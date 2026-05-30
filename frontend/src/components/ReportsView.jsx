@@ -9,11 +9,8 @@ import {
   fetchTaxSummaryReport,
   fetchTopProductsReport
 } from '../api/client';
+import { todayIso } from '../utils/date';
 import { formatMoney } from '../utils/money';
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export default function ReportsView() {
   const [date, setDate] = useState(todayIso());

@@ -3,21 +3,9 @@ const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { writeAuditLog } = require('../services/auditService');
+const { normalizeDate, parseMoney } = require('../utils/formatters');
 
 const DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
-
-function parseMoney(value) {
-  return Number.parseFloat(value) || 0;
-}
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function normalizeDate(value) {
-  const text = String(value || '').trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : todayIso();
-}
 
 function normalizeCounterNo(value, user) {
   if (user?.role === 'COUNTER' && user.counter_no) return Number(user.counter_no);

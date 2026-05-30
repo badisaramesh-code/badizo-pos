@@ -3,10 +3,7 @@ const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { writeAuditLog } = require('../services/auditService');
-
-function normalizePhone(value) {
-  return String(value || '').replace(/\D/g, '').slice(-10);
-}
+const { normalizePhone } = require('../utils/formatters');
 
 function toCustomer(row) {
   return {

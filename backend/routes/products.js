@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
+const { csvEscape, csvLine } = require('../utils/formatters');
 const { writeAuditLog } = require('../services/auditService');
 
 function toProduct(row) {
@@ -40,18 +41,6 @@ const PRODUCT_CSV_HEADERS = [
   'stock_qty',
   'min_stock_alert'
 ];
-
-function csvEscape(value) {
-  const text = value === null || value === undefined ? '' : String(value);
-  if (/[",\r\n]/.test(text)) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-  return text;
-}
-
-function csvLine(values) {
-  return values.map(csvEscape).join(',');
-}
 
 function parseCsv(text) {
   const rows = [];

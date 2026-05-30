@@ -2,27 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
-
-function csvEscape(value) {
-  const text = value === null || value === undefined ? '' : String(value);
-  if (/[",\r\n]/.test(text)) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-  return text;
-}
-
-function csvLine(values) {
-  return values.map(csvEscape).join(',');
-}
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function normalizeDate(value, fallback = todayIso()) {
-  const text = String(value || '').trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : fallback;
-}
+const { csvLine, normalizeDate, todayIso } = require('../utils/formatters');
 
 function normalizeCounter(value) {
   const text = String(value || '').trim();

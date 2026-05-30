@@ -6,13 +6,10 @@ import {
   getStoredUser,
   saveCounterClosing
 } from '../api/client';
+import { todayIso } from '../utils/date';
 import { formatMoney, toNumber } from '../utils/money';
 
 const DEFAULT_DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function parseJsonField(value, fallback) {
   if (!value) return fallback;

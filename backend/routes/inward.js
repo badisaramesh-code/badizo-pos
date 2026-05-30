@@ -3,10 +3,7 @@ const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { writeAuditLog } = require('../services/auditService');
-
-function parseMoney(value) {
-  return Number.parseFloat(value) || 0;
-}
+const { parseMoney } = require('../utils/formatters');
 
 function inwardNo() {
   const now = new Date();

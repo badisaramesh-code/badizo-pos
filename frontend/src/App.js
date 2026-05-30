@@ -10,19 +10,8 @@ import LoginView from './components/LoginView';
 import ReportsView from './components/ReportsView';
 import SystemView from './components/SystemView';
 import { clearAuthSession, getStoredUser } from './api/client';
+import { APP_TABS, canAccessTab } from './config/navigation';
 import './styles.css';
-
-const tabs = [
-  { key: 'dashboard', label: 'Dashboard' },
-  { key: 'billing', label: 'Billing (POS)' },
-  { key: 'closing', label: 'Counter Closing' },
-  { key: 'inventory', label: 'Products' },
-  { key: 'barcode', label: 'Barcode' },
-  { key: 'inward', label: 'Inward' },
-  { key: 'reports', label: 'Reports' },
-  { key: 'books', label: 'Books' },
-  { key: 'system', label: 'System' }
-];
 
 export default function App() {
   const [activeWorkspace, setActiveWorkspace] = useState('billing');
@@ -32,12 +21,7 @@ export default function App() {
     return <LoginView onLogin={setCurrentUser} />;
   }
 
-  const allowedTabs = tabs.filter((tab) => {
-    if (currentUser.role === 'COUNTER') {
-      return ['billing', 'closing', 'inventory'].includes(tab.key);
-    }
-    return true;
-  });
+  const allowedTabs = APP_TABS.filter((tab) => canAccessTab(tab, currentUser));
 
   const views = {
     dashboard: <DashboardView setActiveWorkspace={setActiveWorkspace} />,
