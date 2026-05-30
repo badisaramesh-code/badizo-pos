@@ -282,4 +282,117 @@ router.get('/gst-hsn', authorize('SERVER', 'ADMIN'), async (req, res) => {
   }
 });
 
+router.get('/monthly-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const month = String(req.query.month || todayIso().slice(0, 7));
+    const safeMonth = /^\d{4}-\d{2}$/.test(month) ? month : todayIso().slice(0, 7);
+    const [rows] = await db.query(
+      `SELECT DATE(created_at) AS sale_date,
+              COUNT(*) AS bill_count,
+              COALESCE(SUM(sub_total), 0) AS taxable,
+              COALESCE(SUM(gst_total), 0) AS gst,
+              COALESCE(SUM(grand_total), 0) AS total
+       FROM invoices
+       WHERE DATE_FORMAT(created_at, '%Y-%m') = ? AND invoice_status <> 'CANCELLED'
+       GROUP BY DATE(created_at)
+       ORDER BY sale_date ASC`,
+      [safeMonth]
+    );
+    res.json({ month: safeMonth, rows });
+  } catch (err) {
+    console.error('Monthly sales report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load monthly sales report.' });
+  }
+});
+
+router.get('/stock', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const lowOnly = String(req.query.low_only || '') === '1';
+    const whereSql = lowOnly ? 'WHERE stock_qty <= min_stock_alert' : '';
+    const [rows] = await db.query(
+      `SELECT barcode, product_code, product_name, hsn_code, gst_percent, sale_price, stock_qty, min_stock_alert,
+              stock_qty * sale_price AS stock_value
+       FROM products
+       ${whereSql}
+       ORDER BY product_name ASC
+       LIMIT 1000`
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Stock report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load stock report.' });
+  }
+});
+
+router.get('/top-products', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const from = normalizeDate(req.query.from, todayIso());
+    const to = normalizeDate(req.query.to, from);
+    const direction = String(req.query.direction || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    const [rows] = await db.query(
+      `SELECT ii.barcode, ii.product_name, SUM(ii.quantity) AS quantity, SUM(ii.quantity * ii.sale_price) AS total
+       FROM invoice_items ii
+       INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ? AND i.invoice_status <> 'CANCELLED'
+       GROUP BY ii.barcode, ii.product_name
+       ORDER BY quantity ${direction}
+       LIMIT 50`,
+      [from, to]
+    );
+    res.json({ from, to, rows });
+  } catch (err) {
+    console.error('Top products report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load product movement report.' });
+  }
+});
+
+router.get('/tax-summary', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const from = normalizeDate(req.query.from, todayIso());
+    const to = normalizeDate(req.query.to, from);
+    const [rows] = await db.query(
+      `SELECT ii.gst_percent,
+              SUM(ii.quantity * ii.sale_price) AS gross_total,
+              SUM(ii.cgst_amount) AS cgst,
+              SUM(ii.sgst_amount) AS sgst,
+              SUM(ii.igst_amount) AS igst
+       FROM invoice_items ii
+       INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ? AND i.invoice_status <> 'CANCELLED'
+       GROUP BY ii.gst_percent
+       ORDER BY ii.gst_percent ASC`,
+      [from, to]
+    );
+    res.json({ from, to, rows });
+  } catch (err) {
+    console.error('Tax summary failed:', err.message);
+    res.status(500).json({ error: 'Unable to load tax summary.' });
+  }
+});
+
+router.get('/exceptions', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const from = normalizeDate(req.query.from, todayIso());
+    const to = normalizeDate(req.query.to, from);
+    const [cancelled] = await db.query(
+      `SELECT invoice_no, customer_name, grand_total, cancel_reason, cancelled_by, cancelled_at
+       FROM invoices
+       WHERE DATE(created_at) BETWEEN ? AND ? AND invoice_status = 'CANCELLED'
+       ORDER BY cancelled_at DESC`,
+      [from, to]
+    );
+    const [returns] = await db.query(
+      `SELECT return_no, invoice_no, reason, refund_mode, refund_total, created_by, created_at
+       FROM sales_returns
+       WHERE DATE(created_at) BETWEEN ? AND ?
+       ORDER BY created_at DESC`,
+      [from, to]
+    );
+    res.json({ from, to, cancelled, returns });
+  } catch (err) {
+    console.error('Exception report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load exception report.' });
+  }
+});
+
 module.exports = router;

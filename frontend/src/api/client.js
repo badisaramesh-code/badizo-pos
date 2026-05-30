@@ -113,6 +113,31 @@ export async function fetchGstHsnReport({ from, to } = {}) {
   return data;
 }
 
+export async function fetchMonthlySalesReport(month) {
+  const { data } = await api.get('/reports/monthly-sales', { params: { month } });
+  return data;
+}
+
+export async function fetchStockReport(lowOnly = false) {
+  const { data } = await api.get('/reports/stock', { params: { low_only: lowOnly ? '1' : '' } });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchTopProductsReport({ from, to, direction = 'DESC' } = {}) {
+  const { data } = await api.get('/reports/top-products', { params: { from, to, direction } });
+  return data;
+}
+
+export async function fetchTaxSummaryReport({ from, to } = {}) {
+  const { data } = await api.get('/reports/tax-summary', { params: { from, to } });
+  return data;
+}
+
+export async function fetchExceptionReport({ from, to } = {}) {
+  const { data } = await api.get('/reports/exceptions', { params: { from, to } });
+  return data;
+}
+
 export async function checkout(payload) {
   const { data } = await api.post('/billing/checkout', payload);
   return data;
@@ -150,6 +175,11 @@ export async function downloadBackup(file) {
     responseType: 'blob'
   });
   downloadBlob(data, file);
+}
+
+export async function restoreBackup(file, confirmation) {
+  const { data } = await api.post('/backup/restore', { file, confirmation });
+  return data;
 }
 
 export async function fetchInvoiceHistory() {
@@ -207,6 +237,48 @@ export async function fetchRecentInwards() {
 
 export async function saveInwardEntry(payload) {
   const { data } = await api.post('/inward', payload);
+  return data;
+}
+
+export async function lookupCustomer(phone) {
+  const { data } = await api.get(`/customers/lookup/${encodeURIComponent(phone)}`);
+  return data;
+}
+
+export async function saveCustomer(customer) {
+  const { data } = await api.post('/customers', customer);
+  return data;
+}
+
+export async function fetchCustomers(search = '') {
+  const { data } = await api.get('/customers', { params: { search } });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchBooksSummary(date) {
+  const { data } = await api.get('/books/summary', { params: { date } });
+  return data;
+}
+
+export async function fetchDayBook(date) {
+  const { data } = await api.get('/books/day-book', { params: { date } });
+  return data;
+}
+
+export async function fetchCounterExpected(date, counterNo) {
+  const { data } = await api.get('/counter-closing/expected', {
+    params: { date, counter_no: counterNo }
+  });
+  return data;
+}
+
+export async function saveCounterClosing(payload) {
+  const { data } = await api.post('/counter-closing', payload);
+  return data;
+}
+
+export async function fetchCounterClosingSummary(date) {
+  const { data } = await api.get('/counter-closing/summary', { params: { date } });
   return data;
 }
 

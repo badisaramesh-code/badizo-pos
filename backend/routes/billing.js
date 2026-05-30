@@ -46,6 +46,49 @@ function formatReturnNo() {
   return `SR-${stamp}`;
 }
 
+function normalizePhone(value) {
+  return String(value || '').replace(/\D/g, '').slice(-10);
+}
+
+async function awardLoyaltyPoints(connection, invoiceNo, customerName, customerPhone, grandTotal, user) {
+  const phone = normalizePhone(customerPhone);
+  if (!phone || phone.length < 10) return null;
+
+  const points = Math.floor(parseMoney(grandTotal) / 100);
+  await connection.query(
+    `INSERT INTO customers (customer_name, phone, loyalty_points, total_spent, visit_count, last_visit_at)
+     VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+     ON DUPLICATE KEY UPDATE
+       customer_name = VALUES(customer_name),
+       loyalty_points = loyalty_points + VALUES(loyalty_points),
+       total_spent = total_spent + VALUES(total_spent),
+       visit_count = visit_count + 1,
+       last_visit_at = CURRENT_TIMESTAMP`,
+    [customerName || 'Walk-in Customer', phone, points, parseMoney(grandTotal)]
+  );
+
+  const [rows] = await connection.query(`SELECT id FROM customers WHERE phone = ? LIMIT 1`, [phone]);
+  const customerId = rows[0]?.id;
+  if (customerId && points > 0) {
+    await connection.query(
+      `INSERT INTO loyalty_transactions (customer_id, invoice_no, points_delta, transaction_type, note)
+       VALUES (?, ?, ?, 'EARN', ?)`,
+      [customerId, invoiceNo, points, `Earned on invoice ${invoiceNo}`]
+    );
+  }
+
+  await writeAuditLog({
+    user,
+    action: 'LOYALTY_POINTS_EARNED',
+    entityType: 'CUSTOMER',
+    entityId: phone,
+    details: { invoiceNo, points, grandTotal: parseMoney(grandTotal) },
+    connection
+  });
+
+  return { phone, points };
+}
+
 async function ensureSequenceRow(connection, financialYear, counterNo) {
   await connection.query(
     `INSERT IGNORE INTO invoice_sequences (financial_year, counter_no, next_number)
@@ -236,6 +279,15 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       },
       connection
     });
+
+    await awardLoyaltyPoints(
+      connection,
+      invoiceNo,
+      customer_name || 'Walk-in Customer',
+      customer_phone || '',
+      grand_total,
+      req.user
+    );
 
     await connection.commit();
     res.json({

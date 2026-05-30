@@ -259,6 +259,64 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
 
     await connection.query(`
+      CREATE TABLE IF NOT EXISTS customers (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        customer_name VARCHAR(150) NOT NULL DEFAULT 'Walk-in Customer',
+        phone VARCHAR(20) NOT NULL UNIQUE,
+        gstin VARCHAR(20) DEFAULT '',
+        address VARCHAR(255) DEFAULT '',
+        loyalty_points DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        total_spent DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        visit_count INT NOT NULL DEFAULT 0,
+        last_visit_at TIMESTAMP NULL DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_customer_phone (phone)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS loyalty_transactions (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        customer_id BIGINT NOT NULL,
+        invoice_no VARCHAR(50) DEFAULT NULL,
+        points_delta DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        transaction_type ENUM('EARN', 'REDEEM', 'ADJUST') NOT NULL DEFAULT 'EARN',
+        note VARCHAR(255) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_loyalty_customer (customer_id),
+        INDEX idx_loyalty_invoice (invoice_no)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS counter_closings (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        closing_date DATE NOT NULL,
+        counter_no INT NOT NULL,
+        opening_cash DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        expected_cash_sales DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        expected_upi_sales DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        expected_card_sales DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        cash_in_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        cash_out_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        declared_cash_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        expected_cash_in_hand DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        difference_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        denominations_json JSON NOT NULL,
+        movements_json JSON NOT NULL,
+        handed_over_by VARCHAR(120) NOT NULL,
+        taken_over_by VARCHAR(120) NOT NULL,
+        notes VARCHAR(255) DEFAULT '',
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_counter_closing (closing_date, counter_no),
+        INDEX idx_counter_closing_date (closing_date)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
       INSERT IGNORE INTO app_settings (setting_key, setting_value)
       VALUES
         ('shop_name', 'Hyper Fresh Mart LLP'),

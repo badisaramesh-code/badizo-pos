@@ -10,7 +10,9 @@ import {
   fetchSettings,
   getStoredUser,
   holdBill,
+  lookupCustomer,
   recordInvoiceReprint,
+  saveCustomer,
   voidInvoice,
   searchProducts
 } from '../api/client';
@@ -76,6 +78,7 @@ export default function BillingTerminalView() {
   const [heldBills, setHeldBills] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [printableInvoice, setPrintableInvoice] = useState(null);
+  const [loyaltyCustomer, setLoyaltyCustomer] = useState(null);
   const [returnInvoice, setReturnInvoice] = useState(null);
   const [returnQuantities, setReturnQuantities] = useState({});
   const [returnReason, setReturnReason] = useState('');
@@ -307,6 +310,45 @@ export default function BillingTerminalView() {
       setCounterNo((current) => Math.min(current, nextCounterCount));
     } catch (err) {
       setCounterCount(6);
+    }
+  }
+
+  async function handleCustomerLookup() {
+    if (!customerPhone || customerPhone.replace(/\D/g, '').length < 10) {
+      setErrorMessage('Enter customer phone number for loyalty lookup.');
+      return;
+    }
+
+    try {
+      const customer = await lookupCustomer(customerPhone);
+      setLoyaltyCustomer(customer);
+      setCustomerName(customer.customer_name || customerName);
+      setCustomerAddress(customer.address || customerAddress);
+      setCustomerGstin(customer.gstin || customerGstin);
+      setStatusMessage(`Loyalty customer loaded. Points: ${customer.loyalty_points}`);
+    } catch (err) {
+      setLoyaltyCustomer(null);
+      setStatusMessage('New loyalty customer. Complete bill or save customer to start points.');
+    }
+  }
+
+  async function handleCustomerSave() {
+    if (!customerPhone || customerPhone.replace(/\D/g, '').length < 10) {
+      setErrorMessage('Enter valid customer phone number before saving loyalty customer.');
+      return;
+    }
+
+    try {
+      const customer = await saveCustomer({
+        customer_name: billingMode === 'BUSINESS_IGST' ? companyName : customerName,
+        phone: customerPhone,
+        gstin: customerGstin,
+        address: customerAddress
+      });
+      setLoyaltyCustomer(customer);
+      setStatusMessage(`Customer saved. Loyalty points: ${customer.loyalty_points}`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to save customer.');
     }
   }
 
@@ -730,6 +772,12 @@ export default function BillingTerminalView() {
               <span className="field-label">Phone No</span>
               <input className="field" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="Optional" />
             </label>
+          </div>
+
+          <div className="loyalty-strip">
+            <span className="status-chip">Loyalty: {loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} points | ${loyaltyCustomer.visit_count} visits` : 'No customer loaded'}</span>
+            <button className="secondary-button" onClick={handleCustomerLookup}>Lookup</button>
+            <button className="secondary-button" onClick={handleCustomerSave}>Save Customer</button>
           </div>
 
           <div className="scanner-row">

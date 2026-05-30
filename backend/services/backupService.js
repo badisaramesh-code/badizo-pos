@@ -49,6 +49,52 @@ function getBackupPath(fileName) {
   return path.join(backupDir, safeName);
 }
 
+async function restoreDatabaseBackup(fileName) {
+  await ensureBackupDir();
+  const filePath = getBackupPath(fileName);
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw new Error('Backup file not found.');
+  }
+
+  const dbPassword = process.env.DB_PASSWORD === undefined ? '1234' : process.env.DB_PASSWORD;
+  const mysqlCommand = process.env.MYSQL_PATH || 'mysql';
+  const args = [
+    `--host=${process.env.DB_HOST || 'localhost'}`,
+    `--user=${process.env.DB_USER || 'root'}`
+  ];
+
+  if (dbPassword) {
+    args.push(`--password=${dbPassword}`);
+  }
+
+  return new Promise((resolve, reject) => {
+    const input = fs.createReadStream(filePath);
+    const restore = spawn(mysqlCommand, args, {
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let errorOutput = '';
+    input.pipe(restore.stdin);
+    restore.stderr.on('data', (chunk) => {
+      errorOutput += chunk.toString();
+    });
+
+    restore.on('error', (err) => {
+      reject(new Error(`Unable to start mysql restore. Install MySQL client tools or set MYSQL_PATH. ${err.message}`));
+    });
+
+    restore.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(errorOutput.trim() || `mysql restore failed with exit code ${code}`));
+        return;
+      }
+
+      resolve({ file: path.basename(filePath), restoredAt: new Date() });
+    });
+  });
+}
+
 async function runDatabaseBackup() {
   await ensureBackupDir();
 
@@ -143,5 +189,6 @@ module.exports = {
   getBackupPath,
   listBackups,
   runDatabaseBackup,
+  restoreDatabaseBackup,
   scheduleDailyBackup
 };

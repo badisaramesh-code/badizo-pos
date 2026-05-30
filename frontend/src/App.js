@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import BarcodeStickersView from './components/BarcodeStickersView';
 import BillingTerminalView from './components/BillingTerminalView';
 import BooksView from './components/BooksView';
+import CounterClosingView from './components/CounterClosingView';
 import DashboardView from './components/DashboardView';
 import InwardEntryView from './components/InwardEntryView';
 import InventoryDashboardView from './components/InventoryDashboardView';
@@ -14,6 +15,7 @@ import './styles.css';
 const tabs = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'billing', label: 'Billing (POS)' },
+  { key: 'closing', label: 'Counter Closing' },
   { key: 'inventory', label: 'Products' },
   { key: 'barcode', label: 'Barcode' },
   { key: 'inward', label: 'Inward' },
@@ -32,7 +34,7 @@ export default function App() {
 
   const allowedTabs = tabs.filter((tab) => {
     if (currentUser.role === 'COUNTER') {
-      return ['billing', 'inventory'].includes(tab.key);
+      return ['billing', 'closing', 'inventory'].includes(tab.key);
     }
     return true;
   });
@@ -40,6 +42,7 @@ export default function App() {
   const views = {
     dashboard: <DashboardView setActiveWorkspace={setActiveWorkspace} />,
     billing: <BillingTerminalView />,
+    closing: <CounterClosingView />,
     inventory: <InventoryDashboardView />,
     barcode: <BarcodeStickersView />,
     inward: <InwardEntryView />,

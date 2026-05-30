@@ -1,5 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { exportDailySalesReport, fetchDailySalesReport, fetchGstHsnReport } from '../api/client';
+import {
+  exportDailySalesReport,
+  fetchDailySalesReport,
+  fetchExceptionReport,
+  fetchGstHsnReport,
+  fetchMonthlySalesReport,
+  fetchStockReport,
+  fetchTaxSummaryReport,
+  fetchTopProductsReport
+} from '../api/client';
 import { formatMoney } from '../utils/money';
 
 function todayIso() {
@@ -11,6 +20,11 @@ export default function ReportsView() {
   const [counter, setCounter] = useState('');
   const [dailyReport, setDailyReport] = useState({ rows: [], totals: { billCount: 0, itemCount: 0, taxable: 0, gst: 0, total: 0 } });
   const [hsnReport, setHsnReport] = useState({ rows: [] });
+  const [monthlyReport, setMonthlyReport] = useState({ rows: [] });
+  const [stockReport, setStockReport] = useState([]);
+  const [topProducts, setTopProducts] = useState({ rows: [] });
+  const [taxSummary, setTaxSummary] = useState({ rows: [] });
+  const [exceptionReport, setExceptionReport] = useState({ cancelled: [], returns: [] });
   const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
@@ -20,12 +34,22 @@ export default function ReportsView() {
   async function loadReports() {
     setErrorMessage('');
     try {
-      const [daily, hsn] = await Promise.all([
+      const [daily, hsn, monthly, stock, top, tax, exceptions] = await Promise.all([
         fetchDailySalesReport({ date, counter }),
-        fetchGstHsnReport({ from: date, to: date })
+        fetchGstHsnReport({ from: date, to: date }),
+        fetchMonthlySalesReport(date.slice(0, 7)),
+        fetchStockReport(false),
+        fetchTopProductsReport({ from: date, to: date }),
+        fetchTaxSummaryReport({ from: date, to: date }),
+        fetchExceptionReport({ from: date, to: date })
       ]);
       setDailyReport(daily);
       setHsnReport(hsn);
+      setMonthlyReport(monthly);
+      setStockReport(stock);
+      setTopProducts(top);
+      setTaxSummary(tax);
+      setExceptionReport(exceptions);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to load reports from database.');
     }
@@ -161,18 +185,76 @@ export default function ReportsView() {
 
       <section className="report-grid">
         {[
-          ['Monthly Sales', 'Next: month-wise report with export'],
-          ['GSTR-1 Report', 'Next: GST filing format'],
-          ['Top/Low Products', 'Next: date-range movement report'],
-          ['Sundry Debtors', 'Next: credit customer ledger'],
-          ['Sundry Creditors', 'Next: supplier balance'],
-          ['Staff Attendance & Salary', 'Next: employee module']
+          ['Monthly Sales', `${monthlyReport.rows.length} trading days`],
+          ['Stock Report', `${stockReport.length} products loaded`],
+          ['Top Products', `${topProducts.rows.length} products`],
+          ['Tax Summary', `${taxSummary.rows.length} GST slabs`],
+          ['Returns', `${exceptionReport.returns.length} returns`],
+          ['Cancelled Bills', `${exceptionReport.cancelled.length} cancelled`]
         ].map(([title, note]) => (
           <div className="module-card" key={title}>
             <strong>{title}</strong>
             <span className="muted">{note}</span>
           </div>
         ))}
+      </section>
+
+      <section className="panel">
+        <div className="panel-header green"><h2 className="panel-title">Monthly Sales</h2></div>
+        <div className="panel-body">
+          <table className="history-table">
+            <thead><tr><th>Date</th><th>Bills</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+            <tbody>
+              {monthlyReport.rows.length === 0 ? (
+                <tr><td colSpan="5">No monthly sales data.</td></tr>
+              ) : monthlyReport.rows.map((row) => (
+                <tr key={row.sale_date}>
+                  <td>{row.sale_date ? new Date(row.sale_date).toLocaleDateString() : '-'}</td>
+                  <td>{row.bill_count}</td>
+                  <td>{formatMoney(row.taxable)}</td>
+                  <td>{formatMoney(row.gst)}</td>
+                  <td><strong>{formatMoney(row.total)}</strong></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header green"><h2 className="panel-title">Top Products / Tax / Exceptions</h2></div>
+        <div className="panel-body report-grid">
+          <div>
+            <h3 className="panel-title">Top Products</h3>
+            <table className="history-table">
+              <tbody>
+                {topProducts.rows.slice(0, 8).map((row) => (
+                  <tr key={row.barcode}><td>{row.product_name}</td><td>{row.quantity}</td><td>{formatMoney(row.total)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <h3 className="panel-title">Tax Wise</h3>
+            <table className="history-table">
+              <tbody>
+                {taxSummary.rows.map((row) => (
+                  <tr key={row.gst_percent}><td>{Number(row.gst_percent)}%</td><td>{formatMoney(row.gross_total)}</td><td>{formatMoney(Number(row.cgst || 0) + Number(row.sgst || 0) + Number(row.igst || 0))}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <h3 className="panel-title">Exceptions</h3>
+            <table className="history-table">
+              <tbody>
+                <tr><td>Returns</td><td>{exceptionReport.returns.length}</td></tr>
+                <tr><td>Cancelled Bills</td><td>{exceptionReport.cancelled.length}</td></tr>
+                <tr><td>Low Stock</td><td>{stockReport.filter((row) => Number(row.stock_qty) <= Number(row.min_stock_alert)).length}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
     </div>
   );

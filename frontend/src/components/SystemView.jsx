@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { downloadBackup, fetchAuditLogs, fetchBackups, fetchSettings, fetchUsers, runBackup, saveSettings, saveUser } from '../api/client';
+import { downloadBackup, fetchAuditLogs, fetchBackups, fetchSettings, fetchUsers, restoreBackup, runBackup, saveSettings, saveUser } from '../api/client';
 
 const emptyUserForm = {
   id: null,
@@ -114,6 +114,21 @@ export default function SystemView() {
       setErrorMessage(err.response?.data?.error || 'Unable to create backup.');
     } finally {
       setIsBackingUp(false);
+    }
+  }
+
+  async function handleRestoreBackup(file) {
+    const confirmation = window.prompt(`Restore ${file}? This can overwrite current data. Type RESTORE BADIZO POS to continue.`);
+    if (confirmation !== 'RESTORE BADIZO POS') return;
+
+    setStatusMessage('');
+    setErrorMessage('');
+    try {
+      await restoreBackup(file, confirmation);
+      setStatusMessage(`Backup restored from ${file}. Restart backend and refresh all counters.`);
+      await loadAuditLogs();
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to restore backup.');
     }
   }
 
@@ -291,7 +306,12 @@ export default function SystemView() {
                       <td className="mono">{backup.file}</td>
                       <td>{formatBytes(backup.sizeBytes)}</td>
                       <td>{backup.modifiedAt ? new Date(backup.modifiedAt).toLocaleString() : '-'}</td>
-                      <td><button className="secondary-button" onClick={() => downloadBackup(backup.file)}>Download</button></td>
+                      <td>
+                        <div className="table-actions">
+                          <button className="secondary-button" onClick={() => downloadBackup(backup.file)}>Download</button>
+                          <button className="danger-button" onClick={() => handleRestoreBackup(backup.file)}>Restore</button>
+                        </div>
+                      </td>
                     </tr>
                   ))
                 )}

@@ -523,6 +523,14 @@ button:disabled {
   background: #f4fbf5;
 }
 
+.loyalty-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 .unknown-row {
   background: #ffe7e4 !important;
   outline: 2px solid var(--danger);
@@ -568,7 +576,10 @@ button:disabled {
 .books-grid,
 .system-grid,
 .barcode-grid,
-.inward-grid {
+.inward-grid,
+.closing-layout,
+.closing-metrics,
+.denomination-grid {
   display: grid;
   gap: 16px;
 }
@@ -586,6 +597,55 @@ button:disabled {
 .barcode-grid,
 .inward-grid {
   grid-template-columns: 420px minmax(620px, 1fr);
+}
+
+.closing-layout {
+  grid-template-columns: minmax(620px, 1fr) minmax(440px, 0.85fr);
+  align-items: start;
+}
+
+.closing-metrics {
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+}
+
+.closing-metrics .metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.closing-metrics strong {
+  color: var(--brand-dark);
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.variance-warning {
+  background: var(--warning-soft);
+  border-color: #f5ca7b;
+}
+
+.variance-warning strong {
+  color: var(--warning);
+}
+
+.closing-total-band {
+  justify-content: space-between;
+}
+
+.closing-total-band > div {
+  min-width: 150px;
+}
+
+.denomination-grid {
+  grid-template-columns: repeat(5, minmax(95px, 1fr));
+}
+
+.closing-filter-row {
+  display: grid;
+  grid-template-columns: 150px 150px auto;
+  gap: 8px;
+  align-items: center;
 }
 
 .metric-card,
@@ -980,7 +1040,8 @@ button:disabled {
   .billing-grid,
   .inventory-layout,
   .barcode-grid,
-  .inward-grid {
+  .inward-grid,
+  .closing-layout {
     grid-template-columns: 1fr;
   }
 
@@ -988,7 +1049,8 @@ button:disabled {
   .report-grid,
   .books-grid,
   .system-grid,
-  .customer-grid {
+  .customer-grid,
+  .closing-metrics {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -1035,10 +1097,13 @@ button:disabled {
   .dashboard-grid,
   .report-grid,
   .books-grid,
-  .system-grid,
-  .customer-grid,
-  .billing-options,
-  .user-form-grid {
+    .system-grid,
+    .customer-grid,
+    .billing-options,
+  .user-form-grid,
+  .closing-metrics,
+  .denomination-grid,
+  .closing-filter-row {
     grid-template-columns: 1fr;
   }
 }
