@@ -86,6 +86,16 @@ button:disabled {
   gap: 12px;
 }
 
+.brand-image {
+  width: 168px;
+  height: 48px;
+  display: block;
+  border-radius: 8px;
+  object-fit: contain;
+  background: #fff;
+  padding: 5px 10px;
+}
+
 .brand-logo {
   width: 46px;
   height: 46px;
@@ -236,6 +246,26 @@ button:disabled {
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.28);
   color: #fff;
+}
+
+.billing-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-time-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
 }
 
 .billing-panel-body {

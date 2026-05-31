@@ -99,6 +99,7 @@ function getHeldBillMode(heldBill) {
 export default function BillingTerminalView() {
   const currentUser = getStoredUser();
   const [invoiceNo, setInvoiceNo] = useState('Loading...');
+  const [liveTime, setLiveTime] = useState(new Date());
   const [counterNo, setCounterNo] = useState(1);
   const [counterCount, setCounterCount] = useState(6);
   const [shopSettings, setShopSettings] = useState({
@@ -149,6 +150,11 @@ export default function BillingTerminalView() {
     scannerRef.current?.focus();
     loadSettings();
     refreshHistory(false);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setLiveTime(new Date()), 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -915,7 +921,10 @@ export default function BillingTerminalView() {
             <h2 className="panel-title">{shopSettings.shop_name}</h2>
             <div className="muted">GST: {shopSettings.gst_number} | {shopSettings.address} | Ph: {shopSettings.phone}</div>
           </div>
-          <span className="invoice-chip">Invoice {invoiceNo}</span>
+          <div className="billing-header-meta">
+            <span className="live-time-chip">{liveTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
+            <span className="invoice-chip">Invoice {invoiceNo}</span>
+          </div>
         </div>
 
         <div className="panel-body billing-panel-body">
