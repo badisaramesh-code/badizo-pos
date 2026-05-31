@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import * as XLSX from 'xlsx';
 import {
-  downloadProductTemplate,
+  bulkUpdateProducts,
+  fetchBulkEditableProducts,
   exportProducts,
   fetchProducts,
   getStoredUser,
@@ -16,7 +18,9 @@ const emptyForm = {
   product_name: '',
   hsn_code: '',
   gst_percent: '18',
+  unit_type: 'Nos',
   mrp: '',
+  purchase_price: '',
   sale_price: '',
   wholesale_price: '',
   discount_type: 'PERCENT',
@@ -26,6 +30,191 @@ const emptyForm = {
   stock_qty: '100',
   min_stock_alert: '10'
 };
+
+const GST_OPTIONS = ['0', '3', '5', '12', '18', '28', '40'];
+const UNIT_OPTIONS = ['Nos', 'Gm', 'Kg', 'Ml', 'Ltr', 'Pack'];
+const PRODUCT_EXCEL_HEADERS = [
+  'Sno',
+  'Product Code',
+  'Description',
+  'HSN',
+  'MRP',
+  'Sale GST %',
+  'Unit',
+  'Purchase Price',
+  'Discount',
+  'Sale Net Price',
+  'Wholesale Price',
+  'Opening Stock',
+  'Low Stock Alert'
+];
+
+const PRODUCT_EXCEL_SAMPLE_ROWS = [
+  ['1', '89100100', 'KCP SUGAR', '123456', '80.00', '5', '1.KG', '60.00', '10.00', '70.00', '68.00', '100', '10'],
+  ['2', '89102256', 'NAYASA BUCKET', '2515', '500.00', '18', '1', '400.00', '100.00', '300.00', '285.00', '25', '5'],
+  ['3', '8100123', 'ONION', '44155', '', '0', '1.KG', '25.00', '', '30.00', '28.00', '50', '10'],
+  ['4', '892456', 'THUMS UP 2.LT BOTTLE', '51456', '100.00', '40', '1', '80.00', '10.00', '90.00', '87.00', '20', '5']
+];
+
+const PRODUCT_API_IMPORT_HEADERS = [
+  'product_code',
+  'barcode',
+  'product_name',
+  'hsn_code',
+  'gst_percent',
+  'unit_type',
+  'mrp',
+  'purchase_price',
+  'sale_price',
+  'wholesale_price',
+  'discount_type',
+  'discount_value',
+  'bulk_discount_value',
+  'is_free_item',
+  'stock_qty',
+  'min_stock_alert'
+];
+
+function csvCell(value) {
+  const text = String(value ?? '');
+  if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function tableHtmlToCsv(text) {
+  const parser = new DOMParser();
+  const document = parser.parseFromString(text, 'text/html');
+  const rows = Array.from(document.querySelectorAll('tr'));
+  if (!rows.length) return text;
+
+  return rows.map((row) => (
+    Array.from(row.querySelectorAll('th,td'))
+      .map((cell) => csvCell(cell.textContent.trim()))
+      .join(',')
+  )).join('\n');
+}
+
+function normalizeProductImportFile(text) {
+  const trimmed = String(text || '').trim();
+  if (/^<!doctype html/i.test(trimmed) || /<table[\s>]/i.test(trimmed)) {
+    return tableHtmlToCsv(trimmed);
+  }
+  if (!trimmed.includes(',') && trimmed.includes('\t')) {
+    return trimmed.split(/\r?\n/).map((line) => line.split('\t').map(csvCell).join(',')).join('\n');
+  }
+  return text;
+}
+
+function normalizeHeaderName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[().:%]/g, '')
+    .replace(/[_/-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+function rowsToApiImportCsv(rows) {
+  if (!rows.length) return '';
+
+  const headers = rows[0].map(normalizeHeaderName);
+  const columnIndex = (aliases) => headers.findIndex((header) => aliases.map(normalizeHeaderName).includes(header));
+  const indexes = {
+    productCode: columnIndex(['Product Code', 'product_code', 'item code', 'code']),
+    barcode: columnIndex(['Barcode', 'bar code', 'ean']),
+    productName: columnIndex(['Description', 'Product Name', 'product_name', 'item name', 'product']),
+    hsn: columnIndex(['HSN', 'HSN Code', 'hsn_code', 'HSN/SAC']),
+    mrp: columnIndex(['MRP']),
+    gst: columnIndex(['Sale GST %', 'GST %', 'gst_percent', 'GST']),
+    unit: columnIndex(['Unit', 'Unit Type', 'unit_type', 'UOM']),
+    purchasePrice: columnIndex(['Purchase Price', 'purchase_price', 'purchase rate', 'cost price', 'cost']),
+    wholesalePrice: columnIndex(['Wholesale Price', 'wholesale_price', 'wholesale rate']),
+    discount: columnIndex(['Discount', 'discount_value', 'disc']),
+    salePrice: columnIndex(['Sale Net Price', 'sale_price', 'sale price', 'retail price']),
+    stock: columnIndex(['Opening Stock', 'stock_qty', 'stock']),
+    lowStock: columnIndex(['Low Stock Alert', 'min_stock_alert', 'minimum stock'])
+  };
+
+  const valueAt = (row, index) => (index >= 0 ? String(row[index] ?? '').trim() : '');
+  const apiRows = rows.slice(1)
+    .filter((row) => {
+      const productCode = valueAt(row, indexes.productCode);
+      const barcode = valueAt(row, indexes.barcode);
+      const productName = valueAt(row, indexes.productName);
+      return Boolean(productCode || barcode || productName);
+    })
+    .map((row) => {
+      const productCode = valueAt(row, indexes.productCode);
+      const barcode = valueAt(row, indexes.barcode) || productCode;
+      const discount = valueAt(row, indexes.discount);
+      return {
+        product_code: productCode,
+        barcode,
+        product_name: valueAt(row, indexes.productName),
+        hsn_code: valueAt(row, indexes.hsn),
+        gst_percent: valueAt(row, indexes.gst) || '0',
+        unit_type: valueAt(row, indexes.unit) || 'Nos',
+        mrp: valueAt(row, indexes.mrp),
+        purchase_price: valueAt(row, indexes.purchasePrice),
+        sale_price: valueAt(row, indexes.salePrice),
+        wholesale_price: valueAt(row, indexes.wholesalePrice) || valueAt(row, indexes.salePrice),
+        discount_type: discount ? 'VALUE' : 'PERCENT',
+        discount_value: discount || '0',
+        bulk_discount_value: '0',
+        is_free_item: '0',
+        stock_qty: valueAt(row, indexes.stock) || '0',
+        min_stock_alert: valueAt(row, indexes.lowStock) || '10'
+      };
+    });
+
+  return [
+    PRODUCT_API_IMPORT_HEADERS.map(csvCell).join(','),
+    ...apiRows.map((row) => PRODUCT_API_IMPORT_HEADERS.map((header) => csvCell(row[header])).join(','))
+  ].join('\n');
+}
+
+function downloadProductExcelTemplate() {
+  const rows = [
+    PRODUCT_EXCEL_HEADERS,
+    ...PRODUCT_EXCEL_SAMPLE_ROWS
+  ];
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  worksheet['!cols'] = [
+    { wch: 6 },
+    { wch: 16 },
+    { wch: 30 },
+    { wch: 12 },
+    { wch: 10 },
+    { wch: 12 },
+    { wch: 10 },
+    { wch: 15 },
+    { wch: 12 },
+    { wch: 15 },
+    { wch: 15 },
+    { wch: 15 },
+    { wch: 16 }
+  ];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Products');
+  XLSX.writeFile(workbook, 'badizo_product_import_sample.xlsx');
+}
+
+async function readProductImportFile(file) {
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  if (['xlsx', 'xls'].includes(extension)) {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: 'array' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+    return rowsToApiImportCsv(rows);
+  }
+
+  const normalizedText = normalizeProductImportFile(await file.text());
+  const workbook = XLSX.read(normalizedText, { type: 'string' });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = sheet ? XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) : [];
+  return rows.length ? rowsToApiImportCsv(rows) : normalizedText;
+}
 
 export default function InventoryDashboardView() {
   const [products, setProducts] = useState([]);
@@ -38,6 +227,11 @@ export default function InventoryDashboardView() {
   const [summary, setSummary] = useState({ totalSku: 0, lowStock: 0, inventoryValue: 0 });
   const [isLoading, setIsLoading] = useState(false);
   const [importSummary, setImportSummary] = useState(null);
+  const [bulkSearch, setBulkSearch] = useState('');
+  const [bulkRows, setBulkRows] = useState([]);
+  const [bulkPatch, setBulkPatch] = useState({ hsn_code: '', gst_percent: '', unit_type: '' });
+  const [isBulkLoading, setIsBulkLoading] = useState(false);
+  const [isBulkSaving, setIsBulkSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const currentUser = getStoredUser();
@@ -91,7 +285,9 @@ export default function InventoryDashboardView() {
       product_name: product.product_name || '',
       hsn_code: product.hsn_code || '',
       gst_percent: String(product.gst_percent ?? '18'),
+      unit_type: product.unit_type || 'Nos',
       mrp: String(product.mrp ?? ''),
+      purchase_price: String(product.purchase_price ?? ''),
       sale_price: String(product.sale_price ?? ''),
       wholesale_price: String(product.wholesale_price ?? ''),
       discount_type: product.discount_type || 'PERCENT',
@@ -132,7 +328,7 @@ export default function InventoryDashboardView() {
     setImportSummary(null);
 
     try {
-      const csv = await file.text();
+      const csv = await readProductImportFile(file);
       const result = await importProducts(csv);
       setImportSummary(result.summary);
       setStatusMessage(`Import complete: ${result.summary.inserted} inserted, ${result.summary.updated} updated.`);
@@ -144,6 +340,72 @@ export default function InventoryDashboardView() {
       setErrorMessage(response?.error || 'Unable to import products.');
     } finally {
       event.target.value = '';
+    }
+  }
+
+  async function searchBulkProducts() {
+    const cleaned = bulkSearch.trim();
+    setStatusMessage('');
+    setErrorMessage('');
+
+    if (cleaned.length < 3) {
+      setErrorMessage('Enter at least 3 letters or two words to search products for bulk edit.');
+      return;
+    }
+
+    setIsBulkLoading(true);
+    try {
+      const rows = await fetchBulkEditableProducts(cleaned);
+      setBulkRows(rows.map((row) => ({
+        ...row,
+        gst_percent: String(row.gst_percent ?? '0'),
+        unit_type: row.unit_type || 'Nos'
+      })));
+      setStatusMessage(`${rows.length} products loaded for bulk edit.`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load products for bulk edit.');
+    } finally {
+      setIsBulkLoading(false);
+    }
+  }
+
+  function updateBulkRow(index, field, value) {
+    setBulkRows((current) => current.map((row, rowIndex) => (
+      rowIndex === index ? { ...row, [field]: value } : row
+    )));
+  }
+
+  function applyBulkPatch() {
+    setBulkRows((current) => current.map((row) => ({
+      ...row,
+      ...(bulkPatch.hsn_code.trim() ? { hsn_code: bulkPatch.hsn_code.trim() } : {}),
+      ...(bulkPatch.gst_percent ? { gst_percent: bulkPatch.gst_percent } : {}),
+      ...(bulkPatch.unit_type ? { unit_type: bulkPatch.unit_type } : {})
+    })));
+  }
+
+  async function saveBulkRows() {
+    setStatusMessage('');
+    setErrorMessage('');
+
+    if (!bulkRows.length) {
+      setErrorMessage('Search and load products before saving bulk edit.');
+      return;
+    }
+
+    const confirmed = window.confirm(`Save changes for ${bulkRows.length} products? Barcode will not be changed.`);
+    if (!confirmed) return;
+
+    setIsBulkSaving(true);
+    try {
+      const result = await bulkUpdateProducts(bulkRows);
+      setStatusMessage(`${result.updated} products updated.`);
+      await loadProducts(1);
+      setPage(1);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to save bulk product edit.');
+    } finally {
+      setIsBulkSaving(false);
     }
   }
 
@@ -186,18 +448,25 @@ export default function InventoryDashboardView() {
           <label>
             <span className="field-label">GST percent</span>
             <select className="select" value={form.gst_percent} onChange={(event) => updateField('gst_percent', event.target.value)}>
-              <option value="0">0%</option>
-              <option value="3">3%</option>
-              <option value="5">5%</option>
-              <option value="12">12%</option>
-              <option value="18">18%</option>
-              <option value="40">40%</option>
+              {GST_OPTIONS.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
+            </select>
+          </label>
+
+          <label>
+            <span className="field-label">Unit / Nos</span>
+            <select className="select" value={form.unit_type} onChange={(event) => updateField('unit_type', event.target.value)}>
+              {UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
             </select>
           </label>
 
           <label>
             <span className="field-label">MRP</span>
             <input className="field" type="number" step="0.01" min="0" value={form.mrp} onChange={(event) => updateField('mrp', event.target.value)} required />
+          </label>
+
+          <label>
+            <span className="field-label">Purchase price / Cost</span>
+            <input className="field" type="number" step="0.01" min="0" value={form.purchase_price} onChange={(event) => updateField('purchase_price', event.target.value)} placeholder="Cost to store" />
           </label>
 
           <label>
@@ -262,14 +531,101 @@ export default function InventoryDashboardView() {
         </div>
         <div className="panel-body">
           {canManageProducts && (
-            <div className="import-toolbar">
-              <button className="secondary-button" onClick={downloadProductTemplate}>Download Template</button>
-              <button className="secondary-button" onClick={exportProducts}>Export CSV</button>
-              <label className="secondary-button file-button">
-                Import CSV
-                <input type="file" accept=".csv,text/csv" onChange={handleImportFile} />
-              </label>
-            </div>
+            <>
+              <div className="import-toolbar">
+                <button className="secondary-button" onClick={downloadProductExcelTemplate}>Download Sample Excel</button>
+                <button className="secondary-button" onClick={exportProducts}>Export CSV</button>
+                <label className="secondary-button file-button">
+                  Upload Filled Excel/CSV
+                  <input type="file" accept=".xlsx,.xls,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values,text/plain" onChange={handleImportFile} />
+                </label>
+              </div>
+              <div className="change-box" style={{ marginBottom: 12 }}>
+                Download the sample Excel file, fill product rows, then upload the same .xlsx file. CSV/TSV also works.
+              </div>
+
+              <section className="bulk-edit-box">
+                <div className="bulk-edit-toolbar">
+                  <input
+                    className="field"
+                    value={bulkSearch}
+                    onChange={(event) => setBulkSearch(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') searchBulkProducts();
+                    }}
+                    placeholder="Bulk edit search: rice 500, atta 1kg, oil..."
+                  />
+                  <button className="secondary-button" onClick={searchBulkProducts} disabled={isBulkLoading}>
+                    {isBulkLoading ? 'Searching...' : 'Search'}
+                  </button>
+                </div>
+
+                {bulkRows.length > 0 && (
+                  <>
+                    <div className="bulk-apply-row">
+                      <input
+                        className="field"
+                        value={bulkPatch.hsn_code}
+                        onChange={(event) => setBulkPatch((current) => ({ ...current, hsn_code: event.target.value }))}
+                        placeholder="Bulk HSN"
+                      />
+                      <select className="select" value={bulkPatch.gst_percent} onChange={(event) => setBulkPatch((current) => ({ ...current, gst_percent: event.target.value }))}>
+                        <option value="">Bulk GST</option>
+                        {GST_OPTIONS.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
+                      </select>
+                      <select className="select" value={bulkPatch.unit_type} onChange={(event) => setBulkPatch((current) => ({ ...current, unit_type: event.target.value }))}>
+                        <option value="">Bulk Unit</option>
+                        {UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+                      </select>
+                      <button className="secondary-button" onClick={applyBulkPatch}>Apply To Table</button>
+                      <button className="primary-button compact-primary" onClick={saveBulkRows} disabled={isBulkSaving}>
+                        {isBulkSaving ? 'Saving...' : 'Save Bulk Edit'}
+                      </button>
+                    </div>
+
+                    <div className="bulk-table-wrap">
+                      <table className="history-table">
+                        <thead>
+                          <tr><th>S.No</th><th>Barcode</th><th>Product Name</th><th>HSN</th><th>GST %</th><th>Units / Nos</th></tr>
+                        </thead>
+                        <tbody>
+                          {bulkRows.map((row, index) => (
+                            <tr key={row.barcode}>
+                              <td>{index + 1}</td>
+                              <td className="mono muted">{row.barcode}</td>
+                              <td>
+                                <input
+                                  className="field"
+                                  value={row.product_name}
+                                  onChange={(event) => updateBulkRow(index, 'product_name', event.target.value)}
+                                />
+                              </td>
+                              <td>
+                                <input
+                                  className="field"
+                                  value={row.hsn_code}
+                                  onChange={(event) => updateBulkRow(index, 'hsn_code', event.target.value)}
+                                />
+                              </td>
+                              <td>
+                                <select className="select" value={row.gst_percent} onChange={(event) => updateBulkRow(index, 'gst_percent', event.target.value)}>
+                                  {GST_OPTIONS.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
+                                </select>
+                              </td>
+                              <td>
+                                <select className="select" value={row.unit_type} onChange={(event) => updateBulkRow(index, 'unit_type', event.target.value)}>
+                                  {UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+                                </select>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </section>
+            </>
           )}
 
           {importSummary && (
@@ -299,6 +655,7 @@ export default function InventoryDashboardView() {
               <option value="5">5%</option>
               <option value="12">12%</option>
               <option value="18">18%</option>
+              <option value="28">28%</option>
               <option value="40">40%</option>
             </select>
             <select className="select" value={limit} onChange={(event) => { setLimit(Number(event.target.value)); setPage(1); }}>
@@ -318,7 +675,9 @@ export default function InventoryDashboardView() {
                   <th>Code</th>
                   <th>Product</th>
                   <th>GST</th>
+                  <th>Unit</th>
                   <th>MRP</th>
+                  <th>Purchase</th>
                   <th>Retail</th>
                   <th>Wholesale</th>
                   <th>Disc</th>
@@ -328,7 +687,7 @@ export default function InventoryDashboardView() {
               </thead>
               <tbody>
                 {products.length === 0 ? (
-                  <tr><td colSpan="10">No products found.</td></tr>
+                  <tr><td colSpan="12">No products found.</td></tr>
                 ) : (
                   products.map((product) => {
                     const isLow = toNumber(product.stock_qty) <= toNumber(product.min_stock_alert, 10);
@@ -338,7 +697,9 @@ export default function InventoryDashboardView() {
                         <td>{product.product_code || '-'}</td>
                         <td><strong>{product.product_name}</strong></td>
                         <td>{product.gst_percent}%</td>
+                        <td>{product.unit_type || 'Nos'}</td>
                         <td>{formatMoney(product.mrp)}</td>
+                        <td>{formatMoney(product.purchase_price)}</td>
                         <td><strong>{formatMoney(product.sale_price)}</strong></td>
                         <td>{formatMoney(product.wholesale_price)}</td>
                         <td>{product.discount_value || 0}{product.discount_type === 'VALUE' ? ' Rs' : '%'}</td>

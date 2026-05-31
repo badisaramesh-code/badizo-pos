@@ -25,9 +25,11 @@ CREATE TABLE products (
     product_name VARCHAR(255) NOT NULL,
     hsn_code VARCHAR(20) DEFAULT NULL,
     gst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    unit_type VARCHAR(20) NOT NULL DEFAULT 'Nos',
     mrp DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    purchase_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,  -- Cost to Store
     sale_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,      -- Retail Selling Price
-    wholesale_price DECIMAL(10,2) NOT NULL DEFAULT 0.00, -- Wholesale Bulk Price
+    wholesale_price DECIMAL(10,2) NOT NULL DEFAULT 0.00, -- Wholesale Customer Price
     stock_qty DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     min_stock_alert DECIMAL(10,2) NOT NULL DEFAULT 10.00,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -84,9 +86,9 @@ INSERT INTO users (username, password, role) VALUES
 ('admin', '$2b$10$Eux/DMI/x1bUpE7nBv6H9e79ZfIeP8mUXZ2n7Cg', 'Admin');
 
 -- Products catalog injected with balanced Retail vs Wholesale margin gaps
-INSERT INTO products (barcode, product_name, hsn_code, gst_percent, mrp, sale_price, wholesale_price, stock_qty, min_stock_alert) VALUES
-('8901058820013', 'Maggi Noodles 70g', '19023010', 18.00, 14.00, 14.00, 12.50, 500.00, 10.00),
-('8901063105012', 'Amul Butter 100g', '04051000', 12.00, 56.00, 54.00, 49.00, 200.00, 15.00),
-('8901801001108', 'Colgate Dental Cream 100g', '33061020', 18.00, 65.00, 62.00, 55.00, 150.00, 10.00),
-('8901275012354', 'Parle G Biscuits', '19053110', 18.00, 10.00, 8.00, 7.00, 1000.00, 50.00),
-('8901412015562', 'Tata Salt 1kg', '25010020', 0.00, 28.00, 27.00, 24.00, 400.00, 30.00);
+INSERT INTO products (barcode, product_name, hsn_code, gst_percent, mrp, purchase_price, sale_price, wholesale_price, stock_qty, min_stock_alert) VALUES
+('8901058820013', 'Maggi Noodles 70g', '19023010', 18.00, 14.00, 10.50, 14.00, 12.50, 500.00, 10.00),
+('8901063105012', 'Amul Butter 100g', '04051000', 12.00, 56.00, 45.00, 54.00, 49.00, 200.00, 15.00),
+('8901801001108', 'Colgate Dental Cream 100g', '33061020', 18.00, 65.00, 50.00, 62.00, 55.00, 150.00, 10.00),
+('8901275012354', 'Parle G Biscuits', '19053110', 18.00, 10.00, 6.50, 8.00, 7.00, 1000.00, 50.00),
+('8901412015562', 'Tata Salt 1kg', '25010020', 0.00, 28.00, 23.00, 27.00, 24.00, 400.00, 30.00);

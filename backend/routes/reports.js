@@ -290,8 +290,8 @@ router.get('/stock', authorize('SERVER', 'ADMIN'), async (req, res) => {
     const lowOnly = String(req.query.low_only || '') === '1';
     const whereSql = lowOnly ? 'WHERE stock_qty <= min_stock_alert' : '';
     const [rows] = await db.query(
-      `SELECT barcode, product_code, product_name, hsn_code, gst_percent, sale_price, stock_qty, min_stock_alert,
-              stock_qty * sale_price AS stock_value
+      `SELECT barcode, product_code, product_name, hsn_code, gst_percent, purchase_price, sale_price, stock_qty, min_stock_alert,
+              stock_qty * purchase_price AS stock_value
        FROM products
        ${whereSql}
        ORDER BY product_name ASC

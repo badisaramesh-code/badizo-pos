@@ -3,3 +3,4 @@ frontend/build/
 backend/backups/
 .env
 *.log
+*.traineddata

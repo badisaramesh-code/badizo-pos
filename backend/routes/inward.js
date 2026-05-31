@@ -18,13 +18,44 @@ function inwardNo() {
   return `INW-${stamp}`;
 }
 
+function normalizeDiscountType(value) {
+  return String(value || '').toUpperCase() === 'VALUE' ? 'VALUE' : 'PERCENT';
+}
+
+function calculateLineReduction(baseAmount, value, type) {
+  const amount = parseMoney(value);
+  if (amount <= 0 || baseAmount <= 0) return 0;
+  const reduction = normalizeDiscountType(type) === 'VALUE' ? amount : baseAmount * (amount / 100);
+  return Math.min(reduction, baseAmount);
+}
+
+function calculateInwardLine(line, taxType) {
+  const gross = line.purchase_price * line.quantity;
+  const discountAmount = calculateLineReduction(gross, line.discount_value, line.discount_type);
+  const schemeAmount = calculateLineReduction(gross - discountAmount, line.scheme_value, line.scheme_type);
+  const taxable = Math.max(gross - discountAmount - schemeAmount, 0);
+  const gstAmount = taxable * (line.gst_percent / 100);
+
+  return {
+    discountAmount,
+    schemeAmount,
+    taxable,
+    gstAmount,
+    cgstAmount: taxType === 'LOCAL' ? gstAmount / 2 : 0,
+    sgstAmount: taxType === 'LOCAL' ? gstAmount / 2 : 0,
+    igstAmount: taxType === 'INTERSTATE' ? gstAmount : 0,
+    lineTotal: taxable + gstAmount
+  };
+}
+
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
 router.get('/recent', async (_req, res) => {
   try {
     const [rows] = await db.query(
       `SELECT inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date,
-              item_count, total_qty, grand_total, created_by, created_at
+              item_count, total_qty, taxable_total, gst_total, total_cgst, total_sgst, total_igst,
+              grand_total, tax_type, created_by, created_at
        FROM inward_entries
        ORDER BY created_at DESC
        LIMIT 25`
@@ -38,6 +69,7 @@ router.get('/recent', async (_req, res) => {
 
 router.post('/', async (req, res) => {
   const { supplier = {}, lines = [] } = req.body || {};
+  const taxType = req.body?.tax_type === 'INTERSTATE' ? 'INTERSTATE' : 'LOCAL';
 
   if (!supplier.name || !String(supplier.name).trim()) {
     return res.status(400).json({ error: 'Supplier name is required.' });
@@ -50,9 +82,13 @@ router.post('/', async (req, res) => {
         barcode: String(line.barcode || '').trim().toUpperCase(),
         hsn_code: String(line.hsn_code || '').trim(),
         gst_percent: parseMoney(line.gst_percent),
+        mrp: parseMoney(line.mrp),
         purchase_price: parseMoney(line.price || line.purchase_price),
-        discount_percent: parseMoney(line.discount),
-        scheme: String(line.scheme || '').trim(),
+        discount_type: normalizeDiscountType(line.discount_type),
+        discount_value: parseMoney(line.discount),
+        scheme_type: normalizeDiscountType(line.scheme_type),
+        scheme_value: parseMoney(line.scheme),
+        free_qty: parseMoney(line.free || line.free_qty),
         quantity: parseMoney(line.qty || line.quantity)
       }))
       .filter((line) => line.product_name || line.barcode || line.quantity)
@@ -75,14 +111,17 @@ router.post('/', async (req, res) => {
     let totalQty = 0;
     let taxableTotal = 0;
     let gstTotal = 0;
+    let cgstTotal = 0;
+    let sgstTotal = 0;
+    let igstTotal = 0;
     let grandTotal = 0;
 
     await connection.query(
       `INSERT INTO inward_entries
        (inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
         supplier_invoice_no, supplier_invoice_date, item_count, total_qty, taxable_total,
-        gst_total, grand_total, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, ?)`,
+        gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, ?, ?)`,
       [
         finalInwardNo,
         String(supplier.name || '').trim(),
@@ -91,27 +130,28 @@ router.post('/', async (req, res) => {
         String(supplier.phone || '').trim(),
         String(supplier.invoice_no || '').trim(),
         supplier.invoice_date || null,
+        taxType,
         req.user.username
       ]
     );
 
     for (const line of validLines) {
-      const gross = line.purchase_price * line.quantity;
-      const discountAmount = gross * (line.discount_percent / 100);
-      const taxable = gross - discountAmount;
-      const gstAmount = taxable * (line.gst_percent / 100);
-      const lineTotal = taxable + gstAmount;
+      const calculated = calculateInwardLine(line, taxType);
 
-      totalQty += line.quantity;
-      taxableTotal += taxable;
-      gstTotal += gstAmount;
-      grandTotal += lineTotal;
+      totalQty += line.quantity + line.free_qty;
+      taxableTotal += calculated.taxable;
+      gstTotal += calculated.gstAmount;
+      cgstTotal += calculated.cgstAmount;
+      sgstTotal += calculated.sgstAmount;
+      igstTotal += calculated.igstAmount;
+      grandTotal += calculated.lineTotal;
 
       await connection.query(
         `INSERT INTO inward_items
          (inward_no, barcode, product_name, hsn_code, gst_percent, purchase_price, discount_percent,
-          scheme, quantity, taxable_amount, gst_amount, total_amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          discount_type, discount_amount, scheme, scheme_type, scheme_value, scheme_amount,
+          mrp, free_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount, igst_amount, total_amount)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           finalInwardNo,
           line.barcode,
@@ -119,12 +159,22 @@ router.post('/', async (req, res) => {
           line.hsn_code,
           line.gst_percent,
           line.purchase_price,
-          line.discount_percent,
-          line.scheme,
+          line.discount_type === 'PERCENT' ? line.discount_value : 0,
+          line.discount_type,
+          calculated.discountAmount,
+          String(line.scheme_value || ''),
+          line.scheme_type,
+          line.scheme_value,
+          calculated.schemeAmount,
+          line.mrp,
+          line.free_qty,
           line.quantity,
-          taxable,
-          gstAmount,
-          lineTotal
+          calculated.taxable,
+          calculated.gstAmount,
+          calculated.cgstAmount,
+          calculated.sgstAmount,
+          calculated.igstAmount,
+          calculated.lineTotal
         ]
       );
 
@@ -139,25 +189,27 @@ router.post('/', async (req, res) => {
            SET stock_qty = stock_qty + ?,
                product_name = COALESCE(NULLIF(?, ''), product_name),
                hsn_code = COALESCE(NULLIF(?, ''), hsn_code),
-               gst_percent = ?
+               gst_percent = ?,
+               purchase_price = ?
            WHERE barcode = ?`,
-          [line.quantity, line.product_name, line.hsn_code, line.gst_percent, line.barcode]
+          [line.quantity + line.free_qty, line.product_name, line.hsn_code, line.gst_percent, line.purchase_price, line.barcode]
         );
       } else {
         await connection.query(
           `INSERT INTO products
-           (product_code, barcode, product_name, hsn_code, gst_percent, mrp, sale_price, wholesale_price, stock_qty)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (product_code, barcode, product_name, hsn_code, gst_percent, mrp, purchase_price, sale_price, wholesale_price, stock_qty)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             `BDZ${Date.now().toString().slice(-8)}`,
             line.barcode,
             line.product_name,
             line.hsn_code,
             line.gst_percent,
+            line.mrp || line.purchase_price,
             line.purchase_price,
             line.purchase_price,
             line.purchase_price,
-            line.quantity
+            line.quantity + line.free_qty
           ]
         );
       }
@@ -165,9 +217,10 @@ router.post('/', async (req, res) => {
 
     await connection.query(
       `UPDATE inward_entries
-       SET item_count = ?, total_qty = ?, taxable_total = ?, gst_total = ?, grand_total = ?
+       SET item_count = ?, total_qty = ?, taxable_total = ?, gst_total = ?,
+           total_cgst = ?, total_sgst = ?, total_igst = ?, grand_total = ?
        WHERE inward_no = ?`,
-      [validLines.length, totalQty, taxableTotal, gstTotal, grandTotal, finalInwardNo]
+      [validLines.length, totalQty, taxableTotal, gstTotal, cgstTotal, sgstTotal, igstTotal, grandTotal, finalInwardNo]
     );
 
     await writeAuditLog({
@@ -179,7 +232,8 @@ router.post('/', async (req, res) => {
         supplier: supplier.name,
         itemCount: validLines.length,
         totalQty,
-        grandTotal
+        grandTotal,
+        taxType
       },
       connection
     });

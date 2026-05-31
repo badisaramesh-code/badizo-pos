@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  approveSensitiveBillingMode,
   checkout,
   createSalesReturn,
   deleteHeldBill,
@@ -21,33 +22,82 @@ import PrintableInvoice from './PrintableInvoice';
 
 const BILLING_MODES = {
   RETAIL_LOCAL: {
-    label: 'Retail',
+    label: 'GST Retail',
+    shortLabel: 'GST Retail',
     tier: 'RETAIL',
     taxType: 'LOCAL',
     transactionType: 'B2C'
   },
   WHOLESALE_LOCAL: {
-    label: 'Wholesale',
+    label: 'GST Wholesale',
+    shortLabel: 'GST Whole',
     tier: 'WHOLESALE',
     taxType: 'LOCAL',
     transactionType: 'B2C'
   },
-  BUSINESS_IGST: {
-    label: 'B2B IGST',
+  RETAIL_IGST: {
+    label: 'IGST Retail',
+    shortLabel: 'IGST Retail',
+    tier: 'RETAIL',
+    taxType: 'INTERSTATE',
+    transactionType: 'B2C'
+  },
+  WHOLESALE_IGST: {
+    label: 'IGST Wholesale',
+    shortLabel: 'IGST Whole',
     tier: 'WHOLESALE',
     taxType: 'INTERSTATE',
     transactionType: 'B2B'
   }
 };
 
+const RETAIL_MODE = 'RETAIL_LOCAL';
+
 function getUnitPrice(item, mode) {
-  if (mode === 'WHOLESALE_LOCAL' || mode === 'BUSINESS_IGST') {
+  if (BILLING_MODES[mode]?.tier === 'WHOLESALE') {
     return toNumber(item.wholesale_price || item.sale_price || item.mrp);
   }
   return toNumber(item.sale_price || item.mrp);
 }
 
+function isSensitiveBillingMode(mode) {
+  const config = BILLING_MODES[mode] || {};
+  return config.tier === 'WHOLESALE' || config.taxType === 'INTERSTATE';
+}
+
+function isBusinessBillingMode(mode) {
+  return BILLING_MODES[mode]?.transactionType === 'B2B';
+}
+
+function isSensitivePrintMode(mode) {
+  return mode === 'A4';
+}
+
+function normalizeBillingMode(mode) {
+  if (mode === 'BUSINESS_IGST') return 'WHOLESALE_IGST';
+  return BILLING_MODES[mode] ? mode : RETAIL_MODE;
+}
+
+function composeBillingMode(saleMode, taxMode) {
+  if (saleMode === 'WHOLESALE' && taxMode === 'IGST') return 'WHOLESALE_IGST';
+  if (saleMode === 'WHOLESALE') return 'WHOLESALE_LOCAL';
+  if (taxMode === 'IGST') return 'RETAIL_IGST';
+  return RETAIL_MODE;
+}
+
+function getHeldBillMode(heldBill) {
+  try {
+    const savedState = typeof heldBill.saved_state === 'string'
+      ? JSON.parse(heldBill.saved_state)
+      : heldBill.saved_state;
+    return normalizeBillingMode(savedState?.billingMode);
+  } catch (err) {
+    return RETAIL_MODE;
+  }
+}
+
 export default function BillingTerminalView() {
+  const currentUser = getStoredUser();
   const [invoiceNo, setInvoiceNo] = useState('Loading...');
   const [counterNo, setCounterNo] = useState(1);
   const [counterCount, setCounterCount] = useState(6);
@@ -62,6 +112,11 @@ export default function BillingTerminalView() {
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const [cart, setCart] = useState([]);
   const [billingMode, setBillingMode] = useState('RETAIL_LOCAL');
+  const [approvalDialog, setApprovalDialog] = useState(null);
+  const [approvalUsername, setApprovalUsername] = useState(currentUser?.role === 'SERVER' || currentUser?.role === 'ADMIN' ? currentUser.username : '');
+  const [approvalPassword, setApprovalPassword] = useState('');
+  const [approvalError, setApprovalError] = useState('');
+  const [isApprovingMode, setIsApprovingMode] = useState(false);
   const [customerName, setCustomerName] = useState('Walk-in Customer');
   const [customerAddress, setCustomerAddress] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -84,8 +139,11 @@ export default function BillingTerminalView() {
   const [returnReason, setReturnReason] = useState('');
   const [refundMode, setRefundMode] = useState('Cash');
   const scannerRef = useRef(null);
-  const currentUser = getStoredUser();
+  const billingTableRef = useRef(null);
   const canManageInvoice = ['SERVER', 'ADMIN'].includes(currentUser?.role);
+  const activeMode = BILLING_MODES[billingMode];
+  const activeSaleMode = activeMode.tier === 'WHOLESALE' ? 'WHOLESALE' : 'RETAIL';
+  const activeTaxMode = activeMode.taxType === 'INTERSTATE' ? 'IGST' : 'GST';
 
   useEffect(() => {
     scannerRef.current?.focus();
@@ -97,6 +155,11 @@ export default function BillingTerminalView() {
     refreshInvoicePreview(counterNo);
     refreshHeldBills(counterNo);
   }, [counterNo]);
+
+  useEffect(() => {
+    if (!billingTableRef.current) return;
+    billingTableRef.current.scrollTop = billingTableRef.current.scrollHeight;
+  }, [cart.length]);
 
   useEffect(() => {
     const run = async () => {
@@ -205,7 +268,7 @@ export default function BillingTerminalView() {
       date: invoiceDate.date,
       time: invoiceDate.time,
       shop: shopSettings,
-      customerName: billingMode === 'BUSINESS_IGST' ? companyName : customerName,
+      customerName: isBusinessBillingMode(billingMode) ? companyName : customerName,
       customerAddress,
       customerPhone,
       customerGstin,
@@ -340,7 +403,7 @@ export default function BillingTerminalView() {
 
     try {
       const customer = await saveCustomer({
-        customer_name: billingMode === 'BUSINESS_IGST' ? companyName : customerName,
+        customer_name: isBusinessBillingMode(billingMode) ? companyName : customerName,
         phone: customerPhone,
         gstin: customerGstin,
         address: customerAddress
@@ -456,8 +519,125 @@ export default function BillingTerminalView() {
     setCart((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
 
+  function closeApprovalDialog() {
+    setApprovalDialog(null);
+    setApprovalPassword('');
+    setApprovalError('');
+    setIsApprovingMode(false);
+    scannerRef.current?.focus();
+  }
+
+  function requestBillingMode(targetMode) {
+    setErrorMessage('');
+    setStatusMessage('');
+    setApprovalError('');
+
+    if (targetMode === billingMode) {
+      scannerRef.current?.focus();
+      return;
+    }
+
+    if (targetMode === RETAIL_MODE) {
+      setBillingMode(RETAIL_MODE);
+      setStatusMessage('Billing mode reset to Retail.');
+      scannerRef.current?.focus();
+      return;
+    }
+
+    setApprovalDialog({
+      action: 'MODE',
+      targetMode,
+      title: `Approve ${BILLING_MODES[targetMode].label} bill`,
+      message: `${BILLING_MODES[targetMode].label} is allowed for this bill only. After complete sale or hold, POS will return to Retail.`
+    });
+  }
+
+  function requestPrintMode(targetPrintMode) {
+    setErrorMessage('');
+    setStatusMessage('');
+    setApprovalError('');
+
+    if (targetPrintMode === printMode) {
+      scannerRef.current?.focus();
+      return;
+    }
+
+    if (!isSensitivePrintMode(targetPrintMode)) {
+      setPrintMode('Thermal');
+      setStatusMessage('Print format reset to Thermal.');
+      scannerRef.current?.focus();
+      return;
+    }
+
+    setApprovalDialog({
+      action: 'PRINT_MODE',
+      targetPrintMode,
+      targetMode: billingMode,
+      title: 'Approve A4 print',
+      message: 'A4 print is allowed for this bill only. After complete sale, hold, or reset, POS will return to Thermal.'
+    });
+  }
+
+  async function applyHeldBill(savedState, holdToken) {
+    setInvoiceNo(savedState.invoiceNo || 'Draft');
+    setCounterNo(savedState.counterNo || 1);
+    setCart(savedState.cart || []);
+    setBillingMode(normalizeBillingMode(savedState.billingMode));
+    setCustomerName(savedState.customerName || 'Walk-in Customer');
+    setCustomerAddress(savedState.customerAddress || '');
+    setCustomerPhone(savedState.customerPhone || '');
+    setCompanyName(savedState.companyName || '');
+    setCustomerGstin(savedState.customerGstin || '');
+    setPaymentMode(savedState.paymentMode || 'Cash');
+    setPaymentReference(savedState.paymentReference || '');
+    setPaymentConfirmed(Boolean(savedState.paymentConfirmed));
+    setPrintMode(savedState.printMode || 'Thermal');
+    setCashReceived(savedState.cashReceived || '');
+    await deleteHeldBill(holdToken);
+    refreshHeldBills(savedState.counterNo || counterNo);
+    scannerRef.current?.focus();
+  }
+
+  async function submitModeApproval(event) {
+    event.preventDefault();
+    if (!approvalDialog) return;
+
+    setErrorMessage('');
+    setStatusMessage('');
+    setIsApprovingMode(true);
+
+    try {
+      const result = await approveSensitiveBillingMode({
+        username: approvalUsername,
+        password: approvalPassword,
+        reason: approvalDialog.action === 'RESUME'
+          ? `Resume held ${BILLING_MODES[approvalDialog.targetMode].label} bill`
+          : `Start ${BILLING_MODES[approvalDialog.targetMode].label} bill`
+      });
+
+      if (approvalDialog.action === 'RESUME') {
+        await applyHeldBill(approvalDialog.savedState, approvalDialog.holdToken);
+        setStatusMessage(`${BILLING_MODES[approvalDialog.targetMode].label} held bill resumed. Approved by ${result.approved_by}.`);
+      } else if (approvalDialog.action === 'PRINT_MODE') {
+        setPrintMode(approvalDialog.targetPrintMode);
+        setStatusMessage(`${approvalDialog.targetPrintMode} enabled for this bill. Approved by ${result.approved_by}.`);
+        scannerRef.current?.focus();
+      } else {
+        setBillingMode(approvalDialog.targetMode);
+        setStatusMessage(`${BILLING_MODES[approvalDialog.targetMode].label} enabled for this bill. Approved by ${result.approved_by}.`);
+        scannerRef.current?.focus();
+      }
+
+      closeApprovalDialog();
+    } catch (err) {
+      setApprovalError(err.response?.data?.error || 'Supervisor approval failed.');
+      setIsApprovingMode(false);
+    }
+  }
+
   function resetBill() {
     setCart([]);
+    setBillingMode(RETAIL_MODE);
     setCustomerName('Walk-in Customer');
     setCustomerAddress('');
     setCustomerPhone('');
@@ -467,6 +647,7 @@ export default function BillingTerminalView() {
     setPaymentMode('Cash');
     setPaymentReference('');
     setPaymentConfirmed(false);
+    setPrintMode('Thermal');
     scannerRef.current?.focus();
     refreshInvoicePreview(counterNo);
   }
@@ -527,7 +708,7 @@ export default function BillingTerminalView() {
       };
       await holdBill(holdToken, savedState, {
         counter_no: counterNo,
-        customer_name: billingMode === 'BUSINESS_IGST' ? companyName : customerName,
+        customer_name: isBusinessBillingMode(billingMode) ? companyName : customerName,
         customer_phone: customerPhone,
         bill_total: totals.grand.toFixed(2),
         item_count: cart.length
@@ -546,23 +727,22 @@ export default function BillingTerminalView() {
         ? JSON.parse(heldBill.saved_state)
         : heldBill.saved_state;
 
-      setInvoiceNo(savedState.invoiceNo || 'Draft');
-      setCounterNo(savedState.counterNo || 1);
-      setCart(savedState.cart || []);
-      setBillingMode(savedState.billingMode || 'RETAIL_LOCAL');
-      setCustomerName(savedState.customerName || 'Walk-in Customer');
-      setCustomerAddress(savedState.customerAddress || '');
-      setCustomerPhone(savedState.customerPhone || '');
-      setCompanyName(savedState.companyName || '');
-      setCustomerGstin(savedState.customerGstin || '');
-      setPaymentMode(savedState.paymentMode || 'Cash');
-      setPaymentReference(savedState.paymentReference || '');
-      setPaymentConfirmed(Boolean(savedState.paymentConfirmed));
-      setPrintMode(savedState.printMode || 'Thermal');
-      setCashReceived(savedState.cashReceived || '');
-      await deleteHeldBill(heldBill.hold_token);
-      refreshHeldBills(savedState.counterNo || counterNo);
-      scannerRef.current?.focus();
+      const heldMode = normalizeBillingMode(savedState.billingMode);
+      savedState.billingMode = heldMode;
+      if (isSensitiveBillingMode(heldMode)) {
+        setApprovalError('');
+        setApprovalDialog({
+          action: 'RESUME',
+          targetMode: heldMode,
+          savedState,
+          holdToken: heldBill.hold_token,
+          title: `Approve held ${BILLING_MODES[heldMode].label} bill`,
+          message: `This held bill was saved as ${BILLING_MODES[heldMode].label}. Supervisor approval is required again before resuming.`
+        });
+        return;
+      }
+
+      await applyHeldBill(savedState, heldBill.hold_token);
     } catch (err) {
       setErrorMessage('Unable to resume held bill.');
     }
@@ -663,8 +843,8 @@ export default function BillingTerminalView() {
       return;
     }
 
-    if (billingMode === 'BUSINESS_IGST' && (!companyName.trim() || !customerGstin.trim())) {
-      setErrorMessage('Company name and GSTIN are required for B2B IGST bills.');
+    if (isBusinessBillingMode(billingMode) && (!companyName.trim() || !customerGstin.trim())) {
+      setErrorMessage('Company name and GSTIN are required for B2B IGST Wholesale bills.');
       return;
     }
 
@@ -684,7 +864,7 @@ export default function BillingTerminalView() {
     try {
       const checkoutResult = await checkout({
         counter_no: counterNo,
-        customer_name: billingMode === 'BUSINESS_IGST' ? companyName : customerName,
+        customer_name: isBusinessBillingMode(billingMode) ? companyName : customerName,
         customer_phone: customerPhone,
         items: cart.map((item) => ({
           ...item,
@@ -701,8 +881,8 @@ export default function BillingTerminalView() {
         transaction_type: mode.transactionType,
         billing_tier: mode.tier,
         tax_type: mode.taxType,
-        customer_company_name: billingMode === 'BUSINESS_IGST' ? companyName : null,
-        customer_gstin: billingMode === 'BUSINESS_IGST' ? customerGstin : null,
+        customer_company_name: isBusinessBillingMode(billingMode) ? companyName : null,
+        customer_gstin: mode.taxType === 'INTERSTATE' ? customerGstin : null,
         total_cgst: totals.cgst.toFixed(2),
         total_sgst: totals.sgst.toFixed(2),
         total_igst: totals.igst.toFixed(2),
@@ -728,9 +908,9 @@ export default function BillingTerminalView() {
   }
 
   return (
-    <div className="billing-grid">
-      <section className="panel">
-        <div className="panel-header">
+    <div className={`billing-grid ${isSensitiveBillingMode(billingMode) ? 'sensitive-billing-active' : ''}`}>
+      <section className="panel billing-main-panel">
+        <div className="panel-header billing-store-banner">
           <div>
             <h2 className="panel-title">{shopSettings.shop_name}</h2>
             <div className="muted">GST: {shopSettings.gst_number} | {shopSettings.address} | Ph: {shopSettings.phone}</div>
@@ -738,49 +918,53 @@ export default function BillingTerminalView() {
           <span className="invoice-chip">Invoice {invoiceNo}</span>
         </div>
 
-        <div className="panel-body">
-          <div className="billing-options">
-            <div className="segmented compact">
-              <button className={billingMode === 'RETAIL_LOCAL' ? 'active' : ''} onClick={() => setBillingMode('RETAIL_LOCAL')}>Retail</button>
-              <button className={billingMode === 'WHOLESALE_LOCAL' ? 'active' : ''} onClick={() => setBillingMode('WHOLESALE_LOCAL')}>Wholesale</button>
-              <button className={billingMode === 'BUSINESS_IGST' ? 'active' : ''} onClick={() => setBillingMode('BUSINESS_IGST')}>IGST</button>
+        <div className="panel-body billing-panel-body">
+          <div className="billing-topline">
+            <div className="mode-toggle-group">
+              <div className="mode-toggle">
+                <span className="mode-toggle-label">Sale Mode</span>
+                <div className="mode-option-group" aria-label="Sale mode">
+                  <button className={activeSaleMode === 'RETAIL' ? 'mode-option active retail-active' : 'mode-option'} onClick={() => requestBillingMode(composeBillingMode('RETAIL', activeTaxMode))}>Retail</button>
+                  <button className={activeSaleMode === 'WHOLESALE' ? 'mode-option active sensitive-active' : 'mode-option'} onClick={() => requestBillingMode(composeBillingMode('WHOLESALE', activeTaxMode))}>Wholesale</button>
+                </div>
+              </div>
+              <div className="mode-toggle">
+                <span className="mode-toggle-label">Tax Mode</span>
+                <div className="mode-option-group" aria-label="Tax mode">
+                  <button className={activeTaxMode === 'GST' ? 'mode-option active retail-active' : 'mode-option'} onClick={() => requestBillingMode(composeBillingMode(activeSaleMode, 'GST'))}>GST</button>
+                  <button className={activeTaxMode === 'IGST' ? 'mode-option active sensitive-active' : 'mode-option'} onClick={() => requestBillingMode(composeBillingMode(activeSaleMode, 'IGST'))}>IGST</button>
+                </div>
+              </div>
             </div>
-            <label>
-              <span className="field-label">Counter</span>
-              <select className="select" value={counterNo} onChange={(event) => setCounterNo(Number(event.target.value))}>
-                {Array.from({ length: counterCount }, (_, index) => index + 1).map((number) => (
-                  <option key={number} value={number}>Counter {number}</option>
-                ))}
-              </select>
-            </label>
+            <div className="billing-top-controls">
+              <span className={`billing-mode-pill ${isSensitiveBillingMode(billingMode) ? 'warning' : ''}`}>
+                {activeMode.shortLabel || activeMode.label}
+              </span>
+              <label className="top-control-field">
+                <span>Counter</span>
+                <select aria-label="Counter" value={counterNo} onChange={(event) => setCounterNo(Number(event.target.value))}>
+                  {Array.from({ length: counterCount }, (_, index) => index + 1).map((number) => (
+                    <option key={number} value={number}>Counter {number}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="top-control-field print-control-field">
+                <span>Print</span>
+                <select aria-label="Print format" value={printMode} onChange={(event) => requestPrintMode(event.target.value)}>
+                  <option value="Thermal">Thermal</option>
+                  <option value="A4">A4</option>
+                </select>
+              </label>
+            </div>
           </div>
 
-          <div className="customer-grid">
-            <label>
-              <span className="field-label">Customer name</span>
-              <input className="field" value={billingMode === 'BUSINESS_IGST' ? companyName : customerName} onChange={(event) => (billingMode === 'BUSINESS_IGST' ? setCompanyName(event.target.value) : setCustomerName(event.target.value))} />
-            </label>
-            <label>
-              <span className="field-label">Address</span>
-              <input className="field" value={customerAddress} onChange={(event) => setCustomerAddress(event.target.value)} placeholder="Customer address" />
-            </label>
-            <label>
-              <span className="field-label">GST No</span>
-              <input className="field" maxLength={15} value={customerGstin} onChange={(event) => setCustomerGstin(event.target.value.toUpperCase())} placeholder="Optional" />
-            </label>
-            <label>
-              <span className="field-label">Phone No</span>
-              <input className="field" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="Optional" />
-            </label>
-          </div>
+          {isSensitiveBillingMode(billingMode) && (
+            <div className="sensitive-bill-warning">
+              {activeMode.label} active for this bill only. Complete, Hold, or Reset will return to Retail.
+            </div>
+          )}
 
-          <div className="loyalty-strip">
-            <span className="status-chip">Loyalty: {loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} points | ${loyaltyCustomer.visit_count} visits` : 'No customer loaded'}</span>
-            <button className="secondary-button" onClick={handleCustomerLookup}>Lookup</button>
-            <button className="secondary-button" onClick={handleCustomerSave}>Save Customer</button>
-          </div>
-
-          <div className="scanner-row">
+          <div className="scanner-row billing-scanner-row">
             <span className="status-chip">F9 Focus Scanner</span>
             <div className="search-wrap">
               <input
@@ -816,8 +1000,8 @@ export default function BillingTerminalView() {
           {errorMessage && <div className="alert-box" style={{ marginTop: 12 }}>{errorMessage}</div>}
           {statusMessage && <div className="change-box" style={{ marginTop: 12 }}>{statusMessage}</div>}
 
-          <div style={{ marginTop: 16, overflowX: 'auto' }}>
-            <table className="product-table">
+          <div className="billing-table-wrap" ref={billingTableRef}>
+            <table className="product-table billing-product-table">
               <thead>
                 <tr>
                   <th>Barcode</th>
@@ -845,7 +1029,7 @@ export default function BillingTerminalView() {
                     return (
                       <tr key={`${item.barcode}-${index}`} className={item.isUnknown ? 'unknown-row' : ''}>
                         <td className="mono muted">{item.barcode}</td>
-                        <td><strong>{item.product_name}</strong></td>
+                        <td><strong className="billing-product-name" title={item.product_name}>{item.product_name}</strong></td>
                         <td>{item.hsn_code || '-'}</td>
                         <td className="muted">{formatMoney(item.mrp)}</td>
                         <td>{formatMoney(Math.max(toNumber(item.mrp) - unitPrice, 0))}</td>
@@ -861,7 +1045,7 @@ export default function BillingTerminalView() {
                         </td>
                         <td>{item.gst_percent}%</td>
                         <td><strong>{formatMoney(unitPrice * toNumber(item.quantity, 1))}</strong></td>
-                        <td><button className="danger-button" onClick={() => removeLine(index)}>Remove</button></td>
+                        <td><button className="danger-button" onClick={() => removeLine(index)}>Del</button></td>
                       </tr>
                     );
                   })
@@ -873,6 +1057,55 @@ export default function BillingTerminalView() {
       </section>
 
       <aside className="sidebar">
+        {latestInvoice && (
+          <section className="panel last-bill-panel">
+            <details>
+              <summary>
+                <span>Last Bill</span>
+                <strong className="mono">{latestInvoice.invoice_no}</strong>
+              </summary>
+              <div className="panel-body">
+              <div className="summary-line"><span>Bill No:</span><strong className="mono">{latestInvoice.invoice_no}</strong></div>
+              <div className="summary-line"><span>Amount:</span><strong>{formatMoney(latestInvoice.grand_total)}</strong></div>
+              <div className="summary-line"><span>Cash Given:</span><strong>{formatMoney(latestInvoice.cash_received)}</strong></div>
+              <div className="summary-line"><span>Change Returned:</span><strong className="stock-low">{formatMoney(latestInvoice.change_returned)}</strong></div>
+              </div>
+            </details>
+          </section>
+        )}
+
+        <section className="panel customer-side-panel">
+          <details className="billing-customer-details">
+            <summary>
+              <span>{isBusinessBillingMode(billingMode) ? companyName || 'Business customer' : customerName || 'Walk-in Customer'}</span>
+              <span>{loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} pts` : 'Customer'}</span>
+            </summary>
+            <div className="customer-grid billing-customer-grid">
+              <div className="billing-loyalty-inline">
+                <span>Loyalty: {loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} pts` : 'None'}</span>
+                <button className="secondary-button" onClick={handleCustomerLookup}>Lookup</button>
+                <button className="secondary-button" onClick={handleCustomerSave}>Save</button>
+              </div>
+              <label>
+                <span className="field-label">{isBusinessBillingMode(billingMode) ? 'Company name' : 'Customer name'}</span>
+                <input className="field" value={isBusinessBillingMode(billingMode) ? companyName : customerName} onChange={(event) => (isBusinessBillingMode(billingMode) ? setCompanyName(event.target.value) : setCustomerName(event.target.value))} />
+              </label>
+              <label>
+                <span className="field-label">Phone No</span>
+                <input className="field" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="Optional" />
+              </label>
+              <label>
+                <span className="field-label">GST No</span>
+                <input className="field" maxLength={15} value={customerGstin} onChange={(event) => setCustomerGstin(event.target.value.toUpperCase())} placeholder={activeMode.taxType === 'INTERSTATE' ? 'Required for B2B' : 'Optional'} />
+              </label>
+              <label>
+                <span className="field-label">Address</span>
+                <input className="field" value={customerAddress} onChange={(event) => setCustomerAddress(event.target.value)} placeholder="Customer address" />
+              </label>
+            </div>
+          </details>
+        </section>
+
         <section className="panel payment-panel">
           <div className="panel-header">
             <h2 className="panel-title">Payment</h2>
@@ -978,6 +1211,9 @@ export default function BillingTerminalView() {
                     <strong>{heldBill.hold_token}</strong>
                     <div className="muted">Counter {heldBill.counter_no} | {heldBill.customer_name || 'Walk-in Customer'}</div>
                     <div className="muted">{heldBill.item_count} items | {formatMoney(heldBill.bill_total)}</div>
+                    {isSensitiveBillingMode(getHeldBillMode(heldBill)) && (
+                      <div className="hold-mode-warning">{BILLING_MODES[getHeldBillMode(heldBill)].label} | approval required</div>
+                    )}
                     <div className="muted">{heldBill.updated_at ? new Date(heldBill.updated_at).toLocaleString() : '-'}</div>
                   </div>
                   <div className="hold-actions">
@@ -990,15 +1226,6 @@ export default function BillingTerminalView() {
           </div>
         </section>
 
-        {latestInvoice && (
-          <section className="panel">
-            <div className="panel-body">
-              <div className="muted">Last bill</div>
-              <strong>{latestInvoice.invoice_no}</strong>
-              <div>{formatMoney(latestInvoice.grand_total)} via {latestInvoice.payment_mode}</div>
-            </div>
-          </section>
-        )}
       </aside>
 
       {showHistory && (
@@ -1111,6 +1338,44 @@ export default function BillingTerminalView() {
               <button className="primary-button" onClick={submitSalesReturn}>Save Return</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {approvalDialog && (
+        <div className="modal-backdrop">
+          <form className="modal supervisor-approval-modal" onSubmit={submitModeApproval}>
+            <div className="panel-header">
+              <h2 className="panel-title">{approvalDialog.title}</h2>
+              <button className="secondary-button" type="button" onClick={closeApprovalDialog}>Cancel</button>
+            </div>
+            <div className="panel-body form-stack">
+              <div className="sensitive-bill-warning">{approvalDialog.message}</div>
+              {approvalError && <div className="alert-box">{approvalError}</div>}
+              <label>
+                <span className="field-label">Supervisor username</span>
+                <input
+                  className="field"
+                  value={approvalUsername}
+                  onChange={(event) => setApprovalUsername(event.target.value)}
+                  autoFocus
+                  required
+                />
+              </label>
+              <label>
+                <span className="field-label">Supervisor password</span>
+                <input
+                  className="field"
+                  type="password"
+                  value={approvalPassword}
+                  onChange={(event) => setApprovalPassword(event.target.value)}
+                  required
+                />
+              </label>
+              <button className="primary-button sensitive-approval-button" type="submit" disabled={isApprovingMode}>
+                {isApprovingMode ? 'Verifying...' : `Approve ${approvalDialog.action === 'PRINT_MODE' ? approvalDialog.targetPrintMode : BILLING_MODES[approvalDialog.targetMode].label}`}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

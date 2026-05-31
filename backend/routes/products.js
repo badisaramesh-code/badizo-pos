@@ -13,7 +13,9 @@ function toProduct(row) {
     product_name: row.product_name,
     hsn_code: row.hsn_code || '',
     gst_percent: Number(row.gst_percent || 0),
+    unit_type: row.unit_type || 'Nos',
     mrp: Number(row.mrp || 0),
+    purchase_price: Number(row.purchase_price || 0),
     sale_price: Number(row.sale_price || 0),
     wholesale_price: Number(row.wholesale_price || row.sale_price || 0),
     discount_type: row.discount_type || 'PERCENT',
@@ -26,12 +28,30 @@ function toProduct(row) {
 }
 
 const PRODUCT_CSV_HEADERS = [
+  'Sno',
+  'Product Code',
+  'Description',
+  'HSN',
+  'MRP',
+  'Sale GST %',
+  'Unit',
+  'Purchase Price',
+  'Discount',
+  'Sale Net Price',
+  'Wholesale Price',
+  'Opening Stock',
+  'Low Stock Alert'
+];
+
+const PRODUCT_EXPORT_HEADERS = [
   'product_code',
   'barcode',
   'product_name',
   'hsn_code',
   'gst_percent',
+  'unit_type',
   'mrp',
+  'purchase_price',
   'sale_price',
   'wholesale_price',
   'discount_type',
@@ -41,6 +61,23 @@ const PRODUCT_CSV_HEADERS = [
   'stock_qty',
   'min_stock_alert'
 ];
+
+const PRODUCT_IMPORT_ALIASES = {
+  sno: ['sno', 's no', 'sl no', 'serial', 'serial no'],
+  product_code: ['product code', 'product_code', 'item code', 'code', 'plu code'],
+  barcode: ['barcode', 'bar code', 'ean', 'ean code'],
+  product_name: ['description', 'product name', 'product', 'item name', 'item', 'name'],
+  hsn_code: ['hsn', 'hsn code', 'hsn/sac', 'hsn sac'],
+  gst_percent: ['sale gst %', 'sale gst', 'gst %', 'gst', 'tax %', 'tax'],
+  unit_type: ['unit', 'units', 'unit type', 'uom'],
+  mrp: ['mrp', 'm r p'],
+  purchase_price: ['purchase price', 'purchase rate', 'cost price', 'cost'],
+  discount_value: ['discount', 'disc', 'disc %', 'discount %'],
+  sale_price: ['sale net price', 'sale price', 'selling price', 'retail price', 'net price'],
+  wholesale_price: ['wholesale price', 'wholesale rate'],
+  stock_qty: ['opening stock', 'stock', 'stock qty', 'current stock'],
+  min_stock_alert: ['low stock alert', 'min stock alert', 'minimum stock']
+};
 
 function parseCsv(text) {
   const rows = [];
@@ -77,18 +114,22 @@ function parseCsv(text) {
 }
 
 function normalizeCsvRow(rawRow, rowNumber) {
-  const barcode = String(rawRow.barcode || '').trim().toUpperCase();
+  const productCode = String(rawRow.product_code || '').trim().toUpperCase();
+  const barcode = String(rawRow.barcode || productCode || '').trim().toUpperCase();
   const productName = String(rawRow.product_name || '').trim();
   const gstPercent = Number(rawRow.gst_percent || 0);
   const mrp = Number(rawRow.mrp || 0);
-  const salePrice = Number(rawRow.sale_price || 0);
-  const wholesalePrice = Number(rawRow.wholesale_price || rawRow.sale_price || 0);
+  const purchasePrice = Number(rawRow.purchase_price || 0);
+  const salePrice = Number(rawRow.sale_price || rawRow.mrp || 0);
+  const wholesalePrice = Number(rawRow.wholesale_price || rawRow.sale_price || rawRow.mrp || 0);
+  const discountValue = Number(rawRow.discount_value || 0) || 0;
 
   const errors = [];
-  if (!barcode) errors.push('barcode is required');
+  if (!barcode) errors.push('Product Code or barcode is required');
   if (!productName) errors.push('product_name is required');
-  if (!Number.isFinite(gstPercent) || ![0, 3, 5, 12, 18, 40].includes(gstPercent)) errors.push('gst_percent must be 0, 3, 5, 12, 18, or 40');
+  if (!Number.isFinite(gstPercent) || ![0, 3, 5, 12, 18, 28, 40].includes(gstPercent)) errors.push('gst_percent must be 0, 3, 5, 12, 18, 28, or 40');
   if (!Number.isFinite(mrp) || mrp < 0) errors.push('mrp must be a valid number');
+  if (!Number.isFinite(purchasePrice) || purchasePrice < 0) errors.push('purchase_price must be a valid number');
   if (!Number.isFinite(salePrice) || salePrice < 0) errors.push('sale_price must be a valid number');
   if (mrp > 0 && salePrice > mrp) errors.push('sale_price cannot be greater than mrp');
 
@@ -96,22 +137,65 @@ function normalizeCsvRow(rawRow, rowNumber) {
     rowNumber,
     errors,
     product: {
-      product_code: String(rawRow.product_code || '').trim().toUpperCase() || null,
+      product_code: productCode || null,
       barcode,
       product_name: productName,
       hsn_code: String(rawRow.hsn_code || '').trim(),
       gst_percent: gstPercent,
+      unit_type: normalizeUnitType(rawRow.unit_type),
       mrp,
+      purchase_price: purchasePrice,
       sale_price: salePrice,
       wholesale_price: Number.isFinite(wholesalePrice) ? wholesalePrice : salePrice,
-      discount_type: String(rawRow.discount_type || 'PERCENT').trim().toUpperCase() === 'VALUE' ? 'VALUE' : 'PERCENT',
-      discount_value: Number(rawRow.discount_value || 0) || 0,
+      discount_type: String(rawRow.discount_type || (discountValue ? 'VALUE' : 'PERCENT')).trim().toUpperCase() === 'VALUE' ? 'VALUE' : 'PERCENT',
+      discount_value: discountValue,
       bulk_discount_value: Number(rawRow.bulk_discount_value || 0) || 0,
       is_free_item: ['1', 'TRUE', 'YES', 'Y'].includes(String(rawRow.is_free_item || '').trim().toUpperCase()) ? 1 : 0,
       stock_qty: Number(rawRow.stock_qty || 0) || 0,
       min_stock_alert: Number(rawRow.min_stock_alert || 10) || 10
     }
   };
+}
+
+function normalizeHeaderName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[().:%]/g, '')
+    .replace(/[_/-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+function mapImportHeaders(headers) {
+  return headers.map((header) => {
+    const normalized = normalizeHeaderName(header);
+    const match = Object.entries(PRODUCT_IMPORT_ALIASES).find(([, aliases]) => (
+      aliases.map(normalizeHeaderName).includes(normalized)
+    ));
+    return match ? match[0] : normalized.replace(/\s+/g, '_');
+  });
+}
+
+function normalizeUnitType(value) {
+  const unit = String(value || 'Nos').trim();
+  const allowed = ['Nos', 'Gm', 'Kg', 'Ml', 'Ltr', 'Pack'];
+  if (allowed.includes(unit)) return unit;
+  return unit ? unit.slice(0, 30) : 'Nos';
+}
+
+function applyProductSearch(where, values, search) {
+  const tokens = String(search || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 6);
+
+  if (!tokens.length) return;
+
+  tokens.forEach((token) => {
+    where.push('(product_name LIKE ? OR barcode LIKE ? OR product_code LIKE ?)');
+    values.push(`%${token}%`, `%${token}%`, `%${token}%`);
+  });
 }
 
 router.get('/', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
@@ -124,10 +208,7 @@ router.get('/', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (re
     const where = [];
     const values = [];
 
-    if (search) {
-      where.push('(product_name LIKE ? OR barcode LIKE ? OR product_code LIKE ?)');
-      values.push(`%${search}%`, `%${search}%`, `%${search}%`);
-    }
+    applyProductSearch(where, values, search);
 
     if (gst && gst !== 'ALL') {
       where.push('gst_percent = ?');
@@ -154,7 +235,7 @@ router.get('/', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (re
       `SELECT
          COUNT(*) AS total_sku,
          SUM(CASE WHEN stock_qty <= min_stock_alert THEN 1 ELSE 0 END) AS low_stock,
-         COALESCE(SUM(stock_qty * sale_price), 0) AS inventory_value
+         COALESCE(SUM(stock_qty * purchase_price), 0) AS inventory_value
        FROM products`
     );
 
@@ -177,39 +258,46 @@ router.get('/', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (re
 });
 
 router.get('/export/template', authenticate, authorize('SERVER', 'ADMIN'), (_req, res) => {
-  const sample = {
-    product_code: 'BDZ001',
-    barcode: '8901719110086',
-    product_name: 'Parle G Biscuits 100g',
-    hsn_code: '1905',
-    gst_percent: '5',
-    mrp: '10',
-    sale_price: '8',
-    wholesale_price: '7.5',
-    discount_type: 'PERCENT',
-    discount_value: '0',
-    bulk_discount_value: '0',
-    is_free_item: '0',
-    stock_qty: '100',
-    min_stock_alert: '10'
-  };
+  const sampleRows = [
+    ['1', '89100100', 'KCP SUGAR', '123456', '80.00', '5', '1.KG', '60.00', '10.00', '70.00', '68.00', '100', '10'],
+    ['2', '89102256', 'NAYASA BUCKET', '2515', '500.00', '18', '1', '400.00', '100.00', '300.00', '285.00', '25', '5'],
+    ['3', '8100123', 'ONION', '44155', '', '0', '1.KG', '25.00', '', '30.00', '28.00', '50', '10'],
+    ['4', '892456', 'THUMS UP 2.LT BOTTLE', '51456', '100.00', '40', '1', '80.00', '10.00', '90.00', '87.00', '20', '5']
+  ];
 
-  const csv = [
-    csvLine(PRODUCT_CSV_HEADERS),
-    csvLine(PRODUCT_CSV_HEADERS.map((header) => sample[header]))
-  ].join('\n');
+  const tableRows = [
+    PRODUCT_CSV_HEADERS,
+    ...sampleRows
+  ].map((row, rowIndex) => (
+    `<tr>${row.map((cell) => `<${rowIndex === 0 ? 'th' : 'td'}>${csvEscape(cell)}</${rowIndex === 0 ? 'th' : 'td'}>`).join('')}</tr>`
+  )).join('');
 
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="badizo_product_import_template.csv"');
-  res.send(csv);
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    table { border-collapse: collapse; font-family: Calibri, Arial, sans-serif; font-size: 12pt; }
+    th { background: #d9f2d0; font-weight: bold; }
+    th, td { border: 1px solid #000; padding: 4px 8px; mso-number-format:"\\@"; }
+  </style>
+</head>
+<body>
+  <table>${tableRows}</table>
+</body>
+</html>`;
+
+  res.setHeader('Content-Type', 'application/vnd.ms-excel; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="badizo_product_import_sample.xls"');
+  res.send(html);
 });
 
 router.get('/export', authenticate, authorize('SERVER', 'ADMIN'), async (_req, res) => {
   try {
     const [rows] = await db.query(`SELECT * FROM products ORDER BY product_name ASC`);
     const csv = [
-      csvLine(PRODUCT_CSV_HEADERS),
-      ...rows.map((row) => csvLine(PRODUCT_CSV_HEADERS.map((header) => {
+      csvLine(PRODUCT_EXPORT_HEADERS),
+      ...rows.map((row) => csvLine(PRODUCT_EXPORT_HEADERS.map((header) => {
         if (header === 'is_free_item') return row.is_free_item ? '1' : '0';
         return row[header];
       })))
@@ -236,8 +324,12 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
     return res.status(400).json({ error: 'CSV must include header and at least one product row.' });
   }
 
-  const headers = parsedRows[0].map((header) => header.trim());
-  const missingHeaders = ['barcode', 'product_name', 'gst_percent', 'mrp', 'sale_price'].filter((header) => !headers.includes(header));
+  const headers = mapImportHeaders(parsedRows[0]);
+  const hasProductCode = headers.includes('product_code') || headers.includes('barcode');
+  const missingHeaders = [
+    ...(!hasProductCode ? ['Product Code'] : []),
+    ...(['product_name', 'gst_percent', 'mrp', 'sale_price'].filter((header) => !headers.includes(header)))
+  ];
   if (missingHeaders.length) {
     return res.status(400).json({ error: `Missing required columns: ${missingHeaders.join(', ')}` });
   }
@@ -252,6 +344,10 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
       acc[header] = row[headerIndex] || '';
       return acc;
     }, {});
+
+    const hasProductIdentity = String(rawRow.product_code || rawRow.barcode || rawRow.product_name || '').trim();
+    if (!hasProductIdentity) return;
+
     const normalized = normalizeCsvRow(rawRow, index + 2);
 
     if (seenBarcodes.has(normalized.product.barcode)) {
@@ -332,15 +428,17 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
 
       await connection.query(
         `INSERT INTO products
-         (product_code, barcode, product_name, hsn_code, gst_percent, mrp, sale_price, wholesale_price,
+         (product_code, barcode, product_name, hsn_code, gst_percent, unit_type, mrp, purchase_price, sale_price, wholesale_price,
           discount_type, discount_value, bulk_discount_value, is_free_item, stock_qty, min_stock_alert)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            product_code = VALUES(product_code),
            product_name = VALUES(product_name),
            hsn_code = VALUES(hsn_code),
            gst_percent = VALUES(gst_percent),
+           unit_type = VALUES(unit_type),
            mrp = VALUES(mrp),
+           purchase_price = VALUES(purchase_price),
            sale_price = VALUES(sale_price),
            wholesale_price = VALUES(wholesale_price),
            discount_type = VALUES(discount_type),
@@ -355,7 +453,9 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
           product.product_name,
           product.hsn_code,
           product.gst_percent,
+          product.unit_type,
           product.mrp,
+          product.purchase_price,
           product.sale_price,
           product.wholesale_price,
           product.discount_type,
@@ -390,6 +490,39 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
   }
 });
 
+router.get('/bulk-edit/search', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const search = String(req.query.search || '').trim();
+    if (search.length < 3) {
+      return res.json([]);
+    }
+
+    const where = [];
+    const values = [];
+    applyProductSearch(where, values, search);
+    const [rows] = await db.query(
+      `SELECT id, barcode, product_name, hsn_code, gst_percent, unit_type
+       FROM products
+       WHERE ${where.join(' AND ')}
+       ORDER BY product_name ASC, id DESC
+       LIMIT 500`,
+      values
+    );
+
+    res.json((rows || []).map((row) => ({
+      id: row.id,
+      barcode: row.barcode,
+      product_name: row.product_name,
+      hsn_code: row.hsn_code || '',
+      gst_percent: Number(row.gst_percent || 0),
+      unit_type: row.unit_type || 'Nos'
+    })));
+  } catch (err) {
+    console.error('Product bulk search failed:', err.message);
+    res.status(500).json({ error: 'Unable to fetch products for bulk edit.' });
+  }
+});
+
 router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     const q = decodeURIComponent(req.params.query || '').trim();
@@ -406,12 +539,15 @@ router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER
     }
 
     if (q.length >= 3) {
+      const where = [];
+      const values = [];
+      applyProductSearch(where, values, q);
       const [rows] = await db.query(
         `SELECT * FROM products
-         WHERE product_name LIKE ? OR barcode LIKE ? OR product_code LIKE ?
+         WHERE ${where.join(' AND ')}
          ORDER BY product_name ASC
          LIMIT 5`,
-        [`%${q}%`, `%${q}%`, `%${q}%`]
+        values
       );
       return res.json((rows || []).map(toProduct));
     }
@@ -440,7 +576,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     product_name,
     hsn_code,
     gst_percent,
+    unit_type,
     mrp,
+    purchase_price,
     sale_price,
     wholesale_price,
     discount_type,
@@ -459,7 +597,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     const values = {
       hsnCode: hsn_code || '',
       gstPercent: Number(gst_percent) || 0,
+      unitType: normalizeUnitType(unit_type),
       mrp: Number(mrp) || 0,
+      purchasePrice: Number(purchase_price) || 0,
       salePrice: Number(sale_price) || 0,
       wholesalePrice: Number(wholesale_price || sale_price) || 0,
       discountType: discount_type === 'VALUE' ? 'VALUE' : 'PERCENT',
@@ -474,6 +614,10 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       return res.status(400).json({ error: 'Sale price cannot be greater than MRP.' });
     }
 
+    if (values.purchasePrice < 0) {
+      return res.status(400).json({ error: 'Purchase price cannot be negative.' });
+    }
+
     let finalProductCode = product_code && product_code.trim();
     if (!finalProductCode && code_mode !== 'MANUAL') {
       finalProductCode = `BDZ${Date.now().toString().slice(-8)}`;
@@ -481,15 +625,17 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
 
     await db.query(
       `INSERT INTO products
-       (product_code, barcode, product_name, hsn_code, gst_percent, mrp, sale_price, wholesale_price,
+       (product_code, barcode, product_name, hsn_code, gst_percent, unit_type, mrp, purchase_price, sale_price, wholesale_price,
         discount_type, discount_value, bulk_discount_value, is_free_item, stock_qty, min_stock_alert)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          product_code = VALUES(product_code),
          product_name = VALUES(product_name),
          hsn_code = VALUES(hsn_code),
          gst_percent = VALUES(gst_percent),
+         unit_type = VALUES(unit_type),
          mrp = VALUES(mrp),
+         purchase_price = VALUES(purchase_price),
          sale_price = VALUES(sale_price),
          wholesale_price = VALUES(wholesale_price),
          discount_type = VALUES(discount_type),
@@ -504,7 +650,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
         product_name.trim(),
         values.hsnCode,
         values.gstPercent,
+        values.unitType,
         values.mrp,
+        values.purchasePrice,
         values.salePrice,
         values.wholesalePrice,
         values.discountType,
@@ -524,6 +672,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       details: {
         barcode: barcode.trim(),
         product_name: product_name.trim(),
+        purchase_price: values.purchasePrice,
         sale_price: values.salePrice,
         stock_qty: values.stockQty
       }
@@ -533,6 +682,66 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
   } catch (err) {
     console.error('Product save failed:', err.message);
     res.status(500).json({ error: 'Unable to save product to database.' });
+  }
+});
+
+router.post('/bulk-update', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  if (!rows.length) {
+    return res.status(400).json({ error: 'At least one product row is required.' });
+  }
+
+  const normalizedRows = rows.map((row) => ({
+    barcode: String(row.barcode || '').trim(),
+    product_name: String(row.product_name || '').trim(),
+    hsn_code: String(row.hsn_code || '').trim(),
+    gst_percent: Number(row.gst_percent || 0),
+    unit_type: normalizeUnitType(row.unit_type)
+  }));
+
+  const invalidRow = normalizedRows.find((row) => (
+    !row.barcode ||
+    !row.product_name ||
+    ![0, 3, 5, 12, 18, 28, 40].includes(row.gst_percent)
+  ));
+
+  if (invalidRow) {
+    return res.status(400).json({ error: 'Every row needs product name and GST must be 0, 3, 5, 12, 18, 28, or 40.' });
+  }
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    for (const row of normalizedRows) {
+      await connection.query(
+        `UPDATE products
+         SET product_name = ?, hsn_code = ?, gst_percent = ?, unit_type = ?
+         WHERE barcode = ?`,
+        [row.product_name, row.hsn_code, row.gst_percent, row.unit_type, row.barcode]
+      );
+    }
+
+    await writeAuditLog({
+      user: req.user,
+      action: 'PRODUCT_BULK_UPDATED',
+      entityType: 'PRODUCT',
+      entityId: `${normalizedRows.length} products`,
+      details: {
+        count: normalizedRows.length,
+        fields: ['product_name', 'hsn_code', 'gst_percent', 'unit_type']
+      },
+      connection
+    });
+
+    await connection.commit();
+    res.json({ success: true, updated: normalizedRows.length });
+  } catch (err) {
+    await connection.rollback();
+    console.error('Product bulk update failed:', err.message);
+    res.status(500).json({ error: 'Unable to bulk update products.' });
+  } finally {
+    connection.release();
   }
 });
 

@@ -40,6 +40,11 @@ export async function login(username, password) {
   return data.user;
 }
 
+export async function approveSensitiveBillingMode({ username, password, reason }) {
+  const { data } = await api.post('/auth/approve-sensitive-mode', { username, password, reason });
+  return data;
+}
+
 export async function searchProducts(query) {
   const trimmed = String(query || '').trim();
   if (!trimmed) return [];
@@ -55,8 +60,20 @@ export async function fetchProducts({ page = 1, limit = 50, search = '', gst = '
   return data;
 }
 
+export async function fetchBulkEditableProducts(search = '') {
+  const { data } = await api.get('/products/bulk-edit/search', {
+    params: { search }
+  });
+  return Array.isArray(data) ? data : [];
+}
+
 export async function saveProduct(product) {
   const { data } = await api.post('/products/save', product);
+  return data;
+}
+
+export async function bulkUpdateProducts(rows) {
+  const { data } = await api.post('/products/bulk-update', { rows });
   return data;
 }
 
@@ -69,11 +86,6 @@ function downloadBlob(blob, filename) {
   link.click();
   link.remove();
   window.URL.revokeObjectURL(url);
-}
-
-export async function downloadProductTemplate() {
-  const { data } = await api.get('/products/export/template', { responseType: 'blob' });
-  downloadBlob(data, 'badizo_product_import_template.csv');
 }
 
 export async function exportProducts() {

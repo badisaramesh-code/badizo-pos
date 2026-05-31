@@ -57,4 +57,38 @@ router.get('/me', authenticate, (req, res) => {
   res.json({ user: req.user });
 });
 
+router.post('/approve-sensitive-mode', authenticate, async (req, res) => {
+  const { username, password, reason } = req.body || {};
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Supervisor username and password are required.' });
+  }
+
+  try {
+    const [rows] = await db.query(
+      `SELECT id, username, password_hash, role, counter_no, is_active
+       FROM users
+       WHERE username = ?
+       LIMIT 1`,
+      [String(username).trim()]
+    );
+
+    const supervisor = rows[0];
+    const allowedRole = ['SERVER', 'ADMIN'].includes(supervisor?.role);
+    if (!supervisor || !supervisor.is_active || !allowedRole || !verifyPassword(password, supervisor.password_hash)) {
+      return res.status(401).json({ error: 'Supervisor approval failed.' });
+    }
+
+    res.json({
+      success: true,
+      approved_by: supervisor.username,
+      role: supervisor.role,
+      reason: String(reason || '').slice(0, 120)
+    });
+  } catch (err) {
+    console.error('Sensitive mode approval failed:', err.message);
+    res.status(500).json({ error: 'Unable to verify supervisor approval.' });
+  }
+});
+
 module.exports = router;
