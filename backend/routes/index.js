@@ -2,6 +2,7 @@ const routes = [
   ['/api/auth', require('./auth')],
   ['/api/audit', require('./audit')],
   ['/api/backup', require('./backup')],
+  ['/api/barcode', require('./barcode')],
   ['/api/books', require('./books')],
   ['/api/products', require('./products')],
   ['/api/billing', require('./billing')],

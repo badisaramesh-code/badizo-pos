@@ -81,6 +81,10 @@ function csvCell(value) {
   return text;
 }
 
+function uppercaseProductName(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
 function tableHtmlToCsv(text) {
   const parser = new DOMParser();
   const document = parser.parseFromString(text, 'text/html');
@@ -150,7 +154,7 @@ function rowsToApiImportCsv(rows) {
       return {
         product_code: productCode,
         barcode,
-        product_name: valueAt(row, indexes.productName),
+        product_name: uppercaseProductName(valueAt(row, indexes.productName)),
         hsn_code: valueAt(row, indexes.hsn),
         gst_percent: valueAt(row, indexes.gst) || '0',
         unit_type: valueAt(row, indexes.unit) || 'Nos',
@@ -274,7 +278,7 @@ export default function InventoryDashboardView() {
   }
 
   function updateField(field, value) {
-    setForm((current) => ({ ...current, [field]: value }));
+    setForm((current) => ({ ...current, [field]: field === 'product_name' ? value.toUpperCase() : value }));
   }
 
   function editProduct(product) {
@@ -309,7 +313,7 @@ export default function InventoryDashboardView() {
       await saveProduct({
         ...form,
         barcode: form.barcode.trim(),
-        product_name: form.product_name.trim()
+        product_name: uppercaseProductName(form.product_name)
       });
       setStatusMessage(`${form.product_name} saved.`);
       setForm(emptyForm);
@@ -597,7 +601,7 @@ export default function InventoryDashboardView() {
                                 <input
                                   className="field"
                                   value={row.product_name}
-                                  onChange={(event) => updateBulkRow(index, 'product_name', event.target.value)}
+                                  onChange={(event) => updateBulkRow(index, 'product_name', event.target.value.toUpperCase())}
                                 />
                               </td>
                               <td>

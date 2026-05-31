@@ -48,6 +48,10 @@ function calculateInwardLine(line, taxType) {
   };
 }
 
+function normalizeProductName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
 router.get('/recent', async (_req, res) => {
@@ -78,7 +82,7 @@ router.post('/', async (req, res) => {
   const validLines = Array.isArray(lines)
     ? lines
       .map((line) => ({
-        product_name: String(line.product || line.product_name || '').trim(),
+        product_name: normalizeProductName(line.product || line.product_name),
         barcode: String(line.barcode || '').trim().toUpperCase(),
         hsn_code: String(line.hsn_code || '').trim(),
         gst_percent: parseMoney(line.gst_percent),

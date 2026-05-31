@@ -65,10 +65,22 @@ async function awardLoyaltyPoints(connection, invoiceNo, customerName, customerP
   return { phone, points };
 }
 
+function requestedCounterForUser(user, requestedCounterNo) {
+  if (user?.role === 'COUNTER') {
+    return user.counter_no || 1;
+  }
+  return requestedCounterNo;
+}
+
+function enforceSavedStateCounter(user, savedState, counterNo) {
+  if (user?.role !== 'COUNTER') return savedState;
+  return { ...savedState, counterNo };
+}
+
 router.get('/invoice/next', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     const counterCount = await getCounterCount();
-    const counterNo = normalizeCounterNo(req.query.counter_no, counterCount);
+    const counterNo = normalizeCounterNo(requestedCounterForUser(req.user, req.query.counter_no), counterCount);
     const financialYear = getFinancialYear();
 
     await ensureSequenceRow(db, financialYear, counterNo);
@@ -127,7 +139,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
 
     await connection.beginTransaction();
     const counterCount = await getCounterCount(connection);
-    const counterNo = normalizeCounterNo(counter_no, counterCount);
+    const counterNo = normalizeCounterNo(requestedCounterForUser(req.user, counter_no), counterCount);
     const allocatedInvoice = await allocateInvoiceNo(connection, counterNo);
     const invoiceNo = allocatedInvoice.invoiceNo;
 
@@ -598,7 +610,8 @@ router.post('/hold', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), asyn
 
   try {
     const counterCount = await getCounterCount();
-    const counterNo = normalizeCounterNo(counter_no || saved_state.counterNo, counterCount);
+    const counterNo = normalizeCounterNo(requestedCounterForUser(req.user, counter_no || saved_state.counterNo), counterCount);
+    const finalSavedState = enforceSavedStateCounter(req.user, saved_state, counterNo);
     const holdToken = hold_token.trim();
     const [existingRows] = await db.query(
       `SELECT hold_token FROM held_bills WHERE hold_token = ? LIMIT 1`,
@@ -624,11 +637,11 @@ router.post('/hold', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), asyn
       [
         holdToken,
         counterNo,
-        customer_name || saved_state.customerName || 'Walk-in Customer',
-        customer_phone || saved_state.customerPhone || '',
+        customer_name || finalSavedState.customerName || 'Walk-in Customer',
+        customer_phone || finalSavedState.customerPhone || '',
         parseMoney(bill_total),
-        Number.parseInt(item_count, 10) || (Array.isArray(saved_state.cart) ? saved_state.cart.length : 0),
-        JSON.stringify(saved_state)
+        Number.parseInt(item_count, 10) || (Array.isArray(finalSavedState.cart) ? finalSavedState.cart.length : 0),
+        JSON.stringify(finalSavedState)
       ]
     );
     res.json({ success: true });
@@ -640,7 +653,9 @@ router.post('/hold', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), asyn
 
 router.get('/holds', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
-    const counterNo = req.query.counter_no ? Number.parseInt(req.query.counter_no, 10) : null;
+    const counterNo = req.user.role === 'COUNTER'
+      ? Number(req.user.counter_no || 1)
+      : (req.query.counter_no ? Number.parseInt(req.query.counter_no, 10) : null);
     const values = [];
     let whereSql = '';
 

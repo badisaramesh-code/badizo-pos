@@ -87,13 +87,10 @@ button:disabled {
 }
 
 .brand-image {
-  width: 168px;
-  height: 48px;
+  width: 142px;
+  height: 42px;
   display: block;
-  border-radius: 8px;
   object-fit: contain;
-  background: #fff;
-  padding: 5px 10px;
 }
 
 .brand-logo {
@@ -384,6 +381,20 @@ button:disabled {
   padding: 4px 8px;
   font-size: 12px;
   font-weight: 800;
+}
+
+.locked-counter-chip {
+  display: inline-flex;
+  align-items: center;
+  width: 118px;
+  height: 30px;
+  border: 1px solid #bde5c8;
+  border-radius: 6px;
+  background: #eef8f2;
+  color: var(--brand-dark);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .print-control-field {
@@ -945,6 +956,20 @@ button:disabled {
   color: var(--brand-dark);
 }
 
+.file-path-box {
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fcf9;
+  color: var(--muted);
+  font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .alert-box {
   background: var(--danger-soft);
   border: 1px solid #f3b4ad;
@@ -1321,8 +1346,61 @@ button:disabled {
   color: #111;
 }
 
+.barcode-preview-wrap {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.sticker-preview-wide {
+  width: 430px;
+  min-height: 315px;
+  border: 1px solid #111;
+  padding: 8px 10px;
+  align-items: center;
+  text-align: center;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.sticker-product {
+  font-size: 27px;
+  line-height: 1.05;
+  text-transform: uppercase;
+}
+
+.sticker-code {
+  font-size: 19px;
+}
+
+.sticker-price-row {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 24px;
+}
+
+.sticker-meta-row {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.sticker-divider {
+  width: calc(100% + 20px);
+  height: 5px;
+  margin: 4px -10px;
+  background: #111;
+}
+
+.sticker-store {
+  font-size: 26px;
+  line-height: 1;
+  text-transform: lowercase;
+}
+
 .barcode-bars {
-  height: 46px;
+  width: 190px;
+  height: 56px;
   background:
     repeating-linear-gradient(90deg, #111 0 2px, #fff 2px 4px, #111 4px 5px, #fff 5px 8px);
 }

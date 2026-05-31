@@ -142,11 +142,15 @@ export default function BillingTerminalView() {
   const scannerRef = useRef(null);
   const billingTableRef = useRef(null);
   const canManageInvoice = ['SERVER', 'ADMIN'].includes(currentUser?.role);
+  const canSelectCounter = ['SERVER', 'ADMIN'].includes(currentUser?.role);
   const activeMode = BILLING_MODES[billingMode];
   const activeSaleMode = activeMode.tier === 'WHOLESALE' ? 'WHOLESALE' : 'RETAIL';
   const activeTaxMode = activeMode.taxType === 'INTERSTATE' ? 'IGST' : 'GST';
 
   useEffect(() => {
+    if (!canSelectCounter && currentUser?.counter_no) {
+      setCounterNo(Number(currentUser.counter_no));
+    }
     scannerRef.current?.focus();
     loadSettings();
     refreshHistory(false);
@@ -376,7 +380,12 @@ export default function BillingTerminalView() {
       setPrintMode(settings.default_print_mode || 'Thermal');
       const nextCounterCount = Number(settings.counter_count || 6);
       setCounterCount(nextCounterCount);
-      setCounterNo((current) => Math.min(current, nextCounterCount));
+      setCounterNo((current) => {
+        if (!canSelectCounter && currentUser?.counter_no) {
+          return Math.min(Number(currentUser.counter_no), nextCounterCount);
+        }
+        return Math.min(current, nextCounterCount);
+      });
     } catch (err) {
       setCounterCount(6);
     }
@@ -443,6 +452,7 @@ export default function BillingTerminalView() {
         ...current,
         {
           ...product,
+          product_name: String(product.product_name || '').toUpperCase(),
           quantity: 1,
           sale_price: toNumber(product.sale_price || product.mrp),
           wholesale_price: toNumber(product.wholesale_price || product.sale_price || product.mrp),
@@ -475,11 +485,6 @@ export default function BillingTerminalView() {
       event.preventDefault();
       const cleaned = query.trim();
 
-      if (suggestions[selectedSuggestion]) {
-        addProduct(suggestions[selectedSuggestion]);
-        return;
-      }
-
       if (cleaned.length < 3) {
         setErrorMessage('Enter at least 3 letters or barcode digits.');
         return;
@@ -488,7 +493,10 @@ export default function BillingTerminalView() {
       try {
         const results = await searchProducts(cleaned);
         if (results.length === 1) addProduct(results[0]);
-        if (results.length > 1) setSuggestions(results.slice(0, 5));
+        if (results.length > 1) {
+          setSuggestions(results.slice(0, 5));
+          setSelectedSuggestion(0);
+        }
         if (results.length === 0) {
           setCart((current) => [
             ...current,
@@ -586,7 +594,7 @@ export default function BillingTerminalView() {
 
   async function applyHeldBill(savedState, holdToken) {
     setInvoiceNo(savedState.invoiceNo || 'Draft');
-    setCounterNo(savedState.counterNo || 1);
+    setCounterNo(canSelectCounter ? savedState.counterNo || 1 : Number(currentUser?.counter_no || counterNo));
     setCart(savedState.cart || []);
     setBillingMode(normalizeBillingMode(savedState.billingMode));
     setCustomerName(savedState.customerName || 'Walk-in Customer');
@@ -951,11 +959,15 @@ export default function BillingTerminalView() {
               </span>
               <label className="top-control-field">
                 <span>Counter</span>
-                <select aria-label="Counter" value={counterNo} onChange={(event) => setCounterNo(Number(event.target.value))}>
-                  {Array.from({ length: counterCount }, (_, index) => index + 1).map((number) => (
-                    <option key={number} value={number}>Counter {number}</option>
-                  ))}
-                </select>
+                {canSelectCounter ? (
+                  <select aria-label="Counter" value={counterNo} onChange={(event) => setCounterNo(Number(event.target.value))}>
+                    {Array.from({ length: counterCount }, (_, index) => index + 1).map((number) => (
+                      <option key={number} value={number}>Counter {number}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="locked-counter-chip">Counter {counterNo}</span>
+                )}
               </label>
               <label className="top-control-field print-control-field">
                 <span>Print</span>

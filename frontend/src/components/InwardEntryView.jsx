@@ -262,7 +262,8 @@ function normalizeOcrProductName(value) {
   return String(value || '')
     .replace(/[‘’']/g, '*')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    .toUpperCase();
 }
 
 function normalizeDiscountType(value) {
@@ -417,7 +418,9 @@ export default function InwardEntryView() {
   }
 
   function updateLine(index, field, value) {
-    const nextValue = field === 'gst_percent' ? normalizeGstPercent(value) : value;
+    const nextValue = field === 'gst_percent'
+      ? normalizeGstPercent(value)
+      : (field === 'product' ? value.toUpperCase() : value);
     setLines((current) => current.map((line, lineIndex) => (
       lineIndex === index ? { ...line, [field]: nextValue } : line
     )));
@@ -436,7 +439,7 @@ export default function InwardEntryView() {
 
     return {
       ...line,
-      product: product.product_name || line.product,
+      product: normalizeOcrProductName(product.product_name || line.product),
       barcode: product.barcode || line.barcode,
       hsn_code: line.hsn_code || product.hsn_code || '',
       gst_percent: normalizeGstPercent(line.gst_percent || product.gst_percent || 0),

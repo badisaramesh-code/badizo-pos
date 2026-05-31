@@ -98,6 +98,18 @@ export async function importProducts(csv) {
   return data;
 }
 
+export async function fetchBarcodeTemplate(templateName = 'tsc-244-pro-50x50-two-up.prn') {
+  const { data } = await api.get('/barcode/template', {
+    params: { template: templateName }
+  });
+  return data;
+}
+
+export async function generateBarcodePrn(payload) {
+  const { data } = await api.post('/barcode/prn', payload);
+  return data;
+}
+
 export async function fetchDashboardReport() {
   const { data } = await api.get('/reports/dashboard');
   return data;

@@ -4,3 +4,4 @@ backend/backups/
 .env
 *.log
 *.traineddata
+barcode/output/

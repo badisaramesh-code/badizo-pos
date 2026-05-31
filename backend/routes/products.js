@@ -27,6 +27,10 @@ function toProduct(row) {
   };
 }
 
+function normalizeProductName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
 const PRODUCT_CSV_HEADERS = [
   'Sno',
   'Product Code',
@@ -116,7 +120,7 @@ function parseCsv(text) {
 function normalizeCsvRow(rawRow, rowNumber) {
   const productCode = String(rawRow.product_code || '').trim().toUpperCase();
   const barcode = String(rawRow.barcode || productCode || '').trim().toUpperCase();
-  const productName = String(rawRow.product_name || '').trim();
+  const productName = normalizeProductName(rawRow.product_name);
   const gstPercent = Number(rawRow.gst_percent || 0);
   const mrp = Number(rawRow.mrp || 0);
   const purchasePrice = Number(rawRow.purchase_price || 0);
@@ -538,6 +542,18 @@ router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER
       return res.json((rows || []).map(toProduct));
     }
 
+    const [exactRows] = await db.query(
+      `SELECT * FROM products
+       WHERE barcode = ? OR product_code = ?
+       ORDER BY product_name ASC
+       LIMIT 5`,
+      [q.toUpperCase(), q.toUpperCase()]
+    );
+
+    if (exactRows && exactRows.length > 0) {
+      return res.json(exactRows.map(toProduct));
+    }
+
     if (q.length >= 3) {
       const where = [];
       const values = [];
@@ -552,16 +568,7 @@ router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER
       return res.json((rows || []).map(toProduct));
     }
 
-    const [rows] = await db.query(
-      `SELECT * FROM products WHERE barcode = ? LIMIT 1`,
-      [q]
-    );
-
-    if (!rows || rows.length === 0) {
-      return res.status(404).json({ error: 'Product not found.' });
-    }
-
-    res.json([toProduct(rows[0])]);
+    return res.status(404).json({ error: 'Product not found.' });
   } catch (err) {
     console.error('Product search failed:', err.message);
     res.status(500).json({ error: 'Unable to fetch products from database.' });
@@ -600,6 +607,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       unitType: normalizeUnitType(unit_type),
       mrp: Number(mrp) || 0,
       purchasePrice: Number(purchase_price) || 0,
+      productName: normalizeProductName(product_name),
       salePrice: Number(sale_price) || 0,
       wholesalePrice: Number(wholesale_price || sale_price) || 0,
       discountType: discount_type === 'VALUE' ? 'VALUE' : 'PERCENT',
@@ -609,6 +617,10 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       stockQty: Number(stock_qty) || 0,
       minStockAlert: Number(min_stock_alert) || 10
     };
+
+    if (!values.productName) {
+      return res.status(400).json({ error: 'Product name is required.' });
+    }
 
     if (values.salePrice > values.mrp && values.mrp > 0) {
       return res.status(400).json({ error: 'Sale price cannot be greater than MRP.' });
@@ -647,7 +659,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       [
         finalProductCode,
         barcode.trim(),
-        product_name.trim(),
+        values.productName,
         values.hsnCode,
         values.gstPercent,
         values.unitType,
@@ -671,7 +683,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       entityId: barcode.trim(),
       details: {
         barcode: barcode.trim(),
-        product_name: product_name.trim(),
+        product_name: values.productName,
         purchase_price: values.purchasePrice,
         sale_price: values.salePrice,
         stock_qty: values.stockQty
@@ -693,7 +705,7 @@ router.post('/bulk-update', authenticate, authorize('SERVER', 'ADMIN'), async (r
 
   const normalizedRows = rows.map((row) => ({
     barcode: String(row.barcode || '').trim(),
-    product_name: String(row.product_name || '').trim(),
+    product_name: normalizeProductName(row.product_name),
     hsn_code: String(row.hsn_code || '').trim(),
     gst_percent: Number(row.gst_percent || 0),
     unit_type: normalizeUnitType(row.unit_type)

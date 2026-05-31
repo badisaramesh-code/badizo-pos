@@ -39,7 +39,7 @@ export default function App() {
     <div className="app-shell">
       <header className="topbar">
         <div className="brand-wrap">
-          <img className="brand-image" src="/badizo-logo.jpg" alt="Badizo" />
+          <img className="brand-image" src="/badizo-logo-transparent.png" alt="Badizo" />
         </div>
 
         <nav className="nav-tabs" aria-label="Workspace">
