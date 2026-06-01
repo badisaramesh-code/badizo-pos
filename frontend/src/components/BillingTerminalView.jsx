@@ -730,7 +730,41 @@ export default function BillingTerminalView() {
     }
 
     setPrintableInvoice(invoice);
-    window.setTimeout(() => window.print(), 80);
+    schedulePrint(printMode);
+  }
+
+  function schedulePrint(mode = printMode, afterPrint) {
+    const printClass = mode === 'A4' ? 'printing-a4' : 'printing-thermal';
+    let cleanupTimer;
+    let printHost = null;
+    let didCleanup = false;
+    const cleanup = () => {
+      if (didCleanup) return;
+      didCleanup = true;
+      window.clearTimeout(cleanupTimer);
+      if (printHost) {
+        printHost.remove();
+        printHost = null;
+      }
+      document.body.classList.remove('printing-a4', 'printing-thermal');
+      window.removeEventListener('afterprint', cleanup);
+      if (afterPrint) afterPrint();
+    };
+
+    document.body.classList.remove('printing-a4', 'printing-thermal');
+    document.body.classList.add(printClass);
+    window.addEventListener('afterprint', cleanup);
+    cleanupTimer = window.setTimeout(cleanup, 120000);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const source = document.querySelector(mode === 'A4' ? '.print-area.print-a4' : '.print-area.print-thermal');
+        printHost = document.createElement('div');
+        printHost.className = mode === 'A4' ? 'print-host print-host-a4' : 'print-host print-host-thermal';
+        printHost.innerHTML = source?.innerHTML || '';
+        document.body.appendChild(printHost);
+        window.requestAnimationFrame(() => window.print());
+      });
+    });
   }
 
   function preparePayment(mode) {
@@ -870,8 +904,7 @@ export default function BillingTerminalView() {
       const details = await fetchInvoiceDetails(invoiceNoForReprint);
       await recordInvoiceReprint(invoiceNoForReprint);
       setPrintableInvoice(invoiceDetailsToPrintable(details, true));
-      window.setTimeout(() => window.print(), 80);
-      refreshHistory(false);
+      schedulePrint(printMode, () => refreshHistory(false));
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to reprint invoice.');
     }
@@ -1017,11 +1050,10 @@ export default function BillingTerminalView() {
       };
       setPrintableInvoice(completedInvoice);
       setStatusMessage(`Invoice ${checkoutResult.invoice_no || invoiceNo} saved. Change due: ${formatMoney(Math.max(received - totals.grand, 0))}`);
-      window.setTimeout(() => {
-        window.print();
+      schedulePrint(printMode, () => {
         resetBill();
         refreshHistory(false);
-      }, 80);
+      });
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Checkout failed.');
     }

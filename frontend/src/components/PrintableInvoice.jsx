@@ -435,131 +435,108 @@ function A4OnePageInvoice({ invoice, template }) {
   const totalSgst = gstRows.reduce((sum, row) => sum + row.sgst, 0);
   const totalIgst = gstRows.reduce((sum, row) => sum + row.igst, 0);
   const totalTax = gstRows.reduce((sum, row) => sum + row.tax, 0);
-  const taxLabel = isInterstate ? 'IGST' : 'CGST / SGST';
-  const taxValue = isInterstate ? totalIgst : totalCgst + totalSgst;
+  const totalAmountAfterTax = Math.round(invoice.totals.grand);
 
   return (
-    <div className="print-invoice a4-paper a4-one-page">
-      <div className="a4-one-title">
-        <span />
-        <strong>Tax Invoice</strong>
-        <span>(ORIGINAL FOR RECIPIENT)</span>
-      </div>
-
-      <div className="a4-one-top">
-        <div className="a4-one-shop">
+    <div className={`print-invoice a4-paper a4-one-page ${isInterstate ? 'a4-igst-invoice' : 'a4-gst-invoice'}`}>
+      <div className="a4-sample-header">
+        <div>
           <strong>{invoice.shop.shop_name}</strong>
           <span>{invoice.shop.address}</span>
           <span>GSTIN/UIN: {invoice.shop.gst_number}</span>
-          <span>Phone: {invoice.shop.phone || '-'}</span>
         </div>
-        <div className="a4-one-meta">
+        <div>
+          <span>Tel: {invoice.shop.phone || '-'}</span>
+          <strong>{invoice.shop.shop_name}</strong>
+        </div>
+      </div>
+
+      <div className="a4-sample-title">
+        <strong>GSTIN: {invoice.shop.gst_number}</strong>
+        <h1>TAX INVOICE</h1>
+        <strong>ORIGINAL FOR RECIPIENT</strong>
+      </div>
+
+      <div className="a4-sample-info">
+        <div className="a4-sample-customer">
+          <strong>Customer Detail</strong>
+          <div><b>M/S</b><span>{invoice.customerName || 'Walk-in Customer'}</span></div>
+          <div><b>Address</b><span>{invoice.customerAddress || '-'}</span></div>
+          <div><b>Phone</b><span>{invoice.customerPhone || '-'}</span></div>
+          <div><b>GSTIN</b><span>{invoice.customerGstin || '-'}</span></div>
+          <div><b>Place of Supply</b><span>Telangana (36)</span></div>
+        </div>
+        <div className="a4-sample-meta">
           <div><span>Invoice No.</span><strong>{invoice.invoiceNo}</strong></div>
-          <div><span>Dated</span><strong>{invoice.date}</strong></div>
-          <div><span>Mode/Terms of Payment</span><strong>{invoice.paymentMode}</strong></div>
-          <div><span>Reference No. & Date.</span><strong>-</strong></div>
-          <div><span>Buyer's Order No.</span><strong>-</strong></div>
-          <div><span>Destination</span><strong>-</strong></div>
+          <div><span>Invoice Date</span><strong>{invoice.date}</strong></div>
+          <div><span>Payment</span><strong>{invoice.paymentMode}</strong></div>
+          <div><span>Counter</span><strong>{invoice.counterNo}</strong></div>
+          <div><span>Tax Type</span><strong>{isInterstate ? 'IGST' : 'GST'}</strong></div>
+          <div><span>Transport</span><strong>-</strong></div>
         </div>
       </div>
 
-      <div className="a4-one-buyer">
-        {['Consignee (Ship to)', 'Buyer (Bill to)'].map((label) => (
-          <div key={label}>
-            <span>{label}</span>
-            <strong>{invoice.customerName || 'Walk-in Customer'}</strong>
-            <span>{invoice.customerAddress || '-'}</span>
-            <span>GSTIN/UIN: {invoice.customerGstin || '-'}</span>
-            <span>Place of Supply: Telangana, Code : 36</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="a4-one-items">
-        <div className="a4-one-item-head">
-          <strong>Sl No.</strong><strong>Description of Goods</strong><strong>HSN/SAC</strong><strong>Qty</strong><strong>Rate (Incl.)</strong><strong>Rate</strong><strong>Tax%</strong><strong>Amount</strong>
-        </div>
-        {invoice.items.map((item, index) => (
-          <div className="a4-one-item-row" key={`${item.barcode}-${index}`}>
-            <span>{index + 1}</span>
-            <strong>{item.product_name}</strong>
-            <span>{item.hsn_code || '-'}</span>
-            <span>{formatPlainMoney(item.quantity)}</span>
-            <span>{formatPlainMoney(item.unitPrice)}</span>
-            <span>{formatPlainMoney(item.taxableRate)}</span>
-            <span>{formatPlainMoney(item.gst_percent)}%</span>
-            <strong>{formatPlainMoney(item.lineTotal)}</strong>
-          </div>
-        ))}
-        <div className="a4-one-tax-row"><span /><strong>{taxLabel}</strong><span /><span /><span /><span /><span /><strong>{formatPlainMoney(taxValue)}</strong></div>
-        <div className="a4-one-tax-row"><span /><strong>ROUND OFF</strong><span /><span /><span /><span /><span /><strong>{formatPlainMoney(invoice.totals.roundOff)}</strong></div>
-        <div className="a4-one-total-row"><strong>Total Amount</strong><span /><span /><strong>{formatPlainMoney(invoice.itemCount)}</strong><span /><span /><span /><strong>{formatMoney(invoice.totals.grand)}</strong></div>
-      </div>
-
-      <div className="a4-one-words">
-        <span>Amount Chargeable (in words)</span>
-        <strong>INR {amountInWords(invoice.totals.grand)}</strong>
-      </div>
-
-      <div className="a4-one-gst-title">GST Summary</div>
-      <div className={`a4-one-gst ${isInterstate ? 'igst' : 'local'}`}>
+      <div className={`a4-sample-items ${isInterstate ? 'igst' : 'gst'}`}>
         {isInterstate ? (
-          <>
-            <strong>HSN/SAC</strong><strong>Taxable Value</strong><strong>GST%</strong><strong>IGST%</strong><strong>IGST Amt</strong><strong>Total Tax Amount</strong>
-            {gstRows.map((row) => (
-              <React.Fragment key={row.gst}>
-                <span>{invoice.items.find((item) => toNumber(item.gst_percent) === row.gst)?.hsn_code || '-'}</span>
-                <span>{formatPlainMoney(row.taxable)}</span>
-                <span>{formatPlainMoney(row.gst)}%</span>
-                <span>{formatPlainMoney(row.gst)}%</span>
-                <span>{formatPlainMoney(row.igst)}</span>
-                <span>{formatPlainMoney(row.tax)}</span>
-              </React.Fragment>
-            ))}
-            <strong>Total</strong><strong>{formatPlainMoney(totalTaxable)}</strong><span /><span /><strong>{formatPlainMoney(totalIgst)}</strong><strong>{formatPlainMoney(totalTax)}</strong>
-          </>
+          <div className="a4-sample-item-head">
+            <strong>Sr. No.</strong><strong>Name of Product / Service</strong><strong>HSN / SAC</strong><strong>Qty</strong><strong>Rate</strong><strong>Taxable Value</strong><strong>IGST %</strong><strong>IGST Amt</strong><strong>Total</strong>
+          </div>
         ) : (
-          <>
-            <strong>HSN/SAC</strong><strong>Taxable Value</strong><strong>GST%</strong><strong>CGST%</strong><strong>CGST Amt</strong><strong>SGST%</strong><strong>SGST Amt</strong><strong>Total Tax Amount</strong>
-            {gstRows.map((row) => (
-              <React.Fragment key={row.gst}>
-                <span>{invoice.items.find((item) => toNumber(item.gst_percent) === row.gst)?.hsn_code || '-'}</span>
-                <span>{formatPlainMoney(row.taxable)}</span>
-                <span>{formatPlainMoney(row.gst)}%</span>
-                <span>{formatPlainMoney(row.gst / 2)}%</span>
-                <span>{formatPlainMoney(row.cgst)}</span>
-                <span>{formatPlainMoney(row.gst / 2)}%</span>
-                <span>{formatPlainMoney(row.sgst)}</span>
-                <span>{formatPlainMoney(row.tax)}</span>
-              </React.Fragment>
-            ))}
-            <strong>Total</strong><strong>{formatPlainMoney(totalTaxable)}</strong><span /><span /><strong>{formatPlainMoney(totalCgst)}</strong><span /><strong>{formatPlainMoney(totalSgst)}</strong><strong>{formatPlainMoney(totalTax)}</strong>
-          </>
+          <div className="a4-sample-item-head">
+            <strong>Sr. No.</strong><strong>Name of Product / Service</strong><strong>HSN / SAC</strong><strong>Qty</strong><strong>Rate</strong><strong>Taxable Value</strong><strong>CGST %</strong><strong>CGST Amt</strong><strong>SGST %</strong><strong>SGST Amt</strong><strong>Total</strong>
+          </div>
+        )}
+        {invoice.items.map((item, index) => {
+          const taxableValue = toNumber(item.taxableRate) * toNumber(item.quantity);
+          const gstPercent = toNumber(item.gst_percent);
+          const itemTax = toNumber(item.lineTotal) - taxableValue;
+          return isInterstate ? (
+            <div className="a4-sample-item-row" key={`${item.barcode}-${index}`}>
+              <span>{index + 1}</span><strong>{item.product_name}</strong><span>{item.hsn_code || '-'}</span><span>{formatPlainMoney(item.quantity)}</span><span>{formatPlainMoney(item.taxableRate)}</span><span>{formatPlainMoney(taxableValue)}</span><span>{formatPlainMoney(gstPercent)}</span><span>{formatPlainMoney(itemTax)}</span><strong>{formatPlainMoney(item.lineTotal)}</strong>
+            </div>
+          ) : (
+            <div className="a4-sample-item-row" key={`${item.barcode}-${index}`}>
+              <span>{index + 1}</span><strong>{item.product_name}</strong><span>{item.hsn_code || '-'}</span><span>{formatPlainMoney(item.quantity)}</span><span>{formatPlainMoney(item.taxableRate)}</span><span>{formatPlainMoney(taxableValue)}</span><span>{formatPlainMoney(gstPercent / 2)}</span><span>{formatPlainMoney(itemTax / 2)}</span><span>{formatPlainMoney(gstPercent / 2)}</span><span>{formatPlainMoney(itemTax / 2)}</span><strong>{formatPlainMoney(item.lineTotal)}</strong>
+            </div>
+          );
+        })}
+        <div className="a4-sample-item-spacer" />
+        {isInterstate ? (
+          <div className="a4-sample-item-total"><strong>Total</strong><span /><span /><strong>{formatPlainMoney(invoice.itemCount)}</strong><span /><strong>{formatPlainMoney(totalTaxable)}</strong><span /><strong>{formatPlainMoney(totalIgst)}</strong><strong>{formatMoney(invoice.totals.grand)}</strong></div>
+        ) : (
+          <div className="a4-sample-item-total"><strong>Total</strong><span /><span /><strong>{formatPlainMoney(invoice.itemCount)}</strong><span /><strong>{formatPlainMoney(totalTaxable)}</strong><span /><strong>{formatPlainMoney(totalCgst)}</strong><span /><strong>{formatPlainMoney(totalSgst)}</strong><strong>{formatMoney(invoice.totals.grand)}</strong></div>
         )}
       </div>
 
-      <div className="a4-one-words">
-        <span>Tax Amount (in words)</span>
-        <strong>INR {amountInWords(invoice.totals.tax)}</strong>
-      </div>
-
-      <div className="a4-one-declaration">
-        <div>
-          <strong>Declaration</strong>
-          <span>{template.declaration}</span>
+      <div className="a4-sample-bottom">
+        <div className="a4-sample-left">
+          <div className="a4-sample-words">
+            <strong>Total in words</strong>
+            <span>INR {amountInWords(totalAmountAfterTax)}</span>
+          </div>
+          <div className="a4-sample-bank">
+            <strong>Bank Details</strong>
+            {template.bankDetails.map(([label, value]) => <span key={label}>{label}: <b>{value}</b></span>)}
+          </div>
+          <div className="a4-sample-terms">
+            <strong>Terms and Conditions</strong>
+            <span>Subject to Telangana jurisdiction.</span>
+            <span>Goods once sold will not be taken back.</span>
+            <span>Delivery as per store terms.</span>
+          </div>
+          <div className="a4-sample-customer-sign">Customer Signature</div>
         </div>
-        <div>
-          <strong>Company's Bank Details</strong>
-          {template.bankDetails.map(([label, value]) => <span key={label}>{label}: <strong>{value}</strong></span>)}
+        <div className="a4-sample-right">
+          <div><span>Taxable Amount</span><strong>{formatPlainMoney(totalTaxable)}</strong></div>
+          <div><span>Add : {isInterstate ? 'IGST' : 'CGST + SGST'}</span><strong>{formatPlainMoney(totalTax)}</strong></div>
+          <div><span>Total Tax</span><strong>{formatPlainMoney(totalTax)}</strong></div>
+          <div className="a4-sample-grand"><span>Total Amount After Tax</span><strong>{formatMoney(totalAmountAfterTax)}</strong></div>
+          <div className="a4-sample-certify">Certified that the particulars given above are true and correct.</div>
+          <div className="a4-sample-for">For {invoice.shop.shop_name}</div>
+          <div className="a4-sample-generated">This is a computer generated invoice.</div>
+          <div className="a4-sample-auth">Authorised Signatory</div>
         </div>
       </div>
-
-      <div className="a4-one-signature">
-        <span>Customer's Seal and Signature</span>
-        <strong>for {invoice.shop.shop_name}</strong>
-        <em>Authorised Signatory</em>
-      </div>
-      <div className="a4-one-generated">This is a Computer Generated Invoice</div>
     </div>
   );
 }
