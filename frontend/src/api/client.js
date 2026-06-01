@@ -285,13 +285,15 @@ export async function fetchCustomers(search = '') {
   return Array.isArray(data) ? data : [];
 }
 
-export async function fetchBooksSummary(date) {
-  const { data } = await api.get('/books/summary', { params: { date } });
+export async function fetchBooksSummary(dateOrRange) {
+  const params = typeof dateOrRange === 'object' ? dateOrRange : { date: dateOrRange };
+  const { data } = await api.get('/books/summary', { params });
   return data;
 }
 
-export async function fetchDayBook(date) {
-  const { data } = await api.get('/books/day-book', { params: { date } });
+export async function fetchDayBook(dateOrRange) {
+  const params = typeof dateOrRange === 'object' ? dateOrRange : { date: dateOrRange };
+  const { data } = await api.get('/books/day-book', { params });
   return data;
 }
 

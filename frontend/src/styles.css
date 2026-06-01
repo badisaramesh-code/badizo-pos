@@ -9,6 +9,9 @@
   --brand: #267f32;
   --brand-dark: #155f22;
   --brand-deep: #155f22;
+  --pista: #dff5df;
+  --pista-strong: #bfe8c3;
+  --pista-text: #123b1d;
   --accent: #ff8a00;
   --danger: #b42318;
   --danger-soft: #fff1f0;
@@ -74,10 +77,10 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   padding: 0 24px;
-  background: var(--brand);
-  color: #fff;
+  background: var(--pista);
+  color: var(--pista-text);
   border-bottom: 3px solid var(--accent);
-  box-shadow: 0 5px 18px rgba(21, 95, 34, 0.22);
+  box-shadow: 0 5px 18px rgba(21, 95, 34, 0.14);
 }
 
 .brand-wrap {
@@ -138,7 +141,7 @@ button:disabled {
 }
 
 .tab-button {
-  color: #fff;
+  color: var(--pista-text);
   background: transparent;
   border-color: transparent;
 }
@@ -151,7 +154,8 @@ button:disabled {
 }
 
 .tab-button.active {
-  background: rgba(255, 255, 255, 0.12);
+  background: #ffffff;
+  color: var(--brand-dark);
   border-bottom: 3px solid var(--accent);
 }
 
@@ -201,8 +205,9 @@ button:disabled {
 }
 
 .panel-header.green {
-  background: var(--brand);
-  color: #fff;
+  background: var(--pista);
+  color: var(--pista-text);
+  border-bottom-color: var(--pista-strong);
 }
 
 .panel-title {
@@ -224,25 +229,25 @@ button:disabled {
 
 .billing-store-banner {
   padding: 10px 16px;
-  background: var(--brand-dark);
-  color: #fff;
+  background: var(--pista);
+  color: var(--pista-text);
   border-bottom: 2px solid var(--accent);
 }
 
 .billing-store-banner .panel-title {
-  color: #fff;
+  color: var(--pista-text);
   font-size: 19px;
 }
 
 .billing-store-banner .muted {
-  color: rgba(255, 255, 255, 0.86);
+  color: #1f5a2d;
   font-size: 12px;
 }
 
 .billing-store-banner .invoice-chip {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.28);
-  color: #fff;
+  background: #ffffff;
+  border-color: var(--pista-strong);
+  color: var(--brand-dark);
 }
 
 .billing-header-meta {
@@ -257,9 +262,9 @@ button:disabled {
   min-height: 38px;
   padding: 8px 12px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+  border: 1px solid var(--pista-strong);
+  background: #ffffff;
+  color: var(--brand-dark);
   font-size: 13px;
   font-weight: 900;
   white-space: nowrap;
@@ -738,10 +743,10 @@ button:disabled {
 }
 
 .header-print-button {
-  border: 1px solid rgba(255, 255, 255, 0.75);
+  border: 1px solid #7fbd89;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.15);
-  color: #fff;
+  background: #ffffff;
+  color: var(--brand-dark);
   padding: 7px 12px;
   font-size: 12px;
   font-weight: 800;
@@ -811,7 +816,7 @@ button:disabled {
 }
 
 .header-print-button:hover {
-  background: rgba(255, 255, 255, 0.24);
+  background: #f4fbf5;
 }
 
 .search-input {
@@ -926,7 +931,7 @@ button:disabled {
   background: #b9dfc0;
   color: #12331a;
   font-size: 14px;
-  font-weight: 900;
+  font-weight: 400;
   position: sticky;
   top: 0;
   z-index: 2;
@@ -1642,6 +1647,25 @@ button:disabled {
   color: var(--brand-dark);
   font-size: 30px;
   font-weight: 900;
+}
+
+.reports-metric-grid {
+  gap: 10px;
+}
+
+.reports-metric-grid .metric-card {
+  padding: 10px 12px;
+  min-height: 78px;
+}
+
+.reports-metric-grid .metric-value {
+  margin-top: 4px;
+  font-size: 19px;
+  line-height: 1.1;
+}
+
+.reports-metric-grid .muted {
+  font-size: 11px;
 }
 
 .module-card {

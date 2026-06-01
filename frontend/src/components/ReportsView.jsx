@@ -14,6 +14,13 @@ import {
 import { todayIso } from '../utils/date';
 import { formatMoney } from '../utils/money';
 
+function formatCompactMoney(value) {
+  const amount = Number(value || 0);
+  if (Math.abs(amount) >= 10000000) return `Rs. ${(amount / 10000000).toFixed(2)} Cr`;
+  if (Math.abs(amount) >= 100000) return `Rs. ${(amount / 100000).toFixed(2)} L`;
+  return `Rs. ${amount.toFixed(2)}`;
+}
+
 function getOrderedRange(fromDate, toDate) {
   return fromDate <= toDate ? { from: fromDate, to: toDate } : { from: toDate, to: fromDate };
 }
@@ -118,9 +125,9 @@ export default function ReportsView() {
 
   const metricCards = [
     ['Bills', dailyReport.totals.billCount || 0, 'Selected range'],
-    ['Taxable', formatMoney(dailyReport.totals.taxable || 0), 'Sales before GST'],
-    ['GST', formatMoney(dailyReport.totals.gst || 0), 'Collected tax'],
-    ['Total Sales', formatMoney(dailyReport.totals.total || 0), 'Grand total']
+    ['Taxable', formatCompactMoney(dailyReport.totals.taxable || 0), 'Sales before GST'],
+    ['GST', formatCompactMoney(dailyReport.totals.gst || 0), 'Collected tax'],
+    ['Total Sales', formatCompactMoney(dailyReport.totals.total || 0), 'Grand total']
   ];
 
   function exportRows(name, rows) {
@@ -567,7 +574,7 @@ export default function ReportsView() {
     <div className="form-stack">
       {errorMessage && <div className="alert-box">{errorMessage}</div>}
 
-      <section className="dashboard-grid">
+      <section className="dashboard-grid reports-metric-grid">
         {metricCards.map(([label, value, note]) => (
           <div className="metric-card" key={label}>
             <div className="muted">{label}</div>

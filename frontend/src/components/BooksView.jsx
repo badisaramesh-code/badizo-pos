@@ -1,10 +1,25 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import * as XLSX from 'xlsx';
 import { fetchBooksSummary, fetchDayBook } from '../api/client';
 import { todayIso } from '../utils/date';
 import { formatMoney } from '../utils/money';
 
+function getOrderedRange(fromDate, toDate) {
+  return fromDate <= toDate ? { from: fromDate, to: toDate } : { from: toDate, to: fromDate };
+}
+
+function exportWorkbook(filename, sheets) {
+  const workbook = XLSX.utils.book_new();
+  sheets.forEach(({ name, rows }) => {
+    const worksheet = XLSX.utils.json_to_sheet(rows.length ? rows : [{ Message: 'No data available' }]);
+    XLSX.utils.book_append_sheet(workbook, worksheet, name.slice(0, 31));
+  });
+  XLSX.writeFile(workbook, filename);
+}
+
 export default function BooksView() {
-  const [date, setDate] = useState(todayIso());
+  const [fromDate, setFromDate] = useState(todayIso());
+  const [toDate, setToDate] = useState(todayIso());
   const [summary, setSummary] = useState(null);
   const [dayBook, setDayBook] = useState({ rows: [] });
   const [errorMessage, setErrorMessage] = useState('');
@@ -15,16 +30,22 @@ export default function BooksView() {
 
   async function loadBooks() {
     setErrorMessage('');
+    const range = getOrderedRange(fromDate, toDate);
     try {
       const [summaryResult, dayBookResult] = await Promise.all([
-        fetchBooksSummary(date),
-        fetchDayBook(date)
+        fetchBooksSummary(range),
+        fetchDayBook(range)
       ]);
       setSummary(summaryResult);
       setDayBook(dayBookResult);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to load books.');
     }
+  }
+
+  function handleBooksSubmit(event) {
+    event.preventDefault();
+    loadBooks();
   }
 
   const cards = summary ? [
@@ -63,16 +84,68 @@ export default function BooksView() {
     return Array.from(accounts.values()).sort((a, b) => b.sales + b.purchases - (a.sales + a.purchases));
   }, [dayBook.rows]);
 
+  function exportBooksExcel() {
+    const { from, to } = getOrderedRange(fromDate, toDate);
+    exportWorkbook(`badizo_ledger_books_${from}_to_${to}.xlsx`, [
+      {
+        name: 'Books Summary',
+        rows: cards.map(([book, note, value]) => ({ Book: book, Details: note, Value: value }))
+      },
+      {
+        name: 'Ledger Accounts',
+        rows: ledgerRows.map((row) => {
+          const balance = row.sales - row.purchases;
+          return {
+            Account: row.account,
+            Ledger: row.type === 'SALE' ? 'Sales Ledger' : 'Purchase Ledger',
+            Entries: row.entries,
+            Sales: row.sales,
+            Purchases: row.purchases,
+            Cash: row.cash,
+            'UPI/Card': row.digital,
+            Balance: Math.abs(balance),
+            'Balance Type': balance < 0 ? 'Purchase' : 'Sales'
+          };
+        })
+      },
+      {
+        name: 'Day Book Entries',
+        rows: dayBook.rows.map((row) => ({
+          Date: row.created_at ? new Date(row.created_at).toLocaleDateString() : '',
+          Time: row.created_at ? new Date(row.created_at).toLocaleTimeString() : '',
+          Type: row.type,
+          'Ref No': row.ref_no,
+          Account: row.account,
+          Mode: row.mode,
+          Amount: Number(row.amount || 0)
+        }))
+      }
+    ]);
+  }
+
+  function exportBooksPdf() {
+    window.print();
+  }
+
   return (
     <div className="form-stack">
       {errorMessage && <div className="alert-box">{errorMessage}</div>}
       <section className="panel">
         <div className="panel-header green">
           <h2 className="panel-title">Ledger Books</h2>
-          <div className="report-filter-row">
-            <input className="field" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
-            <button className="secondary-button" onClick={loadBooks}>Load</button>
-          </div>
+          <form className="report-filter-row" onSubmit={handleBooksSubmit}>
+            <label className="date-range-field">
+              <span className="field-label">From Date</span>
+              <input className="field report-date-input" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+            </label>
+            <label className="date-range-field">
+              <span className="field-label">To Date</span>
+              <input className="field report-date-input" type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+            </label>
+            <button className="secondary-button" type="submit">Load</button>
+            <button className="secondary-button" type="button" onClick={exportBooksExcel}>Export Excel</button>
+            <button className="secondary-button" type="button" onClick={exportBooksPdf}>Export PDF</button>
+          </form>
         </div>
         <div className="panel-body books-grid">
           {cards.map(([title, note, value]) => (
@@ -86,13 +159,19 @@ export default function BooksView() {
       </section>
 
       <section className="panel">
-        <div className="panel-header green"><h2 className="panel-title">Ledger Accounts</h2></div>
+        <div className="panel-header green">
+          <h2 className="panel-title">Ledger Accounts</h2>
+          <div className="report-header-actions">
+            <button className="header-print-button" type="button" onClick={exportBooksExcel}>Export Excel</button>
+            <button className="header-print-button" type="button" onClick={exportBooksPdf}>Export PDF</button>
+          </div>
+        </div>
         <div className="panel-body">
           <table className="history-table">
             <thead><tr><th>Account</th><th>Ledger</th><th>Entries</th><th>Sales</th><th>Purchases</th><th>Cash</th><th>UPI/Card</th><th>Balance</th></tr></thead>
             <tbody>
               {ledgerRows.length === 0 ? (
-                <tr><td colSpan="8">No ledger accounts for selected date.</td></tr>
+                <tr><td colSpan="8">No ledger accounts for selected date range.</td></tr>
               ) : ledgerRows.map((row) => {
                 const balance = row.sales - row.purchases;
                 return (
@@ -114,13 +193,19 @@ export default function BooksView() {
       </section>
 
       <section className="panel">
-        <div className="panel-header green"><h2 className="panel-title">Day Book Entries</h2></div>
+        <div className="panel-header green">
+          <h2 className="panel-title">Day Book Entries</h2>
+          <div className="report-header-actions">
+            <button className="header-print-button" type="button" onClick={exportBooksExcel}>Export Excel</button>
+            <button className="header-print-button" type="button" onClick={exportBooksPdf}>Export PDF</button>
+          </div>
+        </div>
         <div className="panel-body">
           <table className="history-table">
             <thead><tr><th>Time</th><th>Type</th><th>Ref No</th><th>Account</th><th>Mode</th><th>Amount</th></tr></thead>
             <tbody>
               {dayBook.rows.length === 0 ? (
-                <tr><td colSpan="6">No book entries for selected date.</td></tr>
+                <tr><td colSpan="6">No book entries for selected date range.</td></tr>
               ) : dayBook.rows.map((row) => (
                 <tr key={`${row.type}-${row.ref_no}`}>
                   <td>{row.created_at ? new Date(row.created_at).toLocaleTimeString() : '-'}</td>

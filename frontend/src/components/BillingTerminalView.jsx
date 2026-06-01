@@ -52,6 +52,27 @@ const BILLING_MODES = {
 };
 
 const RETAIL_MODE = 'RETAIL_LOCAL';
+const POS_DRAFT_KEY = 'badizo_pos_active_draft';
+
+function readActivePosDraft(username) {
+  try {
+    const raw = window.localStorage.getItem(POS_DRAFT_KEY);
+    if (!raw) return null;
+    const draft = JSON.parse(raw);
+    if (draft.username && username && draft.username !== username) return null;
+    return draft;
+  } catch (err) {
+    return null;
+  }
+}
+
+function clearActivePosDraft() {
+  try {
+    window.localStorage.removeItem(POS_DRAFT_KEY);
+  } catch (err) {
+    // Ignore storage failures; billing state still works in memory.
+  }
+}
 
 function getUnitPrice(item, mode) {
   if (BILLING_MODES[mode]?.tier === 'WHOLESALE') {
@@ -103,9 +124,10 @@ function isDigitalPaymentContactReady(value) {
 
 export default function BillingTerminalView() {
   const currentUser = getStoredUser();
-  const [invoiceNo, setInvoiceNo] = useState('Loading...');
+  const initialDraft = readActivePosDraft(currentUser?.username);
+  const [invoiceNo, setInvoiceNo] = useState(initialDraft?.invoiceNo || 'Loading...');
   const [liveTime, setLiveTime] = useState(new Date());
-  const [counterNo, setCounterNo] = useState(1);
+  const [counterNo, setCounterNo] = useState(Number(initialDraft?.counterNo || 1));
   const [counterCount, setCounterCount] = useState(6);
   const [shopSettings, setShopSettings] = useState({
     shop_name: 'Hyper Fresh Mart LLP',
@@ -116,23 +138,23 @@ export default function BillingTerminalView() {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
-  const [cart, setCart] = useState([]);
-  const [billingMode, setBillingMode] = useState('RETAIL_LOCAL');
+  const [cart, setCart] = useState(initialDraft?.cart || []);
+  const [billingMode, setBillingMode] = useState(normalizeBillingMode(initialDraft?.billingMode));
   const [approvalDialog, setApprovalDialog] = useState(null);
   const [approvalUsername, setApprovalUsername] = useState(currentUser?.role === 'SERVER' || currentUser?.role === 'ADMIN' ? currentUser.username : '');
   const [approvalPassword, setApprovalPassword] = useState('');
   const [approvalError, setApprovalError] = useState('');
   const [isApprovingMode, setIsApprovingMode] = useState(false);
-  const [customerName, setCustomerName] = useState('');
-  const [customerAddress, setCustomerAddress] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [customerGstin, setCustomerGstin] = useState('');
-  const [paymentMode, setPaymentMode] = useState('Cash');
-  const [paymentReference, setPaymentReference] = useState('');
-  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
-  const [printMode, setPrintMode] = useState('Thermal');
-  const [cashReceived, setCashReceived] = useState('');
+  const [customerName, setCustomerName] = useState(initialDraft?.customerName || '');
+  const [customerAddress, setCustomerAddress] = useState(initialDraft?.customerAddress || '');
+  const [customerPhone, setCustomerPhone] = useState(initialDraft?.customerPhone || '');
+  const [companyName, setCompanyName] = useState(initialDraft?.companyName || '');
+  const [customerGstin, setCustomerGstin] = useState(initialDraft?.customerGstin || '');
+  const [paymentMode, setPaymentMode] = useState(initialDraft?.paymentMode || 'Cash');
+  const [paymentReference, setPaymentReference] = useState(initialDraft?.paymentReference || '');
+  const [paymentConfirmed, setPaymentConfirmed] = useState(Boolean(initialDraft?.paymentConfirmed));
+  const [printMode, setPrintMode] = useState(initialDraft?.printMode || 'Thermal');
+  const [cashReceived, setCashReceived] = useState(initialDraft?.cashReceived || '');
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [invoiceHistory, setInvoiceHistory] = useState([]);
@@ -166,6 +188,49 @@ export default function BillingTerminalView() {
     loadSettings();
     refreshHistory(false);
   }, []);
+
+  useEffect(() => {
+    const hasDraft = cart.length > 0
+      || billingMode !== RETAIL_MODE
+      || customerName
+      || customerAddress
+      || customerPhone
+      || companyName
+      || customerGstin
+      || cashReceived
+      || paymentMode !== 'Cash'
+      || paymentReference
+      || paymentConfirmed
+      || printMode !== 'Thermal';
+
+    if (!hasDraft) {
+      clearActivePosDraft();
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(POS_DRAFT_KEY, JSON.stringify({
+        username: currentUser?.username,
+        invoiceNo,
+        counterNo,
+        cart,
+        billingMode,
+        customerName,
+        customerAddress,
+        customerPhone,
+        companyName,
+        customerGstin,
+        paymentMode,
+        paymentReference,
+        paymentConfirmed,
+        printMode,
+        cashReceived,
+        savedAt: new Date().toISOString()
+      }));
+    } catch (err) {
+      // Keep billing usable even if browser storage is unavailable.
+    }
+  }, [billingMode, cart, cashReceived, companyName, counterNo, currentUser?.username, customerAddress, customerGstin, customerName, customerPhone, invoiceNo, paymentConfirmed, paymentMode, paymentReference, printMode]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setLiveTime(new Date()), 1000);
@@ -487,7 +552,8 @@ export default function BillingTerminalView() {
     }
   }
 
-  async function refreshInvoicePreview(activeCounterNo = counterNo) {
+  async function refreshInvoicePreview(activeCounterNo = counterNo, force = false) {
+    if (!force && cart.length > 0) return;
     try {
       const nextInvoice = await fetchNextInvoice(activeCounterNo);
       setInvoiceNo(nextInvoice.invoice_no || 'Draft');
@@ -707,6 +773,7 @@ export default function BillingTerminalView() {
   }
 
   function resetBill() {
+    clearActivePosDraft();
     setCart([]);
     setBillingMode(RETAIL_MODE);
     setCustomerName('');
@@ -720,7 +787,7 @@ export default function BillingTerminalView() {
     setPaymentConfirmed(false);
     setPrintMode('Thermal');
     scannerRef.current?.focus();
-    refreshInvoicePreview(counterNo);
+    refreshInvoicePreview(counterNo, true);
   }
 
   function printBill(invoice = printableDraft) {
