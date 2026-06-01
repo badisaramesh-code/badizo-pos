@@ -84,6 +84,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         invoice_no VARCHAR(50) NOT NULL UNIQUE,
         customer_phone VARCHAR(15) DEFAULT NULL,
         customer_name VARCHAR(150) DEFAULT 'Walk-in Customer',
+        customer_address VARCHAR(255) DEFAULT NULL,
         sub_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         gst_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         grand_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -355,6 +356,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'invoices', 'transaction_type', "ENUM('B2C', 'B2B') NOT NULL DEFAULT 'B2C' AFTER created_at");
     await ensureColumn(connection, 'invoices', 'payment_status', "ENUM('PENDING', 'PAID', 'FAILED') NOT NULL DEFAULT 'PAID' AFTER payment_mode");
     await ensureColumn(connection, 'invoices', 'payment_reference', 'VARCHAR(120) DEFAULT NULL AFTER payment_status');
+    await ensureColumn(connection, 'invoices', 'customer_address', 'VARCHAR(255) DEFAULT NULL AFTER customer_name');
     await ensureColumn(connection, 'invoices', 'billing_tier', "ENUM('RETAIL', 'WHOLESALE') NOT NULL DEFAULT 'RETAIL' AFTER transaction_type");
     await ensureColumn(connection, 'invoices', 'tax_type', "ENUM('LOCAL', 'INTERSTATE') NOT NULL DEFAULT 'LOCAL' AFTER billing_tier");
     await ensureColumn(connection, 'invoices', 'customer_company_name', 'VARCHAR(255) DEFAULT NULL AFTER tax_type');

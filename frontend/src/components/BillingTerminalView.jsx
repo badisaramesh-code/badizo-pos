@@ -96,6 +96,11 @@ function getHeldBillMode(heldBill) {
   }
 }
 
+function isDigitalPaymentContactReady(value) {
+  const text = String(value || '').trim();
+  return text.toUpperCase() === 'NO' || text.replace(/\D/g, '').length >= 10;
+}
+
 export default function BillingTerminalView() {
   const currentUser = getStoredUser();
   const [invoiceNo, setInvoiceNo] = useState('Loading...');
@@ -118,7 +123,7 @@ export default function BillingTerminalView() {
   const [approvalPassword, setApprovalPassword] = useState('');
   const [approvalError, setApprovalError] = useState('');
   const [isApprovingMode, setIsApprovingMode] = useState(false);
-  const [customerName, setCustomerName] = useState('Walk-in Customer');
+  const [customerName, setCustomerName] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [companyName, setCompanyName] = useState('');
@@ -131,6 +136,8 @@ export default function BillingTerminalView() {
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [invoiceHistory, setInvoiceHistory] = useState([]);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyDate, setHistoryDate] = useState('');
   const [heldBills, setHeldBills] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [printableInvoice, setPrintableInvoice] = useState(null);
@@ -141,6 +148,10 @@ export default function BillingTerminalView() {
   const [refundMode, setRefundMode] = useState('Cash');
   const scannerRef = useRef(null);
   const billingTableRef = useRef(null);
+  const customerNameRef = useRef(null);
+  const cashReceivedRef = useRef(null);
+  const customerPhoneRef = useRef(null);
+  const paymentReferenceRef = useRef(null);
   const canManageInvoice = ['SERVER', 'ADMIN'].includes(currentUser?.role);
   const canSelectCounter = ['SERVER', 'ADMIN'].includes(currentUser?.role);
   const activeMode = BILLING_MODES[billingMode];
@@ -205,19 +216,24 @@ export default function BillingTerminalView() {
         refreshHistory(true);
       }
 
+      if (event.key === 'F6') {
+        event.preventDefault();
+        holdCurrentBill();
+      }
+
       if (event.key === 'F10') {
         event.preventDefault();
-        submitCheckout('Card');
+        preparePayment('Card');
       }
 
       if (event.key === 'F11') {
         event.preventDefault();
-        submitCheckout('UPI');
+        preparePayment('UPI');
       }
 
       if (event.key === 'F12') {
         event.preventDefault();
-        submitCheckout('Cash');
+        preparePayment('Cash');
       }
     };
 
@@ -258,9 +274,29 @@ export default function BillingTerminalView() {
   const cashReceivedAmount = toNumber(cashReceived);
   const isCashReady = paymentMode !== 'Cash' || cashReceivedAmount >= totals.grand;
   const isExternalPaymentReady = paymentMode === 'Cash' || paymentConfirmed;
-  const canCompleteSale = cart.length > 0 && isCashReady && isExternalPaymentReady && !cart.some((item) => item.isUnknown);
+  const isDigitalContactReady = paymentMode === 'Cash' || isDigitalPaymentContactReady(customerPhone);
+  const canCompleteSale = cart.length > 0 && isCashReady && isExternalPaymentReady && isDigitalContactReady && !cart.some((item) => item.isUnknown);
   const hasUnknownLine = cart.some((item) => item.isUnknown);
   const latestInvoice = invoiceHistory[0];
+  const filteredInvoiceHistory = useMemo(() => {
+    const search = historySearch.trim().toLowerCase();
+
+    return invoiceHistory.filter((invoice) => {
+      const createdAt = invoice.created_at ? new Date(invoice.created_at) : null;
+      const hasValidDate = createdAt && !Number.isNaN(createdAt.getTime());
+      const isoDate = hasValidDate ? createdAt.toISOString().slice(0, 10) : '';
+      const displayDate = hasValidDate ? createdAt.toLocaleString().toLowerCase() : '';
+      const searchableText = [
+        invoice.invoice_no,
+        invoice.customer_name,
+        invoice.payment_mode,
+        invoice.invoice_status,
+        displayDate
+      ].filter(Boolean).join(' ').toLowerCase();
+
+      return (!search || searchableText.includes(search)) && (!historyDate || isoDate === historyDate);
+    });
+  }, [historyDate, historySearch, invoiceHistory]);
   const invoiceDate = useMemo(() => {
     const now = new Date();
     return {
@@ -283,6 +319,8 @@ export default function BillingTerminalView() {
       customerPhone,
       customerGstin,
       paymentMode,
+      cashReceived: toNumber(cashReceived),
+      changeReturned: changeDue,
       taxType: BILLING_MODES[billingMode].taxType,
       itemCount: cart.reduce((sum, item) => sum + toNumber(item.quantity, 1), 0),
       items: cart.map((item) => {
@@ -311,7 +349,7 @@ export default function BillingTerminalView() {
         igst: isInterstate ? totals.tax : 0
       }
     };
-  }, [billingMode, cart, companyName, counterNo, customerAddress, customerGstin, customerName, customerPhone, invoiceDate, invoiceNo, paymentMode, shopSettings, totals]);
+  }, [billingMode, cart, cashReceived, changeDue, companyName, counterNo, customerAddress, customerGstin, customerName, customerPhone, invoiceDate, invoiceNo, paymentMode, shopSettings, totals]);
 
   function invoiceDetailsToPrintable(details, duplicate = false) {
     const invoice = details.invoice;
@@ -341,10 +379,12 @@ export default function BillingTerminalView() {
       time: invoice.created_at ? new Date(invoice.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '',
       shop: shopSettings,
       customerName: invoice.customer_name,
-      customerAddress: '',
+      customerAddress: invoice.customer_address || '',
       customerPhone: invoice.customer_phone,
       customerGstin: invoice.customer_gstin,
       paymentMode: invoice.payment_mode,
+      cashReceived: toNumber(invoice.cash_received),
+      changeReturned: toNumber(invoice.change_returned),
       taxType: invoice.tax_type,
       itemCount: items.reduce((sum, item) => sum + toNumber(item.quantity), 0),
       items,
@@ -372,6 +412,23 @@ export default function BillingTerminalView() {
       setErrorMessage('');
     }
   }, [isCashReady, errorMessage]);
+
+  useEffect(() => {
+    if (isDigitalPaymentContactReady(customerPhone) && errorMessage.includes('customer phone number or type NO')) {
+      setErrorMessage('');
+    }
+  }, [customerPhone, errorMessage]);
+
+  useEffect(() => {
+    if (!errorMessage.includes('Add at least one item before holding a bill')) return undefined;
+    if (cart.length > 0) {
+      setErrorMessage('');
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => setErrorMessage(''), 2500);
+    return () => window.clearTimeout(timer);
+  }, [cart.length, errorMessage]);
 
   async function loadSettings() {
     try {
@@ -597,7 +654,7 @@ export default function BillingTerminalView() {
     setCounterNo(canSelectCounter ? savedState.counterNo || 1 : Number(currentUser?.counter_no || counterNo));
     setCart(savedState.cart || []);
     setBillingMode(normalizeBillingMode(savedState.billingMode));
-    setCustomerName(savedState.customerName || 'Walk-in Customer');
+    setCustomerName(savedState.customerName || '');
     setCustomerAddress(savedState.customerAddress || '');
     setCustomerPhone(savedState.customerPhone || '');
     setCompanyName(savedState.companyName || '');
@@ -652,7 +709,7 @@ export default function BillingTerminalView() {
   function resetBill() {
     setCart([]);
     setBillingMode(RETAIL_MODE);
-    setCustomerName('Walk-in Customer');
+    setCustomerName('');
     setCustomerAddress('');
     setCustomerPhone('');
     setCompanyName('');
@@ -674,6 +731,38 @@ export default function BillingTerminalView() {
 
     setPrintableInvoice(invoice);
     window.setTimeout(() => window.print(), 80);
+  }
+
+  function preparePayment(mode) {
+    setPaymentMode(mode);
+    setErrorMessage('');
+    setStatusMessage('');
+
+    if (mode === 'Cash') {
+      setPaymentConfirmed(false);
+      window.setTimeout(() => {
+        cashReceivedRef.current?.focus();
+        cashReceivedRef.current?.select();
+      }, 50);
+      return;
+    }
+
+    setPaymentConfirmed(true);
+    window.setTimeout(() => {
+      if (!isDigitalPaymentContactReady(customerPhone)) {
+        customerPhoneRef.current?.focus();
+        customerPhoneRef.current?.select();
+        return;
+      }
+      paymentReferenceRef.current?.focus();
+      paymentReferenceRef.current?.select();
+    }, 50);
+  }
+
+  function handlePaymentEnter(event, mode = paymentMode) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    submitCheckout(mode);
   }
 
   async function refreshHistory(openModal) {
@@ -722,7 +811,8 @@ export default function BillingTerminalView() {
       };
       await holdBill(holdToken, savedState, {
         counter_no: counterNo,
-        customer_name: isBusinessBillingMode(billingMode) ? companyName : customerName,
+        customer_name: (isBusinessBillingMode(billingMode) ? companyName : customerName) || 'Walk-in Customer',
+        customer_address: customerAddress,
         customer_phone: customerPhone,
         bill_total: totals.grand.toFixed(2),
         item_count: cart.length
@@ -865,6 +955,16 @@ export default function BillingTerminalView() {
     const received = activePaymentMode === 'Cash' ? toNumber(cashReceived) : totals.grand;
     if (activePaymentMode === 'Cash' && received < totals.grand) {
       setErrorMessage('Cash received must be equal to or greater than the bill total.');
+      window.setTimeout(() => cashReceivedRef.current?.focus(), 50);
+      return;
+    }
+
+    if (activePaymentMode !== 'Cash' && !isDigitalPaymentContactReady(customerPhone)) {
+      setErrorMessage(`Enter customer phone number or type NO before ${activePaymentMode} billing.`);
+      window.setTimeout(() => {
+        customerPhoneRef.current?.focus();
+        customerPhoneRef.current?.select();
+      }, 50);
       return;
     }
 
@@ -878,7 +978,7 @@ export default function BillingTerminalView() {
     try {
       const checkoutResult = await checkout({
         counter_no: counterNo,
-        customer_name: isBusinessBillingMode(billingMode) ? companyName : customerName,
+        customer_name: (isBusinessBillingMode(billingMode) ? companyName : customerName) || 'Walk-in Customer',
         customer_phone: customerPhone,
         items: cart.map((item) => ({
           ...item,
@@ -903,19 +1003,25 @@ export default function BillingTerminalView() {
         print_mode: printMode
       });
 
-      setPrintableInvoice({
+      const completedInvoice = {
         ...printableDraft,
         invoiceNo: checkoutResult.invoice_no || invoiceNo,
         paymentMode: activePaymentMode,
+        cashReceived: received,
+        changeReturned: Math.max(received - totals.grand, 0),
         totals: {
           ...printableDraft.totals,
           grand: Math.round(totals.grand),
           roundOff: Math.round(totals.grand) - totals.grand
         }
-      });
+      };
+      setPrintableInvoice(completedInvoice);
       setStatusMessage(`Invoice ${checkoutResult.invoice_no || invoiceNo} saved. Change due: ${formatMoney(Math.max(received - totals.grand, 0))}`);
-      resetBill();
-      refreshHistory(false);
+      window.setTimeout(() => {
+        window.print();
+        resetBill();
+        refreshHistory(false);
+      }, 80);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Checkout failed.');
     }
@@ -1018,8 +1124,52 @@ export default function BillingTerminalView() {
             </div>
           </div>
 
-          {errorMessage && <div className="alert-box" style={{ marginTop: 12 }}>{errorMessage}</div>}
-          {statusMessage && <div className="change-box" style={{ marginTop: 12 }}>{statusMessage}</div>}
+          <div className="billing-activity-panel">
+            <div className="activity-action-row">
+              <button className="secondary-button" onClick={() => refreshHistory(true)}>Old Bills / Reprint (F8)</button>
+              {latestInvoice ? (
+                <details className="activity-details activity-last-bill-details">
+                  <summary>
+                    <span>Last Bill</span>
+                    <strong className="mono">{latestInvoice.invoice_no}</strong>
+                  </summary>
+                  <div className="activity-detail-grid">
+                    <span>Amount</span><strong>{formatMoney(latestInvoice.grand_total)}</strong>
+                    <span>Cash Given</span><strong>{formatMoney(latestInvoice.cash_received)}</strong>
+                    <span>Change</span><strong className="stock-low">{formatMoney(latestInvoice.change_returned)}</strong>
+                  </div>
+                </details>
+              ) : (
+                <button className="secondary-button" disabled>Last Bill</button>
+              )}
+              <button className="secondary-button" onClick={holdCurrentBill}>Hold Bill (F6)</button>
+              <details className="activity-details activity-held-details">
+                <summary>
+                  <span>Held Bills</span>
+                  <strong>{heldBills.length}</strong>
+                </summary>
+                <div className="activity-held-list">
+                  {heldBills.length === 0 ? (
+                    <span className="muted">No held bills.</span>
+                  ) : (
+                    heldBills.map((heldBill) => (
+                      <div key={heldBill.hold_token} className="activity-held-row">
+                        <div>
+                          <strong>{heldBill.hold_token}</strong>
+                          <span>{heldBill.item_count} items | {formatMoney(heldBill.bill_total)}</span>
+                        </div>
+                        <div className="activity-held-actions">
+                          <button className="secondary-button" onClick={() => resumeHeldBill(heldBill)}>Resume</button>
+                          <button className="danger-button" onClick={() => deleteHeldBillSafely(heldBill)}>Delete</button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </details>
+            </div>
+            {errorMessage && <div className="alert-box">{errorMessage}</div>}
+            </div>
 
           <div className="billing-table-wrap" ref={billingTableRef}>
             <table className="product-table billing-product-table">
@@ -1078,53 +1228,43 @@ export default function BillingTerminalView() {
       </section>
 
       <aside className="sidebar">
-        {latestInvoice && (
-          <section className="panel last-bill-panel">
-            <details>
-              <summary>
-                <span>Last Bill</span>
-                <strong className="mono">{latestInvoice.invoice_no}</strong>
-              </summary>
-              <div className="panel-body">
-              <div className="summary-line"><span>Bill No:</span><strong className="mono">{latestInvoice.invoice_no}</strong></div>
-              <div className="summary-line"><span>Amount:</span><strong>{formatMoney(latestInvoice.grand_total)}</strong></div>
-              <div className="summary-line"><span>Cash Given:</span><strong>{formatMoney(latestInvoice.cash_received)}</strong></div>
-              <div className="summary-line"><span>Change Returned:</span><strong className="stock-low">{formatMoney(latestInvoice.change_returned)}</strong></div>
-              </div>
-            </details>
-          </section>
-        )}
-
         <section className="panel customer-side-panel">
-          <details className="billing-customer-details">
-            <summary>
-              <span>{isBusinessBillingMode(billingMode) ? companyName || 'Business customer' : customerName || 'Walk-in Customer'}</span>
-              <span>{loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} pts` : 'Customer'}</span>
-            </summary>
-            <div className="customer-grid billing-customer-grid">
-              <div className="billing-loyalty-inline">
-                <span>Loyalty: {loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} pts` : 'None'}</span>
-                <button className="secondary-button" onClick={handleCustomerLookup}>Lookup</button>
-                <button className="secondary-button" onClick={handleCustomerSave}>Save</button>
-              </div>
-              <label>
-                <span className="field-label">{isBusinessBillingMode(billingMode) ? 'Company name' : 'Customer name'}</span>
-                <input className="field" value={isBusinessBillingMode(billingMode) ? companyName : customerName} onChange={(event) => (isBusinessBillingMode(billingMode) ? setCompanyName(event.target.value) : setCustomerName(event.target.value))} />
-              </label>
-              <label>
-                <span className="field-label">Phone No</span>
-                <input className="field" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="Optional" />
-              </label>
-              <label>
-                <span className="field-label">GST No</span>
-                <input className="field" maxLength={15} value={customerGstin} onChange={(event) => setCustomerGstin(event.target.value.toUpperCase())} placeholder={activeMode.taxType === 'INTERSTATE' ? 'Required for B2B' : 'Optional'} />
-              </label>
-              <label>
-                <span className="field-label">Address</span>
-                <input className="field" value={customerAddress} onChange={(event) => setCustomerAddress(event.target.value)} placeholder="Customer address" />
-              </label>
+          <div className="panel-header compact-panel-header">
+            <h2 className="panel-title">Customer</h2>
+            <span className="status-chip">{loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} pts` : 'Walk-in'}</span>
+          </div>
+          <div className="customer-grid billing-customer-grid">
+            <div className="billing-loyalty-inline">
+              <span>Loyalty: {loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} pts` : 'None'}</span>
+              <button className="secondary-button" onClick={handleCustomerLookup}>Lookup</button>
+              <button className="secondary-button" onClick={handleCustomerSave}>Save</button>
             </div>
-          </details>
+            <label>
+              <span className="field-label">{isBusinessBillingMode(billingMode) ? 'Company name' : 'Customer name'}</span>
+              <input ref={customerNameRef} className="field" value={isBusinessBillingMode(billingMode) ? companyName : customerName} onChange={(event) => (isBusinessBillingMode(billingMode) ? setCompanyName(event.target.value) : setCustomerName(event.target.value))} placeholder={isBusinessBillingMode(billingMode) ? 'Company name' : 'Customer name'} />
+            </label>
+            <label>
+              <span className="field-label">Phone No</span>
+              <input
+                ref={customerPhoneRef}
+                className="field"
+                value={customerPhone}
+                onChange={(event) => setCustomerPhone(event.target.value)}
+                onKeyDown={(event) => {
+                  if (paymentMode !== 'Cash') handlePaymentEnter(event, paymentMode);
+                }}
+                placeholder="Phone or NO"
+              />
+            </label>
+            <label>
+              <span className="field-label">GST No</span>
+              <input className="field" maxLength={15} value={customerGstin} onChange={(event) => setCustomerGstin(event.target.value.toUpperCase())} placeholder={activeMode.taxType === 'INTERSTATE' ? 'Required for B2B' : 'Optional'} />
+            </label>
+            <label>
+              <span className="field-label">Address</span>
+              <input className="field" value={customerAddress} onChange={(event) => setCustomerAddress(event.target.value)} placeholder="Customer address" />
+            </label>
+          </div>
         </section>
 
         <section className="panel payment-panel">
@@ -1132,17 +1272,30 @@ export default function BillingTerminalView() {
             <h2 className="panel-title">Payment</h2>
           </div>
           <div className="panel-body">
-            <div className="summary-line"><span>Taxable</span><strong>{formatMoney(totals.taxable)}</strong></div>
-            <div className="summary-line"><span>CGST</span><strong>{formatMoney(totals.cgst)}</strong></div>
-            <div className="summary-line"><span>SGST</span><strong>{formatMoney(totals.sgst)}</strong></div>
-            <div className="summary-line"><span>IGST</span><strong>{formatMoney(totals.igst)}</strong></div>
-            <div className="summary-line"><span>Discount</span><strong>{formatMoney(totals.discount)}</strong></div>
-
             <div className="total-box">
               <span className="total-label">Net payable</span>
               <span className="total-value">{formatMoney(totals.grand)}</span>
               <span className="amount-words">{amountInWords(totals.grand)}</span>
+              {paymentMode === 'Cash' && (
+                <div className="payment-change-line">
+                  <span>Change due</span>
+                  <strong>{formatMoney(changeDue)}</strong>
+                </div>
+              )}
             </div>
+            <details className="tax-breakup-details">
+              <summary>
+                <span>Tax details</span>
+                <strong>{formatMoney(totals.cgst + totals.sgst + totals.igst)}</strong>
+              </summary>
+              <div className="tax-breakup-body">
+                <div className="summary-line"><span>Taxable</span><strong>{formatMoney(totals.taxable)}</strong></div>
+                <div className="summary-line"><span>CGST</span><strong>{formatMoney(totals.cgst)}</strong></div>
+                <div className="summary-line"><span>SGST</span><strong>{formatMoney(totals.sgst)}</strong></div>
+                <div className="summary-line"><span>IGST</span><strong>{formatMoney(totals.igst)}</strong></div>
+                <div className="summary-line"><span>Discount</span><strong>{formatMoney(totals.discount)}</strong></div>
+              </div>
+            </details>
 
             <div className="form-stack">
               <label>
@@ -1167,17 +1320,18 @@ export default function BillingTerminalView() {
                   <label>
                     <span className="field-label">Cash received</span>
                     <input
+                      ref={cashReceivedRef}
                       className="field"
                       type="number"
                       min="0"
                       value={cashReceived}
+                      onKeyDown={(event) => handlePaymentEnter(event, 'Cash')}
                       onChange={(event) => {
                         setCashReceived(event.target.value);
                         if (errorMessage.includes('Cash received')) setErrorMessage('');
                       }}
                     />
                   </label>
-                  <div className="change-box">Change due: {formatMoney(changeDue)}</div>
                   {!isCashReady && <div className="alert-box">Enter customer cash before completing sale.</div>}
                 </>
               )}
@@ -1187,8 +1341,10 @@ export default function BillingTerminalView() {
                   <label>
                     <span className="field-label">{paymentMode} reference</span>
                     <input
+                      ref={paymentReferenceRef}
                       className="field"
                       value={paymentReference}
+                      onKeyDown={(event) => handlePaymentEnter(event, paymentMode)}
                       onChange={(event) => setPaymentReference(event.target.value)}
                       placeholder={paymentMode === 'UPI' ? 'UPI transaction ID / last 4 digits' : 'Card approval code / terminal slip no'}
                     />
@@ -1206,44 +1362,14 @@ export default function BillingTerminalView() {
 
               <button className="primary-button" disabled={!canCompleteSale} onClick={() => submitCheckout(paymentMode)}>Complete Sale</button>
               <div className="quick-actions">
-                <button className="secondary-button" onClick={() => submitCheckout('Cash')}>F12 Cash</button>
-                <button className="secondary-button" onClick={() => submitCheckout('UPI')}>F11 UPI</button>
-                <button className="secondary-button" onClick={() => submitCheckout('Card')}>F10 Card</button>
-                <button className="secondary-button" onClick={() => refreshHistory(true)}>F8 History</button>
-                <button className="secondary-button" onClick={holdCurrentBill}>Hold Bill</button>
+                <button className="secondary-button" onClick={() => preparePayment('Cash')}>F12 Cash</button>
+                <button className="secondary-button" onClick={() => preparePayment('UPI')}>F11 UPI</button>
+                <button className="secondary-button" onClick={() => preparePayment('Card')}>F10 Card</button>
+                <button className="secondary-button" onClick={() => refreshHistory(true)}>F8 Old Bills</button>
+                <button className="secondary-button" onClick={holdCurrentBill}>F6 Hold</button>
                 <button className="secondary-button" onClick={() => printBill(printableInvoice || printableDraft)}>Print</button>
               </div>
             </div>
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-header">
-            <h2 className="panel-title">Held Bills</h2>
-            <span className="status-chip">{heldBills.length}</span>
-          </div>
-          <div className="panel-body hold-list">
-            {heldBills.length === 0 ? (
-              <span className="muted">No bills on hold.</span>
-            ) : (
-              heldBills.map((heldBill) => (
-                <div key={heldBill.hold_token} className="hold-card">
-                  <div>
-                    <strong>{heldBill.hold_token}</strong>
-                    <div className="muted">Counter {heldBill.counter_no} | {heldBill.customer_name || 'Walk-in Customer'}</div>
-                    <div className="muted">{heldBill.item_count} items | {formatMoney(heldBill.bill_total)}</div>
-                    {isSensitiveBillingMode(getHeldBillMode(heldBill)) && (
-                      <div className="hold-mode-warning">{BILLING_MODES[getHeldBillMode(heldBill)].label} | approval required</div>
-                    )}
-                    <div className="muted">{heldBill.updated_at ? new Date(heldBill.updated_at).toLocaleString() : '-'}</div>
-                  </div>
-                  <div className="hold-actions">
-                    <button className="secondary-button" onClick={() => resumeHeldBill(heldBill)}>Resume</button>
-                    <button className="danger-button" onClick={() => deleteHeldBillSafely(heldBill)}>Delete</button>
-                  </div>
-                </div>
-              ))
-            )}
           </div>
         </section>
 
@@ -1257,6 +1383,32 @@ export default function BillingTerminalView() {
               <button className="secondary-button" onClick={() => setShowHistory(false)}>Close</button>
             </div>
             <div className="panel-body">
+              <div className="history-search-row">
+                <label>
+                  <span className="field-label">Bill number / customer</span>
+                  <input
+                    className="field"
+                    value={historySearch}
+                    onChange={(event) => setHistorySearch(event.target.value)}
+                    placeholder="Search invoice no, customer, payment"
+                    autoFocus
+                  />
+                </label>
+                <label>
+                  <span className="field-label">Bill date</span>
+                  <input
+                    className="field"
+                    type="date"
+                    value={historyDate}
+                    onChange={(event) => setHistoryDate(event.target.value)}
+                  />
+                </label>
+                <button className="secondary-button" onClick={() => {
+                  setHistorySearch('');
+                  setHistoryDate('');
+                }}>Clear</button>
+                <span className="status-chip">{filteredInvoiceHistory.length} bills</span>
+              </div>
               <table className="history-table">
                 <thead>
                   <tr>
@@ -1270,10 +1422,10 @@ export default function BillingTerminalView() {
                   </tr>
                 </thead>
                 <tbody>
-                  {invoiceHistory.length === 0 ? (
+                  {filteredInvoiceHistory.length === 0 ? (
                     <tr><td colSpan="7">No invoices found.</td></tr>
                   ) : (
-                    invoiceHistory.map((invoice) => (
+                    filteredInvoiceHistory.map((invoice) => (
                       <tr key={invoice.invoice_no}>
                         <td className="mono">{invoice.invoice_no}</td>
                         <td>{invoice.customer_name || 'Walk-in Customer'}</td>
@@ -1400,7 +1552,7 @@ export default function BillingTerminalView() {
         </div>
       )}
 
-      <div className="print-area" aria-hidden="true">
+      <div className={`print-area ${printMode === 'Thermal' ? 'print-thermal' : 'print-a4'}`} aria-hidden="true">
         <PrintableInvoice invoice={printableInvoice || printableDraft} mode={printMode} />
       </div>
     </div>

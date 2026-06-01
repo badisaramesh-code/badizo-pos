@@ -12,7 +12,7 @@ export const APP_TABS = [
   { key: 'barcode', label: 'Barcode', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'inward', label: 'Inward', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'reports', label: 'Reports', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
-  { key: 'books', label: 'Books', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
+  { key: 'books', label: 'Ledger Books', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'system', label: 'System', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] }
 ];
 

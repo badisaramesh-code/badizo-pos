@@ -113,6 +113,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     const {
       counter_no,
       customer_name,
+      customer_address,
       customer_phone,
       items,
       sub_total,
@@ -145,13 +146,14 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
 
     await connection.query(
       `INSERT INTO invoices
-       (invoice_no, customer_name, customer_phone, sub_total, gst_total, grand_total,
+       (invoice_no, customer_name, customer_address, customer_phone, sub_total, gst_total, grand_total,
         cash_received, change_returned, payment_mode, payment_status, payment_reference, billing_counter, transaction_type, billing_tier, tax_type,
         customer_company_name, customer_gstin, total_cgst, total_sgst, total_igst)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         invoiceNo,
         customer_name || 'Walk-in Customer',
+        customer_address || null,
         customer_phone || '',
         parseMoney(sub_total),
         parseMoney(gst_total),
@@ -280,11 +282,14 @@ router.get('/invoice/details', authenticate, authorize('SERVER', 'ADMIN', 'COUNT
     }
 
     const [itemRows] = await db.query(
-      `SELECT id, invoice_no, barcode, product_name, quantity, sale_price, gst_percent,
-              cgst_amount, sgst_amount, igst_amount, returned_qty
-       FROM invoice_items
-       WHERE invoice_no = ?
-       ORDER BY id ASC`,
+      `SELECT ii.id, ii.invoice_no, ii.barcode, ii.product_name, ii.quantity, ii.sale_price, ii.gst_percent,
+              ii.cgst_amount, ii.sgst_amount, ii.igst_amount, ii.returned_qty,
+              COALESCE(p.mrp, 0) AS mrp,
+              COALESCE(p.hsn_code, '') AS hsn_code
+       FROM invoice_items ii
+       LEFT JOIN products p ON p.barcode = ii.barcode
+       WHERE ii.invoice_no = ?
+       ORDER BY ii.id ASC`,
       [invoiceNo]
     );
 

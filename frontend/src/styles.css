@@ -467,6 +467,10 @@ button:disabled {
   border-color: #bde5c8;
 }
 
+.compact-panel-header {
+  padding-bottom: 0;
+}
+
 .customer-side-panel .billing-customer-details {
   padding: 0;
 }
@@ -546,6 +550,126 @@ button:disabled {
 .billing-scanner-row .search-input {
   padding: 11px 13px;
   font-size: 17px;
+}
+
+.billing-activity-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 9px;
+  border: 1px solid #c6ead6;
+  border-radius: 8px;
+  background: #eef8f2;
+}
+
+.billing-activity-panel .change-box,
+.billing-activity-panel .alert-box {
+  padding: 8px 10px;
+}
+
+.activity-action-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(160px, 0.9fr) minmax(125px, 0.7fr) minmax(125px, 0.7fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.activity-action-row .secondary-button {
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.activity-held-details,
+.activity-last-bill-details {
+  min-width: 0;
+}
+
+.activity-held-details summary,
+.activity-last-bill-details summary {
+  min-height: 35px;
+  background: var(--surface-soft);
+  border: 0;
+}
+
+.activity-held-details[open],
+.activity-last-bill-details[open] {
+  grid-column: 1 / -1;
+}
+
+.activity-details {
+  overflow: hidden;
+  border: 1px solid #bde5c8;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.activity-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  color: var(--brand-dark);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.activity-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, auto 1fr);
+  gap: 6px 10px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.activity-detail-grid span {
+  color: var(--muted);
+}
+
+.activity-held-list {
+  display: grid;
+  gap: 6px;
+  max-height: 170px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.activity-held-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fcf9;
+}
+
+.activity-held-row div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.activity-held-row span {
+  color: var(--muted);
+}
+
+.activity-held-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.activity-held-actions .secondary-button,
+.activity-held-actions .danger-button {
+  padding: 5px 7px;
+  font-size: 11px;
 }
 
 .invoice-chip,
@@ -654,6 +778,22 @@ button:disabled {
   color: #344054;
   font-size: 12px;
   font-weight: 800;
+}
+
+.history-search-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 170px auto auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fcf9;
+}
+
+.history-search-row .secondary-button {
+  padding: 9px 12px;
 }
 
 .billing-product-table tbody tr:nth-child(odd):not(.unknown-row) {
@@ -842,7 +982,7 @@ button:disabled {
   display: grid;
   grid-template-columns: 1fr;
   gap: 7px;
-  padding: 0 10px 10px;
+  padding: 8px 10px 10px;
 }
 
 .customer-side-panel .field-label {
@@ -876,7 +1016,7 @@ button:disabled {
 }
 
 .total-box {
-  margin: 12px 0 16px;
+  margin: 0 0 10px;
   padding: 14px;
   border-radius: 8px;
   background: #eef8f2;
@@ -898,10 +1038,61 @@ button:disabled {
   font-weight: 900;
 }
 
+.payment-change-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #bde5c8;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.payment-change-line strong {
+  font-size: 20px;
+}
+
+.tax-breakup-details {
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.tax-breakup-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.tax-breakup-details summary strong {
+  color: var(--brand-dark);
+}
+
+.tax-breakup-body {
+  padding: 2px 10px 8px;
+  border-top: 1px solid var(--line);
+  background: #f8fcf9;
+}
+
+.tax-breakup-body .summary-line {
+  padding: 4px 0;
+  font-size: 12px;
+}
+
 .form-stack {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .field-label {
@@ -979,7 +1170,12 @@ button:disabled {
 .quick-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 6px;
+}
+
+.quick-actions .secondary-button {
+  padding: 7px 8px;
+  font-size: 12px;
 }
 
 .inline-field-action {
@@ -1205,6 +1401,24 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.held-bills-panel summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  color: var(--brand-dark);
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.held-bills-panel .panel-body {
+  padding: 0 10px 10px;
 }
 
 .hold-card {
@@ -1512,6 +1726,7 @@ button:disabled {
   background: #fff;
   color: #111;
   font-family: Arial, sans-serif;
+  box-sizing: border-box;
 }
 
 .print-invoice h1,
@@ -1520,9 +1735,34 @@ button:disabled {
   margin: 0;
 }
 
+.thermal-logo-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 25mm;
+  margin: 0 0 2mm;
+  overflow: hidden;
+}
+
+.thermal-logo-slot picture {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.thermal-logo-slot img {
+  display: block;
+  max-width: 72mm;
+  max-height: 23mm;
+  object-fit: contain;
+}
+
 .print-rule {
   border-top: 1px dashed #111;
-  margin: 8px 0;
+  margin: 5px 0;
 }
 
 .print-center {
@@ -1551,17 +1791,21 @@ button:disabled {
 }
 
 .thermal-paper {
-  width: 78mm;
-  padding: 4mm;
-  font-size: 11px;
+  width: 80mm;
+  min-width: 80mm;
+  max-width: 80mm;
+  padding: 3mm;
+  font-size: 10.5px;
   font-weight: 700;
+  page: thermal-receipt;
+  overflow: hidden;
 }
 
 .thermal-paper .print-store-header {
   text-align: center;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 3px;
   letter-spacing: 0;
 }
 
@@ -1571,18 +1815,86 @@ button:disabled {
   text-transform: uppercase;
 }
 
+.thermal-paper .print-store-header p {
+  font-size: 10.5px;
+}
+
 .print-meta-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 5px 10px;
-  margin: 8px 0;
+  gap: 6px 10px;
+  margin: 6px 0;
+}
+
+.thermal-customer-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 5px 0 7px;
+  padding: 4px 0;
+  border-bottom: 1px dashed #111;
+}
+
+.thermal-customer-block div {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 4px;
+  line-height: 1.2;
+}
+
+.thermal-customer-block span {
+  font-weight: 700;
+}
+
+.thermal-customer-block strong {
+  overflow-wrap: anywhere;
 }
 
 .thermal-items th,
-.thermal-items td,
+.thermal-items td {
+  padding: 3px 2px;
+  font-size: 9.5px;
+  line-height: 1.15;
+}
+
+.thermal-items th {
+  border-bottom: 1px dashed #111;
+  font-size: 9px;
+}
+
+.thermal-product-name {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.2;
+  max-height: 2.4em;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.thermal-product-row td {
+  border-bottom: 0;
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+.thermal-hsn-row td {
+  padding-top: 1px;
+  font-size: 9px;
+}
+
 .gst-summary-table th,
 .gst-summary-table td {
-  font-size: 11px;
+  padding: 4px 2px;
+  font-size: 9px;
+  line-height: 1.15;
+  text-align: right;
+}
+
+.gst-summary-table th:first-child,
+.gst-summary-table td:first-child {
+  text-align: left;
 }
 
 .thermal-total-box {
@@ -1597,6 +1909,15 @@ button:disabled {
   text-align: right;
 }
 
+.gst-summary-total-row td,
+.print-discount-row {
+  font-weight: 900;
+}
+
+.print-discount-row strong {
+  font-size: 14px;
+}
+
 .print-terms {
   display: flex;
   flex-direction: column;
@@ -1605,27 +1926,247 @@ button:disabled {
 }
 
 .a4-paper {
-  width: 210mm;
-  min-height: 297mm;
-  padding: 12mm;
-  font-size: 12px;
+  width: 190mm;
+  min-height: auto;
+  padding: 3mm;
+  font-size: 8px;
+  line-height: 1.08;
+  page: a4-invoice;
+}
+
+.a4-one-page {
+  width: 190mm;
+  height: 287mm;
+  max-height: 287mm;
+  padding: 4mm;
+  box-sizing: border-box;
+  overflow: hidden;
+  font-size: 8.5px;
+  line-height: 1.12;
+}
+
+.a4-one-page strong {
+  font-weight: 900;
+}
+
+.a4-one-title {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  align-items: center;
+  margin-bottom: 3px;
+}
+
+.a4-one-title strong {
+  text-align: center;
+  font-size: 13px;
+}
+
+.a4-one-title span:last-child {
+  text-align: center;
+  font-weight: 900;
+}
+
+.a4-one-top {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid #111;
+  border-bottom: 0;
+}
+
+.a4-one-shop {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+}
+
+.a4-one-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-left: 1px solid #111;
+}
+
+.a4-one-meta div {
+  min-height: 18px;
+  padding: 2px 3px;
+  border-right: 1px solid #111;
+  border-bottom: 1px solid #111;
+}
+
+.a4-one-meta div:nth-child(2n) {
+  border-right: 0;
+}
+
+.a4-one-meta span,
+.a4-one-buyer span,
+.a4-one-words span {
+  display: block;
+  color: #333;
+}
+
+.a4-one-buyer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid #111;
+  border-bottom: 0;
+}
+
+.a4-one-buyer > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 35px;
+  padding: 4px;
+}
+
+.a4-one-buyer > div:first-child {
+  border-right: 1px solid #111;
+}
+
+.a4-one-items {
+  border: 1px solid #111;
+  border-bottom: 0;
+}
+
+.a4-one-item-head,
+.a4-one-item-row,
+.a4-one-tax-row,
+.a4-one-total-row {
+  display: grid;
+  grid-template-columns: 7% 34% 11% 11% 12% 10% 8% 7%;
+}
+
+.a4-one-item-head > *,
+.a4-one-item-row > *,
+.a4-one-tax-row > *,
+.a4-one-total-row > * {
+  min-height: 16px;
+  padding: 2px 3px;
+  border-right: 1px solid #111;
+  border-bottom: 1px solid #111;
+}
+
+.a4-one-item-head > *:last-child,
+.a4-one-item-row > *:last-child,
+.a4-one-tax-row > *:last-child,
+.a4-one-total-row > *:last-child {
+  border-right: 0;
+}
+
+.a4-one-item-head {
+  font-weight: 900;
+}
+
+.a4-one-item-head > *:nth-child(n+4),
+.a4-one-item-row > *:nth-child(n+4),
+.a4-one-tax-row > *:last-child,
+.a4-one-total-row > *:nth-child(4),
+.a4-one-total-row > *:last-child {
+  text-align: right;
+}
+
+.a4-one-words,
+.a4-one-gst-title,
+.a4-one-declaration,
+.a4-one-signature {
+  border: 1px solid #111;
+  border-top: 0;
+}
+
+.a4-one-words {
+  padding: 3px 5px;
+}
+
+.a4-one-gst-title {
+  padding: 2px 5px;
+  text-align: center;
+  font-weight: 900;
+}
+
+.a4-one-gst {
+  display: grid;
+  border-left: 1px solid #111;
+  border-right: 1px solid #111;
+  font-size: 8px;
+}
+
+.a4-one-gst.local {
+  grid-template-columns: 12% 17% 10% 10% 14% 10% 14% 13%;
+}
+
+.a4-one-gst.igst {
+  grid-template-columns: 16% 22% 14% 14% 17% 17%;
+}
+
+.a4-one-gst > * {
+  min-height: 14px;
+  padding: 1px 3px;
+  border-right: 1px solid #111;
+  border-bottom: 1px solid #111;
+}
+
+.a4-one-gst > *:nth-child(8n),
+.a4-one-gst.igst > *:nth-child(6n) {
+  border-right: 0;
+}
+
+.a4-one-declaration {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.a4-one-declaration > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 30px;
+  padding: 4px;
+}
+
+.a4-one-declaration > div:first-child {
+  border-right: 1px solid #111;
+}
+
+.a4-one-signature {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 32px;
+  padding: 4px;
+}
+
+.a4-one-signature strong,
+.a4-one-signature em {
+  grid-column: 2;
+  text-align: right;
+}
+
+.a4-one-signature em {
+  align-self: end;
+  font-style: normal;
+}
+
+.a4-one-generated {
+  padding-top: 3px;
+  text-align: center;
+  font-size: 8px;
+  font-weight: 900;
 }
 
 .a4-title-row {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 2px;
 }
 
 .a4-title-row h1 {
   text-align: center;
-  font-size: 16px;
+  font-size: 11px;
 }
 
 .a4-title-row span:last-child {
   text-align: center;
-  font-size: 11px;
+  font-size: 8px;
   font-weight: 700;
 }
 
@@ -1641,8 +2182,8 @@ button:disabled {
 .a4-declaration-bank > div {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 8px;
+  gap: 1px;
+  padding: 3px;
 }
 
 .a4-meta-table {
@@ -1652,8 +2193,8 @@ button:disabled {
 }
 
 .a4-meta-table div {
-  min-height: 35px;
-  padding: 5px;
+  min-height: 16px;
+  padding: 2px;
   border-right: 1px solid #111;
   border-bottom: 1px solid #111;
 }
@@ -1667,7 +2208,7 @@ button:disabled {
 .a4-words span {
   display: block;
   color: #333;
-  font-size: 11px;
+  font-size: 7.5px;
 }
 
 .a4-buyer-blocks {
@@ -1689,12 +2230,25 @@ button:disabled {
   border: 1px solid #111;
 }
 
-.a4-items tbody tr:first-child td {
-  height: 38px;
+.a4-items th,
+.a4-items td {
+  padding: 1.5px 2px;
+  font-size: 7.6px;
 }
 
-.a4-tax-lines td {
-  height: 210px;
+.a4-gst-table th,
+.a4-gst-table td {
+  padding: 1.5px 2px;
+  font-size: 7.4px;
+}
+
+.a4-items tbody tr:first-child td {
+  height: auto;
+}
+
+.a4-tax-line td {
+  padding-top: 1.5px;
+  padding-bottom: 1.5px;
 }
 
 .a4-items tfoot td {
@@ -1702,14 +2256,36 @@ button:disabled {
   font-weight: 800;
 }
 
+.a4-grand-total-row td {
+  font-size: 8px;
+}
+
 .a4-words {
   border: 1px solid #111;
   border-top: 0;
-  padding: 6px 8px;
+  padding: 2px 3px;
+  font-weight: 800;
 }
 
 .a4-gst-table {
   margin-top: 0;
+}
+
+.a4-paper .print-table {
+  margin: 0;
+}
+
+.a4-paper > * {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.a4-section-title {
+  padding: 2px 3px;
+  border: 1px solid #111;
+  border-top: 0;
+  font-weight: 900;
+  text-align: center;
 }
 
 .a4-declaration-bank {
@@ -1717,15 +2293,29 @@ button:disabled {
   grid-template-columns: 1fr 1fr;
   border: 1px solid #111;
   border-top: 0;
+  min-height: 24px;
 }
 
 .a4-signature {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  min-height: 58px;
+  min-height: 24px;
   border: 1px solid #111;
   border-top: 0;
-  padding: 6px 8px;
+  padding: 3px 4px;
+}
+
+.a4-bottom-summary {
+  margin-top: 0;
+}
+
+.a4-items + .a4-bottom-summary .a4-words:first-child {
+  border-top: 0;
+}
+
+.a4-generated-note {
+  padding-top: 2px;
+  font-size: 7.5px;
 }
 
 .a4-signature strong,
@@ -1741,12 +2331,34 @@ button:disabled {
 
 @media print {
   @page {
+    margin: 0;
+  }
+
+  @page thermal-receipt {
+    size: 80mm auto;
+    margin: 0;
+  }
+
+  @page a4-invoice {
     size: A4;
     margin: 0;
   }
 
   body {
     background: #fff;
+  }
+
+  html,
+  body,
+  #root {
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .topbar,
+  .billing-grid > :not(.print-area) {
+    display: none !important;
   }
 
   body * {
@@ -1760,30 +2372,57 @@ button:disabled {
 
   .print-area {
     display: block;
-    position: absolute;
-    inset: 0 auto auto 0;
+    position: static;
     width: auto;
+    margin: 0;
+    padding: 0;
+  }
+
+  .print-area.print-thermal {
+    width: 80mm;
+    min-width: 80mm;
+    max-width: 80mm;
+  }
+
+  .print-area.print-a4 {
+    width: 190mm;
+    min-width: 190mm;
+    max-width: 190mm;
+    height: 297mm;
+    max-height: 297mm;
+    overflow: hidden;
   }
 
   .app-shell,
   .workspace,
   .billing-grid {
-    display: block;
+    display: block !important;
     padding: 0;
     margin: 0;
     max-width: none;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
   }
 
   .thermal-paper {
-    width: 78mm;
+    width: 80mm;
+    min-width: 80mm;
+    max-width: 80mm;
     min-height: auto;
     padding: 3mm;
+    margin: 0;
+    box-sizing: border-box;
   }
 
   .a4-paper {
-    width: 210mm;
-    min-height: 297mm;
-    padding: 10mm;
+    width: 190mm;
+    height: 287mm;
+    max-height: 287mm;
+    min-height: auto;
+    box-sizing: border-box;
+    overflow: hidden;
   }
 }
 

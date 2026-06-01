@@ -3,8 +3,11 @@ export const THERMAL_RECEIPT_TEMPLATE = {
   label: 'Thermal receipt',
   paperClass: 'thermal-paper',
   sections: [
+    { id: 'thermal-logo', type: 'thermalLogo', enabled: true },
     { id: 'store-header', type: 'storeHeader', enabled: true },
     { id: 'receipt-meta', type: 'metaGrid', enabled: true },
+    { id: 'meta-customer-rule', type: 'rule', enabled: true },
+    { id: 'customer-details', type: 'thermalCustomer', enabled: true },
     { id: 'thermal-items', type: 'itemTable', enabled: true },
     { id: 'free-products', type: 'freeProducts', enabled: true, title: '*** Free Product Details ***' },
     { id: 'billing-total', type: 'thermalTotals', enabled: true },
@@ -15,10 +18,12 @@ export const THERMAL_RECEIPT_TEMPLATE = {
     { id: 'thanks', type: 'centerText', enabled: true, text: 'Thank You Visit Again' }
   ],
   itemColumns: [
-    { key: 'barcode', label: 'BARCODE', width: '28%' },
-    { key: 'gst', label: 'GST %', width: '14%', align: 'right' },
-    { key: 'quantity', label: 'Qty', width: '14%', align: 'right' },
-    { key: 'total', label: 'TOTAL Rs', width: '18%', align: 'right' }
+    { key: 'barcode', label: 'Barcode/Product', width: '34%' },
+    { key: 'mrp', label: 'MRP', width: '14%', align: 'right' },
+    { key: 'discount', label: 'Disc', width: '13%', align: 'right' },
+    { key: 'gst', label: 'GST%', width: '12%', align: 'right' },
+    { key: 'quantity', label: 'Qty', width: '9%', align: 'right' },
+    { key: 'total', label: 'Total', width: '18%', align: 'right' }
   ],
   terms: [
     'E. & O. E',
@@ -46,13 +51,14 @@ export const A4_TAX_INVOICE_TEMPLATE = {
     { id: 'generated-note', type: 'centerText', enabled: true, text: 'This is a Computer Generated Invoice' }
   ],
   itemColumns: [
-    { key: 'serial', label: 'Sl No.', width: '6%' },
-    { key: 'description', label: 'Description of Goods', width: '38%' },
-    { key: 'hsn', label: 'HSN/SAC', width: '12%' },
-    { key: 'quantity', label: 'Quantity', width: '12%', align: 'right' },
-    { key: 'rateWithTax', label: 'Rate (Incl. of Tax)', width: '12%', align: 'right' },
-    { key: 'rate', label: 'Rate', width: '10%', align: 'right' },
-    { key: 'amount', label: 'Amount', width: '10%', align: 'right' }
+    { key: 'serial', label: 'Sl No.', width: '5%' },
+    { key: 'description', label: 'Description of Goods', width: '34%' },
+    { key: 'hsn', label: 'HSN/SAC', width: '11%' },
+    { key: 'quantity', label: 'Quantity', width: '11%', align: 'right' },
+    { key: 'rateWithTax', label: 'Rate (Incl. of Tax)', width: '11%', align: 'right' },
+    { key: 'rate', label: 'Rate', width: '9%', align: 'right' },
+    { key: 'gst', label: 'Tax%', width: '8%', align: 'right' },
+    { key: 'amount', label: 'Amount', width: '11%', align: 'right' }
   ],
   declaration: 'We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.',
   bankDetails: [
