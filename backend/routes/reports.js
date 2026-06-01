@@ -109,9 +109,10 @@ router.get('/dashboard', authorize('SERVER', 'ADMIN'), async (_req, res) => {
 
 router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
   try {
-    const date = normalizeDate(req.query.date);
+    const from = normalizeDate(req.query.from || req.query.date);
+    const to = normalizeDate(req.query.to || from, from);
     const counter = normalizeCounter(req.query.counter);
-    const values = [date];
+    const values = [from, to];
     let counterSql = '';
 
     if (counter) {
@@ -122,6 +123,7 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
     const [rows] = await db.query(
       `SELECT
          i.invoice_no,
+         DATE_FORMAT(i.created_at, '%d-%m-%Y') AS bill_date,
          TIME_FORMAT(i.created_at, '%H:%i') AS bill_time,
          i.customer_name,
          COALESCE(item_counts.item_count, 0) AS item_count,
@@ -137,7 +139,7 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
          FROM invoice_items
          GROUP BY invoice_no
        ) item_counts ON item_counts.invoice_no = i.invoice_no
-       WHERE DATE(i.created_at) = ?
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
        ${counterSql}
        ORDER BY i.created_at DESC`,
       values
@@ -151,7 +153,7 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
       total: acc.total + Number(row.grand_total || 0)
     }), { billCount: 0, itemCount: 0, taxable: 0, gst: 0, total: 0 });
 
-    res.json({ date, counter: counter || 'ALL', rows, totals });
+    res.json({ from, to, counter: counter || 'ALL', rows, totals });
   } catch (err) {
     console.error('Daily sales report failed:', err.message);
     res.status(500).json({ error: 'Unable to load daily sales report.' });
@@ -160,14 +162,16 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
 
 router.get('/daily-sales/export', authorize('SERVER', 'ADMIN'), async (req, res) => {
   try {
-    const date = normalizeDate(req.query.date);
+    const from = normalizeDate(req.query.from || req.query.date);
+    const to = normalizeDate(req.query.to || from, from);
     const counter = normalizeCounter(req.query.counter);
-    const { rows, totals } = await getDailySalesForExport(date, counter);
-    const headers = ['invoice_no', 'time', 'customer', 'items', 'taxable', 'gst', 'total', 'payment_mode', 'counter'];
+    const { rows, totals } = await getDailySalesForExport(from, to, counter);
+    const headers = ['invoice_no', 'date', 'time', 'customer', 'items', 'taxable', 'gst', 'total', 'payment_mode', 'counter'];
     const csv = [
       csvLine(headers),
       ...rows.map((row) => csvLine([
         row.invoice_no,
+        row.bill_date,
         row.bill_time,
         row.customer_name,
         row.item_count,
@@ -178,11 +182,11 @@ router.get('/daily-sales/export', authorize('SERVER', 'ADMIN'), async (req, res)
         row.billing_counter
       ])),
       '',
-      csvLine(['TOTAL', '', '', totals.itemCount, totals.taxable, totals.gst, totals.total, '', counter || 'ALL'])
+      csvLine(['TOTAL', '', '', '', totals.itemCount, totals.taxable, totals.gst, totals.total, '', counter || 'ALL'])
     ].join('\n');
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="badizo_daily_sales_${date}.csv"`);
+    res.setHeader('Content-Disposition', `attachment; filename="badizo_daily_sales_${from}_to_${to}.csv"`);
     res.send(csv);
   } catch (err) {
     console.error('Daily sales export failed:', err.message);
@@ -190,8 +194,8 @@ router.get('/daily-sales/export', authorize('SERVER', 'ADMIN'), async (req, res)
   }
 });
 
-async function getDailySalesForExport(date, counter) {
-  const values = [date];
+async function getDailySalesForExport(from, to, counter) {
+  const values = [from, to];
   let counterSql = '';
   if (counter) {
     counterSql = 'AND i.billing_counter = ?';
@@ -201,6 +205,7 @@ async function getDailySalesForExport(date, counter) {
   const [rows] = await db.query(
     `SELECT
        i.invoice_no,
+       DATE_FORMAT(i.created_at, '%d-%m-%Y') AS bill_date,
        TIME_FORMAT(i.created_at, '%H:%i') AS bill_time,
        i.customer_name,
        COALESCE(item_counts.item_count, 0) AS item_count,
@@ -216,7 +221,7 @@ async function getDailySalesForExport(date, counter) {
        FROM invoice_items
        GROUP BY invoice_no
      ) item_counts ON item_counts.invoice_no = i.invoice_no
-     WHERE DATE(i.created_at) = ?
+     WHERE DATE(i.created_at) BETWEEN ? AND ?
      ${counterSql}
      ORDER BY i.created_at DESC`,
     values
@@ -347,6 +352,195 @@ router.get('/tax-summary', authorize('SERVER', 'ADMIN'), async (req, res) => {
   } catch (err) {
     console.error('Tax summary failed:', err.message);
     res.status(500).json({ error: 'Unable to load tax summary.' });
+  }
+});
+
+router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const from = normalizeDate(req.query.from, todayIso());
+    const to = normalizeDate(req.query.to, from);
+
+    const [b2b] = await db.query(
+      `SELECT
+         i.customer_gstin,
+         COALESCE(i.customer_company_name, i.customer_name, 'Customer') AS customer_name,
+         i.invoice_no,
+         DATE_FORMAT(i.created_at, '%d-%m-%Y') AS invoice_date,
+         i.tax_type,
+         ii.gst_percent,
+         SUM((ii.quantity * ii.sale_price) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable_value,
+         SUM(ii.cgst_amount) AS cgst,
+         SUM(ii.sgst_amount) AS sgst,
+         SUM(ii.igst_amount) AS igst,
+         SUM(ii.quantity * ii.sale_price) AS invoice_value
+       FROM invoices i
+       INNER JOIN invoice_items ii ON ii.invoice_no = i.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
+         AND (i.transaction_type = 'B2B' OR COALESCE(i.customer_gstin, '') <> '')
+       GROUP BY i.customer_gstin, customer_name, i.invoice_no, i.created_at, i.tax_type, ii.gst_percent
+       ORDER BY i.created_at ASC, i.invoice_no ASC, ii.gst_percent ASC`,
+      [from, to]
+    );
+
+    const [b2cl] = await db.query(
+      `SELECT
+         i.invoice_no,
+         DATE_FORMAT(i.created_at, '%d-%m-%Y') AS invoice_date,
+         COALESCE(i.customer_name, 'Consumer') AS customer_name,
+         ii.gst_percent,
+         SUM((ii.quantity * ii.sale_price) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable_value,
+         SUM(ii.igst_amount) AS igst,
+         SUM(ii.quantity * ii.sale_price) AS invoice_value
+       FROM invoices i
+       INNER JOIN invoice_items ii ON ii.invoice_no = i.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
+         AND i.transaction_type <> 'B2B'
+         AND COALESCE(i.customer_gstin, '') = ''
+         AND i.tax_type = 'INTERSTATE'
+         AND i.grand_total > 250000
+       GROUP BY i.invoice_no, i.created_at, customer_name, ii.gst_percent
+       ORDER BY i.created_at ASC, i.invoice_no ASC, ii.gst_percent ASC`,
+      [from, to]
+    );
+
+    const [b2c] = await db.query(
+      `SELECT
+         CASE WHEN i.tax_type = 'INTERSTATE' THEN 'B2CS-INTERSTATE' ELSE 'B2CS-LOCAL' END AS supply_type,
+         ii.gst_percent,
+         COUNT(DISTINCT i.invoice_no) AS bill_count,
+         SUM((ii.quantity * ii.sale_price) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable_value,
+         SUM(ii.cgst_amount) AS cgst,
+         SUM(ii.sgst_amount) AS sgst,
+         SUM(ii.igst_amount) AS igst,
+         SUM(ii.quantity * ii.sale_price) AS gross_value
+       FROM invoices i
+       INNER JOIN invoice_items ii ON ii.invoice_no = i.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
+         AND i.transaction_type <> 'B2B'
+         AND COALESCE(i.customer_gstin, '') = ''
+         AND NOT (i.tax_type = 'INTERSTATE' AND i.grand_total > 250000)
+       GROUP BY supply_type, ii.gst_percent
+       ORDER BY supply_type ASC, ii.gst_percent ASC`,
+      [from, to]
+    );
+
+    const [hsn] = await db.query(
+      `SELECT
+         COALESCE(p.hsn_code, '') AS hsn_code,
+         ii.gst_percent,
+         SUM(ii.quantity) AS quantity,
+         SUM((ii.quantity * ii.sale_price) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable_value,
+         SUM(ii.cgst_amount) AS cgst,
+         SUM(ii.sgst_amount) AS sgst,
+         SUM(ii.igst_amount) AS igst,
+         SUM(ii.quantity * ii.sale_price) AS total_value
+       FROM invoice_items ii
+       INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
+       LEFT JOIN products p ON p.barcode = ii.barcode
+       WHERE DATE(i.created_at) BETWEEN ? AND ? AND i.invoice_status <> 'CANCELLED'
+       GROUP BY COALESCE(p.hsn_code, ''), ii.gst_percent
+       ORDER BY hsn_code ASC, ii.gst_percent ASC`,
+      [from, to]
+    );
+
+    const [hsnB2b] = await db.query(
+      `SELECT
+         COALESCE(p.hsn_code, '') AS hsn_code,
+         ii.gst_percent,
+         SUM(ii.quantity) AS quantity,
+         SUM((ii.quantity * ii.sale_price) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable_value,
+         SUM(ii.cgst_amount) AS cgst,
+         SUM(ii.sgst_amount) AS sgst,
+         SUM(ii.igst_amount) AS igst,
+         SUM(ii.quantity * ii.sale_price) AS total_value
+       FROM invoice_items ii
+       INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
+       LEFT JOIN products p ON p.barcode = ii.barcode
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
+         AND (i.transaction_type = 'B2B' OR COALESCE(i.customer_gstin, '') <> '')
+       GROUP BY COALESCE(p.hsn_code, ''), ii.gst_percent
+       ORDER BY hsn_code ASC, ii.gst_percent ASC`,
+      [from, to]
+    );
+
+    const [hsnB2c] = await db.query(
+      `SELECT
+         COALESCE(p.hsn_code, '') AS hsn_code,
+         ii.gst_percent,
+         SUM(ii.quantity) AS quantity,
+         SUM((ii.quantity * ii.sale_price) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable_value,
+         SUM(ii.cgst_amount) AS cgst,
+         SUM(ii.sgst_amount) AS sgst,
+         SUM(ii.igst_amount) AS igst,
+         SUM(ii.quantity * ii.sale_price) AS total_value
+       FROM invoice_items ii
+       INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
+       LEFT JOIN products p ON p.barcode = ii.barcode
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
+         AND i.transaction_type <> 'B2B'
+         AND COALESCE(i.customer_gstin, '') = ''
+       GROUP BY COALESCE(p.hsn_code, ''), ii.gst_percent
+       ORDER BY hsn_code ASC, ii.gst_percent ASC`,
+      [from, to]
+    );
+
+    const [nilExempt] = await db.query(
+      `SELECT
+         CASE WHEN i.transaction_type = 'B2B' OR COALESCE(i.customer_gstin, '') <> '' THEN 'Registered' ELSE 'Unregistered' END AS supply_type,
+         SUM(ii.quantity * ii.sale_price) AS nil_rated_value
+       FROM invoices i
+       INNER JOIN invoice_items ii ON ii.invoice_no = i.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
+         AND ii.gst_percent = 0
+       GROUP BY supply_type
+       ORDER BY supply_type ASC`,
+      [from, to]
+    );
+
+    const [documents] = await db.query(
+      `SELECT
+         COUNT(*) AS issued_count,
+         SUM(CASE WHEN invoice_status = 'CANCELLED' THEN 1 ELSE 0 END) AS cancelled_count,
+         MIN(invoice_no) AS from_invoice,
+         MAX(invoice_no) AS to_invoice
+       FROM invoices
+       WHERE DATE(created_at) BETWEEN ? AND ?`,
+      [from, to]
+    );
+
+    const totals = [...b2b, ...b2cl, ...b2c].reduce((acc, row) => ({
+      taxable: acc.taxable + Number(row.taxable_value || 0),
+      cgst: acc.cgst + Number(row.cgst || 0),
+      sgst: acc.sgst + Number(row.sgst || 0),
+      igst: acc.igst + Number(row.igst || 0),
+      total: acc.total + Number(row.invoice_value || row.gross_value || 0)
+    }), { taxable: 0, cgst: 0, sgst: 0, igst: 0, total: 0 });
+
+    res.json({
+      from,
+      to,
+      b2b,
+      b2cl,
+      b2c,
+      hsn,
+      hsnB2b,
+      hsnB2c,
+      nilExempt,
+      documents: {
+        ...documents[0],
+        netIssued: Number(documents[0]?.issued_count || 0) - Number(documents[0]?.cancelled_count || 0)
+      },
+      totals
+    });
+  } catch (err) {
+    console.error('GSTR-1 report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load GSTR-1 report.' });
   }
 });
 

@@ -115,19 +115,20 @@ export async function fetchDashboardReport() {
   return data;
 }
 
-export async function fetchDailySalesReport({ date, counter = '' } = {}) {
+export async function fetchDailySalesReport({ date, from, to, counter = '' } = {}) {
   const { data } = await api.get('/reports/daily-sales', {
-    params: { date, counter }
+    params: { date, from, to, counter }
   });
   return data;
 }
 
-export async function exportDailySalesReport({ date, counter = '' } = {}) {
+export async function exportDailySalesReport({ date, from, to, counter = '' } = {}) {
   const { data } = await api.get('/reports/daily-sales/export', {
-    params: { date, counter },
+    params: { date, from, to, counter },
     responseType: 'blob'
   });
-  downloadBlob(data, `badizo_daily_sales_${date || 'today'}.csv`);
+  const rangeLabel = from && to ? `${from}_to_${to}` : date || 'today';
+  downloadBlob(data, `badizo_daily_sales_${rangeLabel}.csv`);
 }
 
 export async function fetchGstHsnReport({ from, to } = {}) {
@@ -154,6 +155,11 @@ export async function fetchTopProductsReport({ from, to, direction = 'DESC' } = 
 
 export async function fetchTaxSummaryReport({ from, to } = {}) {
   const { data } = await api.get('/reports/tax-summary', { params: { from, to } });
+  return data;
+}
+
+export async function fetchGstr1Report({ from, to } = {}) {
+  const { data } = await api.get('/reports/gstr1', { params: { from, to } });
   return data;
 }
 

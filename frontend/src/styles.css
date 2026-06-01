@@ -706,6 +706,114 @@ button:disabled {
   box-shadow: 0 0 0 3px rgba(22, 114, 74, 0.12);
 }
 
+.report-filter-row {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.date-range-field {
+  min-width: 170px;
+}
+
+.report-date-input {
+  border-color: #2d8f4e;
+  background: #effaf2;
+  color: #0f4b25;
+  font-weight: 800;
+  box-shadow: inset 0 0 0 1px rgba(45, 143, 78, 0.12);
+}
+
+.report-date-input:focus {
+  border-color: #0f7a36;
+  box-shadow: 0 0 0 3px rgba(15, 122, 54, 0.18);
+}
+
+.report-action-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.header-print-button {
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.report-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.report-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.report-select-card {
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.report-select-card:hover {
+  border-color: var(--brand);
+  background: #f3fbf5;
+}
+
+.report-select-card.active {
+  border-color: var(--brand);
+  background: #e9f8ed;
+  box-shadow: inset 4px 0 0 var(--brand);
+}
+
+.report-select-card strong {
+  font-size: 13px;
+}
+
+.report-select-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.report-summary-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbf9;
+  font-size: 13px;
+}
+
+.header-print-button:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
 .search-input {
   font-size: 16px;
   font-weight: 650;
