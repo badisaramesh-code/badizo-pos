@@ -1,3 +1,4 @@
+import QRCode from 'qrcode';
 import React from 'react';
 import { amountInWords, formatMoney, toNumber } from '../utils/money';
 import { INVOICE_TEMPLATES } from './invoiceTemplates';
@@ -14,6 +15,60 @@ function getTaxBillLabel(invoice) {
   return invoice.taxType === 'INTERSTATE'
     ? 'INTERSTATE IGST BILL'
     : 'LOCAL GST BILL (CGST + SGST)';
+}
+
+function sanitizeQrText(value, limit = 32) {
+  return String(value || '')
+    .replace(/[^\x20-\x7E]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, limit);
+}
+
+function buildBillQrPayload(invoice) {
+  const billingTotal = toNumber(invoice?.totals?.grand);
+  const received = invoice.paymentMode === 'Cash'
+    ? toNumber(invoice.cashReceived || billingTotal)
+    : billingTotal;
+  const change = invoice.paymentMode === 'Cash' ? toNumber(invoice.changeReturned) : 0;
+  const lines = [
+    'BADIZO POS BILL',
+    `Shop: ${sanitizeQrText(invoice.shop?.shop_name, 36)}`,
+    `Invoice: ${sanitizeQrText(invoice.invoiceNo, 36)}`,
+    `Date: ${sanitizeQrText(invoice.date, 16)}`,
+    `Time: ${sanitizeQrText(invoice.time, 16)}`,
+    `Bill Amount: Rs. ${formatPlainMoney(billingTotal)}`,
+    `Paid By: ${sanitizeQrText(invoice.paymentMode, 12)}`,
+    `Received: Rs. ${formatPlainMoney(received)}`,
+    `Change: Rs. ${formatPlainMoney(change)}`
+  ];
+  const customerName = sanitizeQrText(invoice.customerName, 24);
+  const customerPhone = sanitizeQrText(invoice.customerPhone, 16);
+  const customerGstin = sanitizeQrText(invoice.customerGstin, 18);
+  if (customerName) lines.push(`Customer: ${customerName}`);
+  if (customerPhone) lines.push(`Phone: ${customerPhone}`);
+  if (customerGstin) lines.push(`GSTIN: ${customerGstin}`);
+  return lines.join('\n').slice(0, 420);
+}
+
+function BillQrCode({ invoice, className = '' }) {
+  const payload = buildBillQrPayload(invoice);
+  const qr = QRCode.create(payload, { errorCorrectionLevel: 'M' });
+  const size = qr.modules.size;
+  const margin = 4;
+  const viewSize = size + margin * 2;
+
+  return (
+    <svg className={`bill-qr ${className}`} viewBox={`0 0 ${viewSize} ${viewSize}`} role="img" aria-label="Bill details QR">
+      <rect width={viewSize} height={viewSize} fill="#fff" />
+      {Array.from(qr.modules.data).map((value, index) => {
+        if (!value) return null;
+        const x = (index % size) + margin;
+        const y = Math.floor(index / size) + margin;
+        return <rect key={index} x={x} y={y} width="1" height="1" fill="#000" />;
+      })}
+    </svg>
+  );
 }
 
 function ThermalLogoSlot() {
@@ -482,10 +537,15 @@ function A4OnePageInvoice({ invoice, template }) {
 
       <div className="a4-store-top">
         <div className="a4-store-shop">
-          <strong>{invoice.shop.shop_name}</strong>
-          {String(invoice.shop.address || '').split(/\s*\|\s*|\n/).filter(Boolean).map((line) => <span key={line}>{line}</span>)}
-          <span>Gst no: {invoice.shop.gst_number}</span>
-          <span>Phno {invoice.shop.phone || '-'}</span>
+          <div className="a4-store-shop-qr-box">
+            <BillQrCode invoice={invoice} className="a4-bill-qr" />
+          </div>
+          <div className="a4-store-shop-text">
+            <strong>{invoice.shop.shop_name}</strong>
+            {String(invoice.shop.address || '').split(/\s*\|\s*|\n/).filter(Boolean).map((line) => <span key={line}>{line}</span>)}
+            <span>Gst no: {invoice.shop.gst_number}</span>
+            <span>Phno {invoice.shop.phone || '-'}</span>
+          </div>
         </div>
         <div className="a4-store-meta">
           <span>Invoice No.</span><strong>{invoice.invoiceNo}</strong>
@@ -658,6 +718,11 @@ export default function PrintableInvoice({ invoice, mode }) {
           {renderSection(section, invoice, template)}
         </React.Fragment>
       ))}
+      <SectionLine />
+      <div className="thermal-bill-qr-wrap">
+        <BillQrCode invoice={invoice} className="thermal-bill-qr" />
+        <strong>Scan Bill Details</strong>
+      </div>
     </div>
   );
 }

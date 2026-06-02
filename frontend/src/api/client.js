@@ -270,6 +270,23 @@ export async function fetchRecentInwards() {
   return Array.isArray(data) ? data : [];
 }
 
+export async function fetchInwardHistory({ from = '', to = '', supplier = '', invoice = '' } = {}) {
+  const { data } = await api.get('/inward/history', {
+    params: { from, to, supplier, invoice }
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchInwardDetails(id) {
+  const { data } = await api.get(`/inward/${encodeURIComponent(id)}/details`);
+  return data;
+}
+
+export async function fetchInwardDetailsByNumber(inwardNo) {
+  const { data } = await api.get(`/inward/by-number/${encodeURIComponent(inwardNo)}/details`);
+  return data;
+}
+
 export async function saveInwardEntry(payload) {
   const { data } = await api.post('/inward', payload);
   return data;

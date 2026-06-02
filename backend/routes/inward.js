@@ -57,7 +57,7 @@ router.use(authenticate, authorize('SERVER', 'ADMIN'));
 router.get('/recent', async (_req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date,
+      `SELECT id, inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date,
               item_count, total_qty, taxable_total, gst_total, total_cgst, total_sgst, total_igst,
               grand_total, tax_type, created_by, created_at
        FROM inward_entries
@@ -68,6 +68,124 @@ router.get('/recent', async (_req, res) => {
   } catch (err) {
     console.error('Inward recent fetch failed:', err.message);
     res.status(500).json({ error: 'Unable to fetch inward entries.' });
+  }
+});
+
+router.get('/history', async (req, res) => {
+  const { from, to, supplier = '', invoice = '' } = req.query || {};
+  const clauses = [];
+  const params = [];
+
+  if (from) {
+    clauses.push('DATE(created_at) >= ?');
+    params.push(from);
+  }
+  if (to) {
+    clauses.push('DATE(created_at) <= ?');
+    params.push(to);
+  }
+  if (String(supplier).trim()) {
+    clauses.push('supplier_name LIKE ?');
+    params.push(`%${String(supplier).trim()}%`);
+  }
+  if (String(invoice).trim()) {
+    clauses.push('(supplier_invoice_no LIKE ? OR inward_no LIKE ?)');
+    params.push(`%${String(invoice).trim()}%`, `%${String(invoice).trim()}%`);
+  }
+
+  try {
+    const [rows] = await db.query(
+      `SELECT id, inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date,
+              item_count, total_qty, taxable_total, gst_total, total_cgst, total_sgst, total_igst,
+              grand_total, tax_type, created_by, created_at
+       FROM inward_entries
+       ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+       ORDER BY id DESC
+       LIMIT 200`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Inward history fetch failed:', err.message);
+    res.status(500).json({ error: 'Unable to fetch inward history.' });
+  }
+});
+
+router.get('/by-number/:inwardNo/details', async (req, res) => {
+  const inwardNo = String(req.params.inwardNo || '').trim();
+  if (!inwardNo) {
+    return res.status(400).json({ error: 'Valid inward number is required.' });
+  }
+
+  try {
+    const [entryRows] = await db.query(
+      `SELECT id, inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
+              supplier_invoice_no, supplier_invoice_date, item_count, total_qty, taxable_total,
+              gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, created_by, created_at
+       FROM inward_entries
+       WHERE inward_no = ?
+       LIMIT 1`,
+      [inwardNo]
+    );
+
+    if (!entryRows.length) {
+      return res.status(404).json({ error: 'Inward bill not found.' });
+    }
+
+    const [items] = await db.query(
+      `SELECT id, barcode, product_name, hsn_code, gst_percent, purchase_price, discount_percent,
+              discount_type, discount_amount, scheme, scheme_type, scheme_value, scheme_amount,
+              mrp, free_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount,
+              igst_amount, total_amount
+       FROM inward_items
+       WHERE inward_no = ?
+       ORDER BY id ASC`,
+      [entryRows[0].inward_no]
+    );
+
+    res.json({ entry: entryRows[0], items });
+  } catch (err) {
+    console.error('Inward detail fetch by number failed:', err.message);
+    res.status(500).json({ error: 'Unable to fetch inward bill details.' });
+  }
+});
+
+router.get('/:id/details', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Valid inward S.No is required.' });
+  }
+
+  try {
+    const [entryRows] = await db.query(
+      `SELECT id, inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
+              supplier_invoice_no, supplier_invoice_date, item_count, total_qty, taxable_total,
+              gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, created_by, created_at
+       FROM inward_entries
+       WHERE id = ?
+       LIMIT 1`,
+      [id]
+    );
+
+    if (!entryRows.length) {
+      return res.status(404).json({ error: 'Inward bill not found.' });
+    }
+
+    const [items] = await db.query(
+      `SELECT id, barcode, product_name, hsn_code, gst_percent, purchase_price, discount_percent,
+              discount_type, discount_amount, scheme, scheme_type, scheme_value, scheme_amount,
+              mrp, free_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount,
+              igst_amount, total_amount
+       FROM inward_items
+       WHERE inward_no = ?
+       ORDER BY id ASC`,
+      [entryRows[0].inward_no]
+    );
+
+    res.json({ entry: entryRows[0], items });
+  } catch (err) {
+    console.error('Inward detail fetch failed:', err.message);
+    res.status(500).json({ error: 'Unable to fetch inward bill details.' });
   }
 });
 
@@ -120,7 +238,7 @@ router.post('/', async (req, res) => {
     let igstTotal = 0;
     let grandTotal = 0;
 
-    await connection.query(
+    const [entryResult] = await connection.query(
       `INSERT INTO inward_entries
        (inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
         supplier_invoice_no, supplier_invoice_date, item_count, total_qty, taxable_total,
@@ -245,6 +363,8 @@ router.post('/', async (req, res) => {
     await connection.commit();
     res.json({
       success: true,
+      id: entryResult.insertId,
+      serial_no: entryResult.insertId,
       inward_no: finalInwardNo,
       item_count: validLines.length,
       total_qty: totalQty,

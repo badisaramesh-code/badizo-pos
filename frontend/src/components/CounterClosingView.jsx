@@ -107,6 +107,7 @@ export default function CounterClosingView() {
   const [errorMessage, setErrorMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const entryDetailRefs = useRef([]);
+  const historySectionRef = useRef(null);
 
   useEffect(() => {
     loadSettings();
@@ -224,6 +225,22 @@ export default function CounterClosingView() {
     } catch (err) {
       setHistory({ rows: [] });
     }
+  }
+
+  async function viewSavedSheet(row) {
+    setDate(row.closing_date);
+    setCounterNo(Number(row.counter_no));
+    setStatusMessage(`Viewing sheet ${row.sheet_no}.`);
+    window.setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 0);
+  }
+
+  async function showOldSheets() {
+    await loadHistory();
+    window.setTimeout(() => {
+      historySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
   }
 
   function updateEntry(index, field, value) {
@@ -369,6 +386,7 @@ export default function CounterClosingView() {
           <div className="report-filter-row closing-filter-row">
             <button className="secondary-button" type="button" onClick={printHandoverSheet}>Print Sheet</button>
             <button className="secondary-button" type="button" onClick={exportHandoverExcel}>Export Excel</button>
+            {!isCounterUser && <button className="secondary-button" type="button" onClick={showOldSheets}>Old Sheets</button>}
             <label className="date-range-field">
               <span className="field-label">Date</span>
               <input className="field report-date-input" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
@@ -560,7 +578,7 @@ export default function CounterClosingView() {
       </section>
 
       {!isCounterUser && (
-        <section className="panel">
+        <section className="panel" ref={historySectionRef}>
           <div className="panel-header green">
             <h2 className="panel-title">Daily Handover Sheets Ledger</h2>
             <form className="report-filter-row" onSubmit={(event) => { event.preventDefault(); loadHistory(); }}>
@@ -572,10 +590,10 @@ export default function CounterClosingView() {
           </div>
           <div className="panel-body table-scroll">
             <table className="history-table">
-              <thead><tr><th>Date</th><th>Counter</th><th>Sheet</th><th>Sale</th><th>DR</th><th>CR</th><th>Cash Notes Balance</th><th>Difference</th><th>Handover</th></tr></thead>
+              <thead><tr><th>Date</th><th>Counter</th><th>Sheet</th><th>Sale</th><th>DR</th><th>CR</th><th>Cash Notes Balance</th><th>Difference</th><th>Handover</th><th>Action</th></tr></thead>
               <tbody>
                 {(history.rows || []).length === 0 ? (
-                  <tr><td colSpan="9">No handover sheets saved for selected date range.</td></tr>
+                  <tr><td colSpan="10">No handover sheets saved for selected date range.</td></tr>
                 ) : history.rows.map((row) => (
                   <tr key={row.id}>
                     <td>{row.closing_date}</td>
@@ -587,6 +605,7 @@ export default function CounterClosingView() {
                     <td><strong>{formatMoney(row.cash_balance)}</strong></td>
                     <td className={Math.abs(toNumber(row.variance_amount)) > 0.01 ? 'stock-low' : ''}>{formatMoney(row.variance_amount)}</td>
                     <td>{row.handed_over_by} to {row.taken_over_by}</td>
+                    <td><button className="secondary-button" type="button" onClick={() => viewSavedSheet(row)}>View</button></td>
                   </tr>
                 ))}
               </tbody>

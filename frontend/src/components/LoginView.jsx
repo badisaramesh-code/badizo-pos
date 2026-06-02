@@ -25,8 +25,10 @@ export default function LoginView({ onLogin }) {
   return (
     <div className="login-screen">
       <form className="login-card" onSubmit={handleSubmit}>
-        <div className="brand-logo" style={{ margin: '0 auto 12px' }}>B</div>
-        <h1 className="brand-title" style={{ color: 'var(--brand-dark)', textAlign: 'center' }}>BADIZO POS</h1>
+        <div className="login-logo-wrap">
+          <img className="login-brand-image" src="/badizo-logo-transparent.png" alt="Badizo" />
+        </div>
+        <h1 className="brand-title" style={{ color: 'var(--brand-dark)', textAlign: 'center' }}>POS</h1>
         <p className="muted" style={{ textAlign: 'center' }}>Login to continue billing</p>
 
         {errorMessage && <div className="alert-box">{errorMessage}</div>}

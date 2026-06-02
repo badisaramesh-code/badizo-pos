@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createWorker, PSM } from 'tesseract.js';
-import { fetchRecentInwards, saveInwardEntry, searchProducts } from '../api/client';
+import {
+  fetchInwardDetails,
+  fetchInwardDetailsByNumber,
+  fetchInwardHistory,
+  fetchRecentInwards,
+  saveInwardEntry,
+  searchProducts
+} from '../api/client';
 import { formatMoney, toNumber } from '../utils/money';
 
 const blankLine = {
@@ -15,7 +22,8 @@ const blankLine = {
   scheme_type: 'PERCENT',
   scheme: '',
   free: '',
-  qty: ''
+  qty: '',
+  last_amount_input: 'RATE'
 };
 
 const blankSupplier = {
@@ -26,6 +34,24 @@ const blankSupplier = {
   invoice_no: '',
   invoice_date: ''
 };
+
+function todayIso() {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDate(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value).slice(0, 10) : date.toLocaleDateString();
+}
+
+function formatDateTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
 
 const invoiceColumnAliases = {
   barcode: ['barcode', 'bar code', 'ean', 'item code', 'product code', 'code'],
@@ -304,6 +330,41 @@ function calculateInwardLine(line, taxType, discountType, schemeType) {
   };
 }
 
+function reversePercentFactor(value) {
+  const percent = Math.min(Math.max(toNumber(value), 0), 99.99);
+  return 1 - (percent / 100);
+}
+
+function deriveGrossFromTaxable(taxableAmount, line, discountType, schemeType) {
+  let amountAfterDiscount = toNumber(taxableAmount);
+
+  if (normalizeDiscountType(schemeType) === 'VALUE') {
+    amountAfterDiscount += toNumber(line.scheme);
+  } else {
+    amountAfterDiscount /= reversePercentFactor(line.scheme);
+  }
+
+  if (normalizeDiscountType(discountType) === 'VALUE') {
+    return amountAfterDiscount + toNumber(line.discount);
+  }
+
+  return amountAfterDiscount / reversePercentFactor(line.discount);
+}
+
+function deriveRateFromTaxable(taxableAmount, line, discountType, schemeType) {
+  const quantity = toNumber(line.qty);
+  if (quantity <= 0) return line.price;
+  const gross = deriveGrossFromTaxable(taxableAmount, line, discountType, schemeType);
+  return Math.max(gross / quantity, 0).toFixed(2);
+}
+
+function deriveRateFromTotal(totalAmount, line, discountType, schemeType) {
+  const total = toNumber(totalAmount);
+  const gstFactor = 1 + (toNumber(line.gst_percent) / 100);
+  const taxable = gstFactor > 0 ? total / gstFactor : total;
+  return deriveRateFromTaxable(taxable, line, discountType, schemeType);
+}
+
 function parseOcrItemLine(line) {
     const tokens = line.replace(/[|]/g, ' ').split(/\s+/).filter(Boolean);
     if (tokens.length < 5) return null;
@@ -379,6 +440,9 @@ export default function InwardEntryView() {
   const [schemeType, setSchemeType] = useState('PERCENT');
   const [lines, setLines] = useState([blankLine]);
   const [recentInwards, setRecentInwards] = useState([]);
+  const [historyFilters, setHistoryFilters] = useState({ from: '', to: '', supplier: '', invoice: '' });
+  const [viewedInward, setViewedInward] = useState(null);
+  const [isLoadingInward, setIsLoadingInward] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [invoiceImportText, setInvoiceImportText] = useState('');
@@ -407,10 +471,54 @@ export default function InwardEntryView() {
 
   async function loadRecentInwards() {
     try {
+      const hasFilters = historyFilters.from || historyFilters.to || historyFilters.supplier || historyFilters.invoice;
+      setRecentInwards(hasFilters ? await fetchInwardHistory(historyFilters) : await fetchRecentInwards());
+    } catch (err) {
+      setRecentInwards([]);
+    }
+  }
+
+  function updateHistoryFilter(field, value) {
+    setHistoryFilters((current) => ({ ...current, [field]: value }));
+  }
+
+  function resetHistoryDatesToToday() {
+    const date = todayIso();
+    setHistoryFilters((current) => ({ ...current, from: date, to: date }));
+  }
+
+  async function clearHistoryFilters() {
+    const emptyFilters = { from: '', to: '', supplier: '', invoice: '' };
+    setHistoryFilters(emptyFilters);
+    try {
       setRecentInwards(await fetchRecentInwards());
     } catch (err) {
       setRecentInwards([]);
     }
+  }
+
+  async function handleViewInward(entry) {
+    const serialNo = typeof entry === 'object' ? entry?.id : entry;
+    const inwardNo = typeof entry === 'object' ? entry?.inward_no : '';
+    setIsLoadingInward(true);
+    setErrorMessage('');
+    setViewedInward(null);
+    try {
+      const details = serialNo
+        ? await fetchInwardDetails(serialNo)
+        : await fetchInwardDetailsByNumber(inwardNo);
+      setViewedInward(details);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to open inward bill.');
+    } finally {
+      setIsLoadingInward(false);
+    }
+  }
+
+  function handlePrintInward() {
+    document.body.classList.add('printing-inward');
+    window.print();
+    setTimeout(() => document.body.classList.remove('printing-inward'), 300);
   }
 
   function updateSupplier(field, value) {
@@ -418,12 +526,52 @@ export default function InwardEntryView() {
   }
 
   function updateLine(index, field, value) {
-    const nextValue = field === 'gst_percent'
-      ? normalizeGstPercent(value)
-      : (field === 'product' ? value.toUpperCase() : value);
-    setLines((current) => current.map((line, lineIndex) => (
-      lineIndex === index ? { ...line, [field]: nextValue } : line
-    )));
+    setLines((current) => current.map((line, lineIndex) => {
+      if (lineIndex !== index) return line;
+
+      const nextValue = field === 'gst_percent'
+        ? normalizeGstPercent(value)
+        : (field === 'product' ? value.toUpperCase() : value);
+      const nextLine = { ...line, [field]: nextValue };
+
+      if (field === 'taxable_amount') {
+        return {
+          ...nextLine,
+          price: deriveRateFromTaxable(nextValue, nextLine, discountType, schemeType),
+          last_amount_input: 'TAXABLE'
+        };
+      }
+
+      if (field === 'total_amount') {
+        return {
+          ...nextLine,
+          price: deriveRateFromTotal(nextValue, nextLine, discountType, schemeType),
+          last_amount_input: 'TOTAL'
+        };
+      }
+
+      if (field === 'price') {
+        return { ...nextLine, taxable_amount: '', total_amount: '', last_amount_input: 'RATE' };
+      }
+
+      if (['qty', 'gst_percent', 'discount', 'scheme'].includes(field)) {
+        if (nextLine.last_amount_input === 'TAXABLE' && String(nextLine.taxable_amount || '').trim()) {
+          return {
+            ...nextLine,
+            price: deriveRateFromTaxable(nextLine.taxable_amount, nextLine, discountType, schemeType)
+          };
+        }
+
+        if (nextLine.last_amount_input === 'TOTAL' && String(nextLine.total_amount || '').trim()) {
+          return {
+            ...nextLine,
+            price: deriveRateFromTotal(nextLine.total_amount, nextLine, discountType, schemeType)
+          };
+        }
+      }
+
+      return nextLine;
+    }));
   }
 
   function addRow() {
@@ -521,10 +669,11 @@ export default function InwardEntryView() {
           scheme_type: schemeType
         }))
       });
-      setStatusMessage(`Inward ${result.inward_no} saved. Stock updated for ${result.item_count} products.`);
+      setStatusMessage(`Inward S.No ${result.serial_no || result.id} (${result.inward_no}) saved. Stock updated for ${result.item_count} products.`);
       setSupplier(blankSupplier);
       setLines([{ ...blankLine }]);
       await loadRecentInwards();
+      if (result.id || result.inward_no) await handleViewInward(result);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save inward entry.');
     } finally {
@@ -692,8 +841,26 @@ export default function InwardEntryView() {
                       </td>
                       {taxType === 'LOCAL' && <><td>{formatMoney(calculated.cgst)}</td><td>{formatMoney(calculated.sgst)}</td></>}
                       {taxType === 'INTERSTATE' && <td>{formatMoney(calculated.igst)}</td>}
-                      <td><strong>{formatMoney(calculated.taxable)}</strong></td>
-                      <td><strong>{formatMoney(calculated.amount)}</strong></td>
+                      <td>
+                        <input
+                          className="field compact-number-field"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={line.last_amount_input === 'TAXABLE' && line.taxable_amount !== '' ? line.taxable_amount : calculated.taxable.toFixed(2)}
+                          onChange={(event) => updateLine(index, 'taxable_amount', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="field compact-number-field"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={line.last_amount_input === 'TOTAL' && line.total_amount !== '' ? line.total_amount : calculated.amount.toFixed(2)}
+                          onChange={(event) => updateLine(index, 'total_amount', event.target.value)}
+                        />
+                      </td>
                       <td><button className="danger-button" onClick={() => removeRow(index)}>Del</button></td>
                     </tr>
                   );
@@ -719,20 +886,46 @@ export default function InwardEntryView() {
       </section>
 
       <section className="panel">
-        <div className="panel-header green"><h2 className="panel-title">Recent Inward Entries</h2></div>
-        <div className="panel-body">
+        <div className="panel-header green"><h2 className="panel-title">Inward Bills Ledger</h2></div>
+        <div className="panel-body form-stack">
+          <form className="history-search-row inward-history-filters" onSubmit={(event) => { event.preventDefault(); loadRecentInwards(); }}>
+            <label>
+              <span className="field-label">From</span>
+              <input className="field" type="date" value={historyFilters.from} onChange={(event) => updateHistoryFilter('from', event.target.value)} />
+            </label>
+            <label>
+              <span className="field-label">To</span>
+              <input className="field" type="date" value={historyFilters.to} onChange={(event) => updateHistoryFilter('to', event.target.value)} />
+            </label>
+            <label>
+              <span className="field-label">Supplier</span>
+              <input className="field" value={historyFilters.supplier} onChange={(event) => updateHistoryFilter('supplier', event.target.value)} />
+            </label>
+            <label>
+              <span className="field-label">Invoice / Inward No</span>
+              <input className="field" value={historyFilters.invoice} onChange={(event) => updateHistoryFilter('invoice', event.target.value)} />
+            </label>
+            <button className="primary-button compact-primary" type="submit">Search</button>
+            <button className="secondary-button" type="button" onClick={resetHistoryDatesToToday}>Today</button>
+            <button className="secondary-button" type="button" onClick={clearHistoryFilters}>Clear</button>
+          </form>
           <table className="history-table">
             <thead>
-              <tr><th>Inward No</th><th>Supplier</th><th>Invoice</th><th>Tax Type</th><th>Items</th><th>Qty</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Created</th></tr>
+              <tr><th>S.No</th><th>Inward No</th><th>Supplier</th><th>Invoice</th><th>Tax Type</th><th>Items</th><th>Qty</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Created</th><th>Action</th></tr>
             </thead>
             <tbody>
               {recentInwards.length === 0 ? (
-                <tr><td colSpan="12">No inward entries saved yet.</td></tr>
+                <tr><td colSpan="14">No inward entries found.</td></tr>
               ) : (
                 recentInwards.map((entry) => (
-                  <tr key={entry.inward_no}>
+                  <tr key={entry.id || entry.inward_no}>
+                    <td><strong>{entry.id}</strong></td>
                     <td className="mono">{entry.inward_no}</td>
-                    <td>{entry.supplier_name}</td>
+                    <td>
+                      <button className="link-button" type="button" disabled={isLoadingInward} onClick={() => handleViewInward(entry)}>
+                        {entry.supplier_name}
+                      </button>
+                    </td>
                     <td>{entry.supplier_invoice_no || '-'}</td>
                     <td>{entry.tax_type === 'INTERSTATE' ? 'IGST' : 'GST Local'}</td>
                     <td>{entry.item_count}</td>
@@ -742,7 +935,12 @@ export default function InwardEntryView() {
                     <td>{formatMoney(entry.total_sgst)}</td>
                     <td>{formatMoney(entry.total_igst)}</td>
                     <td><strong>{formatMoney(entry.grand_total)}</strong></td>
-                    <td>{entry.created_at ? new Date(entry.created_at).toLocaleString() : '-'}</td>
+                    <td>{formatDateTime(entry.created_at)}</td>
+                    <td>
+                      <button className="secondary-button" type="button" disabled={isLoadingInward} onClick={() => handleViewInward(entry)}>
+                        View / Print
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -750,6 +948,101 @@ export default function InwardEntryView() {
           </table>
         </div>
       </section>
+
+      {viewedInward && (
+        <div className="modal-backdrop">
+          <div className="modal inward-view-modal">
+            <div className="panel-header green">
+              <h2 className="panel-title">Inward Bill S.No {viewedInward.entry.id}</h2>
+              <div className="actions-row">
+                <button className="secondary-button" type="button" onClick={handlePrintInward}>Print</button>
+                <button className="secondary-button" type="button" onClick={() => setViewedInward(null)}>Close</button>
+              </div>
+            </div>
+            <div className="panel-body">
+              <InwardPrintSheet inward={viewedInward} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InwardPrintSheet({ inward }) {
+  const { entry, items } = inward;
+  const isInterstate = entry.tax_type === 'INTERSTATE';
+
+  return (
+    <div className="inward-print-area">
+      <div className="inward-print-title">
+        <h1>Purchase Inward Bill</h1>
+        <strong>{isInterstate ? 'IGST Purchase' : 'GST Local Purchase'}</strong>
+      </div>
+      <div className="inward-print-meta">
+        <div>
+          <strong>S.No: {entry.id}</strong>
+          <span>Inward No: {entry.inward_no}</span>
+          <span>Created: {formatDateTime(entry.created_at)}</span>
+          <span>Entered By: {entry.created_by || '-'}</span>
+        </div>
+        <div>
+          <strong>Supplier</strong>
+          <span>{entry.supplier_name}</span>
+          <span>{entry.supplier_address || '-'}</span>
+          <span>GSTIN: {entry.supplier_gstin || '-'}</span>
+          <span>Phone: {entry.supplier_phone || '-'}</span>
+        </div>
+        <div>
+          <strong>Supplier Invoice</strong>
+          <span>No: {entry.supplier_invoice_no || '-'}</span>
+          <span>Date: {formatDate(entry.supplier_invoice_date)}</span>
+          <span>Tax Type: {isInterstate ? 'IGST' : 'CGST + SGST'}</span>
+        </div>
+      </div>
+      <table className="inward-print-table">
+        <thead>
+          <tr>
+            <th>S.No</th><th>Barcode</th><th>Product</th><th>HSN</th><th>MRP</th><th>Rate</th><th>Disc</th><th>Scheme</th><th>Free</th><th>Qty</th><th>GST%</th>
+            {isInterstate ? <th>IGST</th> : <><th>CGST</th><th>SGST</th></>}
+            <th>Taxable</th><th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item, index) => (
+            <tr key={item.id}>
+              <td>{index + 1}</td>
+              <td>{item.barcode}</td>
+              <td>{item.product_name}</td>
+              <td>{item.hsn_code || '-'}</td>
+              <td>{formatMoney(item.mrp)}</td>
+              <td>{formatMoney(item.purchase_price)}</td>
+              <td>{formatMoney(item.discount_amount)}</td>
+              <td>{formatMoney(item.scheme_amount)}</td>
+              <td>{item.free_qty}</td>
+              <td>{item.quantity}</td>
+              <td>{toNumber(item.gst_percent).toFixed(2)}%</td>
+              {isInterstate ? <td>{formatMoney(item.igst_amount)}</td> : <><td>{formatMoney(item.cgst_amount)}</td><td>{formatMoney(item.sgst_amount)}</td></>}
+              <td>{formatMoney(item.taxable_amount)}</td>
+              <td><strong>{formatMoney(item.total_amount)}</strong></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="inward-print-summary">
+        <span>Items: <strong>{entry.item_count}</strong></span>
+        <span>Total Qty: <strong>{entry.total_qty}</strong></span>
+        <span>Taxable: <strong>{formatMoney(entry.taxable_total)}</strong></span>
+        {!isInterstate && <span>CGST: <strong>{formatMoney(entry.total_cgst)}</strong></span>}
+        {!isInterstate && <span>SGST: <strong>{formatMoney(entry.total_sgst)}</strong></span>}
+        {isInterstate && <span>IGST: <strong>{formatMoney(entry.total_igst)}</strong></span>}
+        <span>Grand Total: <strong>{formatMoney(entry.grand_total)}</strong></span>
+      </div>
+      <div className="inward-print-signatures">
+        <span>Checked By</span>
+        <span>Store Incharge Signature</span>
+        <span>Authorised Signature</span>
+      </div>
     </div>
   );
 }
