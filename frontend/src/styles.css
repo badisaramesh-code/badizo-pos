@@ -1786,6 +1786,105 @@ button:disabled {
   grid-template-columns: repeat(3, minmax(220px, 1fr));
 }
 
+.book-select-card {
+  border: 1px solid var(--line);
+  min-height: 92px;
+  gap: 7px;
+  align-items: flex-start;
+  text-align: left;
+  cursor: pointer;
+}
+
+.book-select-card.active {
+  border-color: var(--brand);
+  background: #eaf8ee;
+  box-shadow: inset 4px 0 0 var(--brand);
+}
+
+.books-control-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 170px) minmax(150px, 170px) auto auto auto auto;
+  align-items: end;
+  justify-content: start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7fcf8;
+}
+
+.books-control-row .secondary-button {
+  height: 38px;
+  padding: 8px 12px;
+}
+
+.books-print-heading {
+  display: none;
+}
+
+.books-table-scroll {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.books-accounting-table {
+  font-size: 12px;
+}
+
+.books-accounting-table th,
+.books-accounting-table td {
+  white-space: nowrap;
+}
+
+.books-accounting-table td:nth-child(n+4) {
+  text-align: right;
+}
+
+.books-accounting-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #d6ecd9;
+  color: #102f18;
+}
+
+.books-summary-strip {
+  margin-bottom: 12px;
+}
+
+.books-account-tools {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.books-account-tools > label {
+  max-width: 420px;
+}
+
+.voucher-entry-row {
+  display: grid;
+  grid-template-columns: minmax(210px, 1.2fr) 100px 120px minmax(130px, 0.8fr) minmax(170px, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7fcf8;
+}
+
+@media (max-width: 980px) {
+  .books-control-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .voucher-entry-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .barcode-grid,
 .inward-grid {
   grid-template-columns: 420px minmax(620px, 1fr);
@@ -2395,6 +2494,92 @@ button:disabled {
   height: 56px;
   background:
     repeating-linear-gradient(90deg, #111 0 2px, #fff 2px 4px, #111 4px 5px, #fff 5px 8px);
+}
+
+.barcode-bars.small {
+  width: 132px;
+  height: 31px;
+}
+
+.sticker-preview-33x25 {
+  width: 330px;
+  min-height: 250px;
+  border: 1px solid #111;
+  padding: 7px 9px;
+  align-items: center;
+  text-align: center;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.sticker-preview-33x25 .sticker-product {
+  max-width: 100%;
+  font-size: 15px;
+  line-height: 1.08;
+}
+
+.sticker-preview-33x25 .sticker-code {
+  font-size: 11px;
+}
+
+.sticker-preview-33x25 .sticker-price-row {
+  font-size: 15px;
+  gap: 8px;
+}
+
+.sticker-preview-33x25 .tax-note,
+.sticker-preview-33x25 small {
+  font-size: 10px;
+  line-height: 1.15;
+}
+
+.sticker-preview-33x25 .sticker-meta-row {
+  font-size: 13px;
+}
+
+.sticker-preview-33x25 .sticker-divider {
+  height: 2px;
+}
+
+.sticker-preview-33x25 .sticker-store {
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.sticker-preview-jewellery {
+  width: 650px;
+  min-height: 150px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  padding: 0;
+  border: 1px solid #111;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.jewellery-side {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 9px 12px;
+  border-right: 2px solid #111;
+  font-size: 15px;
+}
+
+.jewellery-bars {
+  width: 145px;
+  height: 38px;
+}
+
+.jewellery-side.shop-side {
+  border-right: 0;
+  gap: 5px;
+  font-size: 13px;
+}
+
+.jewellery-side.shop-side strong {
+  font-size: 16px;
+  text-transform: uppercase;
 }
 
 .prn-output {
@@ -3568,6 +3753,83 @@ button:disabled {
   body.printing-inward .inward-print-summary span,
   body.printing-inward .inward-print-signatures span {
     font-size: 10px;
+  }
+
+  body.printing-books {
+    width: 190mm !important;
+    min-width: 190mm !important;
+    max-width: 190mm !important;
+    overflow: visible !important;
+  }
+
+  body.printing-books #root,
+  body.printing-books .app-shell,
+  body.printing-books .workspace,
+  body.printing-books .books-view,
+  body.printing-books .books-report-panel,
+  body.printing-books .books-print-area {
+    display: block !important;
+    width: 190mm !important;
+    min-width: 190mm !important;
+    max-width: 190mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  body.printing-books .topbar,
+  body.printing-books .books-view > :not(.books-report-panel),
+  body.printing-books .books-report-panel > .panel-header {
+    display: none !important;
+  }
+
+  body.printing-books .books-print-area,
+  body.printing-books .books-print-area * {
+    visibility: visible !important;
+  }
+
+  body.printing-books .books-print-heading {
+    display: flex !important;
+    justify-content: space-between;
+    align-items: end;
+    gap: 12px;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #111;
+  }
+
+  body.printing-books .books-print-heading h1 {
+    margin: 0;
+    font-size: 18px;
+  }
+
+  body.printing-books .books-accounting-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8.8px;
+  }
+
+  body.printing-books .books-table-scroll {
+    overflow: visible !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  body.printing-books .books-accounting-table th,
+  body.printing-books .books-accounting-table td {
+    padding: 3px;
+    border: 1px solid #111;
+  }
+
+  body.printing-books .books-summary-strip {
+    border: 1px solid #111;
+    border-radius: 0;
+    padding: 5px;
+    margin-bottom: 6px;
+    font-size: 9px;
   }
 
   body.printing-handover #root,

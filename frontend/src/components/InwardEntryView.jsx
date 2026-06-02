@@ -436,6 +436,7 @@ function parseOcrInvoiceRows(lines) {
 export default function InwardEntryView() {
   const [supplier, setSupplier] = useState(blankSupplier);
   const [taxType, setTaxType] = useState('LOCAL');
+  const [paymentMode, setPaymentMode] = useState('Credit');
   const [discountType, setDiscountType] = useState('PERCENT');
   const [schemeType, setSchemeType] = useState('PERCENT');
   const [lines, setLines] = useState([blankLine]);
@@ -663,6 +664,7 @@ export default function InwardEntryView() {
       const result = await saveInwardEntry({
         supplier,
         tax_type: taxType,
+        payment_mode: paymentMode,
         lines: lines.map((line) => ({
           ...line,
           discount_type: discountType,
@@ -671,6 +673,7 @@ export default function InwardEntryView() {
       });
       setStatusMessage(`Inward S.No ${result.serial_no || result.id} (${result.inward_no}) saved. Stock updated for ${result.item_count} products.`);
       setSupplier(blankSupplier);
+      setPaymentMode('Credit');
       setLines([{ ...blankLine }]);
       await loadRecentInwards();
       if (result.id || result.inward_no) await handleViewInward(result);
@@ -760,8 +763,12 @@ export default function InwardEntryView() {
               <button type="button" className={taxType === 'LOCAL' ? 'active' : ''} onClick={() => setTaxType('LOCAL')}>GST Local</button>
               <button type="button" className={taxType === 'INTERSTATE' ? 'active' : ''} onClick={() => setTaxType('INTERSTATE')}>IGST Bill</button>
             </div>
+            <div className="segmented two">
+              <button type="button" className={paymentMode === 'Credit' ? 'active' : ''} onClick={() => setPaymentMode('Credit')}>Credit</button>
+              <button type="button" className={paymentMode === 'Cash' ? 'active' : ''} onClick={() => setPaymentMode('Cash')}>Cash</button>
+            </div>
             <span className="muted">
-              {taxType === 'LOCAL' ? 'Local purchase: GST splits into CGST + SGST.' : 'Interstate purchase: GST posts as IGST.'}
+              {paymentMode === 'Credit' ? 'Credit purchase posts to supplier ledger.' : 'Cash purchase posts as cash purchase, not supplier outstanding.'}
             </span>
           </div>
 
@@ -911,11 +918,11 @@ export default function InwardEntryView() {
           </form>
           <table className="history-table">
             <thead>
-              <tr><th>S.No</th><th>Inward No</th><th>Supplier</th><th>Invoice</th><th>Tax Type</th><th>Items</th><th>Qty</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Created</th><th>Action</th></tr>
+              <tr><th>S.No</th><th>Inward No</th><th>Supplier</th><th>Invoice</th><th>Payment</th><th>Tax Type</th><th>Items</th><th>Qty</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Created</th><th>Action</th></tr>
             </thead>
             <tbody>
               {recentInwards.length === 0 ? (
-                <tr><td colSpan="14">No inward entries found.</td></tr>
+                <tr><td colSpan="15">No inward entries found.</td></tr>
               ) : (
                 recentInwards.map((entry) => (
                   <tr key={entry.id || entry.inward_no}>
@@ -927,6 +934,7 @@ export default function InwardEntryView() {
                       </button>
                     </td>
                     <td>{entry.supplier_invoice_no || '-'}</td>
+                    <td>{entry.payment_mode || 'Credit'}</td>
                     <td>{entry.tax_type === 'INTERSTATE' ? 'IGST' : 'GST Local'}</td>
                     <td>{entry.item_count}</td>
                     <td>{entry.total_qty}</td>
@@ -997,6 +1005,7 @@ function InwardPrintSheet({ inward }) {
           <strong>Supplier Invoice</strong>
           <span>No: {entry.supplier_invoice_no || '-'}</span>
           <span>Date: {formatDate(entry.supplier_invoice_date)}</span>
+          <span>Payment: {entry.payment_mode || 'Credit'}</span>
           <span>Tax Type: {isInterstate ? 'IGST' : 'CGST + SGST'}</span>
         </div>
       </div>

@@ -52,12 +52,16 @@ function normalizeProductName(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
 }
 
+function normalizePaymentMode(value) {
+  return String(value || '').toUpperCase() === 'CASH' ? 'Cash' : 'Credit';
+}
+
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
 router.get('/recent', async (_req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT id, inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date,
+      `SELECT id, inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date, payment_mode,
               item_count, total_qty, taxable_total, gst_total, total_cgst, total_sgst, total_igst,
               grand_total, tax_type, created_by, created_at
        FROM inward_entries
@@ -95,7 +99,7 @@ router.get('/history', async (req, res) => {
 
   try {
     const [rows] = await db.query(
-      `SELECT id, inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date,
+      `SELECT id, inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date, payment_mode,
               item_count, total_qty, taxable_total, gst_total, total_cgst, total_sgst, total_igst,
               grand_total, tax_type, created_by, created_at
        FROM inward_entries
@@ -120,7 +124,7 @@ router.get('/by-number/:inwardNo/details', async (req, res) => {
   try {
     const [entryRows] = await db.query(
       `SELECT id, inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
-              supplier_invoice_no, supplier_invoice_date, item_count, total_qty, taxable_total,
+              supplier_invoice_no, supplier_invoice_date, payment_mode, item_count, total_qty, taxable_total,
               gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, created_by, created_at
        FROM inward_entries
        WHERE inward_no = ?
@@ -159,7 +163,7 @@ router.get('/:id/details', async (req, res) => {
   try {
     const [entryRows] = await db.query(
       `SELECT id, inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
-              supplier_invoice_no, supplier_invoice_date, item_count, total_qty, taxable_total,
+              supplier_invoice_no, supplier_invoice_date, payment_mode, item_count, total_qty, taxable_total,
               gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, created_by, created_at
        FROM inward_entries
        WHERE id = ?
@@ -192,6 +196,7 @@ router.get('/:id/details', async (req, res) => {
 router.post('/', async (req, res) => {
   const { supplier = {}, lines = [] } = req.body || {};
   const taxType = req.body?.tax_type === 'INTERSTATE' ? 'INTERSTATE' : 'LOCAL';
+  const paymentMode = normalizePaymentMode(req.body?.payment_mode || supplier.payment_mode);
 
   if (!supplier.name || !String(supplier.name).trim()) {
     return res.status(400).json({ error: 'Supplier name is required.' });
@@ -241,9 +246,9 @@ router.post('/', async (req, res) => {
     const [entryResult] = await connection.query(
       `INSERT INTO inward_entries
        (inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
-        supplier_invoice_no, supplier_invoice_date, item_count, total_qty, taxable_total,
+        supplier_invoice_no, supplier_invoice_date, payment_mode, item_count, total_qty, taxable_total,
         gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, ?, ?)`,
       [
         finalInwardNo,
         String(supplier.name || '').trim(),
@@ -252,6 +257,7 @@ router.post('/', async (req, res) => {
         String(supplier.phone || '').trim(),
         String(supplier.invoice_no || '').trim(),
         supplier.invoice_date || null,
+        paymentMode,
         taxType,
         req.user.username
       ]
@@ -352,6 +358,7 @@ router.post('/', async (req, res) => {
       entityId: finalInwardNo,
       details: {
         supplier: supplier.name,
+        paymentMode,
         itemCount: validLines.length,
         totalQty,
         grandTotal,
@@ -368,6 +375,7 @@ router.post('/', async (req, res) => {
       inward_no: finalInwardNo,
       item_count: validLines.length,
       total_qty: totalQty,
+      payment_mode: paymentMode,
       grand_total: grandTotal
     });
   } catch (err) {

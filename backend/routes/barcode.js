@@ -58,10 +58,19 @@ function extractBlock(template, name) {
 }
 
 function renderLabels(template, data) {
+  const labelBlock = extractBlock(template, 'LABEL');
+  const stickerCount = Math.max(Number.parseInt(data.stickerCount, 10) || 1, 1);
+
+  if (labelBlock) {
+    const renderedLabels = Array.from({ length: stickerCount }, () => replaceFields(labelBlock, data));
+    return template
+      .replace(/{{#LABEL}}[\s\S]*?{{\/LABEL}}/, renderedLabels.join('\r\n'))
+      .replace(/\n/g, '\r\n');
+  }
+
   const rowBlock = extractBlock(template, 'ROW');
   const leftBlock = extractBlock(rowBlock, 'LEFT');
   const rightBlock = extractBlock(rowBlock, 'RIGHT');
-  const stickerCount = Math.max(Number.parseInt(data.stickerCount, 10) || 1, 1);
   const rows = Math.ceil(stickerCount / 2);
   const renderedRows = [];
 

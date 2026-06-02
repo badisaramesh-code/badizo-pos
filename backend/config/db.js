@@ -178,6 +178,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         supplier_phone VARCHAR(20) DEFAULT '',
         supplier_invoice_no VARCHAR(100) DEFAULT '',
         supplier_invoice_date DATE DEFAULT NULL,
+        payment_mode ENUM('Credit', 'Cash') NOT NULL DEFAULT 'Credit',
         item_count INT NOT NULL DEFAULT 0,
         total_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         taxable_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
@@ -392,6 +393,25 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
 
     await connection.query(`
+      CREATE TABLE IF NOT EXISTS accounting_vouchers (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        voucher_no VARCHAR(80) NOT NULL UNIQUE,
+        voucher_date DATE NOT NULL,
+        voucher_type ENUM('CREDITOR_PAYMENT', 'DEBTOR_RECEIPT') NOT NULL,
+        account_name VARCHAR(180) NOT NULL,
+        payment_mode ENUM('Cash', 'Bank') NOT NULL DEFAULT 'Cash',
+        amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        reference_no VARCHAR(120) DEFAULT '',
+        remarks VARCHAR(255) DEFAULT '',
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_accounting_voucher_date (voucher_date),
+        INDEX idx_accounting_voucher_account (account_name),
+        INDEX idx_accounting_voucher_type (voucher_type)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
       CREATE TABLE IF NOT EXISTS counter_cash_ledger_entries (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         entry_date DATE NOT NULL,
@@ -462,6 +482,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'inward_entries', 'total_sgst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER total_cgst');
     await ensureColumn(connection, 'inward_entries', 'total_igst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER total_sgst');
     await ensureColumn(connection, 'inward_entries', 'tax_type', "ENUM('LOCAL', 'INTERSTATE') NOT NULL DEFAULT 'LOCAL' AFTER grand_total");
+    await ensureColumn(connection, 'inward_entries', 'payment_mode', "ENUM('Credit', 'Cash') NOT NULL DEFAULT 'Credit' AFTER supplier_invoice_date");
     await ensureColumn(connection, 'inward_items', 'discount_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER discount_percent");
     await ensureColumn(connection, 'inward_items', 'discount_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER discount_type');
     await ensureColumn(connection, 'inward_items', 'scheme_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER scheme");

@@ -319,6 +319,17 @@ export async function fetchDayBook(dateOrRange) {
   return data;
 }
 
+export async function fetchAccountingBooks(dateOrRange) {
+  const params = typeof dateOrRange === 'object' ? dateOrRange : { date: dateOrRange };
+  const { data } = await api.get('/books/accounting', { params });
+  return data;
+}
+
+export async function saveAccountingVoucher(payload) {
+  const { data } = await api.post('/accounting-vouchers', payload);
+  return data;
+}
+
 export async function fetchCounterExpected(date, counterNo) {
   const { data } = await api.get('/counter-closing/expected', {
     params: { date, counter_no: counterNo }
