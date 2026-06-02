@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import {
   fetchCounterHandover,
@@ -11,21 +11,8 @@ import { todayIso } from '../utils/date';
 import { formatMoney, toNumber } from '../utils/money';
 
 const DEFAULT_DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
-const COMMON_DETAIL_OPTIONS = [
-  'Counter open Cash',
-  'UPI',
-  'CARDS',
-  'Tea Tiffin',
-  'Transport',
-  'Hamali',
-  'Salaries',
-  'Incoming',
-  'Outgoing',
-  'Anamathu / Instant Credit Bill',
-  'Old Anamathu Collection',
-  'Counter Closing Cash',
-  'Today Sale'
-];
+const HANDOVER_TRANSACTION_ROWS = 30;
+const AUTO_ENTRY_DETAILS = new Set(['Counter Closing Cash', 'Today Sale']);
 
 function emptyDenominations(denominations) {
   return denominations.reduce((acc, value) => ({ ...acc, [value]: '' }), {});
@@ -35,9 +22,40 @@ function blankEntry(direction = 'CR') {
   return { entry_type: 'GENERAL', details: '', remarks: '', direction, amount: '' };
 }
 
+function isAutoEntry(entry) {
+  return AUTO_ENTRY_DETAILS.has(String(entry.details || '').trim());
+}
+
+function isEntryFilled(entry) {
+  return Boolean(String(entry.details || '').trim() || String(entry.remarks || '').trim() || normalizeAmount(entry.amount) > 0);
+}
+
+function normalizeEntryCount(rows) {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  const normalized = sourceRows.slice(0, HANDOVER_TRANSACTION_ROWS).map((entry) => ({
+    ...blankEntry(entry.direction === 'DR' ? 'DR' : 'CR'),
+    ...entry,
+    details: entry.details || '',
+    remarks: entry.remarks || '',
+    amount: entry.amount === undefined || entry.amount === null ? '' : String(entry.amount)
+  }));
+
+  while (normalized.length < HANDOVER_TRANSACTION_ROWS) {
+    normalized.push(blankEntry());
+  }
+
+  return normalized;
+}
+
 function normalizeAmount(value) {
   const amount = Number(value || 0);
   return Number.isFinite(amount) ? amount : 0;
+}
+
+function formatAmountInput(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  return normalizeAmount(text).toFixed(2);
 }
 
 function getOrderedRange(fromDate, toDate) {
@@ -53,19 +71,8 @@ function exportWorkbook(filename, sheets) {
   XLSX.writeFile(workbook, filename);
 }
 
-function makeDefaultEntries(snapshot, openingCash) {
-  const openCash = toNumber(openingCash);
-  return [
-    { entry_type: 'OPENING_CASH', details: 'Counter open Cash', remarks: '', direction: 'DR', amount: openCash ? String(openCash) : '' },
-    { entry_type: 'DIGITAL_SALE', details: 'UPI', remarks: 'Today UPI sale', direction: 'DR', amount: snapshot.upi_sales ? String(snapshot.upi_sales) : '' },
-    { entry_type: 'DIGITAL_SALE', details: 'CARDS', remarks: 'Today card sale', direction: 'DR', amount: snapshot.card_sales ? String(snapshot.card_sales) : '' },
-    { entry_type: 'EXPENSE', details: 'Tea Tiffin', remarks: '', direction: 'CR', amount: '' },
-    { entry_type: 'EXPENSE', details: 'Transport', remarks: '', direction: 'CR', amount: '' },
-    { entry_type: 'CREDIT_ISSUED', details: 'Anamathu / Instant Credit Bill', remarks: 'Customer credit bill today', direction: 'CR', amount: '' },
-    { entry_type: 'CREDIT_COLLECTION', details: 'Old Anamathu Collection', remarks: 'Cash/UPI/Card received today', direction: 'DR', amount: '' },
-    { entry_type: 'CLOSING_BASE', details: 'Counter Closing Cash', remarks: 'Base cash retained in counter', direction: 'CR', amount: openCash ? String(openCash) : '' },
-    { entry_type: 'SALES', details: 'Today Sale', remarks: 'Counter sales total', direction: 'CR', amount: snapshot.counter_sales ? String(snapshot.counter_sales) : '' }
-  ];
+function makeDefaultEntries() {
+  return normalizeEntryCount([]);
 }
 
 function moneyWords(amount) {
@@ -90,6 +97,8 @@ export default function CounterClosingView() {
   const [denominations, setDenominations] = useState(emptyDenominations(DEFAULT_DENOMINATIONS));
   const [openingCash, setOpeningCash] = useState('');
   const [entries, setEntries] = useState([blankEntry()]);
+  const [activeEntryIndex, setActiveEntryIndex] = useState(0);
+  const [isExistingSheet, setIsExistingSheet] = useState(false);
   const [handedOverBy, setHandedOverBy] = useState(currentUser?.username || '');
   const [takenOverBy, setTakenOverBy] = useState('');
   const [notes, setNotes] = useState('');
@@ -97,6 +106,7 @@ export default function CounterClosingView() {
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const entryDetailRefs = useRef([]);
 
   useEffect(() => {
     loadSettings();
@@ -118,22 +128,43 @@ export default function CounterClosingView() {
     return denominationRows.reduce((sum, row) => sum + row.amount, 0);
   }, [denominationRows]);
 
+  const enteredEntries = useMemo(() => (
+    entries.filter((entry) => isEntryFilled(entry) && !isAutoEntry(entry))
+  ), [entries]);
+
+  const displayEntryRows = useMemo(() => {
+    const indexedRows = entries.map((entry, index) => ({ entry, index }));
+    if (isExistingSheet) {
+      return indexedRows.filter(({ entry }) => isEntryFilled(entry) && !isAutoEntry(entry));
+    }
+
+    const start = Math.max(Math.min(activeEntryIndex - 2, HANDOVER_TRANSACTION_ROWS - 3), 0);
+    return indexedRows.slice(start, start + 3);
+  }, [activeEntryIndex, entries, isExistingSheet]);
+
   const entryTotals = useMemo(() => {
-    return entries.reduce((acc, entry) => {
+    return enteredEntries.reduce((acc, entry) => {
       const amount = normalizeAmount(entry.amount);
       if (entry.direction === 'DR') acc.dr += amount;
       else acc.cr += amount;
       return acc;
     }, { dr: 0, cr: 0 });
-  }, [entries]);
+  }, [enteredEntries]);
 
+  const autoClosingCash = toNumber(openingCash);
+  const autoTodaySale = toNumber(snapshot.counter_sales);
+  const autoLedgerRows = useMemo(() => ([
+    { entry_type: 'CLOSING_BASE', details: 'Counter Closing Cash', remarks: 'Auto from opening cash', direction: 'CR', amount: autoClosingCash ? String(autoClosingCash) : '' },
+    { entry_type: 'SALES', details: 'Today Sale', remarks: 'Auto counter sales total', direction: 'CR', amount: autoTodaySale ? String(autoTodaySale) : '' }
+  ]), [autoClosingCash, autoTodaySale]);
   const drTotal = entryTotals.dr + notesTotal;
-  const crTotal = entryTotals.cr;
+  const crTotal = entryTotals.cr + autoClosingCash + autoTodaySale;
   const varianceAmount = drTotal - crTotal;
   const cashBalance = notesTotal;
-  const printableEntries = useMemo(() => {
-    return entries.filter((entry) => normalizeAmount(entry.amount) > 0);
-  }, [entries]);
+  const printableEntries = enteredEntries;
+  const printableDenominationRows = useMemo(() => (
+    denominationRows.filter((row) => row.qty > 0)
+  ), [denominationRows]);
 
   async function loadSettings() {
     try {
@@ -160,7 +191,9 @@ export default function CounterClosingView() {
 
       if (savedSheet) {
         setOpeningCash(String(toNumber(savedSheet.opening_cash)));
-        setEntries((savedSheet.entries || []).map((entry) => ({ ...entry, amount: String(toNumber(entry.amount)) })));
+        setEntries(normalizeEntryCount((savedSheet.entries || []).filter((entry) => !isAutoEntry(entry))));
+        setActiveEntryIndex(0);
+        setIsExistingSheet(true);
         setDenominations({
           ...emptyDenominations(nextDenominations),
           ...(savedSheet.denominations || []).reduce((acc, row) => ({ ...acc, [Number(row.denomination_value)]: String(toNumber(row.quantity)) }), {})
@@ -171,7 +204,9 @@ export default function CounterClosingView() {
         setStatusMessage('Existing handover sheet loaded for this counter and date.');
       } else {
         setOpeningCash('');
-        setEntries(makeDefaultEntries(nextSnapshot, ''));
+        setEntries(makeDefaultEntries());
+        setActiveEntryIndex(0);
+        setIsExistingSheet(false);
         setDenominations(emptyDenominations(nextDenominations));
         setHandedOverBy(currentUser?.username || '');
         setTakenOverBy('');
@@ -192,20 +227,46 @@ export default function CounterClosingView() {
   }
 
   function updateEntry(index, field, value) {
+    setActiveEntryIndex(index);
+    if (isExistingSheet) setIsExistingSheet(false);
     setEntries((current) => current.map((entry, rowIndex) => (
       rowIndex === index ? { ...entry, [field]: value } : entry
     )));
   }
 
-  function removeEntry(index) {
-    setEntries((current) => {
-      const next = current.filter((_, rowIndex) => rowIndex !== index);
-      return next.length ? next : [blankEntry()];
-    });
+  function updateOpeningCash(value) {
+    setOpeningCash(value);
+  }
+
+  function formatOpeningCash() {
+    setOpeningCash((current) => formatAmountInput(current));
+  }
+
+  function formatEntryAmount(index) {
+    setEntries((current) => current.map((entry, rowIndex) => (
+      rowIndex === index ? { ...entry, amount: formatAmountInput(entry.amount) } : entry
+    )));
+  }
+
+  function focusEntryDetails(index) {
+    setActiveEntryIndex(index);
+    window.setTimeout(() => {
+      entryDetailRefs.current[index]?.focus();
+      entryDetailRefs.current[index]?.select?.();
+    }, 0);
+  }
+
+  function moveToNextEntryOnEnter(event, index) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    formatEntryAmount(index);
+    focusEntryDetails(Math.min(index + 1, HANDOVER_TRANSACTION_ROWS - 1));
   }
 
   function resetAccountingRows() {
-    setEntries(makeDefaultEntries(snapshot, openingCash));
+    setEntries(makeDefaultEntries());
+    setActiveEntryIndex(0);
+    setIsExistingSheet(false);
   }
 
   async function handleSave() {
@@ -223,7 +284,7 @@ export default function CounterClosingView() {
         date,
         counter_no: counterNo,
         opening_cash: openingCash,
-        entries: entries.map((entry, index) => ({ ...entry, line_no: index + 1 })),
+        entries: [...enteredEntries, ...autoLedgerRows].map((entry, index) => ({ ...entry, line_no: index + 1 })),
         denominations,
         handed_over_by: handedOverBy,
         taken_over_by: takenOverBy,
@@ -251,12 +312,14 @@ export default function CounterClosingView() {
           CR: entry.direction === 'CR' ? normalizeAmount(entry.amount) : ''
         })).concat([
           { Sno: '', Details: 'Cash Notes Denomination Total', Remarks: '', DR: notesTotal, CR: '' },
+          { Sno: '', Details: 'Counter Closing Cash', Remarks: 'Auto from opening cash', DR: '', CR: autoClosingCash },
+          { Sno: '', Details: 'Today Sale', Remarks: 'Auto counter sales total', DR: '', CR: autoTodaySale },
           { Sno: '', Details: 'Counter Closing Total', Remarks: '', DR: drTotal, CR: crTotal }
         ])
       },
       {
         name: 'Denominations',
-        rows: denominationRows.map((row) => ({ Denomination: row.value, Quantity: row.qty, Amount: row.amount }))
+        rows: printableDenominationRows.map((row) => ({ Denomination: row.value, Quantity: row.qty, Amount: row.amount }))
       }
     ]);
   }
@@ -304,6 +367,8 @@ export default function CounterClosingView() {
         <div className="panel-header green">
           <h2 className="panel-title">Counter Handover Daily Sheet</h2>
           <div className="report-filter-row closing-filter-row">
+            <button className="secondary-button" type="button" onClick={printHandoverSheet}>Print Sheet</button>
+            <button className="secondary-button" type="button" onClick={exportHandoverExcel}>Export Excel</button>
             <label className="date-range-field">
               <span className="field-label">Date</span>
               <input className="field report-date-input" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
@@ -315,17 +380,16 @@ export default function CounterClosingView() {
               </select>
             </label>
             <button className="secondary-button" type="button" onClick={loadHandover}>Refresh</button>
-            <button className="secondary-button" type="button" onClick={printHandoverSheet}>Print Sheet</button>
-            <button className="secondary-button" type="button" onClick={exportHandoverExcel}>Export Excel</button>
           </div>
         </div>
 
         <div className="panel-body form-stack">
           <div className="handover-heading">
             <strong>Hyper Fresh Mart LLP</strong>
-            <span>Date: {date}</span>
-            <span>Sheet: {sheetNo || '-'}</span>
-            <span>Counter: {counterNo}</span>
+            <span className="handover-heading-title">Accounting DR / CR Transactions</span>
+            <span className="handover-heading-chip">Date: {date}</span>
+            <span className="handover-heading-chip">Sheet: {sheetNo || '-'}</span>
+            <span className="handover-heading-chip">Counter: {counterNo}</span>
           </div>
 
           <div className="handover-sales-strip">
@@ -339,7 +403,7 @@ export default function CounterClosingView() {
           <div className="handover-actions-row">
             <label>
               <span className="field-label">Opening Cash</span>
-              <input className="field" type="number" min="0" value={openingCash} onChange={(event) => setOpeningCash(event.target.value)} />
+              <input className="field amount-field no-spinner" inputMode="decimal" value={openingCash} onChange={(event) => updateOpeningCash(event.target.value)} onBlur={formatOpeningCash} />
             </label>
             <label>
               <span className="field-label">Handed Over By</span>
@@ -353,59 +417,76 @@ export default function CounterClosingView() {
           </div>
 
           <section className="panel">
-            <div className="panel-header">
-              <h3 className="panel-title">Accounting DR / CR Transactions</h3>
-              <button className="secondary-button" type="button" onClick={() => setEntries((current) => [...current, blankEntry()])}>Add Row</button>
-            </div>
             <div className="panel-body table-scroll">
               <table className="history-table handover-table">
-                <thead><tr><th>Sno</th><th>Details</th><th>Remarks</th><th>Type</th><th>DR Rs</th><th>CR Rs</th><th>Del</th></tr></thead>
+                <thead><tr><th>Sno</th><th>Details</th><th>Remarks</th><th>DR Rs</th><th>CR Rs</th></tr></thead>
                 <tbody>
-                  {entries.map((entry, index) => (
+                  {displayEntryRows.length === 0 && isExistingSheet ? (
+                    <tr><td colSpan="5">No manual entries saved for this sheet.</td></tr>
+                  ) : displayEntryRows.map(({ entry, index }) => (
                     <tr key={index}>
                       <td>{index + 1}</td>
                       <td>
-                        {COMMON_DETAIL_OPTIONS.includes(entry.details) ? (
-                          <select
-                            className="select handover-detail-select"
-                            value={entry.details}
-                            onChange={(event) => updateEntry(index, 'details', event.target.value === '__CUSTOM__' ? '' : event.target.value)}
-                          >
-                            {COMMON_DETAIL_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                            <option value="__CUSTOM__">Custom entry...</option>
-                          </select>
-                        ) : (
-                          <input className="field" value={entry.details} onChange={(event) => updateEntry(index, 'details', event.target.value)} placeholder="Type custom details..." />
-                        )}
-                      </td>
-                      <td><input className="field" value={entry.remarks} onChange={(event) => updateEntry(index, 'remarks', event.target.value)} /></td>
-                      <td>
-                        <select className="select" value={entry.entry_type} onChange={(event) => updateEntry(index, 'entry_type', event.target.value)}>
-                          <option value="GENERAL">General</option>
-                          <option value="EXPENSE">Expense</option>
-                          <option value="INCOMING">Incoming</option>
-                          <option value="OUTGOING">Outgoing</option>
-                          <option value="CREDIT_ISSUED">Anamathu Bill</option>
-                          <option value="CREDIT_COLLECTION">Credit Collection</option>
-                          <option value="DIGITAL_SALE">UPI/Card</option>
-                          <option value="SALES">Sale</option>
-                        </select>
+                        <input
+                          ref={(element) => { entryDetailRefs.current[index] = element; }}
+                          className="field"
+                          value={entry.details}
+                          onFocus={() => setActiveEntryIndex(index)}
+                          onChange={(event) => updateEntry(index, 'details', event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              const remarksInput = event.currentTarget.closest('tr')?.querySelector('.handover-remarks-input');
+                              remarksInput?.focus();
+                            }
+                          }}
+                          placeholder="Type details..."
+                        />
                       </td>
                       <td>
-                        {entry.direction === 'DR' ? (
-                          <input className="field amount-field" type="number" min="0" value={entry.amount} onChange={(event) => updateEntry(index, 'amount', event.target.value)} />
-                        ) : (
-                          <button className="secondary-button mini-ledger-toggle" type="button" onClick={() => updateEntry(index, 'direction', 'DR')}>DR</button>
-                        )}
+                        <input
+                          className="field handover-remarks-input"
+                          value={entry.remarks}
+                          onFocus={() => setActiveEntryIndex(index)}
+                          onChange={(event) => updateEntry(index, 'remarks', event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              const drInput = event.currentTarget.closest('tr')?.querySelector('.handover-dr-input');
+                              drInput?.focus();
+                            }
+                          }}
+                          placeholder="Remarks"
+                        />
                       </td>
                       <td>
-                        {entry.direction === 'CR' ? (
-                          <input className="field amount-field" type="number" min="0" value={entry.amount} onChange={(event) => updateEntry(index, 'amount', event.target.value)} />
-                        ) : (
-                          <button className="secondary-button mini-ledger-toggle" type="button" onClick={() => updateEntry(index, 'direction', 'CR')}>CR</button>
-                        )}
+                        <input
+                          className="field amount-field handover-dr-input"
+                          inputMode="decimal"
+                          value={entry.direction === 'DR' ? entry.amount : ''}
+                          onChange={(event) => updateEntry(index, 'amount', event.target.value)}
+                          onBlur={() => formatEntryAmount(index)}
+                          onFocus={() => {
+                            setActiveEntryIndex(index);
+                            updateEntry(index, 'direction', 'DR');
+                          }}
+                          onKeyDown={(event) => moveToNextEntryOnEnter(event, index)}
+                        />
                       </td>
-                      <td><button className="danger-button" type="button" onClick={() => removeEntry(index)}>Del</button></td>
+                      <td>
+                        <input
+                          className="field amount-field"
+                          inputMode="decimal"
+                          value={entry.direction === 'CR' ? entry.amount : ''}
+                          onChange={(event) => updateEntry(index, 'amount', event.target.value)}
+                          onBlur={() => formatEntryAmount(index)}
+                          onFocus={() => {
+                            setActiveEntryIndex(index);
+                            updateEntry(index, 'direction', 'CR');
+                          }}
+                          onKeyDown={(event) => moveToNextEntryOnEnter(event, index)}
+                        />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -414,7 +495,10 @@ export default function CounterClosingView() {
           </section>
 
           <section className="panel">
-            <div className="panel-header"><h3 className="panel-title">Notes Denomination</h3></div>
+            <div className="panel-header handover-denomination-header">
+              <h3 className="panel-title">Notes Denomination</h3>
+              <strong>Today Cash Notes Count Balance: {formatMoney(cashBalance)}</strong>
+            </div>
             <div className="panel-body handover-denomination-grid">
               {denominationRows.map((row) => (
                 <label key={row.value}>
@@ -426,16 +510,42 @@ export default function CounterClosingView() {
             </div>
           </section>
 
+          <section className="panel">
+            <div className="panel-header"><h3 className="panel-title">Automatic Closing Rows</h3></div>
+            <div className="panel-body table-scroll">
+              <table className="history-table handover-auto-table">
+                <thead><tr><th>Details</th><th>Remarks</th><th>DR Rs</th><th>CR Rs</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td>Counter Closing Cash</td>
+                    <td>Automatically taken from Opening Cash</td>
+                    <td></td>
+                    <td><strong>{formatMoney(autoClosingCash)}</strong></td>
+                  </tr>
+                  <tr>
+                    <td>Today Sale</td>
+                    <td>Automatically taken from counter sales</td>
+                    <td></td>
+                    <td><strong>{formatMoney(autoTodaySale)}</strong></td>
+                  </tr>
+                  <tr>
+                    <td><strong>Counter Closing Total</strong></td>
+                    <td></td>
+                    <td><strong>{formatMoney(drTotal)}</strong></td>
+                    <td><strong>{formatMoney(crTotal)}</strong></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
           <div className="handover-total-strip">
             <div><span>Notes Cash Balance</span><strong>{formatMoney(cashBalance)}</strong></div>
+            <div><span>Closing Cash</span><strong>{formatMoney(autoClosingCash)}</strong></div>
+            <div><span>Today Sale</span><strong>{formatMoney(autoTodaySale)}</strong></div>
             <div><span>DR Total</span><strong>{formatMoney(drTotal)}</strong></div>
             <div><span>CR Total</span><strong>{formatMoney(crTotal)}</strong></div>
             <div className={Math.abs(varianceAmount) > 0.01 ? 'variance-warning' : ''}><span>Difference</span><strong>{formatMoney(varianceAmount)}</strong></div>
-          </div>
-
-          <div className="handover-words">
-            <strong>Today Cash Notes Count Balance: {formatMoney(cashBalance)}</strong>
-            <span>{moneyWords(cashBalance)}</span>
           </div>
 
           <label>
@@ -510,19 +620,11 @@ export default function CounterClosingView() {
                 </tr>
               ))}
               <tr><td>{printableEntries.length + 1}</td><td colSpan="4"><strong>Notes Denomination</strong></td></tr>
-              {denominationRows.filter((row) => row.qty > 0).map((row, index) => (
-                <tr key={row.value}><td>{printableEntries.length + 2 + index}</td><td>Rs. {row.value}</td><td>{row.qty}</td><td>{row.amount.toFixed(2)}</td><td /></tr>
+              {printableDenominationRows.map((row, index) => (
+                <tr key={row.value}><td>{printableEntries.length + 2 + index}</td><td>Rs. {row.value}</td><td>{row.qty || ''}</td><td>{row.amount ? row.amount.toFixed(2) : ''}</td><td /></tr>
               ))}
-              <tr><td /></tr>
-              <tr><td /></tr>
-              <tr><td /></tr>
-              <tr><td /></tr>
-              <tr><td /></tr>
-              <tr><td /></tr>
-              <tr><td /></tr>
-              <tr><td /></tr>
-              <tr><td /></tr>
-              <tr><td /></tr>
+              <tr><td>{printableEntries.length + printableDenominationRows.length + 2}</td><td>Counter Closing Cash</td><td>Auto from opening cash</td><td></td><td>{autoClosingCash.toFixed(2)}</td></tr>
+              <tr><td>{printableEntries.length + printableDenominationRows.length + 3}</td><td>Today Sale</td><td>Auto counter sales total</td><td></td><td>{autoTodaySale.toFixed(2)}</td></tr>
             </tbody>
             <tfoot>
               <tr><th colSpan="3">Counter Closing Total</th><th>{drTotal.toFixed(2)}</th><th>{crTotal.toFixed(2)}</th></tr>

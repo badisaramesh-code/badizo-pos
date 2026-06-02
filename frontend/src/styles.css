@@ -1665,8 +1665,10 @@ button:disabled {
 }
 
 .handover-heading {
-  grid-template-columns: 1fr auto auto auto;
-  padding: 10px 12px;
+  grid-template-columns: minmax(180px, 1fr) minmax(230px, auto) minmax(120px, auto) minmax(130px, auto) minmax(100px, auto);
+  gap: 8px;
+  align-items: center;
+  padding: 6px 9px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f7fcf8;
@@ -1674,21 +1676,48 @@ button:disabled {
 }
 
 .handover-heading strong {
-  font-size: 17px;
+  font-size: 15px;
 }
 
-.handover-sales-strip,
-.handover-total-strip {
+.handover-heading-title {
+  color: var(--brand-dark);
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.handover-heading-chip {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 8px;
+  border: 1px solid #b9dfbf;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--brand-dark);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.handover-sales-strip {
   grid-template-columns: repeat(5, minmax(130px, 1fr));
+}
+
+.handover-total-strip {
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
 }
 
 .handover-sales-strip > div,
 .handover-total-strip > div {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  min-height: 68px;
-  padding: 10px 12px;
+  gap: 3px;
+  min-height: 50px;
+  padding: 7px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-soft);
@@ -1704,7 +1733,7 @@ button:disabled {
 .handover-sales-strip strong,
 .handover-total-strip strong {
   color: var(--brand-dark);
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 900;
 }
 
@@ -1715,12 +1744,86 @@ button:disabled {
   align-items: end;
 }
 
+.counter-handover-card > .panel-header.green {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  min-height: 0;
+  padding: 5px 10px;
+}
+
+.counter-handover-card > .panel-header.green .panel-title {
+  white-space: nowrap;
+  font-size: 15px;
+  line-height: 1.1;
+}
+
+.counter-handover-card > .panel-header.green .closing-filter-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(145px, 170px) minmax(130px, 150px) auto;
+  justify-content: end;
+  align-items: center;
+  gap: 7px;
+}
+
+.counter-handover-card > .panel-header.green .field-label {
+  display: none;
+}
+
+.counter-handover-card > .panel-header.green .field,
+.counter-handover-card > .panel-header.green .select,
+.counter-handover-card > .panel-header.green .secondary-button {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.counter-handover-view > .panel > .panel-header.green {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  min-height: 0;
+  padding: 5px 10px;
+}
+
+.counter-handover-view > .panel > .panel-header.green .panel-title {
+  white-space: nowrap;
+  font-size: 15px;
+  line-height: 1.1;
+}
+
+.counter-handover-view > .panel > .panel-header.green .report-filter-row {
+  display: grid;
+  grid-template-columns: minmax(145px, 170px) minmax(145px, 170px) auto auto;
+  justify-content: end;
+  align-items: center;
+  gap: 7px;
+}
+
+.counter-handover-view > .panel > .panel-header.green .field-label {
+  display: none;
+}
+
+.counter-handover-view > .panel > .panel-header.green .field,
+.counter-handover-view > .panel > .panel-header.green .secondary-button {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.counter-handover-card > .panel-body {
+  padding-top: 10px;
+}
+
 .table-scroll {
   overflow: auto;
 }
 
 .handover-table {
   min-width: 980px;
+  font-size: 12px;
 }
 
 .handover-table th:nth-child(1),
@@ -1754,11 +1857,40 @@ button:disabled {
 
 .handover-table .field,
 .handover-table .select {
-  padding: 7px 8px;
+  min-height: 28px;
+  padding: 4px 7px;
+  font-size: 12px;
+}
+
+.handover-table th,
+.handover-table td,
+.handover-auto-table th,
+.handover-auto-table td {
+  padding-top: 4px;
+  padding-bottom: 4px;
+  line-height: 1.15;
+}
+
+.handover-auto-table .field {
+  min-height: 28px;
+  padding: 4px 7px;
 }
 
 .amount-field {
   text-align: right;
+}
+
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button,
+.amount-field::-webkit-outer-spin-button,
+.amount-field::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.no-spinner,
+.amount-field {
+  -moz-appearance: textfield;
 }
 
 .mini-ledger-toggle {
@@ -1769,13 +1901,13 @@ button:disabled {
 .handover-denomination-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(125px, 1fr));
-  gap: 10px;
+  gap: 6px;
 }
 
 .handover-denomination-grid label {
   display: grid;
-  gap: 6px;
-  padding: 10px;
+  gap: 4px;
+  padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfffc;
@@ -1784,13 +1916,29 @@ button:disabled {
 .handover-denomination-grid strong {
   color: var(--brand-dark);
   text-align: right;
+  font-size: 12px;
+}
+
+.handover-denomination-header {
+  min-height: 0;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.handover-denomination-header strong {
+  padding: 5px 9px;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 13px;
 }
 
 .handover-words {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 12px;
+  gap: 3px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fffdf5;
@@ -3370,6 +3518,20 @@ button:disabled {
   .handover-heading,
   .handover-denomination-grid {
     grid-template-columns: 1fr;
+  }
+
+  .handover-heading-title,
+  .handover-heading-chip {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .counter-handover-card > .panel-header.green,
+  .counter-handover-card > .panel-header.green .closing-filter-row,
+  .counter-handover-view > .panel > .panel-header.green,
+  .counter-handover-view > .panel > .panel-header.green .report-filter-row {
+    grid-template-columns: 1fr;
+    justify-content: stretch;
   }
 
   .bulk-edit-toolbar,

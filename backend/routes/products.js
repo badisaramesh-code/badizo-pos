@@ -605,7 +605,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
   try {
     const values = {
       hsnCode: hsn_code || '',
-      gstPercent: Number(gst_percent) || 0,
+      gstPercent: Number(gst_percent),
       unitType: normalizeUnitType(unit_type),
       mrp: Number(mrp) || 0,
       purchasePrice: Number(purchase_price) || 0,
@@ -638,6 +638,10 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
 
     if (requiredErrors.length) {
       return res.status(400).json({ error: `Fill all product columns before saving. Missing: ${requiredErrors.join(', ')}.` });
+    }
+
+    if (!Number.isFinite(values.gstPercent) || ![0, 3, 5, 12, 18, 28, 40].includes(values.gstPercent)) {
+      return res.status(400).json({ error: 'Select a valid GST percent.' });
     }
 
     if (values.salePrice > values.mrp && values.mrp > 0) {
@@ -678,7 +682,8 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
          bulk_discount_value = VALUES(bulk_discount_value),
          is_free_item = VALUES(is_free_item),
          stock_qty = VALUES(stock_qty),
-         min_stock_alert = VALUES(min_stock_alert)`,
+         min_stock_alert = VALUES(min_stock_alert),
+         updated_at = CURRENT_TIMESTAMP`,
       [
         finalProductCode,
         finalBarcode,

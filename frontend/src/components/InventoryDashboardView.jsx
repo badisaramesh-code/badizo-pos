@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import {
   bulkUpdateProducts,
@@ -17,8 +17,8 @@ const emptyForm = {
   barcode: '',
   product_name: '',
   hsn_code: '',
-  gst_percent: '18',
-  unit_type: 'Nos',
+  gst_percent: '',
+  unit_type: '',
   mrp: '',
   purchase_price: '',
   sale_price: '',
@@ -98,6 +98,10 @@ function formatProductDate(value) {
     hour: '2-digit',
     minute: '2-digit'
   });
+}
+
+function todayIso() {
+  return new Date().toISOString();
 }
 
 function moneyInput(value) {
@@ -260,7 +264,7 @@ async function readProductImportFile(file) {
 
 export default function InventoryDashboardView() {
   const [products, setProducts] = useState([]);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState({ ...emptyForm, created_at: todayIso() });
   const [filter, setFilter] = useState('');
   const [gstFilter, setGstFilter] = useState('ALL');
   const [page, setPage] = useState(1);
@@ -278,6 +282,22 @@ export default function InventoryDashboardView() {
   const [errorMessage, setErrorMessage] = useState('');
   const currentUser = getStoredUser();
   const canManageProducts = ['SERVER', 'ADMIN'].includes(currentUser?.role);
+  const productCodeRef = useRef(null);
+  const barcodeRef = useRef(null);
+  const productNameRef = useRef(null);
+  const hsnRef = useRef(null);
+  const gstRef = useRef(null);
+  const unitRef = useRef(null);
+  const mrpRef = useRef(null);
+  const purchasePriceRef = useRef(null);
+  const salePriceRef = useRef(null);
+  const wholesalePriceRef = useRef(null);
+  const discountTypeRef = useRef(null);
+  const discountRef = useRef(null);
+  const wholesaleDiscountRef = useRef(null);
+  const stockRef = useRef(null);
+  const lowStockRef = useRef(null);
+  const saveButtonRef = useRef(null);
 
   useEffect(() => {
     loadProducts();
@@ -313,6 +333,24 @@ export default function InventoryDashboardView() {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  function focusProductField(ref) {
+    window.setTimeout(() => {
+      ref.current?.focus();
+      ref.current?.select?.();
+    }, 0);
+  }
+
+  function moveOnEnter(event, nextRef) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    focusProductField(nextRef);
+  }
+
+  function resetProductForm() {
+    setForm({ ...emptyForm, created_at: todayIso(), updated_at: '' });
+    focusProductField(productCodeRef);
   }
 
   function updateField(field, value) {
@@ -408,7 +446,7 @@ export default function InventoryDashboardView() {
       is_free_item: Boolean(product.is_free_item),
       stock_qty: String(product.stock_qty ?? '0'),
       min_stock_alert: String(product.min_stock_alert ?? '10'),
-      created_at: product.created_at || '',
+      created_at: product.created_at || product.updated_at || todayIso(),
       updated_at: product.updated_at || ''
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -432,7 +470,7 @@ export default function InventoryDashboardView() {
         product_name: uppercaseProductName(form.product_name)
       });
       setStatusMessage(`${form.product_name} saved.`);
-      setForm(emptyForm);
+      resetProductForm();
       await loadProducts();
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save product.');
@@ -539,12 +577,10 @@ export default function InventoryDashboardView() {
           {errorMessage && <div className="alert-box">{errorMessage}</div>}
           {statusMessage && <div className="change-box">{statusMessage}</div>}
           {!canManageProducts && <div className="alert-box">Login as Admin or Server to save/import products.</div>}
-          {(form.created_at || form.updated_at) && (
-            <div className="product-date-strip">
-              <span>Entry Date: <strong>{formatProductDate(form.created_at)}</strong></span>
-              <span>Edit Date: <strong>{formatProductDate(form.updated_at)}</strong></span>
-            </div>
-          )}
+          <div className="product-date-strip">
+            <span>Product Created Date: <strong>{formatProductDate(form.created_at || form.updated_at)}</strong></span>
+            <span>Product Edit Date: <strong>{formatProductDate(form.updated_at || form.created_at)}</strong></span>
+          </div>
 
           <div className="segmented two">
             <button type="button" className={form.code_mode === 'AUTO' ? 'active' : ''} onClick={() => updateField('code_mode', 'AUTO')}>Auto Code</button>
@@ -553,61 +589,71 @@ export default function InventoryDashboardView() {
 
           <label>
             <span className="field-label">Product Code</span>
-            <input className="field" value={form.product_code} onChange={(event) => updateField('product_code', event.target.value.toUpperCase())} placeholder={form.code_mode === 'AUTO' ? 'Auto generated when empty' : 'Enter product code'} required={form.code_mode === 'MANUAL'} />
+            <input
+              ref={productCodeRef}
+              className="field"
+              value={form.product_code}
+              onChange={(event) => updateField('product_code', event.target.value.toUpperCase())}
+              onKeyDown={(event) => moveOnEnter(event, barcodeRef)}
+              placeholder={form.code_mode === 'AUTO' ? 'Auto generated when empty' : 'Enter product code'}
+              required={form.code_mode === 'MANUAL'}
+            />
           </label>
 
           <label>
             <span className="field-label">Barcode 128 (0-9, A-Z)</span>
-            <input className="field" value={form.barcode} onChange={(event) => updateField('barcode', event.target.value.toUpperCase())} required />
+            <input ref={barcodeRef} className="field" value={form.barcode} onChange={(event) => updateField('barcode', event.target.value.toUpperCase())} onKeyDown={(event) => moveOnEnter(event, productNameRef)} required />
           </label>
 
           <label>
             <span className="field-label">Product name</span>
-            <input className="field" value={form.product_name} onChange={(event) => updateField('product_name', event.target.value)} required />
+            <input ref={productNameRef} className="field" value={form.product_name} onChange={(event) => updateField('product_name', event.target.value)} onKeyDown={(event) => moveOnEnter(event, hsnRef)} required />
           </label>
 
           <label>
             <span className="field-label">HSN code</span>
-            <input className="field" value={form.hsn_code} onChange={(event) => updateField('hsn_code', event.target.value)} required />
+            <input ref={hsnRef} className="field" value={form.hsn_code} onChange={(event) => updateField('hsn_code', event.target.value)} onKeyDown={(event) => moveOnEnter(event, gstRef)} required />
           </label>
 
           <label>
             <span className="field-label">GST percent</span>
-            <select className="select" value={form.gst_percent} onChange={(event) => updateField('gst_percent', event.target.value)}>
+            <select ref={gstRef} className="select" value={form.gst_percent} onChange={(event) => updateField('gst_percent', event.target.value)} onKeyDown={(event) => moveOnEnter(event, unitRef)}>
+              <option value="">Select GST</option>
               {GST_OPTIONS.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
             </select>
           </label>
 
           <label>
             <span className="field-label">Unit / Nos</span>
-            <select className="select" value={form.unit_type} onChange={(event) => updateField('unit_type', event.target.value)}>
+            <select ref={unitRef} className="select" value={form.unit_type} onChange={(event) => updateField('unit_type', event.target.value)} onKeyDown={(event) => moveOnEnter(event, mrpRef)}>
+              <option value="">Select Unit</option>
               {UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
             </select>
           </label>
 
           <label>
             <span className="field-label">MRP</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.mrp} onChange={(event) => updateField('mrp', event.target.value)} required />
+            <input ref={mrpRef} className="field" type="number" step="0.01" min="0" value={form.mrp} onChange={(event) => updateField('mrp', event.target.value)} onKeyDown={(event) => moveOnEnter(event, purchasePriceRef)} required />
           </label>
 
           <label>
             <span className="field-label">Purchase price / Cost</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.purchase_price} onChange={(event) => updateField('purchase_price', event.target.value)} placeholder="Cost to store" required />
+            <input ref={purchasePriceRef} className="field" type="number" step="0.01" min="0" value={form.purchase_price} onChange={(event) => updateField('purchase_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, salePriceRef)} placeholder="Cost to store" required />
           </label>
 
           <label>
             <span className="field-label">Retail sale price</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.sale_price} onChange={(event) => updateField('sale_price', event.target.value)} required />
+            <input ref={salePriceRef} className="field" type="number" step="0.01" min="0" value={form.sale_price} onChange={(event) => updateField('sale_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, wholesalePriceRef)} required />
           </label>
 
           <label>
             <span className="field-label">Wholesale price</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} placeholder="Defaults to retail price" required />
+            <input ref={wholesalePriceRef} className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, discountTypeRef)} placeholder="Defaults to retail price" required />
           </label>
 
           <label>
             <span className="field-label">Discount Type</span>
-            <select className="select" value={form.discount_type} onChange={(event) => updateField('discount_type', event.target.value)}>
+            <select ref={discountTypeRef} className="select" value={form.discount_type} onChange={(event) => updateField('discount_type', event.target.value)} onKeyDown={(event) => moveOnEnter(event, discountRef)}>
               <option value="PERCENT">Percent</option>
               <option value="VALUE">Value</option>
             </select>
@@ -615,12 +661,12 @@ export default function InventoryDashboardView() {
 
           <label>
             <span className="field-label">Discount</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.discount_value} onChange={(event) => updateField('discount_value', event.target.value)} required />
+            <input ref={discountRef} className="field" type="number" step="0.01" min="0" value={form.discount_value} onChange={(event) => updateField('discount_value', event.target.value)} onKeyDown={(event) => moveOnEnter(event, wholesaleDiscountRef)} required />
           </label>
 
           <label>
             <span className="field-label">Wholesale Discount</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.bulk_discount_value} onChange={(event) => updateField('bulk_discount_value', event.target.value)} required />
+            <input ref={wholesaleDiscountRef} className="field" type="number" step="0.01" min="0" value={form.bulk_discount_value} onChange={(event) => updateField('bulk_discount_value', event.target.value)} onKeyDown={(event) => moveOnEnter(event, stockRef)} required />
           </label>
 
           <label className="change-box">
@@ -629,16 +675,16 @@ export default function InventoryDashboardView() {
 
           <label>
             <span className="field-label">Current stock</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.stock_qty} onChange={(event) => updateField('stock_qty', event.target.value)} required />
+            <input ref={stockRef} className="field" type="number" step="0.01" min="0" value={form.stock_qty} onChange={(event) => updateField('stock_qty', event.target.value)} onKeyDown={(event) => moveOnEnter(event, lowStockRef)} required />
           </label>
 
           <label>
             <span className="field-label">Low stock alert</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.min_stock_alert} onChange={(event) => updateField('min_stock_alert', event.target.value)} required />
+            <input ref={lowStockRef} className="field" type="number" step="0.01" min="0" value={form.min_stock_alert} onChange={(event) => updateField('min_stock_alert', event.target.value)} onKeyDown={(event) => moveOnEnter(event, saveButtonRef)} required />
           </label>
 
-          <button className="primary-button" type="submit" disabled={!canManageProducts}>Save Product</button>
-          <button className="secondary-button" type="button" onClick={() => setForm(emptyForm)}>Clear</button>
+          <button ref={saveButtonRef} className="primary-button" type="submit" disabled={!canManageProducts}>Save Product</button>
+          <button className="secondary-button" type="button" onClick={resetProductForm}>Clear</button>
         </form>
       </section>
 
@@ -832,8 +878,8 @@ export default function InventoryDashboardView() {
                         <td>{formatMoney(product.wholesale_price)}</td>
                         <td>{product.discount_value || 0}{product.discount_type === 'VALUE' ? ' Rs' : '%'}</td>
                         <td className={isLow ? 'stock-low' : ''}>{product.stock_qty}</td>
-                        <td>{formatProductDate(product.created_at)}</td>
-                        <td>{formatProductDate(product.updated_at)}</td>
+                        <td>{formatProductDate(product.created_at || product.updated_at)}</td>
+                        <td>{formatProductDate(product.updated_at || product.created_at)}</td>
                         <td><button className="secondary-button" onClick={() => editProduct(product)}>Edit</button></td>
                       </tr>
                     );
