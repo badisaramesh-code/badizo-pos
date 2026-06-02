@@ -71,6 +71,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         is_free_item TINYINT(1) NOT NULL DEFAULT 0,
         stock_qty DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         min_stock_alert DECIMAL(10,2) NOT NULL DEFAULT 10.00,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_product_code (product_code),
         INDEX idx_barcode (barcode),
@@ -334,12 +335,94 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
 
     await connection.query(`
+      CREATE TABLE IF NOT EXISTS counter_handover_sheets (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        closing_date DATE NOT NULL,
+        counter_no INT NOT NULL,
+        sheet_no VARCHAR(80) NOT NULL UNIQUE,
+        opening_cash DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        counter_sales DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        all_counter_sales DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        cash_sales DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        upi_sales DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        card_sales DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        dr_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        cr_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        notes_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        cash_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        variance_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        handed_over_by VARCHAR(120) DEFAULT '',
+        taken_over_by VARCHAR(120) DEFAULT '',
+        notes VARCHAR(255) DEFAULT '',
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_counter_handover (closing_date, counter_no),
+        INDEX idx_counter_handover_date (closing_date),
+        INDEX idx_counter_handover_counter (counter_no)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS counter_handover_entries (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        sheet_id BIGINT NOT NULL,
+        line_no INT NOT NULL,
+        entry_type VARCHAR(40) DEFAULT 'GENERAL',
+        details VARCHAR(180) NOT NULL,
+        remarks VARCHAR(255) DEFAULT '',
+        direction ENUM('DR', 'CR') NOT NULL,
+        amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        FOREIGN KEY (sheet_id) REFERENCES counter_handover_sheets(id) ON DELETE CASCADE,
+        INDEX idx_handover_entry_sheet (sheet_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS counter_handover_denominations (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        sheet_id BIGINT NOT NULL,
+        denomination_label VARCHAR(20) NOT NULL,
+        denomination_value DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        quantity DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        FOREIGN KEY (sheet_id) REFERENCES counter_handover_sheets(id) ON DELETE CASCADE,
+        INDEX idx_handover_denom_sheet (sheet_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS counter_cash_ledger_entries (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        entry_date DATE NOT NULL,
+        counter_no INT DEFAULT NULL,
+        source_type VARCHAR(40) NOT NULL DEFAULT 'MANUAL',
+        source_id BIGINT DEFAULT NULL,
+        account_name VARCHAR(160) NOT NULL,
+        details VARCHAR(255) NOT NULL,
+        direction ENUM('DR', 'CR') NOT NULL,
+        amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        payment_mode VARCHAR(30) DEFAULT '',
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_cash_ledger_date (entry_date),
+        INDEX idx_cash_ledger_source (source_type, source_id),
+        INDEX idx_cash_ledger_account (account_name)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
       INSERT IGNORE INTO app_settings (setting_key, setting_value)
       VALUES
         ('shop_name', 'Hyper Fresh Mart LLP'),
         ('gst_number', '36AAJFH7790R1ZB'),
         ('phone', '08761 295000'),
         ('address', 'Sathupally - Khammam(dt) - 507303'),
+        ('bank_name', 'HDFC BANK'),
+        ('bank_account_name', 'Hyper Fresh Mart LLP'),
+        ('bank_account_no', '59209440987345'),
+        ('bank_ifsc', 'HDFC0004047'),
+        ('bank_branch', 'Sathupally'),
         ('counter_count', '6'),
         ('default_print_mode', 'Thermal')
     `);
@@ -353,6 +436,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'products', 'bulk_discount_value', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER discount_value');
     await ensureColumn(connection, 'products', 'is_free_item', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER bulk_discount_value');
     await ensureColumn(connection, 'products', 'min_stock_alert', 'DECIMAL(10,2) NOT NULL DEFAULT 10.00 AFTER stock_qty');
+    await ensureColumn(connection, 'products', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER min_stock_alert');
     await ensureColumn(connection, 'invoices', 'transaction_type', "ENUM('B2C', 'B2B') NOT NULL DEFAULT 'B2C' AFTER created_at");
     await ensureColumn(connection, 'invoices', 'payment_status', "ENUM('PENDING', 'PAID', 'FAILED') NOT NULL DEFAULT 'PAID' AFTER payment_mode");
     await ensureColumn(connection, 'invoices', 'payment_reference', 'VARCHAR(120) DEFAULT NULL AFTER payment_status');

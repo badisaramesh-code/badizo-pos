@@ -23,12 +23,14 @@ const emptyForm = {
   purchase_price: '',
   sale_price: '',
   wholesale_price: '',
-  discount_type: 'PERCENT',
+  discount_type: 'VALUE',
   discount_value: '',
   bulk_discount_value: '',
   is_free_item: false,
   stock_qty: '100',
-  min_stock_alert: '10'
+  min_stock_alert: '10',
+  created_at: '',
+  updated_at: ''
 };
 
 const GST_OPTIONS = ['0', '3', '5', '12', '18', '28', '40'];
@@ -83,6 +85,42 @@ function csvCell(value) {
 
 function uppercaseProductName(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
+function formatProductDate(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+function moneyInput(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '';
+  return Math.max(number, 0).toFixed(2);
+}
+
+function calculateDiscountFromPrice(mrpValue, priceValue, discountType) {
+  const mrp = Number(mrpValue);
+  const price = Number(priceValue);
+  if (!Number.isFinite(mrp) || mrp <= 0 || !Number.isFinite(price)) return '';
+  const discountAmount = Math.max(mrp - price, 0);
+  if (discountType === 'PERCENT') return moneyInput((discountAmount / mrp) * 100);
+  return moneyInput(discountAmount);
+}
+
+function calculatePriceFromDiscount(mrpValue, discountValue, discountType) {
+  const mrp = Number(mrpValue);
+  const discount = Number(discountValue);
+  if (!Number.isFinite(mrp) || mrp < 0 || !Number.isFinite(discount)) return '';
+  if (discountType === 'PERCENT') return moneyInput(mrp - (mrp * discount) / 100);
+  return moneyInput(mrp - discount);
 }
 
 function tableHtmlToCsv(text) {
@@ -278,7 +316,77 @@ export default function InventoryDashboardView() {
   }
 
   function updateField(field, value) {
-    setForm((current) => ({ ...current, [field]: field === 'product_name' ? value.toUpperCase() : value }));
+    setForm((current) => {
+      const next = { ...current, [field]: field === 'product_name' ? value.toUpperCase() : value };
+      const discountType = field === 'discount_type' ? value : next.discount_type;
+
+      if (field === 'mrp') {
+        if (next.sale_price !== '') next.discount_value = calculateDiscountFromPrice(value, next.sale_price, discountType);
+        if (next.wholesale_price !== '') next.bulk_discount_value = calculateDiscountFromPrice(value, next.wholesale_price, discountType);
+      }
+
+      if (field === 'sale_price') {
+        next.discount_value = calculateDiscountFromPrice(next.mrp, value, discountType);
+        if (next.wholesale_price === '') {
+          next.wholesale_price = value;
+          next.bulk_discount_value = next.discount_value;
+        }
+      }
+
+      if (field === 'discount_value') {
+        next.sale_price = calculatePriceFromDiscount(next.mrp, value, discountType);
+        if (next.wholesale_price === '') next.wholesale_price = next.sale_price;
+      }
+
+      if (field === 'wholesale_price') {
+        next.bulk_discount_value = calculateDiscountFromPrice(next.mrp, value, discountType);
+      }
+
+      if (field === 'bulk_discount_value') {
+        next.wholesale_price = calculatePriceFromDiscount(next.mrp, value, discountType);
+      }
+
+      if (field === 'discount_type') {
+        if (next.sale_price !== '') next.discount_value = calculateDiscountFromPrice(next.mrp, next.sale_price, value);
+        if (next.wholesale_price !== '') next.bulk_discount_value = calculateDiscountFromPrice(next.mrp, next.wholesale_price, value);
+      }
+
+      return next;
+    });
+  }
+
+  function validateProductForm() {
+    const requiredFields = [
+      ...(form.code_mode === 'MANUAL' ? [['product_code', 'Product Code']] : []),
+      ['barcode', 'Barcode'],
+      ['product_name', 'Product name'],
+      ['hsn_code', 'HSN code'],
+      ['gst_percent', 'GST percent'],
+      ['unit_type', 'Unit'],
+      ['mrp', 'MRP'],
+      ['purchase_price', 'Purchase price'],
+      ['sale_price', 'Retail sale price'],
+      ['wholesale_price', 'Wholesale price'],
+      ['discount_value', 'Discount'],
+      ['bulk_discount_value', 'Wholesale discount'],
+      ['stock_qty', 'Current stock'],
+      ['min_stock_alert', 'Low stock alert']
+    ];
+    const missing = requiredFields
+      .filter(([field]) => String(form[field] ?? '').trim() === '')
+      .map(([, label]) => label);
+
+    if (missing.length) return `Fill all product columns before saving. Missing: ${missing.join(', ')}.`;
+
+    const mrp = toNumber(form.mrp);
+    const salePrice = toNumber(form.sale_price);
+    const wholesalePrice = toNumber(form.wholesale_price);
+    const purchasePrice = toNumber(form.purchase_price);
+
+    if (salePrice > mrp && mrp > 0) return 'Retail sale price cannot be greater than MRP.';
+    if (wholesalePrice > mrp && mrp > 0) return 'Wholesale price cannot be greater than MRP.';
+    if (purchasePrice < 0) return 'Purchase price cannot be negative.';
+    return '';
   }
 
   function editProduct(product) {
@@ -299,7 +407,9 @@ export default function InventoryDashboardView() {
       bulk_discount_value: String(product.bulk_discount_value ?? ''),
       is_free_item: Boolean(product.is_free_item),
       stock_qty: String(product.stock_qty ?? '0'),
-      min_stock_alert: String(product.min_stock_alert ?? '10')
+      min_stock_alert: String(product.min_stock_alert ?? '10'),
+      created_at: product.created_at || '',
+      updated_at: product.updated_at || ''
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -308,6 +418,12 @@ export default function InventoryDashboardView() {
     event.preventDefault();
     setStatusMessage('');
     setErrorMessage('');
+
+    const validationError = validateProductForm();
+    if (validationError) {
+      setErrorMessage(validationError);
+      return;
+    }
 
     try {
       await saveProduct({
@@ -423,6 +539,12 @@ export default function InventoryDashboardView() {
           {errorMessage && <div className="alert-box">{errorMessage}</div>}
           {statusMessage && <div className="change-box">{statusMessage}</div>}
           {!canManageProducts && <div className="alert-box">Login as Admin or Server to save/import products.</div>}
+          {(form.created_at || form.updated_at) && (
+            <div className="product-date-strip">
+              <span>Entry Date: <strong>{formatProductDate(form.created_at)}</strong></span>
+              <span>Edit Date: <strong>{formatProductDate(form.updated_at)}</strong></span>
+            </div>
+          )}
 
           <div className="segmented two">
             <button type="button" className={form.code_mode === 'AUTO' ? 'active' : ''} onClick={() => updateField('code_mode', 'AUTO')}>Auto Code</button>
@@ -431,7 +553,7 @@ export default function InventoryDashboardView() {
 
           <label>
             <span className="field-label">Product Code</span>
-            <input className="field" value={form.product_code} onChange={(event) => updateField('product_code', event.target.value.toUpperCase())} placeholder={form.code_mode === 'AUTO' ? 'Auto generated when empty' : 'Enter product code'} />
+            <input className="field" value={form.product_code} onChange={(event) => updateField('product_code', event.target.value.toUpperCase())} placeholder={form.code_mode === 'AUTO' ? 'Auto generated when empty' : 'Enter product code'} required={form.code_mode === 'MANUAL'} />
           </label>
 
           <label>
@@ -446,7 +568,7 @@ export default function InventoryDashboardView() {
 
           <label>
             <span className="field-label">HSN code</span>
-            <input className="field" value={form.hsn_code} onChange={(event) => updateField('hsn_code', event.target.value)} />
+            <input className="field" value={form.hsn_code} onChange={(event) => updateField('hsn_code', event.target.value)} required />
           </label>
 
           <label>
@@ -470,7 +592,7 @@ export default function InventoryDashboardView() {
 
           <label>
             <span className="field-label">Purchase price / Cost</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.purchase_price} onChange={(event) => updateField('purchase_price', event.target.value)} placeholder="Cost to store" />
+            <input className="field" type="number" step="0.01" min="0" value={form.purchase_price} onChange={(event) => updateField('purchase_price', event.target.value)} placeholder="Cost to store" required />
           </label>
 
           <label>
@@ -480,7 +602,7 @@ export default function InventoryDashboardView() {
 
           <label>
             <span className="field-label">Wholesale price</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} placeholder="Defaults to retail price" />
+            <input className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} placeholder="Defaults to retail price" required />
           </label>
 
           <label>
@@ -493,12 +615,12 @@ export default function InventoryDashboardView() {
 
           <label>
             <span className="field-label">Discount</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.discount_value} onChange={(event) => updateField('discount_value', event.target.value)} />
+            <input className="field" type="number" step="0.01" min="0" value={form.discount_value} onChange={(event) => updateField('discount_value', event.target.value)} required />
           </label>
 
           <label>
-            <span className="field-label">Bulk Discount</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.bulk_discount_value} onChange={(event) => updateField('bulk_discount_value', event.target.value)} />
+            <span className="field-label">Wholesale Discount</span>
+            <input className="field" type="number" step="0.01" min="0" value={form.bulk_discount_value} onChange={(event) => updateField('bulk_discount_value', event.target.value)} required />
           </label>
 
           <label className="change-box">
@@ -507,12 +629,12 @@ export default function InventoryDashboardView() {
 
           <label>
             <span className="field-label">Current stock</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.stock_qty} onChange={(event) => updateField('stock_qty', event.target.value)} />
+            <input className="field" type="number" step="0.01" min="0" value={form.stock_qty} onChange={(event) => updateField('stock_qty', event.target.value)} required />
           </label>
 
           <label>
             <span className="field-label">Low stock alert</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.min_stock_alert} onChange={(event) => updateField('min_stock_alert', event.target.value)} />
+            <input className="field" type="number" step="0.01" min="0" value={form.min_stock_alert} onChange={(event) => updateField('min_stock_alert', event.target.value)} required />
           </label>
 
           <button className="primary-button" type="submit" disabled={!canManageProducts}>Save Product</button>
@@ -686,12 +808,14 @@ export default function InventoryDashboardView() {
                   <th>Wholesale</th>
                   <th>Disc</th>
                   <th>Stock</th>
+                  <th>Entry Date</th>
+                  <th>Edit Date</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {products.length === 0 ? (
-                  <tr><td colSpan="12">No products found.</td></tr>
+                  <tr><td colSpan="14">No products found.</td></tr>
                 ) : (
                   products.map((product) => {
                     const isLow = toNumber(product.stock_qty) <= toNumber(product.min_stock_alert, 10);
@@ -708,6 +832,8 @@ export default function InventoryDashboardView() {
                         <td>{formatMoney(product.wholesale_price)}</td>
                         <td>{product.discount_value || 0}{product.discount_type === 'VALUE' ? ' Rs' : '%'}</td>
                         <td className={isLow ? 'stock-low' : ''}>{product.stock_qty}</td>
+                        <td>{formatProductDate(product.created_at)}</td>
+                        <td>{formatProductDate(product.updated_at)}</td>
                         <td><button className="secondary-button" onClick={() => editProduct(product)}>Edit</button></td>
                       </tr>
                     );

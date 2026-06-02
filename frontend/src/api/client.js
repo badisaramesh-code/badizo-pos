@@ -163,6 +163,11 @@ export async function fetchGstr1Report({ from, to } = {}) {
   return data;
 }
 
+export async function fetchCounterHandoverReport({ from, to, counter = '' } = {}) {
+  const { data } = await api.get('/reports/counter-handover', { params: { from, to, counter } });
+  return data;
+}
+
 export async function fetchExceptionReport({ from, to } = {}) {
   const { data } = await api.get('/reports/exceptions', { params: { from, to } });
   return data;
@@ -311,6 +316,25 @@ export async function saveCounterClosing(payload) {
 
 export async function fetchCounterClosingSummary(date) {
   const { data } = await api.get('/counter-closing/summary', { params: { date } });
+  return data;
+}
+
+export async function fetchCounterHandover(date, counterNo) {
+  const { data } = await api.get('/counter-closing/handover', {
+    params: { date, counter_no: counterNo }
+  });
+  return data;
+}
+
+export async function saveCounterHandover(payload) {
+  const { data } = await api.post('/counter-closing/handover', payload);
+  return data;
+}
+
+export async function fetchCounterHandoverHistory({ from, to, counterNo = '' } = {}) {
+  const { data } = await api.get('/counter-closing/handover/history', {
+    params: { from, to, counter_no: counterNo }
+  });
   return data;
 }
 

@@ -32,6 +32,7 @@ CREATE TABLE products (
     wholesale_price DECIMAL(10,2) NOT NULL DEFAULT 0.00, -- Wholesale Customer Price
     stock_qty DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     min_stock_alert DECIMAL(10,2) NOT NULL DEFAULT 10.00,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_barcode (barcode),
     INDEX idx_product_name (product_name)

@@ -119,7 +119,7 @@ function getHeldBillMode(heldBill) {
 
 function isDigitalPaymentContactReady(value) {
   const text = String(value || '').trim();
-  return text.toUpperCase() === 'NO' || text.replace(/\D/g, '').length >= 10;
+  return text.toUpperCase() === 'NO' || text.replace(/\D/g, '').length === 10;
 }
 
 export default function BillingTerminalView() {
@@ -133,7 +133,12 @@ export default function BillingTerminalView() {
     shop_name: 'Hyper Fresh Mart LLP',
     gst_number: '36AAJFH7790R1ZB',
     address: 'Sathupally - Khammam(dt) - 507303',
-    phone: '08761 295000'
+    phone: '08761 295000',
+    bank_name: 'HDFC BANK',
+    bank_account_name: 'Hyper Fresh Mart LLP',
+    bank_account_no: '59209440987345',
+    bank_ifsc: 'HDFC0004047',
+    bank_branch: 'Sathupally'
   });
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
@@ -153,6 +158,9 @@ export default function BillingTerminalView() {
   const [paymentMode, setPaymentMode] = useState(initialDraft?.paymentMode || 'Cash');
   const [paymentReference, setPaymentReference] = useState(initialDraft?.paymentReference || '');
   const [paymentConfirmed, setPaymentConfirmed] = useState(Boolean(initialDraft?.paymentConfirmed));
+  const [digitalContactModal, setDigitalContactModal] = useState(null);
+  const [digitalContactDraft, setDigitalContactDraft] = useState({ name: '', phone: '' });
+  const [digitalContactError, setDigitalContactError] = useState('');
   const [printMode, setPrintMode] = useState(initialDraft?.printMode || 'Thermal');
   const [cashReceived, setCashReceived] = useState(initialDraft?.cashReceived || '');
   const [statusMessage, setStatusMessage] = useState('');
@@ -173,7 +181,11 @@ export default function BillingTerminalView() {
   const customerNameRef = useRef(null);
   const cashReceivedRef = useRef(null);
   const customerPhoneRef = useRef(null);
+  const customerGstinRef = useRef(null);
+  const customerAddressRef = useRef(null);
   const paymentReferenceRef = useRef(null);
+  const digitalContactNameRef = useRef(null);
+  const digitalContactPhoneRef = useRef(null);
   const canManageInvoice = ['SERVER', 'ADMIN'].includes(currentUser?.role);
   const canSelectCounter = ['SERVER', 'ADMIN'].includes(currentUser?.role);
   const activeMode = BILLING_MODES[billingMode];
@@ -338,9 +350,7 @@ export default function BillingTerminalView() {
   const changeDue = Math.max(toNumber(cashReceived) - totals.grand, 0);
   const cashReceivedAmount = toNumber(cashReceived);
   const isCashReady = paymentMode !== 'Cash' || cashReceivedAmount >= totals.grand;
-  const isExternalPaymentReady = paymentMode === 'Cash' || paymentConfirmed;
-  const isDigitalContactReady = paymentMode === 'Cash' || isDigitalPaymentContactReady(customerPhone);
-  const canCompleteSale = cart.length > 0 && isCashReady && isExternalPaymentReady && isDigitalContactReady && !cart.some((item) => item.isUnknown);
+  const canCompleteSale = cart.length > 0 && isCashReady && !cart.some((item) => item.isUnknown);
   const hasUnknownLine = cart.some((item) => item.isUnknown);
   const latestInvoice = invoiceHistory[0];
   const filteredInvoiceHistory = useMemo(() => {
@@ -384,6 +394,7 @@ export default function BillingTerminalView() {
       customerPhone,
       customerGstin,
       paymentMode,
+      paymentReference,
       cashReceived: toNumber(cashReceived),
       changeReturned: changeDue,
       taxType: BILLING_MODES[billingMode].taxType,
@@ -448,6 +459,7 @@ export default function BillingTerminalView() {
       customerPhone: invoice.customer_phone,
       customerGstin: invoice.customer_gstin,
       paymentMode: invoice.payment_mode,
+      paymentReference: invoice.payment_reference || '',
       cashReceived: toNumber(invoice.cash_received),
       changeReturned: toNumber(invoice.change_returned),
       taxType: invoice.tax_type,
@@ -834,6 +846,78 @@ export default function BillingTerminalView() {
     });
   }
 
+  function focusInput(ref, delay = 0) {
+    window.setTimeout(() => {
+      ref.current?.focus();
+      ref.current?.select?.();
+    }, delay);
+  }
+
+  function handleCustomerFieldEnter(event, nextRef) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    focusInput(nextRef, 0);
+  }
+
+  function openDigitalContactModal(mode, submitAfter = false) {
+    setPaymentMode(mode);
+    setDigitalContactError('');
+    setDigitalContactDraft({
+      name: (isBusinessBillingMode(billingMode) ? companyName : customerName) || '',
+      phone: customerPhone || ''
+    });
+    setDigitalContactModal({ mode, submitAfter });
+    focusInput(digitalContactNameRef, 60);
+  }
+
+  function handleDigitalContactFieldEnter(event, nextRef) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    if (nextRef) {
+      focusInput(nextRef, 0);
+      return;
+    }
+    confirmDigitalContactModal();
+  }
+
+  function confirmDigitalContactModal() {
+    if (!digitalContactModal) return;
+
+    const nextName = digitalContactDraft.name.trim();
+    const nextPhone = digitalContactDraft.phone.trim();
+
+    if (!isDigitalPaymentContactReady(nextPhone)) {
+      setDigitalContactError('Enter exactly 10 digit phone number or type NO.');
+      focusInput(digitalContactPhoneRef, 0);
+      return;
+    }
+
+    if (isBusinessBillingMode(billingMode)) {
+      setCompanyName(nextName);
+    } else {
+      setCustomerName(nextName);
+    }
+    setCustomerPhone(nextPhone);
+    setPaymentMode(digitalContactModal.mode);
+    setPaymentConfirmed(true);
+    setErrorMessage('');
+    setDigitalContactModal(null);
+
+    const overrides = {
+      customerName: nextName,
+      customerPhone: nextPhone,
+      paymentReference,
+      paymentConfirmed: true
+    };
+
+    if (digitalContactModal.submitAfter) {
+      submitCheckout(digitalContactModal.mode, overrides);
+      return;
+    }
+
+    focusInput(paymentReferenceRef, 50);
+  }
+
   function preparePayment(mode) {
     setPaymentMode(mode);
     setErrorMessage('');
@@ -851,8 +935,7 @@ export default function BillingTerminalView() {
     setPaymentConfirmed(true);
     window.setTimeout(() => {
       if (!isDigitalPaymentContactReady(customerPhone)) {
-        customerPhoneRef.current?.focus();
-        customerPhoneRef.current?.select();
+        openDigitalContactModal(mode, true);
         return;
       }
       paymentReferenceRef.current?.focus();
@@ -1032,8 +1115,12 @@ export default function BillingTerminalView() {
     }
   }
 
-  async function submitCheckout(forcedMode) {
+  async function submitCheckout(forcedMode, overrides = {}) {
     const activePaymentMode = forcedMode || paymentMode;
+    const effectiveCustomerName = overrides.customerName ?? (isBusinessBillingMode(billingMode) ? companyName : customerName);
+    const effectiveCustomerPhone = overrides.customerPhone ?? customerPhone;
+    const effectivePaymentReference = overrides.paymentReference ?? paymentReference;
+    const effectivePaymentConfirmed = overrides.paymentConfirmed ?? paymentConfirmed;
     setErrorMessage('');
     setStatusMessage('');
 
@@ -1047,7 +1134,7 @@ export default function BillingTerminalView() {
       return;
     }
 
-    if (isBusinessBillingMode(billingMode) && (!companyName.trim() || !customerGstin.trim())) {
+    if (isBusinessBillingMode(billingMode) && (!effectiveCustomerName.trim() || !customerGstin.trim())) {
       setErrorMessage('Company name and GSTIN are required for B2B IGST Wholesale bills.');
       return;
     }
@@ -1059,16 +1146,12 @@ export default function BillingTerminalView() {
       return;
     }
 
-    if (activePaymentMode !== 'Cash' && !isDigitalPaymentContactReady(customerPhone)) {
-      setErrorMessage(`Enter customer phone number or type NO before ${activePaymentMode} billing.`);
-      window.setTimeout(() => {
-        customerPhoneRef.current?.focus();
-        customerPhoneRef.current?.select();
-      }, 50);
+    if (activePaymentMode !== 'Cash' && !isDigitalPaymentContactReady(effectiveCustomerPhone)) {
+      openDigitalContactModal(activePaymentMode, true);
       return;
     }
 
-    if (activePaymentMode !== 'Cash' && !paymentConfirmed) {
+    if (activePaymentMode !== 'Cash' && !effectivePaymentConfirmed) {
       setErrorMessage(`Confirm ${activePaymentMode} payment before completing the sale.`);
       return;
     }
@@ -1078,8 +1161,8 @@ export default function BillingTerminalView() {
     try {
       const checkoutResult = await checkout({
         counter_no: counterNo,
-        customer_name: (isBusinessBillingMode(billingMode) ? companyName : customerName) || 'Walk-in Customer',
-        customer_phone: customerPhone,
+        customer_name: effectiveCustomerName || 'Walk-in Customer',
+        customer_phone: effectiveCustomerPhone,
         items: cart.map((item) => ({
           ...item,
           sale_price: getUnitPrice(item, billingMode)
@@ -1089,13 +1172,13 @@ export default function BillingTerminalView() {
         grand_total: totals.grand.toFixed(2),
         payment_mode: activePaymentMode,
         payment_status: 'PAID',
-        payment_reference: activePaymentMode === 'Cash' ? null : paymentReference,
+        payment_reference: activePaymentMode === 'Cash' ? null : effectivePaymentReference,
         cash_received: received.toFixed(2),
         change_returned: Math.max(received - totals.grand, 0).toFixed(2),
         transaction_type: mode.transactionType,
         billing_tier: mode.tier,
         tax_type: mode.taxType,
-        customer_company_name: isBusinessBillingMode(billingMode) ? companyName : null,
+        customer_company_name: isBusinessBillingMode(billingMode) ? effectiveCustomerName : null,
         customer_gstin: mode.taxType === 'INTERSTATE' ? customerGstin : null,
         total_cgst: totals.cgst.toFixed(2),
         total_sgst: totals.sgst.toFixed(2),
@@ -1106,6 +1189,9 @@ export default function BillingTerminalView() {
       const completedInvoice = {
         ...printableDraft,
         invoiceNo: checkoutResult.invoice_no || invoiceNo,
+        customerName: effectiveCustomerName,
+        customerPhone: effectiveCustomerPhone,
+        paymentReference: activePaymentMode === 'Cash' ? '' : effectivePaymentReference,
         paymentMode: activePaymentMode,
         cashReceived: received,
         changeReturned: Math.max(received - totals.grand, 0),
@@ -1340,7 +1426,14 @@ export default function BillingTerminalView() {
             </div>
             <label>
               <span className="field-label">{isBusinessBillingMode(billingMode) ? 'Company name' : 'Customer name'}</span>
-              <input ref={customerNameRef} className="field" value={isBusinessBillingMode(billingMode) ? companyName : customerName} onChange={(event) => (isBusinessBillingMode(billingMode) ? setCompanyName(event.target.value) : setCustomerName(event.target.value))} placeholder={isBusinessBillingMode(billingMode) ? 'Company name' : 'Customer name'} />
+              <input
+                ref={customerNameRef}
+                className="field"
+                value={isBusinessBillingMode(billingMode) ? companyName : customerName}
+                onChange={(event) => (isBusinessBillingMode(billingMode) ? setCompanyName(event.target.value) : setCustomerName(event.target.value))}
+                onKeyDown={(event) => handleCustomerFieldEnter(event, customerPhoneRef)}
+                placeholder={isBusinessBillingMode(billingMode) ? 'Company name' : 'Customer name'}
+              />
             </label>
             <label>
               <span className="field-label">Phone No</span>
@@ -1349,19 +1442,32 @@ export default function BillingTerminalView() {
                 className="field"
                 value={customerPhone}
                 onChange={(event) => setCustomerPhone(event.target.value)}
-                onKeyDown={(event) => {
-                  if (paymentMode !== 'Cash') handlePaymentEnter(event, paymentMode);
-                }}
-                placeholder="Phone or NO"
+                onKeyDown={(event) => handleCustomerFieldEnter(event, customerGstinRef)}
+                placeholder="10 digit phone or NO"
               />
             </label>
             <label>
               <span className="field-label">GST No</span>
-              <input className="field" maxLength={15} value={customerGstin} onChange={(event) => setCustomerGstin(event.target.value.toUpperCase())} placeholder={activeMode.taxType === 'INTERSTATE' ? 'Required for B2B' : 'Optional'} />
+              <input
+                ref={customerGstinRef}
+                className="field"
+                maxLength={15}
+                value={customerGstin}
+                onChange={(event) => setCustomerGstin(event.target.value.toUpperCase())}
+                onKeyDown={(event) => handleCustomerFieldEnter(event, customerAddressRef)}
+                placeholder={activeMode.taxType === 'INTERSTATE' ? 'Required for B2B' : 'Optional'}
+              />
             </label>
             <label>
               <span className="field-label">Address</span>
-              <input className="field" value={customerAddress} onChange={(event) => setCustomerAddress(event.target.value)} placeholder="Customer address" />
+              <input
+                ref={customerAddressRef}
+                className="field"
+                value={customerAddress}
+                onChange={(event) => setCustomerAddress(event.target.value)}
+                onKeyDown={(event) => handleCustomerFieldEnter(event, scannerRef)}
+                placeholder="Customer address"
+              />
             </label>
           </div>
         </section>
@@ -1473,6 +1579,56 @@ export default function BillingTerminalView() {
         </section>
 
       </aside>
+
+      {digitalContactModal && (
+        <div className="modal-backdrop">
+          <form
+            className="modal digital-contact-modal"
+            onSubmit={(event) => {
+              event.preventDefault();
+              confirmDigitalContactModal();
+            }}
+          >
+            <div className="panel-header">
+              <h2 className="panel-title">{digitalContactModal.mode} customer detail required</h2>
+              <button className="secondary-button" type="button" onClick={() => setDigitalContactModal(null)}>Cancel</button>
+            </div>
+            <div className="panel-body form-stack">
+              <div className="alert-box">
+                For {digitalContactModal.mode} payment, enter customer phone number. If customer does not give phone number, type NO.
+              </div>
+              {digitalContactError && <div className="alert-box">{digitalContactError}</div>}
+              <label>
+                <span className="field-label">Customer name</span>
+                <input
+                  ref={digitalContactNameRef}
+                  className="field"
+                  value={digitalContactDraft.name}
+                  onChange={(event) => setDigitalContactDraft((current) => ({ ...current, name: event.target.value }))}
+                  onKeyDown={(event) => handleDigitalContactFieldEnter(event, digitalContactPhoneRef)}
+                  placeholder="Customer name"
+                />
+              </label>
+              <label>
+                <span className="field-label">Phone No</span>
+                <input
+                  ref={digitalContactPhoneRef}
+                  className="field"
+                  value={digitalContactDraft.phone}
+                  onChange={(event) => {
+                    setDigitalContactDraft((current) => ({ ...current, phone: event.target.value }));
+                    if (digitalContactError) setDigitalContactError('');
+                  }}
+                  onKeyDown={(event) => handleDigitalContactFieldEnter(event, null)}
+                  placeholder="10 digit phone or NO"
+                  required
+                />
+              </label>
+              <button className="primary-button" type="submit">Continue Bill Print</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {showHistory && (
         <div className="modal-backdrop">

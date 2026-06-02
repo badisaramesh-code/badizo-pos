@@ -23,7 +23,9 @@ function toProduct(row) {
     bulk_discount_value: Number(row.bulk_discount_value || 0),
     is_free_item: Boolean(row.is_free_item),
     stock_qty: Number(row.stock_qty || 0),
-    min_stock_alert: Number(row.min_stock_alert || 10)
+    min_stock_alert: Number(row.min_stock_alert || 10),
+    created_at: row.created_at,
+    updated_at: row.updated_at
   };
 }
 
@@ -618,19 +620,40 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       minStockAlert: Number(min_stock_alert) || 10
     };
 
-    if (!values.productName) {
-      return res.status(400).json({ error: 'Product name is required.' });
+    const requiredErrors = [];
+    if (code_mode === 'MANUAL' && !String(product_code || '').trim()) requiredErrors.push('Product code');
+    if (!String(barcode || '').trim()) requiredErrors.push('Barcode');
+    if (!values.productName) requiredErrors.push('Product name');
+    if (!String(values.hsnCode || '').trim()) requiredErrors.push('HSN code');
+    if (!String(gst_percent ?? '').trim()) requiredErrors.push('GST percent');
+    if (!String(unit_type ?? '').trim()) requiredErrors.push('Unit');
+    if (!String(mrp ?? '').trim()) requiredErrors.push('MRP');
+    if (!String(purchase_price ?? '').trim()) requiredErrors.push('Purchase price');
+    if (!String(sale_price ?? '').trim()) requiredErrors.push('Retail sale price');
+    if (!String(wholesale_price ?? '').trim()) requiredErrors.push('Wholesale price');
+    if (!String(discount_value ?? '').trim()) requiredErrors.push('Discount');
+    if (!String(bulk_discount_value ?? '').trim()) requiredErrors.push('Wholesale discount');
+    if (!String(stock_qty ?? '').trim()) requiredErrors.push('Current stock');
+    if (!String(min_stock_alert ?? '').trim()) requiredErrors.push('Low stock alert');
+
+    if (requiredErrors.length) {
+      return res.status(400).json({ error: `Fill all product columns before saving. Missing: ${requiredErrors.join(', ')}.` });
     }
 
     if (values.salePrice > values.mrp && values.mrp > 0) {
       return res.status(400).json({ error: 'Sale price cannot be greater than MRP.' });
     }
 
+    if (values.wholesalePrice > values.mrp && values.mrp > 0) {
+      return res.status(400).json({ error: 'Wholesale price cannot be greater than MRP.' });
+    }
+
     if (values.purchasePrice < 0) {
       return res.status(400).json({ error: 'Purchase price cannot be negative.' });
     }
 
-    let finalProductCode = product_code && product_code.trim();
+    const finalBarcode = String(barcode || '').trim().toUpperCase();
+    let finalProductCode = String(product_code || '').trim().toUpperCase();
     if (!finalProductCode && code_mode !== 'MANUAL') {
       finalProductCode = `BDZ${Date.now().toString().slice(-8)}`;
     }
@@ -658,7 +681,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
          min_stock_alert = VALUES(min_stock_alert)`,
       [
         finalProductCode,
-        barcode.trim(),
+        finalBarcode,
         values.productName,
         values.hsnCode,
         values.gstPercent,
@@ -680,9 +703,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       user: req.user,
       action: 'PRODUCT_SAVED',
       entityType: 'PRODUCT',
-      entityId: barcode.trim(),
+      entityId: finalBarcode,
       details: {
-        barcode: barcode.trim(),
+        barcode: finalBarcode,
         product_name: values.productName,
         purchase_price: values.purchasePrice,
         sale_price: values.salePrice,

@@ -536,6 +536,25 @@ button:disabled {
   font-size: 11px;
 }
 
+.product-date-strip {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.product-date-strip span {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f7fcf8;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.product-date-strip strong {
+  color: var(--brand-dark);
+}
+
 .billing-scanner-row {
   grid-template-columns: 210px minmax(340px, 1fr);
   padding: 8px;
@@ -1633,6 +1652,251 @@ button:disabled {
   align-items: center;
 }
 
+.counter-handover-card .panel-body {
+  gap: 12px;
+}
+
+.handover-heading,
+.handover-sales-strip,
+.handover-total-strip {
+  display: grid;
+  gap: 10px;
+  align-items: center;
+}
+
+.handover-heading {
+  grid-template-columns: 1fr auto auto auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7fcf8;
+  color: var(--brand-dark);
+}
+
+.handover-heading strong {
+  font-size: 17px;
+}
+
+.handover-sales-strip,
+.handover-total-strip {
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+}
+
+.handover-sales-strip > div,
+.handover-total-strip > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 68px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.handover-sales-strip span,
+.handover-total-strip span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.handover-sales-strip strong,
+.handover-total-strip strong {
+  color: var(--brand-dark);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.handover-actions-row {
+  display: grid;
+  grid-template-columns: 160px minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.table-scroll {
+  overflow: auto;
+}
+
+.handover-table {
+  min-width: 980px;
+}
+
+.handover-table th:nth-child(1),
+.handover-table td:nth-child(1) {
+  width: 48px;
+  text-align: center;
+}
+
+.handover-table th:nth-child(2),
+.handover-table td:nth-child(2) {
+  min-width: 240px;
+}
+
+.handover-table th:nth-child(3),
+.handover-table td:nth-child(3) {
+  min-width: 220px;
+}
+
+.handover-table th:nth-child(4),
+.handover-table td:nth-child(4) {
+  width: 145px;
+}
+
+.handover-table th:nth-child(5),
+.handover-table th:nth-child(6),
+.handover-table td:nth-child(5),
+.handover-table td:nth-child(6) {
+  width: 120px;
+  text-align: right;
+}
+
+.handover-table .field,
+.handover-table .select {
+  padding: 7px 8px;
+}
+
+.amount-field {
+  text-align: right;
+}
+
+.mini-ledger-toggle {
+  width: 100%;
+  padding: 7px 8px;
+}
+
+.handover-denomination-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(125px, 1fr));
+  gap: 10px;
+}
+
+.handover-denomination-grid label {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfffc;
+}
+
+.handover-denomination-grid strong {
+  color: var(--brand-dark);
+  text-align: right;
+}
+
+.handover-words {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdf5;
+}
+
+.handover-words span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.handover-save-button {
+  width: auto;
+  min-width: 260px;
+}
+
+.handover-print-area {
+  background: #fff;
+}
+
+.handover-print-sheet {
+  width: 190mm;
+  min-height: 260mm;
+  padding: 6mm;
+  color: #111;
+  background: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 12px;
+}
+
+.handover-print-sheet h1 {
+  margin: 0;
+  border: 1px solid #111;
+  border-bottom: 0;
+  text-align: center;
+  font-size: 17px;
+  line-height: 1.4;
+  text-transform: lowercase;
+}
+
+.handover-print-meta,
+.handover-print-sale-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  border: 1px solid #111;
+  border-bottom: 0;
+}
+
+.handover-print-sale-row {
+  grid-template-columns: 1fr 1fr;
+}
+
+.handover-print-meta > *,
+.handover-print-sale-row > * {
+  padding: 5px 6px;
+  border-right: 1px solid #111;
+  text-align: center;
+}
+
+.handover-print-meta > *:last-child,
+.handover-print-sale-row > *:last-child {
+  border-right: 0;
+}
+
+.handover-print-sheet table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.handover-print-sheet th,
+.handover-print-sheet td {
+  height: 23px;
+  padding: 3px 5px;
+  border: 1px solid #111;
+  vertical-align: middle;
+}
+
+.handover-print-sheet th:nth-child(1),
+.handover-print-sheet td:nth-child(1) {
+  width: 11mm;
+  text-align: center;
+}
+
+.handover-print-sheet th:nth-child(4),
+.handover-print-sheet th:nth-child(5),
+.handover-print-sheet td:nth-child(4),
+.handover-print-sheet td:nth-child(5) {
+  width: 27mm;
+  text-align: right;
+}
+
+.handover-print-balance {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  text-align: center;
+  font-size: 15px;
+}
+
+.handover-signatures {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  margin-top: 20mm;
+  font-size: 13px;
+}
+
 .metric-card,
 .module-card {
   background: var(--surface);
@@ -1850,6 +2114,10 @@ button:disabled {
   box-shadow: var(--shadow);
 }
 
+.digital-contact-modal {
+  width: min(420px, 100%);
+}
+
 .print-area {
   display: none;
 }
@@ -1953,6 +2221,13 @@ button:disabled {
 
 .thermal-paper .print-store-header p {
   font-size: 10.5px;
+}
+
+.print-tax-type-label {
+  display: block;
+  margin-top: 2px;
+  font-size: 10.5px;
+  text-transform: uppercase;
 }
 
 .print-meta-grid {
@@ -2480,6 +2755,256 @@ button:disabled {
   font-style: normal;
 }
 
+.a4-store-invoice {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #111;
+  padding: 0;
+  font-size: 9.5px;
+  line-height: 1.15;
+}
+
+.a4-store-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 4px;
+  border-bottom: 1px solid #111;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.a4-store-title span {
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.a4-store-top {
+  display: grid;
+  grid-template-columns: 1.32fr 0.78fr;
+  border-bottom: 1px solid #111;
+  min-height: 36mm;
+}
+
+.a4-store-shop {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 8px;
+  border-right: 1px solid #111;
+  text-align: center;
+  font-size: 10.8px;
+  line-height: 1.22;
+}
+
+.a4-store-shop strong {
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.a4-store-meta {
+  display: grid;
+  grid-template-columns: 29mm 1fr;
+  align-content: start;
+}
+
+.a4-store-meta span,
+.a4-store-meta strong {
+  min-height: 6mm;
+  padding: 3px 4px;
+  border-bottom: 1px solid #111;
+}
+
+.a4-store-meta span {
+  border-right: 1px solid #111;
+  font-size: 10px;
+}
+
+.a4-store-customer {
+  display: grid;
+  grid-template-columns: 1.35fr 0.75fr;
+  min-height: 24mm;
+  border-bottom: 1px solid #111;
+}
+
+.a4-store-customer > div:first-child {
+  display: grid;
+  grid-template-columns: 18mm 1fr;
+  align-content: start;
+  border-right: 1px solid #111;
+}
+
+.a4-store-customer span,
+.a4-store-customer strong {
+  min-height: 5.7mm;
+  padding: 2px 4px;
+}
+
+.a4-store-items {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 8.8px;
+}
+
+.a4-store-items th,
+.a4-store-items td {
+  padding: 2px 3px;
+  border-right: 1px solid #111;
+  border-bottom: 1px solid #111;
+  vertical-align: top;
+}
+
+.a4-store-items th:last-child,
+.a4-store-items td:last-child {
+  border-right: 0;
+}
+
+.a4-store-items th {
+  text-align: center;
+  font-size: 9.5px;
+}
+
+.a4-store-items th:nth-child(1) { width: 7mm; }
+.a4-store-items th:nth-child(2) { width: 19mm; }
+.a4-store-items th:nth-child(3) { width: 56mm; }
+.a4-store-items th:nth-child(4) { width: 15mm; }
+.a4-store-items th:nth-child(5),
+.a4-store-items th:nth-child(6),
+.a4-store-items th:nth-child(7),
+.a4-store-items th:nth-child(8) { width: 15mm; }
+.a4-store-items th:nth-child(9) { width: 22mm; }
+
+.a4-store-items td:nth-child(5),
+.a4-store-items td:nth-child(6),
+.a4-store-items td:nth-child(7),
+.a4-store-items td:nth-child(8),
+.a4-store-items td:nth-child(9) {
+  text-align: right;
+}
+
+.a4-store-empty-row td {
+  height: 7.4mm;
+}
+
+.a4-store-discount,
+.a4-store-words {
+  min-height: 7mm;
+  padding: 4px;
+  border-bottom: 1px solid #111;
+  text-align: center;
+  font-size: 10px;
+}
+
+.a4-store-bottom {
+  display: grid;
+  grid-template-columns: 0.95fr 1.35fr;
+  grid-template-rows: 39mm 18mm;
+  min-height: 57mm;
+}
+
+.a4-store-bank {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px;
+  border-right: 1px solid #111;
+  border-bottom: 1px solid #111;
+  text-align: center;
+  font-size: 10.5px;
+  line-height: 1.18;
+}
+
+.a4-store-bank strong {
+  font-size: 11px;
+}
+
+.a4-store-right-bottom {
+  display: grid;
+  grid-template-rows: 13mm 26mm;
+  min-height: 39mm;
+  border-bottom: 1px solid #111;
+}
+
+.a4-store-payment-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-bottom: 1px solid #111;
+}
+
+.a4-store-payment-summary div {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 3px;
+  border-right: 1px solid #111;
+  text-align: center;
+}
+
+.a4-store-payment-summary div:last-child {
+  border-right: 0;
+}
+
+.a4-store-payment-summary span {
+  font-size: 8.5px;
+}
+
+.a4-store-payment-summary strong {
+  font-size: 10px;
+}
+
+.a4-store-gst {
+  width: 100%;
+  height: 26mm;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 7.8px;
+}
+
+.a4-store-gst caption {
+  padding: 2px;
+  border-bottom: 1px solid #111;
+  font-weight: 900;
+  text-align: center;
+}
+
+.a4-store-gst th,
+.a4-store-gst td {
+  padding: 2px;
+  border-right: 1px solid #111;
+  border-bottom: 1px solid #111;
+  text-align: right;
+}
+
+.a4-store-gst th:last-child,
+.a4-store-gst td:last-child {
+  border-right: 0;
+}
+
+.a4-store-customer-sign,
+.a4-store-auth {
+  min-height: 18mm;
+  padding: 8px;
+}
+
+.a4-store-customer-sign {
+  border-right: 1px solid #111;
+}
+
+.a4-store-auth {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-align: center;
+  font-size: 10px;
+}
+
 @media print {
   @page {
     size: A4 portrait;
@@ -2532,11 +3057,90 @@ button:disabled {
   }
 
   .print-area {
-    display: block;
+    display: none;
     position: static;
     width: auto;
     margin: 0;
     padding: 0;
+  }
+
+  body.printing-handover .print-area,
+  body.printing-handover .print-host,
+  body.printing-handover .print-area.print-thermal,
+  body.printing-handover .print-area.print-a4 {
+    display: none !important;
+  }
+
+  body.printing-a4 .print-area.print-a4,
+  body.printing-thermal .print-area.print-thermal {
+    display: block;
+  }
+
+  body.printing-handover {
+    width: 190mm !important;
+    min-width: 190mm !important;
+    max-width: 190mm !important;
+    overflow: hidden !important;
+  }
+
+  body.printing-handover #root,
+  body.printing-handover .app-shell,
+  body.printing-handover .workspace,
+  body.printing-handover .counter-handover-view {
+    display: block !important;
+    width: 190mm !important;
+    min-width: 190mm !important;
+    max-width: 190mm !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  body.printing-handover .topbar,
+  body.printing-handover .counter-handover-view > :not(.handover-print-area) {
+    display: none !important;
+  }
+
+  body.printing-handover .handover-print-area {
+    display: block !important;
+    position: static !important;
+    visibility: visible !important;
+    width: 190mm !important;
+    min-width: 190mm !important;
+    max-width: 190mm !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    page-break-before: avoid !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-before: avoid !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  body.printing-handover .handover-print-area * {
+    visibility: visible !important;
+  }
+
+  .handover-print-area {
+    width: 190mm;
+    min-width: 190mm;
+    max-width: 190mm;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  .handover-print-sheet {
+    width: 190mm;
+    min-height: 260mm;
+    max-height: 260mm;
+    overflow: hidden;
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
 
   .print-area.print-thermal {
@@ -2693,7 +3297,10 @@ button:disabled {
   .inventory-layout,
   .barcode-grid,
   .inward-grid,
-  .closing-layout {
+  .closing-layout,
+  .handover-actions-row,
+  .handover-sales-strip,
+  .handover-total-strip {
     grid-template-columns: 1fr;
   }
 
@@ -2759,7 +3366,9 @@ button:disabled {
   .user-form-grid,
   .closing-metrics,
   .denomination-grid,
-  .closing-filter-row {
+  .closing-filter-row,
+  .handover-heading,
+  .handover-denomination-grid {
     grid-template-columns: 1fr;
   }
 

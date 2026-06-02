@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import {
   exportDailySalesReport,
+  fetchCounterHandoverReport,
   fetchDailySalesReport,
   fetchExceptionReport,
   fetchGstHsnReport,
@@ -63,6 +64,7 @@ export default function ReportsView() {
   const [topProducts, setTopProducts] = useState({ rows: [] });
   const [taxSummary, setTaxSummary] = useState({ rows: [] });
   const [gstr1Report, setGstr1Report] = useState({ b2b: [], b2cl: [], b2c: [], hsn: [], hsnB2b: [], hsnB2c: [], nilExempt: [], documents: {}, totals: {} });
+  const [counterHandoverReport, setCounterHandoverReport] = useState({ rows: [], totals: {} });
   const [exceptionReport, setExceptionReport] = useState({ cancelled: [], returns: [] });
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -74,7 +76,7 @@ export default function ReportsView() {
     setErrorMessage('');
     const { from, to } = getOrderedRange(fromDate, toDate);
     try {
-      const [daily, hsn, monthly, stock, top, tax, gstr1, exceptions] = await Promise.all([
+      const [daily, hsn, monthly, stock, top, tax, gstr1, handover, exceptions] = await Promise.all([
         fetchDailySalesReport({ from, to, counter }),
         fetchGstHsnReport({ from, to }),
         fetchMonthlySalesReport(from.slice(0, 7)),
@@ -82,6 +84,7 @@ export default function ReportsView() {
         fetchTopProductsReport({ from, to }),
         fetchTaxSummaryReport({ from, to }),
         fetchGstr1Report({ from, to }),
+        fetchCounterHandoverReport({ from, to, counter }),
         fetchExceptionReport({ from, to })
       ]);
       setDailyReport(daily);
@@ -91,6 +94,7 @@ export default function ReportsView() {
       setTopProducts(top);
       setTaxSummary(tax);
       setGstr1Report(gstr1);
+      setCounterHandoverReport(handover);
       setExceptionReport(exceptions);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to load reports from database.');
@@ -119,6 +123,7 @@ export default function ReportsView() {
     { key: 'top', title: 'Top Products', note: `${topProducts.rows.length} products` },
     { key: 'tax', title: 'Tax Summary', note: `${taxSummary.rows.length} GST slabs` },
     { key: 'gstr1', title: 'GSTR-1 / GST Returns', note: `${(gstr1Report.b2b?.length || 0) + (gstr1Report.b2cl?.length || 0) + (gstr1Report.b2c?.length || 0)} rows` },
+    { key: 'handover', title: 'Counter Handover', note: `${counterHandoverReport.totals?.sheets || 0} sheets` },
     { key: 'returns', title: 'Returns', note: `${exceptionReport.returns.length} returns` },
     { key: 'cancelled', title: 'Cancelled Bills', note: `${exceptionReport.cancelled.length} bills` }
   ];
@@ -310,6 +315,25 @@ export default function ReportsView() {
         }]
       }
     ]);
+  }
+
+  function exportCounterHandoverExcel() {
+    exportRows('counter_handover', (counterHandoverReport.rows || []).map((row) => ({
+      Date: row.closing_date,
+      Counter: row.counter_no,
+      Sheet: row.sheet_no,
+      'Opening Cash': Number(row.opening_cash || 0),
+      'Counter Sale': Number(row.counter_sales || 0),
+      Cash: Number(row.cash_sales || 0),
+      UPI: Number(row.upi_sales || 0),
+      Card: Number(row.card_sales || 0),
+      DR: Number(row.dr_total || 0),
+      CR: Number(row.cr_total || 0),
+      'Cash Notes Balance': Number(row.cash_balance || 0),
+      Difference: Number(row.variance_amount || 0),
+      'Handed Over By': row.handed_over_by || '',
+      'Checked By': row.taken_over_by || ''
+    })));
   }
 
   function exportReturnsExcel() {
@@ -519,6 +543,44 @@ export default function ReportsView() {
                 <tbody>
                   {exceptionReport.returns.length === 0 ? <tr><td colSpan="7">No returns found.</td></tr> : exceptionReport.returns.map((row) => (
                     <tr key={row.return_no}><td>{row.return_no}</td><td>{row.invoice_no}</td><td>{row.reason}</td><td>{row.refund_mode}</td><td>{formatMoney(row.refund_total)}</td><td>{row.created_by}</td><td>{row.created_at}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        );
+      case 'handover':
+        return (
+          <section className="panel">
+            <ReportHeader title="Counter Handover Report" onExcel={exportCounterHandoverExcel} onPdf={exportPdf} />
+            <div className="panel-body form-stack">
+              <section className="report-summary-strip">
+                <span>Sheets: <strong>{Number(counterHandoverReport.totals?.sheets || 0)}</strong></span>
+                <span>Counter Sales: <strong>{formatMoney(counterHandoverReport.totals?.counterSales || 0)}</strong></span>
+                <span>DR: <strong>{formatMoney(counterHandoverReport.totals?.dr || 0)}</strong></span>
+                <span>CR: <strong>{formatMoney(counterHandoverReport.totals?.cr || 0)}</strong></span>
+                <span>Cash Notes Balance: <strong>{formatMoney(counterHandoverReport.totals?.cashBalance || 0)}</strong></span>
+                <span>Difference: <strong>{formatMoney(counterHandoverReport.totals?.difference || 0)}</strong></span>
+              </section>
+              <table className="history-table">
+                <thead><tr><th>Date</th><th>Counter</th><th>Sheet</th><th>Opening</th><th>Sale</th><th>Cash</th><th>UPI</th><th>Card</th><th>DR</th><th>CR</th><th>Cash Notes</th><th>Difference</th><th>Handover</th></tr></thead>
+                <tbody>
+                  {(counterHandoverReport.rows || []).length === 0 ? <tr><td colSpan="13">No counter handover sheets found.</td></tr> : counterHandoverReport.rows.map((row) => (
+                    <tr key={row.sheet_no}>
+                      <td>{row.closing_date}</td>
+                      <td>Counter {row.counter_no}</td>
+                      <td className="mono">{row.sheet_no}</td>
+                      <td>{formatMoney(row.opening_cash)}</td>
+                      <td>{formatMoney(row.counter_sales)}</td>
+                      <td>{formatMoney(row.cash_sales)}</td>
+                      <td>{formatMoney(row.upi_sales)}</td>
+                      <td>{formatMoney(row.card_sales)}</td>
+                      <td>{formatMoney(row.dr_total)}</td>
+                      <td>{formatMoney(row.cr_total)}</td>
+                      <td><strong>{formatMoney(row.cash_balance)}</strong></td>
+                      <td className={Math.abs(Number(row.variance_amount || 0)) > 0.01 ? 'stock-low' : ''}>{formatMoney(row.variance_amount)}</td>
+                      <td>{row.handed_over_by || '-'} to {row.taken_over_by || '-'}</td>
+                    </tr>
                   ))}
                 </tbody>
               </table>

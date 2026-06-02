@@ -51,6 +51,7 @@ export default function BooksView() {
   const cards = summary ? [
     ['Day Book', 'Sales and purchases for selected date', formatMoney((summary.dayBook.sales || 0) + (summary.dayBook.purchases || 0))],
     ['Cash Book', 'Cash receipts from sales', formatMoney(summary.cashBook.cashSales || 0)],
+    ['Counter Cash Balance', 'Counter handover DR/CR ledger balance', formatMoney(summary.counterCashBook?.balance || 0)],
     ['Purchase Book', 'Inward purchase total', formatMoney(summary.purchaseBook.purchases || 0)],
     ['Tax Book', 'GST collected from sales', formatMoney(summary.taxBook.gstCollected || 0)],
     ['Profit & Loss', 'Estimated monthly gross result', formatMoney(summary.profitLoss.estimatedGrossProfit || 0)],
@@ -70,12 +71,16 @@ export default function BooksView() {
         sales: 0,
         purchases: 0,
         cash: 0,
-        digital: 0
+        digital: 0,
+        dr: 0,
+        cr: 0
       };
       const amount = Number(row.amount || 0);
       current.entries += 1;
       if (row.type === 'SALE') current.sales += amount;
       if (row.type === 'PURCHASE') current.purchases += amount;
+      if (row.type === 'COUNTER_LEDGER' && row.mode === 'DR') current.dr += amount;
+      if (row.type === 'COUNTER_LEDGER' && row.mode === 'CR') current.cr += amount;
       if (row.mode === 'Cash') current.cash += amount;
       if (['UPI', 'Card'].includes(row.mode)) current.digital += amount;
       accounts.set(key, current);
@@ -94,13 +99,15 @@ export default function BooksView() {
       {
         name: 'Ledger Accounts',
         rows: ledgerRows.map((row) => {
-          const balance = row.sales - row.purchases;
+          const balance = row.sales + row.dr - row.purchases - row.cr;
           return {
             Account: row.account,
-            Ledger: row.type === 'SALE' ? 'Sales Ledger' : 'Purchase Ledger',
+            Ledger: row.type === 'SALE' ? 'Sales Ledger' : row.type === 'PURCHASE' ? 'Purchase Ledger' : 'Counter Cash Ledger',
             Entries: row.entries,
             Sales: row.sales,
             Purchases: row.purchases,
+            DR: row.dr,
+            CR: row.cr,
             Cash: row.cash,
             'UPI/Card': row.digital,
             Balance: Math.abs(balance),
@@ -117,6 +124,7 @@ export default function BooksView() {
           'Ref No': row.ref_no,
           Account: row.account,
           Mode: row.mode,
+          Details: row.details || '',
           Amount: Number(row.amount || 0)
         }))
       }
@@ -168,19 +176,21 @@ export default function BooksView() {
         </div>
         <div className="panel-body">
           <table className="history-table">
-            <thead><tr><th>Account</th><th>Ledger</th><th>Entries</th><th>Sales</th><th>Purchases</th><th>Cash</th><th>UPI/Card</th><th>Balance</th></tr></thead>
+            <thead><tr><th>Account</th><th>Ledger</th><th>Entries</th><th>Sales</th><th>Purchases</th><th>DR</th><th>CR</th><th>Cash</th><th>UPI/Card</th><th>Balance</th></tr></thead>
             <tbody>
               {ledgerRows.length === 0 ? (
-                <tr><td colSpan="8">No ledger accounts for selected date range.</td></tr>
+                <tr><td colSpan="10">No ledger accounts for selected date range.</td></tr>
               ) : ledgerRows.map((row) => {
-                const balance = row.sales - row.purchases;
+                const balance = row.sales + row.dr - row.purchases - row.cr;
                 return (
                   <tr key={`${row.type}-${row.account}`}>
                     <td><strong>{row.account}</strong></td>
-                    <td>{row.type === 'SALE' ? 'Sales Ledger' : 'Purchase Ledger'}</td>
+                    <td>{row.type === 'SALE' ? 'Sales Ledger' : row.type === 'PURCHASE' ? 'Purchase Ledger' : 'Counter Cash Ledger'}</td>
                     <td>{row.entries}</td>
                     <td>{formatMoney(row.sales)}</td>
                     <td>{formatMoney(row.purchases)}</td>
+                    <td>{formatMoney(row.dr)}</td>
+                    <td>{formatMoney(row.cr)}</td>
                     <td>{formatMoney(row.cash)}</td>
                     <td>{formatMoney(row.digital)}</td>
                     <td><strong className={balance < 0 ? 'stock-low' : ''}>{formatMoney(Math.abs(balance))}</strong></td>
@@ -202,10 +212,10 @@ export default function BooksView() {
         </div>
         <div className="panel-body">
           <table className="history-table">
-            <thead><tr><th>Time</th><th>Type</th><th>Ref No</th><th>Account</th><th>Mode</th><th>Amount</th></tr></thead>
+            <thead><tr><th>Time</th><th>Type</th><th>Ref No</th><th>Account</th><th>Mode</th><th>Details</th><th>Amount</th></tr></thead>
             <tbody>
               {dayBook.rows.length === 0 ? (
-                <tr><td colSpan="6">No book entries for selected date range.</td></tr>
+                <tr><td colSpan="7">No book entries for selected date range.</td></tr>
               ) : dayBook.rows.map((row) => (
                 <tr key={`${row.type}-${row.ref_no}`}>
                   <td>{row.created_at ? new Date(row.created_at).toLocaleTimeString() : '-'}</td>
@@ -213,6 +223,7 @@ export default function BooksView() {
                   <td className="mono">{row.ref_no}</td>
                   <td>{row.account}</td>
                   <td>{row.mode}</td>
+                  <td>{row.details || '-'}</td>
                   <td><strong>{formatMoney(row.amount)}</strong></td>
                 </tr>
               ))}

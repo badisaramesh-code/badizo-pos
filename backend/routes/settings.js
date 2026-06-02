@@ -8,6 +8,11 @@ const ALLOWED_SETTINGS = new Set([
   'gst_number',
   'phone',
   'address',
+  'bank_name',
+  'bank_account_name',
+  'bank_account_no',
+  'bank_ifsc',
+  'bank_branch',
   'counter_count',
   'default_print_mode'
 ]);
@@ -28,6 +33,11 @@ router.get('/', async (_req, res) => {
       gst_number: settings.gst_number || '36AAJFH7790R1ZB',
       phone: settings.phone || '08761 295000',
       address: settings.address || 'Sathupally - Khammam(dt) - 507303',
+      bank_name: settings.bank_name || 'HDFC BANK',
+      bank_account_name: settings.bank_account_name || settings.shop_name || 'Hyper Fresh Mart LLP',
+      bank_account_no: settings.bank_account_no || '59209440987345',
+      bank_ifsc: settings.bank_ifsc || 'HDFC0004047',
+      bank_branch: settings.bank_branch || 'Sathupally',
       counter_count: Number.parseInt(settings.counter_count, 10) || 6,
       default_print_mode: ['Thermal', 'A4'].includes(settings.default_print_mode) ? settings.default_print_mode : 'Thermal'
     });

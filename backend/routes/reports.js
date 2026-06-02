@@ -9,6 +9,12 @@ function normalizeCounter(value) {
   return /^Counter \d+$/.test(text) ? text : '';
 }
 
+function normalizeCounterNoFromLabel(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^Counter\s+(\d+)$/i);
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
+
 router.use(authenticate);
 
 router.get('/dashboard', authorize('SERVER', 'ADMIN'), async (_req, res) => {
@@ -191,6 +197,61 @@ router.get('/daily-sales/export', authorize('SERVER', 'ADMIN'), async (req, res)
   } catch (err) {
     console.error('Daily sales export failed:', err.message);
     res.status(500).json({ error: 'Unable to export daily sales report.' });
+  }
+});
+
+router.get('/counter-handover', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const from = normalizeDate(req.query.from || req.query.date);
+    const to = normalizeDate(req.query.to || from, from);
+    const counterNo = normalizeCounterNoFromLabel(req.query.counter);
+    const values = [from, to];
+    let counterSql = '';
+
+    if (counterNo > 0) {
+      counterSql = 'AND counter_no = ?';
+      values.push(counterNo);
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+         closing_date,
+         counter_no,
+         sheet_no,
+         opening_cash,
+         counter_sales,
+         all_counter_sales,
+         cash_sales,
+         upi_sales,
+         card_sales,
+         dr_total,
+         cr_total,
+         notes_total,
+         cash_balance,
+         variance_amount,
+         handed_over_by,
+         taken_over_by,
+         updated_at
+       FROM counter_handover_sheets
+       WHERE closing_date BETWEEN ? AND ?
+       ${counterSql}
+       ORDER BY closing_date DESC, counter_no ASC`,
+      values
+    );
+
+    const totals = rows.reduce((acc, row) => ({
+      sheets: acc.sheets + 1,
+      counterSales: acc.counterSales + Number(row.counter_sales || 0),
+      dr: acc.dr + Number(row.dr_total || 0),
+      cr: acc.cr + Number(row.cr_total || 0),
+      cashBalance: acc.cashBalance + Number(row.cash_balance || 0),
+      difference: acc.difference + Number(row.variance_amount || 0)
+    }), { sheets: 0, counterSales: 0, dr: 0, cr: 0, cashBalance: 0, difference: 0 });
+
+    res.json({ from, to, counter: counterNo > 0 ? `Counter ${counterNo}` : 'ALL', rows, totals });
+  } catch (err) {
+    console.error('Counter handover report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load counter handover report.' });
   }
 });
 

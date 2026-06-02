@@ -16,6 +16,11 @@ export default function SystemView() {
     gst_number: '36AAJFH7790R1ZB',
     phone: '08761 295000',
     address: 'Sathupally - Khammam(dt) - 507303',
+    bank_name: 'HDFC BANK',
+    bank_account_name: 'Hyper Fresh Mart LLP',
+    bank_account_no: '59209440987345',
+    bank_ifsc: 'HDFC0004047',
+    bank_branch: 'Sathupally',
     counter_count: 6,
     default_print_mode: 'Thermal'
   });
@@ -192,6 +197,12 @@ export default function SystemView() {
             <label><span className="field-label">GST Number</span><input className="field" value={settings.gst_number || ''} onChange={(event) => updateSetting('gst_number', event.target.value.toUpperCase())} /></label>
             <label><span className="field-label">Phone</span><input className="field" value={settings.phone || ''} onChange={(event) => updateSetting('phone', event.target.value)} /></label>
             <label><span className="field-label">Address</span><input className="field" value={settings.address || ''} onChange={(event) => updateSetting('address', event.target.value)} /></label>
+            <div className="change-box"><strong>A4 Invoice / Bank Details</strong></div>
+            <label><span className="field-label">Bank Name</span><input className="field" value={settings.bank_name || ''} onChange={(event) => updateSetting('bank_name', event.target.value)} /></label>
+            <label><span className="field-label">Bank Account Name</span><input className="field" value={settings.bank_account_name || ''} onChange={(event) => updateSetting('bank_account_name', event.target.value)} /></label>
+            <label><span className="field-label">Bank Account No</span><input className="field" value={settings.bank_account_no || ''} onChange={(event) => updateSetting('bank_account_no', event.target.value)} /></label>
+            <label><span className="field-label">Bank IFSC</span><input className="field" value={settings.bank_ifsc || ''} onChange={(event) => updateSetting('bank_ifsc', event.target.value.toUpperCase())} /></label>
+            <label><span className="field-label">Bank Branch</span><input className="field" value={settings.bank_branch || ''} onChange={(event) => updateSetting('bank_branch', event.target.value)} /></label>
             <label>
               <span className="field-label">Number of Billing Counters</span>
               <input

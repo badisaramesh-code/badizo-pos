@@ -31,6 +31,14 @@ router.get('/summary', async (req, res) => {
        WHERE DATE(created_at) BETWEEN ? AND ? AND payment_mode = 'Cash' AND invoice_status <> 'CANCELLED'`,
       [from, to]
     );
+    const [counterCashRows] = await db.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN direction = 'DR' THEN amount ELSE 0 END), 0) AS dr_total,
+         COALESCE(SUM(CASE WHEN direction = 'CR' THEN amount ELSE 0 END), 0) AS cr_total
+       FROM counter_cash_ledger_entries
+       WHERE entry_date BETWEEN ? AND ?`,
+      [from, to]
+    );
     const [monthRows] = await db.query(
       `SELECT
          COALESCE((SELECT SUM(grand_total) FROM invoices WHERE DATE_FORMAT(created_at, '%Y-%m') = ? AND invoice_status <> 'CANCELLED'), 0) AS month_sales,
@@ -48,6 +56,11 @@ router.get('/summary', async (req, res) => {
       to,
       dayBook: { sales: todaySales, purchases: todayPurchases, bills: Number(salesRows[0]?.bills || 0), purchaseEntries: Number(purchaseRows[0]?.entries || 0) },
       cashBook: { cashSales: Number(cashRows[0]?.cash_sales || 0) },
+      counterCashBook: {
+        drTotal: Number(counterCashRows[0]?.dr_total || 0),
+        crTotal: Number(counterCashRows[0]?.cr_total || 0),
+        balance: Number(counterCashRows[0]?.dr_total || 0) - Number(counterCashRows[0]?.cr_total || 0)
+      },
       purchaseBook: { purchases: todayPurchases },
       taxBook: { gstCollected: Number(salesRows[0]?.gst || 0) },
       profitLoss: { sales: monthSales, purchases: monthPurchases, estimatedGrossProfit: monthSales - monthPurchases },
@@ -75,7 +88,19 @@ router.get('/day-book', async (req, res) => {
        WHERE DATE(created_at) BETWEEN ? AND ?`,
       [from, to]
     );
-    const rows = [...sales, ...purchases].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const [counterCashLedger] = await db.query(
+      `SELECT created_at,
+              CONCAT(source_type, '-', COALESCE(source_id, id)) AS ref_no,
+              'COUNTER_LEDGER' AS type,
+              account_name AS account,
+              amount,
+              direction AS mode,
+              details
+       FROM counter_cash_ledger_entries
+       WHERE entry_date BETWEEN ? AND ?`,
+      [from, to]
+    );
+    const rows = [...sales, ...purchases, ...counterCashLedger].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     res.json({ from, to, rows });
   } catch (err) {
     console.error('Day book failed:', err.message);
