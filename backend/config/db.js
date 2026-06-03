@@ -104,6 +104,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         total_cgst DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         total_sgst DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         total_igst DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        exchange_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        exchange_items_json JSON DEFAULT NULL,
         invoice_status VARCHAR(20) NOT NULL DEFAULT 'PAID',
         cancel_reason VARCHAR(255) DEFAULT NULL,
         cancelled_by VARCHAR(100) DEFAULT NULL,
@@ -469,7 +471,9 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'invoices', 'total_cgst', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER customer_gstin');
     await ensureColumn(connection, 'invoices', 'total_sgst', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER total_cgst');
     await ensureColumn(connection, 'invoices', 'total_igst', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER total_sgst');
-    await ensureColumn(connection, 'invoices', 'invoice_status', "VARCHAR(20) NOT NULL DEFAULT 'PAID' AFTER total_igst");
+    await ensureColumn(connection, 'invoices', 'exchange_total', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER total_igst');
+    await ensureColumn(connection, 'invoices', 'exchange_items_json', 'JSON DEFAULT NULL AFTER exchange_total');
+    await ensureColumn(connection, 'invoices', 'invoice_status', "VARCHAR(20) NOT NULL DEFAULT 'PAID' AFTER exchange_items_json");
     await ensureColumn(connection, 'invoices', 'cancel_reason', 'VARCHAR(255) DEFAULT NULL AFTER invoice_status');
     await ensureColumn(connection, 'invoices', 'cancelled_by', 'VARCHAR(100) DEFAULT NULL AFTER cancel_reason');
     await ensureColumn(connection, 'invoices', 'cancelled_at', 'TIMESTAMP NULL DEFAULT NULL AFTER cancelled_by');

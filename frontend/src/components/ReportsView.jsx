@@ -4,6 +4,7 @@ import {
   exportDailySalesReport,
   fetchCounterHandoverReport,
   fetchDailySalesReport,
+  fetchExchangeBillsReport,
   fetchExceptionReport,
   fetchGstHsnReport,
   fetchGstr1Report,
@@ -66,6 +67,7 @@ export default function ReportsView() {
   const [gstr1Report, setGstr1Report] = useState({ b2b: [], b2cl: [], b2c: [], hsn: [], hsnB2b: [], hsnB2c: [], nilExempt: [], documents: {}, totals: {} });
   const [counterHandoverReport, setCounterHandoverReport] = useState({ rows: [], totals: {} });
   const [exceptionReport, setExceptionReport] = useState({ cancelled: [], returns: [] });
+  const [exchangeReport, setExchangeReport] = useState({ rows: [], totals: {} });
   const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
@@ -76,7 +78,7 @@ export default function ReportsView() {
     setErrorMessage('');
     const { from, to } = getOrderedRange(fromDate, toDate);
     try {
-      const [daily, hsn, monthly, stock, top, tax, gstr1, handover, exceptions] = await Promise.all([
+      const [daily, hsn, monthly, stock, top, tax, gstr1, handover, exceptions, exchange] = await Promise.all([
         fetchDailySalesReport({ from, to, counter }),
         fetchGstHsnReport({ from, to }),
         fetchMonthlySalesReport(from.slice(0, 7)),
@@ -85,7 +87,8 @@ export default function ReportsView() {
         fetchTaxSummaryReport({ from, to }),
         fetchGstr1Report({ from, to }),
         fetchCounterHandoverReport({ from, to, counter }),
-        fetchExceptionReport({ from, to })
+        fetchExceptionReport({ from, to }),
+        fetchExchangeBillsReport({ from, to, counter })
       ]);
       setDailyReport(daily);
       setHsnReport(hsn);
@@ -96,6 +99,7 @@ export default function ReportsView() {
       setGstr1Report(gstr1);
       setCounterHandoverReport(handover);
       setExceptionReport(exceptions);
+      setExchangeReport(exchange);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to load reports from database.');
     }
@@ -124,6 +128,7 @@ export default function ReportsView() {
     { key: 'tax', title: 'Tax Summary', note: `${taxSummary.rows.length} GST slabs` },
     { key: 'gstr1', title: 'GSTR-1 / GST Returns', note: `${(gstr1Report.b2b?.length || 0) + (gstr1Report.b2cl?.length || 0) + (gstr1Report.b2c?.length || 0)} rows` },
     { key: 'handover', title: 'Counter Handover', note: `${counterHandoverReport.totals?.sheets || 0} sheets` },
+    { key: 'exchange', title: 'Exchange Bills', note: `${exchangeReport.totals?.billCount || 0} bills` },
     { key: 'returns', title: 'Returns', note: `${exceptionReport.returns.length} returns` },
     { key: 'cancelled', title: 'Cancelled Bills', note: `${exceptionReport.cancelled.length} bills` }
   ];
@@ -336,6 +341,26 @@ export default function ReportsView() {
     })));
   }
 
+  function exportExchangeExcel() {
+    exportRows('exchange_bills', (exchangeReport.rows || []).map((row) => ({
+      'Invoice No': row.invoice_no,
+      Date: row.bill_date || '',
+      Time: row.bill_time || '',
+      Customer: row.customer_name || '',
+      Phone: row.customer_phone || '',
+      Counter: row.billing_counter || '',
+      Payment: row.payment_mode || '',
+      'Sale Total': Number(row.sale_total || 0),
+      'Exchange Less': Number(row.exchange_total || 0),
+      'Net Bill': Number(row.grand_total || 0),
+      'Cash Received': Number(row.cash_received || 0),
+      Change: Number(row.change_returned || 0),
+      'Sale Items': Number(row.item_count || 0),
+      'Exchange Items': Number(row.exchange_item_count || 0),
+      'Exchange Products': (row.exchange_items || []).map((item) => `${item.barcode || ''} ${item.product_name || ''} x ${item.quantity || 0}`).join('; ')
+    })));
+  }
+
   function exportReturnsExcel() {
     exportRows('returns', exceptionReport.returns.map((row) => ({
       'Return No': row.return_no,
@@ -543,6 +568,48 @@ export default function ReportsView() {
                 <tbody>
                   {exceptionReport.returns.length === 0 ? <tr><td colSpan="7">No returns found.</td></tr> : exceptionReport.returns.map((row) => (
                     <tr key={row.return_no}><td>{row.return_no}</td><td>{row.invoice_no}</td><td>{row.reason}</td><td>{row.refund_mode}</td><td>{formatMoney(row.refund_total)}</td><td>{row.created_by}</td><td>{row.created_at}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        );
+      case 'exchange':
+        return (
+          <section className="panel">
+            <ReportHeader title="Exchange Bills Report" onExcel={exportExchangeExcel} onPdf={exportPdf} />
+            <div className="panel-body form-stack">
+              <section className="report-summary-strip">
+                <span>Bills: <strong>{Number(exchangeReport.totals?.billCount || 0)}</strong></span>
+                <span>Sale Total: <strong>{formatMoney(exchangeReport.totals?.saleTotal || 0)}</strong></span>
+                <span>Exchange Less: <strong>{formatMoney(exchangeReport.totals?.exchangeTotal || 0)}</strong></span>
+                <span>Net Bills: <strong>{formatMoney(exchangeReport.totals?.netTotal || 0)}</strong></span>
+                <span>Exchange Items: <strong>{Number(exchangeReport.totals?.exchangeItemCount || 0)}</strong></span>
+              </section>
+              <table className="history-table">
+                <thead>
+                  <tr><th>Invoice No</th><th>Date</th><th>Customer</th><th>Phone</th><th>Counter</th><th>Payment</th><th>Sale Total</th><th>Exchange Less</th><th>Net Bill</th><th>Exchange Products</th></tr>
+                </thead>
+                <tbody>
+                  {(exchangeReport.rows || []).length === 0 ? <tr><td colSpan="10">No exchange bills found.</td></tr> : exchangeReport.rows.map((row) => (
+                    <tr key={row.invoice_no}>
+                      <td className="mono">{row.invoice_no}</td>
+                      <td>{row.bill_date || '-'} {row.bill_time || ''}</td>
+                      <td>{row.customer_name || '-'}</td>
+                      <td>{row.customer_phone || '-'}</td>
+                      <td>{row.billing_counter || '-'}</td>
+                      <td>{row.payment_mode || '-'}</td>
+                      <td>{formatMoney(row.sale_total)}</td>
+                      <td><strong>{formatMoney(row.exchange_total)}</strong></td>
+                      <td><strong>{formatMoney(row.grand_total)}</strong></td>
+                      <td>
+                        {(row.exchange_items || []).length === 0 ? '-' : row.exchange_items.map((item, index) => (
+                          <div key={`${row.invoice_no}-${item.barcode || index}`}>
+                            <span className="mono">{item.barcode || '-'}</span> {item.product_name || '-'} x {Number(item.quantity || 0)}
+                          </div>
+                        ))}
+                      </td>
+                    </tr>
                   ))}
                 </tbody>
               </table>

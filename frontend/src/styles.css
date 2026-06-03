@@ -1238,6 +1238,45 @@ button:disabled {
   font-size: 20px;
 }
 
+.exchange-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #e6b84a;
+  border-radius: 8px;
+  background: #fff8e4;
+}
+
+.exchange-entry-row {
+  display: grid;
+  grid-template-columns: auto minmax(260px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.exchange-total-chip {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #ffe1a6;
+  color: #6b3d00;
+  white-space: nowrap;
+}
+
+.exchange-table {
+  font-size: 12px;
+}
+
+.exchange-table .qty-input {
+  width: 72px;
+  height: 28px;
+  padding: 4px 6px;
+}
+
+.exchange-less-line strong {
+  color: #9a3412;
+}
+
 .tax-breakup-details {
   margin-bottom: 10px;
   border: 1px solid var(--line);
@@ -1784,6 +1823,51 @@ button:disabled {
 .books-grid,
 .system-grid {
   grid-template-columns: repeat(3, minmax(220px, 1fr));
+}
+
+.settings-section {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fcf8;
+}
+
+.settings-section-title {
+  padding-bottom: 6px;
+  border-bottom: 1px solid #d6e7d8;
+  color: #0d4e1b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.settings-address-field {
+  min-height: 62px;
+  resize: vertical;
+  line-height: 1.35;
+}
+
+.settings-inline-section {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pos-header-preview {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #145f22;
+  color: #fff;
+}
+
+.pos-header-preview strong {
+  font-size: 16px;
+}
+
+.pos-header-preview span {
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .book-select-card {
@@ -2560,15 +2644,24 @@ button:disabled {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 5px;
-  padding: 9px 12px;
+  gap: 4px;
+  padding: 7px 12px;
   border-right: 2px solid #111;
   font-size: 15px;
 }
 
+.jewellery-product-name {
+  max-width: 25ch;
+  overflow: hidden;
+  white-space: nowrap;
+  text-transform: uppercase;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
 .jewellery-bars {
   width: 145px;
-  height: 38px;
+  height: 34px;
 }
 
 .jewellery-side.shop-side {
@@ -2769,7 +2862,7 @@ button:disabled {
   font-size: 10.5px;
   font-weight: 700;
   page: thermal-receipt;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .thermal-paper .print-store-header {
@@ -2887,6 +2980,28 @@ button:disabled {
   text-align: right;
 }
 
+.thermal-exchange-table th,
+.thermal-exchange-table td {
+  padding: 2px 2px;
+  font-size: 8.5px;
+  line-height: 1.1;
+}
+
+.thermal-exchange-table th:nth-child(1),
+.thermal-exchange-table td:nth-child(1) {
+  width: 20%;
+}
+
+.thermal-exchange-table th:nth-child(2),
+.thermal-exchange-table td:nth-child(2) {
+  width: 36%;
+  overflow-wrap: anywhere;
+}
+
+.thermal-exchange-table tfoot th {
+  font-size: 9.5px;
+}
+
 .bill-qr {
   display: block;
   object-fit: contain;
@@ -2901,15 +3016,15 @@ button:disabled {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2mm;
-  margin-top: 3mm;
+  gap: 1mm;
+  margin-top: 1.5mm;
   text-align: center;
   font-size: 9px;
 }
 
 .thermal-bill-qr {
-  width: 31mm;
-  height: 31mm;
+  width: 22mm;
+  height: 22mm;
 }
 
 .gst-summary-total-row td,
@@ -3377,16 +3492,16 @@ button:disabled {
   display: grid;
   grid-template-columns: 1.32fr 0.78fr;
   border-bottom: 1px solid #111;
-  min-height: 36mm;
+  min-height: 29mm;
 }
 
 .a4-store-shop {
   display: grid;
-  grid-template-columns: 28mm 1fr;
+  grid-template-columns: 23mm 1fr;
   justify-content: center;
   align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
+  gap: 4px;
+  padding: 3px 6px;
   border-right: 1px solid #111;
   text-align: center;
   font-size: 10.8px;
@@ -3402,8 +3517,8 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 25mm;
-  height: 25mm;
+  width: 21mm;
+  height: 21mm;
   border: 1px solid #111;
   background: #fff;
 }
@@ -3417,8 +3532,8 @@ button:disabled {
 }
 
 .a4-bill-qr {
-  width: 22mm;
-  height: 22mm;
+  width: 18mm;
+  height: 18mm;
 }
 
 .a4-store-meta {
@@ -3429,8 +3544,8 @@ button:disabled {
 
 .a4-store-meta span,
 .a4-store-meta strong {
-  min-height: 6mm;
-  padding: 3px 4px;
+  min-height: 4.8mm;
+  padding: 2px 4px;
   border-bottom: 1px solid #111;
 }
 
@@ -3442,7 +3557,7 @@ button:disabled {
 .a4-store-customer {
   display: grid;
   grid-template-columns: 1.35fr 0.75fr;
-  min-height: 24mm;
+  min-height: 18mm;
   border-bottom: 1px solid #111;
 }
 
@@ -3455,8 +3570,8 @@ button:disabled {
 
 .a4-store-customer span,
 .a4-store-customer strong {
-  min-height: 5.7mm;
-  padding: 2px 4px;
+  min-height: 4.4mm;
+  padding: 1px 4px;
 }
 
 .a4-store-items {
@@ -3468,7 +3583,7 @@ button:disabled {
 
 .a4-store-items th,
 .a4-store-items td {
-  padding: 2px 3px;
+  padding: 1.5px 3px;
   border-right: 1px solid #111;
   border-bottom: 1px solid #111;
   vertical-align: top;
@@ -3503,13 +3618,13 @@ button:disabled {
 }
 
 .a4-store-empty-row td {
-  height: 7.4mm;
+  height: 4.5mm;
 }
 
 .a4-store-discount,
 .a4-store-words {
-  min-height: 7mm;
-  padding: 4px;
+  min-height: 5.5mm;
+  padding: 2px 4px;
   border-bottom: 1px solid #111;
   text-align: center;
   font-size: 10px;
@@ -3518,16 +3633,16 @@ button:disabled {
 .a4-store-bottom {
   display: grid;
   grid-template-columns: 0.95fr 1.35fr;
-  grid-template-rows: 39mm 18mm;
-  min-height: 57mm;
+  grid-template-rows: auto 13mm;
+  min-height: 0;
 }
 
 .a4-store-bank {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 5px;
-  padding: 7px;
+  gap: 3px;
+  padding: 4px 6px;
   border-right: 1px solid #111;
   border-bottom: 1px solid #111;
   text-align: center;
@@ -3541,14 +3656,15 @@ button:disabled {
 
 .a4-store-right-bottom {
   display: grid;
-  grid-template-rows: 13mm 26mm;
-  min-height: 39mm;
+  grid-template-rows: auto auto;
+  min-height: 0;
   border-bottom: 1px solid #111;
 }
 
 .a4-store-payment-summary {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: 6mm;
   border-bottom: 1px solid #111;
 }
 
@@ -3556,8 +3672,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 2px;
-  padding: 3px;
+  gap: 1px;
+  padding: 1px 2px;
   border-right: 1px solid #111;
   text-align: center;
 }
@@ -3566,24 +3682,27 @@ button:disabled {
   border-right: 0;
 }
 
+.a4-store-payment-summary div:nth-child(3n) {
+  border-right: 0;
+}
+
 .a4-store-payment-summary span {
-  font-size: 8.5px;
+  font-size: 7.4px;
 }
 
 .a4-store-payment-summary strong {
-  font-size: 10px;
+  font-size: 8.8px;
 }
 
 .a4-store-gst {
   width: 100%;
-  height: 26mm;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 7.8px;
+  font-size: 7.2px;
 }
 
 .a4-store-gst caption {
-  padding: 2px;
+  padding: 1px 2px;
   border-bottom: 1px solid #111;
   font-weight: 900;
   text-align: center;
@@ -3591,7 +3710,7 @@ button:disabled {
 
 .a4-store-gst th,
 .a4-store-gst td {
-  padding: 2px;
+  padding: 1px 2px;
   border-right: 1px solid #111;
   border-bottom: 1px solid #111;
   text-align: right;
@@ -3604,8 +3723,15 @@ button:disabled {
 
 .a4-store-customer-sign,
 .a4-store-auth {
-  min-height: 18mm;
-  padding: 8px;
+  min-height: 13mm;
+  padding: 4px 8px;
+}
+
+.a4-exchange-table th,
+.a4-exchange-table td {
+  padding: 1.5px 3px;
+  font-size: 8px;
+  line-height: 1.08;
 }
 
 .a4-store-customer-sign {
@@ -3652,6 +3778,26 @@ button:disabled {
   #root {
     margin: 0 !important;
     padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  html.printing-thermal,
+  html.printing-thermal body,
+  html.printing-thermal #root {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  html.printing-a4,
+  html.printing-a4 body {
+    width: 190mm !important;
+    min-width: 190mm !important;
+    max-width: 190mm !important;
+    height: 260mm !important;
+    min-height: 260mm !important;
+    max-height: 260mm !important;
     overflow: hidden !important;
   }
 
@@ -3920,6 +4066,17 @@ button:disabled {
     display: none !important;
   }
 
+  html.printing-thermal body,
+  html.printing-thermal #root,
+  body.printing-thermal,
+  body.printing-thermal #root {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  html.printing-thermal .print-host-thermal,
   body.printing-thermal .print-host-thermal {
     display: block !important;
     position: static !important;
@@ -3930,15 +4087,16 @@ button:disabled {
     min-height: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
-    overflow: hidden !important;
-    page-break-before: avoid !important;
-    page-break-after: avoid !important;
-    page-break-inside: avoid !important;
-    break-before: avoid !important;
-    break-after: avoid !important;
-    break-inside: avoid !important;
+    overflow: visible !important;
+    page-break-before: auto !important;
+    page-break-after: auto !important;
+    page-break-inside: auto !important;
+    break-before: auto !important;
+    break-after: auto !important;
+    break-inside: auto !important;
   }
 
+  html.printing-a4 .print-host-a4,
   body.printing-a4 .print-host-a4 {
     display: block !important;
     position: static !important;
@@ -3980,6 +4138,7 @@ button:disabled {
     padding: 3mm;
     margin: 0;
     box-sizing: border-box;
+    overflow: visible !important;
   }
 
   .a4-paper {
@@ -4136,7 +4295,8 @@ button:disabled {
   }
 
   .bulk-edit-toolbar,
-  .bulk-apply-row {
+  .bulk-apply-row,
+  .settings-inline-section {
     grid-template-columns: 1fr;
   }
 }

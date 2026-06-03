@@ -416,6 +416,89 @@ router.get('/tax-summary', authorize('SERVER', 'ADMIN'), async (req, res) => {
   }
 });
 
+router.get('/exchange-bills', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const from = normalizeDate(req.query.from, todayIso());
+    const to = normalizeDate(req.query.to, from);
+    const counter = normalizeCounter(req.query.counter);
+    const values = [from, to];
+    let counterSql = '';
+
+    if (counter) {
+      counterSql = 'AND i.billing_counter = ?';
+      values.push(counter);
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+         i.invoice_no,
+         DATE_FORMAT(i.created_at, '%d-%m-%Y') AS bill_date,
+         TIME_FORMAT(i.created_at, '%H:%i') AS bill_time,
+         i.customer_name,
+         i.customer_phone,
+         i.payment_mode,
+         i.billing_counter,
+         i.sub_total,
+         i.gst_total,
+         (i.sub_total + i.gst_total) AS sale_total,
+         i.exchange_total,
+         i.grand_total,
+         i.cash_received,
+         i.change_returned,
+         i.exchange_items_json,
+         COALESCE(item_counts.item_count, 0) AS item_count,
+         COALESCE(exchange_counts.exchange_item_count, 0) AS exchange_item_count
+       FROM invoices i
+       LEFT JOIN (
+         SELECT invoice_no, COUNT(*) AS item_count
+         FROM invoice_items
+         GROUP BY invoice_no
+       ) item_counts ON item_counts.invoice_no = i.invoice_no
+       LEFT JOIN (
+         SELECT invoice_no, JSON_LENGTH(exchange_items_json) AS exchange_item_count
+         FROM invoices
+         WHERE exchange_total > 0
+       ) exchange_counts ON exchange_counts.invoice_no = i.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
+         AND i.exchange_total > 0
+       ${counterSql}
+       ORDER BY i.created_at DESC`,
+      values
+    );
+
+    const normalizedRows = rows.map((row) => {
+      let exchangeItems = [];
+      try {
+        exchangeItems = Array.isArray(row.exchange_items_json)
+          ? row.exchange_items_json
+          : JSON.parse(row.exchange_items_json || '[]');
+      } catch (err) {
+        exchangeItems = [];
+      }
+      return {
+        ...row,
+        exchange_items: exchangeItems,
+        exchange_item_count: Number(row.exchange_item_count || exchangeItems.length || 0)
+      };
+    });
+
+    const totals = normalizedRows.reduce((acc, row) => ({
+      billCount: acc.billCount + 1,
+      itemCount: acc.itemCount + Number(row.item_count || 0),
+      exchangeItemCount: acc.exchangeItemCount + Number(row.exchange_item_count || 0),
+      saleTotal: acc.saleTotal + Number(row.sale_total || 0),
+      exchangeTotal: acc.exchangeTotal + Number(row.exchange_total || 0),
+      netTotal: acc.netTotal + Number(row.grand_total || 0)
+    }), { billCount: 0, itemCount: 0, exchangeItemCount: 0, saleTotal: 0, exchangeTotal: 0, netTotal: 0 });
+
+    res.json({ from, to, counter: counter || 'ALL', rows: normalizedRows, totals });
+  } catch (err) {
+    console.error('Exchange report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load exchange bills report.' });
+  }
+});
+
 router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
   try {
     const from = normalizeDate(req.query.from, todayIso());

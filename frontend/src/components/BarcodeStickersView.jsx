@@ -218,6 +218,10 @@ export default function BarcodeStickersView() {
             <input className="field" value={form.address_line_2} onChange={(event) => update('address_line_2', event.target.value)} />
           </label>
           <label>
+            <span className="field-label">Phone Number</span>
+            <input className="field" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
+          </label>
+          <label>
             <span className="field-label">Customer Care Line</span>
             <input className="field" value={form.customer_care} onChange={(event) => update('customer_care', event.target.value)} />
           </label>
@@ -267,9 +271,11 @@ function StickerPreview({ form, templateName }) {
   }
 
   if (templateName === 'tsc-244-2-jewellery-100x15-tail.prn') {
+    const shortName = String(form.product_name || '').toUpperCase().slice(0, 25);
     return (
       <div className="sticker-preview sticker-preview-jewellery">
         <div className="jewellery-side">
+          <strong className="jewellery-product-name">{shortName}</strong>
           <strong>MRP {form.mrp}</strong>
           <strong>Price {form.sale_price}</strong>
           <div className="barcode-bars jewellery-bars"></div>

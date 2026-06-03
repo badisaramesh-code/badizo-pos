@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import {
   approveSensitiveBillingMode,
   checkout,
@@ -122,6 +123,15 @@ function isDigitalPaymentContactReady(value) {
   return text.toUpperCase() === 'NO' || text.replace(/\D/g, '').length === 10;
 }
 
+function isExchangeCustomerNameReady(value) {
+  const text = String(value || '').trim();
+  return text.length > 0 && text.toLowerCase() !== 'walk-in customer';
+}
+
+function isTenDigitPhoneReady(value) {
+  return String(value || '').replace(/\D/g, '').length === 10;
+}
+
 export default function BillingTerminalView() {
   const currentUser = getStoredUser();
   const initialDraft = readActivePosDraft(currentUser?.username);
@@ -144,6 +154,9 @@ export default function BillingTerminalView() {
   const [suggestions, setSuggestions] = useState([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const [cart, setCart] = useState(initialDraft?.cart || []);
+  const [exchangeMode, setExchangeMode] = useState(Boolean(initialDraft?.exchangeMode));
+  const [exchangeQuery, setExchangeQuery] = useState('');
+  const [exchangeItems, setExchangeItems] = useState(initialDraft?.exchangeItems || []);
   const [billingMode, setBillingMode] = useState(normalizeBillingMode(initialDraft?.billingMode));
   const [approvalDialog, setApprovalDialog] = useState(null);
   const [approvalUsername, setApprovalUsername] = useState(currentUser?.role === 'SERVER' || currentUser?.role === 'ADMIN' ? currentUser.username : '');
@@ -177,6 +190,7 @@ export default function BillingTerminalView() {
   const [returnReason, setReturnReason] = useState('');
   const [refundMode, setRefundMode] = useState('Cash');
   const scannerRef = useRef(null);
+  const exchangeScannerRef = useRef(null);
   const billingTableRef = useRef(null);
   const customerNameRef = useRef(null);
   const cashReceivedRef = useRef(null);
@@ -203,6 +217,8 @@ export default function BillingTerminalView() {
 
   useEffect(() => {
     const hasDraft = cart.length > 0
+      || exchangeItems.length > 0
+      || exchangeMode
       || billingMode !== RETAIL_MODE
       || customerName
       || customerAddress
@@ -226,6 +242,8 @@ export default function BillingTerminalView() {
         invoiceNo,
         counterNo,
         cart,
+        exchangeMode,
+        exchangeItems,
         billingMode,
         customerName,
         customerAddress,
@@ -242,7 +260,7 @@ export default function BillingTerminalView() {
     } catch (err) {
       // Keep billing usable even if browser storage is unavailable.
     }
-  }, [billingMode, cart, cashReceived, companyName, counterNo, currentUser?.username, customerAddress, customerGstin, customerName, customerPhone, invoiceNo, paymentConfirmed, paymentMode, paymentReference, printMode]);
+  }, [billingMode, cart, cashReceived, companyName, counterNo, currentUser?.username, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, exchangeMode, invoiceNo, paymentConfirmed, paymentMode, paymentReference, printMode]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setLiveTime(new Date()), 1000);
@@ -335,17 +353,25 @@ export default function BillingTerminalView() {
       discount += Math.max(toNumber(item.mrp) - unitPrice, 0) * quantity;
     });
 
+    const saleGrand = taxable + tax;
+    const exchangeTotal = exchangeItems.reduce((sum, item) => {
+      const quantity = toNumber(item.quantity, 1);
+      return sum + toNumber(item.unitPrice || item.sale_price || item.mrp) * quantity;
+    }, 0);
+    const netGrand = Math.max(saleGrand - exchangeTotal, 0);
     const isInterstate = BILLING_MODES[billingMode].taxType === 'INTERSTATE';
     return {
       taxable,
       tax,
       discount,
-      grand: taxable + tax,
+      saleGrand,
+      exchangeTotal,
+      grand: netGrand,
       cgst: isInterstate ? 0 : tax / 2,
       sgst: isInterstate ? 0 : tax / 2,
       igst: isInterstate ? tax : 0
     };
-  }, [cart, billingMode]);
+  }, [cart, billingMode, exchangeItems]);
 
   const changeDue = Math.max(toNumber(cashReceived) - totals.grand, 0);
   const cashReceivedAmount = toNumber(cashReceived);
@@ -416,6 +442,12 @@ export default function BillingTerminalView() {
           taxAmount: lineTotal - taxableRate * quantity
         };
       }),
+      exchangeItems: exchangeItems.map((item) => ({
+        ...item,
+        quantity: toNumber(item.quantity, 1),
+        unitPrice: toNumber(item.unitPrice || item.sale_price || item.mrp),
+        lineTotal: toNumber(item.unitPrice || item.sale_price || item.mrp) * toNumber(item.quantity, 1)
+      })),
       totals: {
         ...totals,
         grand: roundedGrand,
@@ -425,11 +457,20 @@ export default function BillingTerminalView() {
         igst: isInterstate ? totals.tax : 0
       }
     };
-  }, [billingMode, cart, cashReceived, changeDue, companyName, counterNo, customerAddress, customerGstin, customerName, customerPhone, invoiceDate, invoiceNo, paymentMode, shopSettings, totals]);
+  }, [billingMode, cart, cashReceived, changeDue, companyName, counterNo, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, invoiceDate, invoiceNo, paymentMode, shopSettings, totals]);
 
   function invoiceDetailsToPrintable(details, duplicate = false) {
     const invoice = details.invoice;
     const isInterstate = invoice.tax_type === 'INTERSTATE';
+    let exchangeItemsFromInvoice = [];
+    try {
+      const rawExchange = invoice.exchange_items_json;
+      exchangeItemsFromInvoice = Array.isArray(rawExchange)
+        ? rawExchange
+        : JSON.parse(rawExchange || '[]');
+    } catch (err) {
+      exchangeItemsFromInvoice = [];
+    }
     const items = details.items.map((item) => {
       const unitPrice = toNumber(item.sale_price);
       const quantity = toNumber(item.quantity);
@@ -465,10 +506,18 @@ export default function BillingTerminalView() {
       taxType: invoice.tax_type,
       itemCount: items.reduce((sum, item) => sum + toNumber(item.quantity), 0),
       items,
+      exchangeItems: exchangeItemsFromInvoice.map((item) => ({
+        ...item,
+        quantity: toNumber(item.quantity, 1),
+        unitPrice: toNumber(item.sale_price || item.unitPrice),
+        lineTotal: toNumber(item.line_total || item.lineTotal || (toNumber(item.sale_price || item.unitPrice) * toNumber(item.quantity, 1)))
+      })),
       totals: {
         taxable: toNumber(invoice.sub_total),
         tax: toNumber(invoice.gst_total),
         discount: 0,
+        saleGrand: toNumber(invoice.sub_total) + toNumber(invoice.gst_total),
+        exchangeTotal: toNumber(invoice.exchange_total),
         grand: Math.round(toNumber(invoice.grand_total)),
         roundOff: Math.round(toNumber(invoice.grand_total)) - toNumber(invoice.grand_total),
         cgst: isInterstate ? 0 : toNumber(invoice.gst_total) / 2,
@@ -668,6 +717,88 @@ export default function BillingTerminalView() {
     setCart((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
 
+  function addExchangeProduct(product) {
+    const unitPrice = toNumber(product.sale_price || product.mrp);
+    setExchangeItems((current) => {
+      const existingIndex = current.findIndex((item) => item.barcode === product.barcode);
+      if (existingIndex >= 0) {
+        return current.map((item, index) => (
+          index === existingIndex ? { ...item, quantity: toNumber(item.quantity, 1) + 1 } : item
+        ));
+      }
+
+      return [
+        ...current,
+        {
+          barcode: product.barcode,
+          product_name: String(product.product_name || '').toUpperCase(),
+          hsn_code: product.hsn_code || '',
+          gst_percent: toNumber(product.gst_percent),
+          mrp: toNumber(product.mrp),
+          sale_price: unitPrice,
+          unitPrice,
+          quantity: 1
+        }
+      ];
+    });
+    setExchangeQuery('');
+    setErrorMessage('');
+    setStatusMessage(`${product.product_name} added to exchange.`);
+    exchangeScannerRef.current?.focus();
+  }
+
+  async function handleExchangeSearchKeyDown(event) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const cleaned = exchangeQuery.trim();
+    if (cleaned.length < 3) {
+      setErrorMessage('Enter exchange product barcode or at least 3 letters.');
+      return;
+    }
+
+    try {
+      const results = await searchProducts(cleaned);
+      if (results.length === 0) {
+        setErrorMessage('Exchange product not found.');
+        return;
+      }
+      addExchangeProduct(results[0]);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Exchange product lookup failed.');
+    }
+  }
+
+  function updateExchangeQuantity(index, quantity) {
+    setExchangeItems((current) => current.map((item, itemIndex) => (
+      itemIndex === index ? { ...item, quantity: Math.max(toNumber(quantity), 0) } : item
+    )));
+  }
+
+  function removeExchangeLine(index) {
+    setExchangeItems((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function requestExchangeMode() {
+    setErrorMessage('');
+    setStatusMessage('');
+    setApprovalError('');
+
+    if (exchangeMode) {
+      setExchangeMode(false);
+      setExchangeItems([]);
+      setStatusMessage('Exchange bill mode removed.');
+      scannerRef.current?.focus();
+      return;
+    }
+
+    setApprovalDialog({
+      action: 'EXCHANGE',
+      targetMode: billingMode,
+      title: 'Approve Exchange Bill',
+      message: 'Exchange billing needs supervisor password. Exchange amount will be deducted from this bill only, then POS will return to Retail.'
+    });
+  }
+
   function closeApprovalDialog() {
     setApprovalDialog(null);
     setApprovalPassword('');
@@ -731,6 +862,8 @@ export default function BillingTerminalView() {
     setInvoiceNo(savedState.invoiceNo || 'Draft');
     setCounterNo(canSelectCounter ? savedState.counterNo || 1 : Number(currentUser?.counter_no || counterNo));
     setCart(savedState.cart || []);
+    setExchangeMode(Boolean(savedState.exchangeMode));
+    setExchangeItems(savedState.exchangeItems || []);
     setBillingMode(normalizeBillingMode(savedState.billingMode));
     setCustomerName(savedState.customerName || '');
     setCustomerAddress(savedState.customerAddress || '');
@@ -761,6 +894,8 @@ export default function BillingTerminalView() {
         password: approvalPassword,
         reason: approvalDialog.action === 'RESUME'
           ? `Resume held ${BILLING_MODES[approvalDialog.targetMode].label} bill`
+          : approvalDialog.action === 'EXCHANGE'
+            ? 'Start exchange bill'
           : `Start ${BILLING_MODES[approvalDialog.targetMode].label} bill`
       });
 
@@ -771,6 +906,10 @@ export default function BillingTerminalView() {
         setPrintMode(approvalDialog.targetPrintMode);
         setStatusMessage(`${approvalDialog.targetPrintMode} enabled for this bill. Approved by ${result.approved_by}.`);
         scannerRef.current?.focus();
+      } else if (approvalDialog.action === 'EXCHANGE') {
+        setExchangeMode(true);
+        setStatusMessage(`Exchange bill enabled. Approved by ${result.approved_by}.`);
+        exchangeScannerRef.current?.focus();
       } else {
         setBillingMode(approvalDialog.targetMode);
         setStatusMessage(`${BILLING_MODES[approvalDialog.targetMode].label} enabled for this bill. Approved by ${result.approved_by}.`);
@@ -787,6 +926,9 @@ export default function BillingTerminalView() {
   function resetBill() {
     clearActivePosDraft();
     setCart([]);
+    setExchangeMode(false);
+    setExchangeItems([]);
+    setExchangeQuery('');
     setBillingMode(RETAIL_MODE);
     setCustomerName('');
     setCustomerAddress('');
@@ -809,41 +951,269 @@ export default function BillingTerminalView() {
     }
 
     setPrintableInvoice(invoice);
-    schedulePrint(printMode);
+    schedulePrint(printMode, null, invoice);
   }
 
-  function schedulePrint(mode = printMode, afterPrint) {
+  function schedulePrint(mode = printMode, afterPrint, invoiceForPrint = printableInvoice || printableDraft) {
     const printClass = mode === 'A4' ? 'printing-a4' : 'printing-thermal';
     let cleanupTimer;
-    let printHost = null;
+    let printFrame = null;
     let didCleanup = false;
     const cleanup = () => {
       if (didCleanup) return;
       didCleanup = true;
       window.clearTimeout(cleanupTimer);
-      if (printHost) {
-        printHost.remove();
-        printHost = null;
+      if (printFrame) {
+        printFrame.remove();
+        printFrame = null;
       }
-      document.body.classList.remove('printing-a4', 'printing-thermal');
-      window.removeEventListener('afterprint', cleanup);
       if (afterPrint) afterPrint();
     };
 
-    document.body.classList.remove('printing-a4', 'printing-thermal');
-    document.body.classList.add(printClass);
-    window.addEventListener('afterprint', cleanup);
+    const styleMarkup = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+      .map((node) => node.outerHTML)
+      .join('\n');
+    const hostClass = mode === 'A4' ? 'print-host print-host-a4' : 'print-host print-host-thermal';
+    const invoiceMarkup = renderToStaticMarkup(<PrintableInvoice invoice={invoiceForPrint} mode={mode} />);
+
+    printFrame = document.createElement('iframe');
+    printFrame.title = 'Bill print frame';
+    printFrame.style.position = 'fixed';
+    printFrame.style.left = '-10000px';
+    printFrame.style.top = '0';
+    printFrame.style.width = mode === 'A4' ? '210mm' : '90mm';
+    printFrame.style.height = mode === 'A4' ? '297mm' : '2000mm';
+    printFrame.style.border = '0';
+    printFrame.style.visibility = 'hidden';
+    document.body.appendChild(printFrame);
+
+    const frameDocument = printFrame.contentDocument || printFrame.contentWindow?.document;
+    if (!frameDocument) {
+      cleanup();
+      return;
+    }
+
+    frameDocument.open();
+    frameDocument.write(`<!doctype html>
+<html class="${printClass}">
+<head>
+  <meta charset="utf-8" />
+  <title>Print Bill</title>
+  ${styleMarkup}
+  <style>
+    html.${printClass}, html.${printClass} body {
+      margin: 0 !important;
+      padding: 0 !important;
+      background: #fff !important;
+    }
+    .print-host {
+      display: block !important;
+      visibility: visible !important;
+      background: #fff !important;
+    }
+    .print-host * {
+      visibility: visible !important;
+    }
+    .print-host-thermal {
+      width: 80mm !important;
+      min-width: 80mm !important;
+      max-width: 80mm !important;
+      overflow: visible !important;
+    }
+    .print-host-a4 {
+      width: 190mm !important;
+      min-width: 190mm !important;
+      max-width: 190mm !important;
+      overflow: hidden !important;
+    }
+    html.printing-thermal,
+    html.printing-thermal body,
+    body.printing-thermal {
+      width: 80mm !important;
+      min-width: 80mm !important;
+      max-width: 80mm !important;
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      overflow: visible !important;
+    }
+    body.printing-thermal .print-host-thermal,
+    body.printing-thermal .thermal-paper {
+      display: block !important;
+      width: 80mm !important;
+      min-width: 80mm !important;
+      max-width: 80mm !important;
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      overflow: visible !important;
+      page-break-before: avoid !important;
+      page-break-after: auto !important;
+      page-break-inside: auto !important;
+      break-before: avoid !important;
+      break-after: auto !important;
+      break-inside: auto !important;
+    }
+    body.printing-thermal .thermal-paper {
+      padding: 2mm 2.5mm 14mm !important;
+      font-size: 9.4px !important;
+      line-height: 1.05 !important;
+    }
+    body.printing-thermal .thermal-logo-slot {
+      height: 14mm !important;
+      margin-bottom: 1mm !important;
+    }
+    body.printing-thermal .thermal-logo-slot img {
+      max-height: 13mm !important;
+      max-width: 70mm !important;
+    }
+    body.printing-thermal .print-rule {
+      margin: 2px 0 !important;
+    }
+    body.printing-thermal .print-meta-grid,
+    body.printing-thermal .thermal-customer-block {
+      gap: 2px 5px !important;
+      margin: 2px 0 !important;
+      padding: 2px 0 !important;
+    }
+    body.printing-thermal .print-table th,
+    body.printing-thermal .print-table td,
+    body.printing-thermal .thermal-items th,
+    body.printing-thermal .thermal-items td,
+    body.printing-thermal .gst-summary-table th,
+    body.printing-thermal .gst-summary-table td {
+      padding: 1.5px 1px !important;
+      font-size: 8.3px !important;
+      line-height: 1.02 !important;
+    }
+    body.printing-thermal .thermal-total-box {
+      gap: 1px !important;
+      font-size: 10px !important;
+    }
+    body.printing-thermal .thermal-total-box strong {
+      font-size: 13px !important;
+    }
+    body.printing-thermal .print-terms {
+      gap: 2px !important;
+      margin-top: 2px !important;
+    }
+    body.printing-thermal .thermal-bill-qr-wrap {
+      gap: 0.5mm !important;
+      margin-top: 0.5mm !important;
+      page-break-before: avoid !important;
+      page-break-after: avoid !important;
+      page-break-inside: auto !important;
+      break-before: avoid !important;
+      break-after: avoid !important;
+      break-inside: auto !important;
+    }
+    body.printing-thermal .thermal-bill-qr {
+      width: 18mm !important;
+      height: 18mm !important;
+    }
+    @media print {
+      @page {
+        size: ${mode === 'A4' ? 'A4 portrait' : '80mm 2000mm'};
+        margin: 0;
+      }
+      @page thermal-receipt {
+        size: 80mm 2000mm;
+        margin: 0;
+      }
+      body.${printClass} {
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      body.${printClass} .print-host {
+        display: block !important;
+        position: static !important;
+        visibility: visible !important;
+      }
+      body.${printClass} .print-host * {
+        visibility: visible !important;
+      }
+    }
+  </style>
+</head>
+<body class="${printClass}">
+  <div class="${hostClass}">${invoiceMarkup}</div>
+</body>
+</html>`);
+    frameDocument.close();
+
     cleanupTimer = window.setTimeout(cleanup, 120000);
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        const source = document.querySelector(mode === 'A4' ? '.print-area.print-a4' : '.print-area.print-thermal');
-        printHost = document.createElement('div');
-        printHost.className = mode === 'A4' ? 'print-host print-host-a4' : 'print-host print-host-thermal';
-        printHost.innerHTML = source?.innerHTML || '';
-        document.body.appendChild(printHost);
-        window.requestAnimationFrame(() => window.print());
-      });
-    });
+
+    const waitForFrameAssets = async (doc) => {
+      try {
+        await doc.fonts?.ready;
+      } catch (err) {
+        // Printing can continue even when browser font readiness is unavailable.
+      }
+      const images = Array.from(doc.images || []);
+      await Promise.all(images.map((image) => {
+        if (image.complete) return Promise.resolve();
+        return new Promise((resolve) => {
+          image.addEventListener('load', resolve, { once: true });
+          image.addEventListener('error', resolve, { once: true });
+        });
+      }));
+    };
+
+    const startPrint = async () => {
+      const frameWindow = printFrame?.contentWindow;
+      const doc = printFrame?.contentDocument || frameWindow?.document;
+      if (!frameWindow || !doc) {
+        cleanup();
+        return;
+      }
+
+      await waitForFrameAssets(doc);
+
+      if (mode === 'Thermal') {
+        const printHost = doc.querySelector('.print-host-thermal');
+        if (printHost) {
+          const receipt = printHost.querySelector('.thermal-paper');
+          const contentHeightPx = Math.max(
+            receipt?.scrollHeight || 0,
+            receipt?.getBoundingClientRect?.().height || 0,
+            printHost.scrollHeight || 0,
+            420
+          );
+          const contentHeightMm = Math.max(420, Math.ceil((contentHeightPx * 25.4) / 96) + 140);
+          const dynamicPrintStyle = doc.createElement('style');
+          dynamicPrintStyle.textContent = `
+            @media print {
+              @page { size: 80mm ${contentHeightMm}mm; margin: 0; }
+              @page thermal-receipt { size: 80mm ${contentHeightMm}mm; margin: 0; }
+              html.printing-thermal,
+              html.printing-thermal body,
+              html.printing-thermal #root,
+              html.printing-thermal .print-host-thermal,
+              html.printing-thermal .thermal-paper,
+              body.printing-thermal .print-host-thermal,
+              body.printing-thermal .thermal-paper {
+                width: 80mm !important;
+                min-width: 80mm !important;
+                max-width: 80mm !important;
+                height: auto !important;
+                min-height: ${contentHeightMm}mm !important;
+                max-height: none !important;
+                overflow: visible !important;
+                padding-bottom: 12mm !important;
+                box-sizing: border-box !important;
+              }
+            }
+          `;
+          doc.head.appendChild(dynamicPrintStyle);
+        }
+      }
+
+      frameWindow.addEventListener('afterprint', cleanup, { once: true });
+      frameWindow.focus();
+      frameWindow.print();
+    };
+
+    window.setTimeout(startPrint, 350);
   }
 
   function focusInput(ref, delay = 0) {
@@ -859,14 +1229,14 @@ export default function BillingTerminalView() {
     focusInput(nextRef, 0);
   }
 
-  function openDigitalContactModal(mode, submitAfter = false) {
+  function openDigitalContactModal(mode, submitAfter = false, options = {}) {
     setPaymentMode(mode);
     setDigitalContactError('');
     setDigitalContactDraft({
       name: (isBusinessBillingMode(billingMode) ? companyName : customerName) || '',
       phone: customerPhone || ''
     });
-    setDigitalContactModal({ mode, submitAfter });
+    setDigitalContactModal({ mode, submitAfter, ...options });
     focusInput(digitalContactNameRef, 60);
   }
 
@@ -886,7 +1256,19 @@ export default function BillingTerminalView() {
     const nextName = digitalContactDraft.name.trim();
     const nextPhone = digitalContactDraft.phone.trim();
 
-    if (!isDigitalPaymentContactReady(nextPhone)) {
+    if (digitalContactModal.requireName && !isExchangeCustomerNameReady(nextName)) {
+      setDigitalContactError('Exchange bill requires customer name.');
+      focusInput(digitalContactNameRef, 0);
+      return;
+    }
+
+    if (digitalContactModal.requireRealPhone && !isTenDigitPhoneReady(nextPhone)) {
+      setDigitalContactError('Exchange bill requires exact 10 digit phone number. NO is not allowed.');
+      focusInput(digitalContactPhoneRef, 0);
+      return;
+    }
+
+    if (!digitalContactModal.requireRealPhone && !isDigitalPaymentContactReady(nextPhone)) {
       setDigitalContactError('Enter exactly 10 digit phone number or type NO.');
       focusInput(digitalContactPhoneRef, 0);
       return;
@@ -981,6 +1363,8 @@ export default function BillingTerminalView() {
         invoiceNo,
         counterNo,
         cart,
+        exchangeMode,
+        exchangeItems,
         billingMode,
         customerName,
         customerAddress,
@@ -1017,15 +1401,17 @@ export default function BillingTerminalView() {
 
       const heldMode = normalizeBillingMode(savedState.billingMode);
       savedState.billingMode = heldMode;
-      if (isSensitiveBillingMode(heldMode)) {
+      if (isSensitiveBillingMode(heldMode) || savedState.exchangeMode) {
         setApprovalError('');
         setApprovalDialog({
           action: 'RESUME',
           targetMode: heldMode,
           savedState,
           holdToken: heldBill.hold_token,
-          title: `Approve held ${BILLING_MODES[heldMode].label} bill`,
-          message: `This held bill was saved as ${BILLING_MODES[heldMode].label}. Supervisor approval is required again before resuming.`
+          title: savedState.exchangeMode ? 'Approve held Exchange Bill' : `Approve held ${BILLING_MODES[heldMode].label} bill`,
+          message: savedState.exchangeMode
+            ? 'This held bill has exchange products. Supervisor approval is required again before resuming.'
+            : `This held bill was saved as ${BILLING_MODES[heldMode].label}. Supervisor approval is required again before resuming.`
         });
         return;
       }
@@ -1053,8 +1439,9 @@ export default function BillingTerminalView() {
     try {
       const details = await fetchInvoiceDetails(invoiceNoForReprint);
       await recordInvoiceReprint(invoiceNoForReprint);
-      setPrintableInvoice(invoiceDetailsToPrintable(details, true));
-      schedulePrint(printMode, () => refreshHistory(false));
+      const invoiceToPrint = invoiceDetailsToPrintable(details, true);
+      setPrintableInvoice(invoiceToPrint);
+      schedulePrint(printMode, () => refreshHistory(false), invoiceToPrint);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to reprint invoice.');
     }
@@ -1134,6 +1521,22 @@ export default function BillingTerminalView() {
       return;
     }
 
+    if (exchangeMode && exchangeItems.length === 0) {
+      setErrorMessage('Exchange mode is active. Add at least one exchange product or remove exchange mode.');
+      exchangeScannerRef.current?.focus();
+      return;
+    }
+
+    if (exchangeMode && (!isExchangeCustomerNameReady(effectiveCustomerName) || !isTenDigitPhoneReady(effectiveCustomerPhone))) {
+      openDigitalContactModal(activePaymentMode, true, {
+        requireName: true,
+        requireRealPhone: true,
+        title: 'Exchange customer detail required',
+        message: 'Exchange bill must have customer name and exact 10 digit phone number. NO is not allowed for exchange bills.'
+      });
+      return;
+    }
+
     if (isBusinessBillingMode(billingMode) && (!effectiveCustomerName.trim() || !customerGstin.trim())) {
       setErrorMessage('Company name and GSTIN are required for B2B IGST Wholesale bills.');
       return;
@@ -1183,6 +1586,15 @@ export default function BillingTerminalView() {
         total_cgst: totals.cgst.toFixed(2),
         total_sgst: totals.sgst.toFixed(2),
         total_igst: totals.igst.toFixed(2),
+        exchange_total: totals.exchangeTotal.toFixed(2),
+        exchange_items: exchangeItems.map((item) => ({
+          barcode: item.barcode,
+          product_name: item.product_name,
+          hsn_code: item.hsn_code || '',
+          quantity: toNumber(item.quantity, 1),
+          sale_price: toNumber(item.unitPrice || item.sale_price || item.mrp),
+          gst_percent: toNumber(item.gst_percent)
+        })),
         print_mode: printMode
       });
 
@@ -1199,14 +1611,15 @@ export default function BillingTerminalView() {
           ...printableDraft.totals,
           grand: Math.round(totals.grand),
           roundOff: Math.round(totals.grand) - totals.grand
-        }
+        },
+        exchangeItems: printableDraft.exchangeItems
       };
       setPrintableInvoice(completedInvoice);
       setStatusMessage(`Invoice ${checkoutResult.invoice_no || invoiceNo} saved. Change due: ${formatMoney(Math.max(received - totals.grand, 0))}`);
       schedulePrint(printMode, () => {
         resetBill();
         refreshHistory(false);
-      });
+      }, completedInvoice);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Checkout failed.');
     }
@@ -1248,6 +1661,9 @@ export default function BillingTerminalView() {
               <span className={`billing-mode-pill ${isSensitiveBillingMode(billingMode) ? 'warning' : ''}`}>
                 {activeMode.shortLabel || activeMode.label}
               </span>
+              <button className={exchangeMode ? 'mode-option active sensitive-active' : 'mode-option'} onClick={requestExchangeMode}>
+                Exchange
+              </button>
               <label className="top-control-field">
                 <span>Counter</span>
                 {canSelectCounter ? (
@@ -1273,6 +1689,11 @@ export default function BillingTerminalView() {
           {isSensitiveBillingMode(billingMode) && (
             <div className="sensitive-bill-warning">
               {activeMode.label} active for this bill only. Complete, Hold, or Reset will return to Retail.
+            </div>
+          )}
+          {exchangeMode && (
+            <div className="sensitive-bill-warning exchange-bill-warning">
+              Exchange bill active. Exchange amount will be deducted from this bill only. Complete, Hold, or Reset will return to normal Retail.
             </div>
           )}
 
@@ -1308,6 +1729,52 @@ export default function BillingTerminalView() {
               )}
             </div>
           </div>
+
+          {exchangeMode && (
+            <section className="exchange-panel">
+              <div className="exchange-entry-row">
+                <span className="status-chip">Exchange Product</span>
+                <input
+                  ref={exchangeScannerRef}
+                  className="field search-input"
+                  value={exchangeQuery}
+                  onChange={(event) => setExchangeQuery(event.target.value)}
+                  onKeyDown={handleExchangeSearchKeyDown}
+                  placeholder="Scan/type exchange product barcode or name"
+                />
+                <strong className="exchange-total-chip">Less {formatMoney(totals.exchangeTotal)}</strong>
+              </div>
+              {exchangeItems.length > 0 && (
+                <table className="history-table exchange-table">
+                  <thead><tr><th>Code</th><th>Product</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Del</th></tr></thead>
+                  <tbody>
+                    {exchangeItems.map((item, index) => {
+                      const lineAmount = toNumber(item.unitPrice || item.sale_price || item.mrp) * toNumber(item.quantity, 1);
+                      return (
+                        <tr key={`${item.barcode}-${index}`}>
+                          <td className="mono">{item.barcode}</td>
+                          <td>{item.product_name}</td>
+                          <td>
+                            <input
+                              className="field qty-input"
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={item.quantity}
+                              onChange={(event) => updateExchangeQuantity(index, event.target.value)}
+                            />
+                          </td>
+                          <td>{formatMoney(item.unitPrice || item.sale_price || item.mrp)}</td>
+                          <td><strong>{formatMoney(lineAmount)}</strong></td>
+                          <td><button className="danger-button" onClick={() => removeExchangeLine(index)}>Del</button></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </section>
+          )}
 
           <div className="billing-activity-panel">
             <div className="activity-action-row">
@@ -1478,6 +1945,12 @@ export default function BillingTerminalView() {
           </div>
           <div className="panel-body">
             <div className="total-box">
+              {totals.exchangeTotal > 0 && (
+                <>
+                  <div className="summary-line"><span>Sale total</span><strong>{formatMoney(totals.saleGrand)}</strong></div>
+                  <div className="summary-line exchange-less-line"><span>Exchange less</span><strong>- {formatMoney(totals.exchangeTotal)}</strong></div>
+                </>
+              )}
               <span className="total-label">Net payable</span>
               <span className="total-value">{formatMoney(totals.grand)}</span>
               <span className="amount-words">{amountInWords(totals.grand)}</span>
@@ -1590,12 +2063,12 @@ export default function BillingTerminalView() {
             }}
           >
             <div className="panel-header">
-              <h2 className="panel-title">{digitalContactModal.mode} customer detail required</h2>
+              <h2 className="panel-title">{digitalContactModal.title || `${digitalContactModal.mode} customer detail required`}</h2>
               <button className="secondary-button" type="button" onClick={() => setDigitalContactModal(null)}>Cancel</button>
             </div>
             <div className="panel-body form-stack">
               <div className="alert-box">
-                For {digitalContactModal.mode} payment, enter customer phone number. If customer does not give phone number, type NO.
+                {digitalContactModal.message || `For ${digitalContactModal.mode} payment, enter customer phone number. If customer does not give phone number, type NO.`}
               </div>
               {digitalContactError && <div className="alert-box">{digitalContactError}</div>}
               <label>
@@ -1800,7 +2273,13 @@ export default function BillingTerminalView() {
                 />
               </label>
               <button className="primary-button sensitive-approval-button" type="submit" disabled={isApprovingMode}>
-                {isApprovingMode ? 'Verifying...' : `Approve ${approvalDialog.action === 'PRINT_MODE' ? approvalDialog.targetPrintMode : BILLING_MODES[approvalDialog.targetMode].label}`}
+                {isApprovingMode
+                  ? 'Verifying...'
+                  : `Approve ${approvalDialog.action === 'PRINT_MODE'
+                    ? approvalDialog.targetPrintMode
+                    : approvalDialog.action === 'EXCHANGE'
+                      ? 'Exchange Bill'
+                      : BILLING_MODES[approvalDialog.targetMode].label}`}
               </button>
             </div>
           </form>

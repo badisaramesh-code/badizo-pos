@@ -131,7 +131,9 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       customer_gstin,
       total_cgst,
       total_sgst,
-      total_igst
+      total_igst,
+      exchange_items,
+      exchange_total
     } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -143,13 +145,27 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     const counterNo = normalizeCounterNo(requestedCounterForUser(req.user, counter_no), counterCount);
     const allocatedInvoice = await allocateInvoiceNo(connection, counterNo);
     const invoiceNo = allocatedInvoice.invoiceNo;
+    const normalizedExchangeItems = Array.isArray(exchange_items)
+      ? exchange_items
+        .map((item) => ({
+          barcode: String(item.barcode || '').trim(),
+          product_name: String(item.product_name || '').trim(),
+          hsn_code: String(item.hsn_code || '').trim(),
+          quantity: parseMoney(item.quantity) || 0,
+          sale_price: parseMoney(item.sale_price),
+          gst_percent: parseMoney(item.gst_percent),
+          line_total: (parseMoney(item.sale_price) * (parseMoney(item.quantity) || 0))
+        }))
+        .filter((item) => item.barcode && item.quantity > 0)
+      : [];
+    const exchangeTotal = normalizedExchangeItems.reduce((total, item) => total + item.line_total, 0) || parseMoney(exchange_total);
 
     await connection.query(
       `INSERT INTO invoices
        (invoice_no, customer_name, customer_address, customer_phone, sub_total, gst_total, grand_total,
         cash_received, change_returned, payment_mode, payment_status, payment_reference, billing_counter, transaction_type, billing_tier, tax_type,
-        customer_company_name, customer_gstin, total_cgst, total_sgst, total_igst)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        customer_company_name, customer_gstin, total_cgst, total_sgst, total_igst, exchange_total, exchange_items_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         invoiceNo,
         customer_name || 'Walk-in Customer',
@@ -171,7 +187,9 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         customer_gstin || null,
         parseMoney(total_cgst),
         parseMoney(total_sgst),
-        parseMoney(total_igst)
+        parseMoney(total_igst),
+        exchangeTotal,
+        normalizedExchangeItems.length ? JSON.stringify(normalizedExchangeItems) : null
       ]
     );
 
@@ -221,6 +239,19 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       );
     }
 
+    for (const item of normalizedExchangeItems) {
+      const [stockResult] = await connection.query(
+        `UPDATE products
+         SET stock_qty = stock_qty + ?
+         WHERE barcode = ?`,
+        [item.quantity, item.barcode]
+      );
+
+      if (stockResult.affectedRows !== 1) {
+        throw new Error(`Exchange product not found for barcode ${item.barcode}.`);
+      }
+    }
+
     await writeAuditLog({
       user: req.user,
       action: 'INVOICE_CREATED',
@@ -230,7 +261,9 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         counterNo,
         paymentMode: payment_mode || 'Cash',
         grandTotal: parseMoney(grand_total),
-        itemCount: items.length
+        itemCount: items.length,
+        exchangeTotal,
+        exchangeItemCount: normalizedExchangeItems.length
       },
       connection
     });

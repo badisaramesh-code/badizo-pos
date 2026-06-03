@@ -173,6 +173,11 @@ export async function fetchExceptionReport({ from, to } = {}) {
   return data;
 }
 
+export async function fetchExchangeBillsReport({ from, to, counter = '' } = {}) {
+  const { data } = await api.get('/reports/exchange-bills', { params: { from, to, counter } });
+  return data;
+}
+
 export async function checkout(payload) {
   const { data } = await api.post('/billing/checkout', payload);
   return data;

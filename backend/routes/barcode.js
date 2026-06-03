@@ -32,6 +32,7 @@ function moneyText(value) {
 function replaceFields(block, data) {
   const fields = {
     PRODUCT_NAME: tsplText(data.product_name, 28).toUpperCase(),
+    PRODUCT_NAME_25: tsplText(data.product_name, 25).toUpperCase(),
     BARCODE: tsplText(data.barcode, 40),
     MRP: moneyText(data.mrp),
     SALE_PRICE: moneyText(data.sale_price),

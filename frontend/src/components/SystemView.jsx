@@ -90,6 +90,11 @@ export default function SystemView() {
     setSettings((current) => ({ ...current, [field]: value }));
   }
 
+  const storeName = settings.shop_name || 'Hyper Fresh Mart LLP';
+  const storeGst = settings.gst_number || '36AAJFH7790R1ZB';
+  const storeAddress = settings.address || 'Sathupally - Khammam(dt) - 507303';
+  const storePhone = settings.phone || '08761 295000';
+
   async function handleSave() {
     setStatusMessage('');
     setErrorMessage('');
@@ -193,38 +198,51 @@ export default function SystemView() {
             {errorMessage && <div className="alert-box">{errorMessage}</div>}
             {statusMessage && <div className="change-box">{statusMessage}</div>}
 
-            <label><span className="field-label">Shop Name</span><input className="field" value={settings.shop_name || ''} onChange={(event) => updateSetting('shop_name', event.target.value)} /></label>
-            <label><span className="field-label">GST Number</span><input className="field" value={settings.gst_number || ''} onChange={(event) => updateSetting('gst_number', event.target.value.toUpperCase())} /></label>
-            <label><span className="field-label">Phone</span><input className="field" value={settings.phone || ''} onChange={(event) => updateSetting('phone', event.target.value)} /></label>
-            <label><span className="field-label">Address</span><input className="field" value={settings.address || ''} onChange={(event) => updateSetting('address', event.target.value)} /></label>
-            <div className="change-box"><strong>A4 Invoice / Bank Details</strong></div>
-            <label><span className="field-label">Bank Name</span><input className="field" value={settings.bank_name || ''} onChange={(event) => updateSetting('bank_name', event.target.value)} /></label>
-            <label><span className="field-label">Bank Account Name</span><input className="field" value={settings.bank_account_name || ''} onChange={(event) => updateSetting('bank_account_name', event.target.value)} /></label>
-            <label><span className="field-label">Bank Account No</span><input className="field" value={settings.bank_account_no || ''} onChange={(event) => updateSetting('bank_account_no', event.target.value)} /></label>
-            <label><span className="field-label">Bank IFSC</span><input className="field" value={settings.bank_ifsc || ''} onChange={(event) => updateSetting('bank_ifsc', event.target.value.toUpperCase())} /></label>
-            <label><span className="field-label">Bank Branch</span><input className="field" value={settings.bank_branch || ''} onChange={(event) => updateSetting('bank_branch', event.target.value)} /></label>
-            <label>
-              <span className="field-label">Number of Billing Counters</span>
-              <input
-                className="field"
-                type="number"
-                min="1"
-                max="99"
-                value={settings.counter_count || 1}
-                onChange={(event) => updateSetting('counter_count', event.target.value)}
-              />
-            </label>
-            <label>
-              <span className="field-label">Default Receipt Print Format</span>
-              <select
-                className="select"
-                value={settings.default_print_mode || 'Thermal'}
-                onChange={(event) => updateSetting('default_print_mode', event.target.value)}
-              >
-                <option value="Thermal">Thermal receipt</option>
-                <option value="A4">A4 invoice</option>
-              </select>
-            </label>
+            <div className="settings-section">
+              <div className="settings-section-title">Store Details</div>
+              <label><span className="field-label">Shop Name</span><input className="field" value={settings.shop_name || ''} onChange={(event) => updateSetting('shop_name', event.target.value)} /></label>
+              <label><span className="field-label">GST Number</span><input className="field" value={settings.gst_number || ''} onChange={(event) => updateSetting('gst_number', event.target.value.toUpperCase())} /></label>
+              <label><span className="field-label">Phone</span><input className="field" value={settings.phone || ''} onChange={(event) => updateSetting('phone', event.target.value)} /></label>
+              <label><span className="field-label">Address</span><textarea className="field settings-address-field" rows="2" value={settings.address || ''} onChange={(event) => updateSetting('address', event.target.value)} /></label>
+              <div className="pos-header-preview">
+                <strong>{storeName}</strong>
+                <span>GST: {storeGst} | {storeAddress} | Ph: {storePhone}</span>
+              </div>
+            </div>
+
+            <div className="settings-section">
+              <div className="settings-section-title">A4 Invoice / Bank Details</div>
+              <label><span className="field-label">Bank Name</span><input className="field" value={settings.bank_name || ''} onChange={(event) => updateSetting('bank_name', event.target.value)} /></label>
+              <label><span className="field-label">Bank Account Name</span><input className="field" value={settings.bank_account_name || ''} onChange={(event) => updateSetting('bank_account_name', event.target.value)} /></label>
+              <label><span className="field-label">Bank Account No</span><input className="field" value={settings.bank_account_no || ''} onChange={(event) => updateSetting('bank_account_no', event.target.value)} /></label>
+              <label><span className="field-label">Bank IFSC</span><input className="field" value={settings.bank_ifsc || ''} onChange={(event) => updateSetting('bank_ifsc', event.target.value.toUpperCase())} /></label>
+              <label><span className="field-label">Bank Branch</span><input className="field" value={settings.bank_branch || ''} onChange={(event) => updateSetting('bank_branch', event.target.value)} /></label>
+            </div>
+
+            <div className="settings-section settings-inline-section">
+              <label>
+                <span className="field-label">Billing Counters</span>
+                <input
+                  className="field"
+                  type="number"
+                  min="1"
+                  max="99"
+                  value={settings.counter_count || 1}
+                  onChange={(event) => updateSetting('counter_count', event.target.value)}
+                />
+              </label>
+              <label>
+                <span className="field-label">Default Print</span>
+                <select
+                  className="select"
+                  value={settings.default_print_mode || 'Thermal'}
+                  onChange={(event) => updateSetting('default_print_mode', event.target.value)}
+                >
+                  <option value="Thermal">Thermal receipt</option>
+                  <option value="A4">A4 invoice</option>
+                </select>
+              </label>
+            </div>
             <button className="primary-button" onClick={handleSave}>Save Settings</button>
           </div>
         </div>

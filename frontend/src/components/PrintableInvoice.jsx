@@ -27,6 +27,7 @@ function sanitizeQrText(value, limit = 32) {
 
 function buildBillQrPayload(invoice) {
   const billingTotal = toNumber(invoice?.totals?.grand);
+  const exchangeTotal = toNumber(invoice?.totals?.exchangeTotal);
   const received = invoice.paymentMode === 'Cash'
     ? toNumber(invoice.cashReceived || billingTotal)
     : billingTotal;
@@ -42,6 +43,7 @@ function buildBillQrPayload(invoice) {
     `Received: Rs. ${formatPlainMoney(received)}`,
     `Change: Rs. ${formatPlainMoney(change)}`
   ];
+  if (exchangeTotal > 0) lines.splice(6, 0, `Exchange Less: Rs. ${formatPlainMoney(exchangeTotal)}`);
   const customerName = sanitizeQrText(invoice.customerName, 24);
   const customerPhone = sanitizeQrText(invoice.customerPhone, 16);
   const customerGstin = sanitizeQrText(invoice.customerGstin, 18);
@@ -192,13 +194,57 @@ function ThermalItemTable({ invoice, template }) {
 }
 
 function ThermalTotals({ invoice }) {
+  const saleTotal = toNumber(invoice.totals.saleGrand || invoice.totals.grand);
+  const exchangeTotal = toNumber(invoice.totals.exchangeTotal);
   return (
     <div className="thermal-total-box">
-      <div><span>Billing Total</span><span /><strong>{formatPlainMoney(invoice.totals.grand)}</strong></div>
+      <div><span>Billing Total</span><span /><strong>{formatPlainMoney(saleTotal)}</strong></div>
+      {exchangeTotal > 0 && <div><span>Exchange Less</span><span /><strong>-{formatPlainMoney(exchangeTotal)}</strong></div>}
       <div><span>Bill Amount</span><span /><strong>{formatPlainMoney(invoice.totals.grand)}</strong></div>
       <div><span>Received Amt ({invoice.paymentMode})</span><span /><strong>{formatPlainMoney(invoice.cashReceived || invoice.totals.grand)}</strong></div>
       <div><span>Change Amt</span><span /><strong>{formatPlainMoney(invoice.changeReturned || 0)}</strong></div>
     </div>
+  );
+}
+
+function ExchangeDetails({ invoice, compact = false }) {
+  const rows = Array.isArray(invoice.exchangeItems) ? invoice.exchangeItems : [];
+  if (!rows.length) return null;
+
+  return (
+    <>
+      <SectionLine />
+      <div className="print-center"><strong>EXCHANGE PRODUCTS</strong></div>
+      <table className={`print-table ${compact ? 'thermal-exchange-table' : 'a4-exchange-table'}`}>
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Product</th>
+            <th>Qty</th>
+            <th>Rate</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((item, index) => {
+            const rate = toNumber(item.unitPrice || item.sale_price || item.mrp);
+            const qty = toNumber(item.quantity, 1);
+            return (
+              <tr key={`${item.barcode}-${index}`}>
+                <td>{item.barcode || '-'}</td>
+                <td>{item.product_name || '-'}</td>
+                <td style={{ textAlign: 'right' }}>{formatPlainMoney(qty)}</td>
+                <td style={{ textAlign: 'right' }}>{formatPlainMoney(rate)}</td>
+                <td style={{ textAlign: 'right' }}>{formatPlainMoney(rate * qty)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr><th colSpan="4">Exchange Less</th><th style={{ textAlign: 'right' }}>{formatPlainMoney(invoice.totals.exchangeTotal)}</th></tr>
+        </tfoot>
+      </table>
+    </>
   );
 }
 
@@ -512,6 +558,8 @@ function A4OnePageInvoice({ invoice, template }) {
   const bankDetails = getA4BankDetails(invoice.shop, template);
   const qtyTotal = invoice.items.reduce((sum, item) => sum + toNumber(item.quantity), 0);
   const billingTotal = toNumber(invoice.totals.grand);
+  const saleTotal = toNumber(invoice.totals.saleGrand || invoice.totals.grand);
+  const exchangeTotal = toNumber(invoice.totals.exchangeTotal);
   const receivedAmount = invoice.paymentMode === 'Cash'
     ? toNumber(invoice.cashReceived || billingTotal)
     : billingTotal;
@@ -527,6 +575,9 @@ function A4OnePageInvoice({ invoice, template }) {
     const discount = Math.max(toNumber(item.mrp) - toNumber(item.unitPrice), 0) * toNumber(item.quantity);
     return sum + discount;
   }, 0);
+  const exchangeItemCount = Array.isArray(invoice.exchangeItems) ? invoice.exchangeItems.length : 0;
+  const bottomReserveRows = exchangeItemCount > 0 || gstRows.length > 2 ? 4 : 7;
+  const blankRowCount = Math.max(1, bottomReserveRows - invoice.items.length);
 
   return (
     <div className={`print-invoice a4-paper a4-one-page a4-store-invoice ${isInterstate ? 'a4-igst-invoice' : 'a4-gst-invoice'}`}>
@@ -598,12 +649,13 @@ function A4OnePageInvoice({ invoice, template }) {
               </tr>
             );
           })}
-          {Array.from({ length: Math.max(10, 20 - invoice.items.length) }).map((_, index) => (
+          {Array.from({ length: blankRowCount }).map((_, index) => (
             <tr className="a4-store-empty-row" key={`blank-${index}`}><td colSpan="9" /></tr>
           ))}
         </tbody>
       </table>
 
+      <ExchangeDetails invoice={invoice} />
       <div className="a4-store-discount">You Have Gained Discount Amount Rs. <strong>{formatPlainMoney(totalDiscount)}</strong></div>
       <div className="a4-store-words">Total Amount In words................................ <strong>INR {amountInWords(invoice.totals.grand)}</strong></div>
 
@@ -614,7 +666,9 @@ function A4OnePageInvoice({ invoice, template }) {
         </div>
         <div className="a4-store-right-bottom">
           <div className="a4-store-payment-summary">
-            <div><span>Billing Total</span><strong>{formatPlainMoney(billingTotal)}</strong></div>
+            <div><span>Billing Total</span><strong>{formatPlainMoney(saleTotal)}</strong></div>
+            {exchangeTotal > 0 && <div><span>Exchange Less</span><strong>-{formatPlainMoney(exchangeTotal)}</strong></div>}
+            <div><span>Bill Amount</span><strong>{formatPlainMoney(billingTotal)}</strong></div>
             <div><span>Qty Total</span><strong>{formatPlainMoney(qtyTotal)}</strong></div>
             <div><span>Received Amount</span><strong>{formatPlainMoney(receivedAmount)}</strong></div>
             <div><span>Given Change Amount</span><strong>{formatPlainMoney(changeAmount)}</strong></div>
@@ -723,6 +777,7 @@ export default function PrintableInvoice({ invoice, mode }) {
         <BillQrCode invoice={invoice} className="thermal-bill-qr" />
         <strong>Scan Bill Details</strong>
       </div>
+      <ExchangeDetails invoice={invoice} compact />
     </div>
   );
 }

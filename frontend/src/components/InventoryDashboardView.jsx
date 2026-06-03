@@ -567,6 +567,9 @@ export default function InventoryDashboardView() {
     }
   }
 
+  const showProductCodeColumn = filter.trim().length > 0;
+  const inventoryColSpan = showProductCodeColumn ? 14 : 13;
+
   return (
     <div className="inventory-layout">
       <section className="panel">
@@ -693,7 +696,6 @@ export default function InventoryDashboardView() {
           <div>
             <h2 className="panel-title">Inventory</h2>
             <div className="inventory-stats">
-              <span className="status-chip">{summary.totalSku} SKUs</span>
               <span className="status-chip">{summary.lowStock} low stock</span>
               <span className="status-chip">{formatMoney(summary.inventoryValue)} value</span>
               <span className="status-chip">Showing {products.length} of {pagination.total}</span>
@@ -844,7 +846,7 @@ export default function InventoryDashboardView() {
               <thead>
                 <tr>
                   <th>Barcode</th>
-                  <th>Code</th>
+                  {showProductCodeColumn && <th>Code</th>}
                   <th>Product</th>
                   <th>GST</th>
                   <th>Unit</th>
@@ -861,14 +863,14 @@ export default function InventoryDashboardView() {
               </thead>
               <tbody>
                 {products.length === 0 ? (
-                  <tr><td colSpan="14">No products found.</td></tr>
+                  <tr><td colSpan={inventoryColSpan}>No products found.</td></tr>
                 ) : (
                   products.map((product) => {
                     const isLow = toNumber(product.stock_qty) <= toNumber(product.min_stock_alert, 10);
                     return (
                       <tr key={product.barcode}>
                         <td className="mono muted">{product.barcode}</td>
-                        <td>{product.product_code || '-'}</td>
+                        {showProductCodeColumn && <td>{product.product_code || '-'}</td>}
                         <td><strong>{product.product_name}</strong></td>
                         <td>{product.gst_percent}%</td>
                         <td>{product.unit_type || 'Nos'}</td>
