@@ -25,13 +25,35 @@ function sanitizeQrText(value, limit = 32) {
     .slice(0, limit);
 }
 
+function getPaymentSplits(invoice) {
+  return Array.isArray(invoice.paymentSplits)
+    ? invoice.paymentSplits.filter((payment) => toNumber(payment.amount) > 0)
+    : [];
+}
+
+function getReceivedAmount(invoice) {
+  const billingTotal = toNumber(invoice?.totals?.grand);
+  if (invoice?.paymentMode === 'Mixed') {
+    const splitTotal = getPaymentSplits(invoice).reduce((sum, payment) => sum + toNumber(payment.amount), 0);
+    return splitTotal || toNumber(invoice.cashReceived || billingTotal);
+  }
+  if (invoice?.paymentMode === 'Cash') {
+    return toNumber(invoice.cashReceived || billingTotal);
+  }
+  return billingTotal;
+}
+
+function getChangeAmount(invoice) {
+  return ['Cash', 'Mixed'].includes(invoice?.paymentMode)
+    ? toNumber(invoice.changeReturned)
+    : 0;
+}
+
 function buildBillQrPayload(invoice) {
   const billingTotal = toNumber(invoice?.totals?.grand);
   const exchangeTotal = toNumber(invoice?.totals?.exchangeTotal);
-  const received = invoice.paymentMode === 'Cash'
-    ? toNumber(invoice.cashReceived || billingTotal)
-    : billingTotal;
-  const change = invoice.paymentMode === 'Cash' ? toNumber(invoice.changeReturned) : 0;
+  const received = getReceivedAmount(invoice);
+  const change = getChangeAmount(invoice);
   const lines = [
     'BADIZO POS BILL',
     `Shop: ${sanitizeQrText(invoice.shop?.shop_name, 36)}`,
@@ -43,6 +65,9 @@ function buildBillQrPayload(invoice) {
     `Received: Rs. ${formatPlainMoney(received)}`,
     `Change: Rs. ${formatPlainMoney(change)}`
   ];
+  getPaymentSplits(invoice).forEach((payment) => {
+    lines.push(`${sanitizeQrText(payment.mode, 8)}: Rs. ${formatPlainMoney(payment.amount)}`);
+  });
   if (exchangeTotal > 0) lines.splice(6, 0, `Exchange Less: Rs. ${formatPlainMoney(exchangeTotal)}`);
   const customerName = sanitizeQrText(invoice.customerName, 24);
   const customerPhone = sanitizeQrText(invoice.customerPhone, 16);
@@ -196,13 +221,19 @@ function ThermalItemTable({ invoice, template }) {
 function ThermalTotals({ invoice }) {
   const saleTotal = toNumber(invoice.totals.saleGrand || invoice.totals.grand);
   const exchangeTotal = toNumber(invoice.totals.exchangeTotal);
+  const paymentSplits = getPaymentSplits(invoice);
+  const receivedAmount = getReceivedAmount(invoice);
+  const changeAmount = getChangeAmount(invoice);
   return (
     <div className="thermal-total-box">
       <div><span>Billing Total</span><span /><strong>{formatPlainMoney(saleTotal)}</strong></div>
       {exchangeTotal > 0 && <div><span>Exchange Less</span><span /><strong>-{formatPlainMoney(exchangeTotal)}</strong></div>}
       <div><span>Bill Amount</span><span /><strong>{formatPlainMoney(invoice.totals.grand)}</strong></div>
-      <div><span>Received Amt ({invoice.paymentMode})</span><span /><strong>{formatPlainMoney(invoice.cashReceived || invoice.totals.grand)}</strong></div>
-      <div><span>Change Amt</span><span /><strong>{formatPlainMoney(invoice.changeReturned || 0)}</strong></div>
+      {invoice.paymentMode === 'Mixed' && paymentSplits.map((payment) => (
+        <div key={payment.mode}><span>{payment.mode} Paid</span><span /><strong>{formatPlainMoney(payment.amount)}</strong></div>
+      ))}
+      <div><span>Received Amt ({invoice.paymentMode})</span><span /><strong>{formatPlainMoney(receivedAmount)}</strong></div>
+      <div><span>Change Amt</span><span /><strong>{formatPlainMoney(changeAmount)}</strong></div>
     </div>
   );
 }
@@ -551,6 +582,123 @@ function getA4BankDetails(shop, template) {
   return details.length ? details : template.bankDetails;
 }
 
+const A4_FIRST_PAGE_ITEMS = 14;
+const A4_CONTINUATION_PAGE_ITEMS = 28;
+const A4_LAST_PAGE_ITEMS = 13;
+
+function splitA4Items(items) {
+  if (items.length <= A4_FIRST_PAGE_ITEMS) {
+    return [{ type: 'single', startIndex: 0, items }];
+  }
+
+  const pages = [];
+  let cursor = 0;
+  pages.push({ type: 'first', startIndex: cursor, items: items.slice(cursor, cursor + A4_FIRST_PAGE_ITEMS) });
+  cursor += A4_FIRST_PAGE_ITEMS;
+
+  while (items.length - cursor > A4_LAST_PAGE_ITEMS) {
+    const remaining = items.length - cursor;
+    const take = Math.min(A4_CONTINUATION_PAGE_ITEMS, remaining - A4_LAST_PAGE_ITEMS);
+    pages.push({ type: 'middle', startIndex: cursor, items: items.slice(cursor, cursor + take) });
+    cursor += take;
+  }
+
+  pages.push({ type: 'last', startIndex: cursor, items: items.slice(cursor) });
+  return pages;
+}
+
+function A4StoreTitle({ taxBillLabel, pageNo, pageCount }) {
+  return (
+    <div className="a4-store-title">
+      <span>{pageCount > 1 ? `Page ${pageNo} / ${pageCount}` : ''}</span>
+      <strong>TAX INVOICE</strong>
+      <span>{taxBillLabel}</span>
+    </div>
+  );
+}
+
+function A4StoreTop({ invoice }) {
+  const taxBillLabel = getTaxBillLabel(invoice);
+  return (
+    <div className="a4-store-top">
+      <div className="a4-store-shop">
+        <div className="a4-store-shop-qr-box">
+          <BillQrCode invoice={invoice} className="a4-bill-qr" />
+        </div>
+        <div className="a4-store-shop-text">
+          <strong>{invoice.shop.shop_name}</strong>
+          {String(invoice.shop.address || '').split(/\s*\|\s*|\n/).filter(Boolean).map((line) => <span key={line}>{line}</span>)}
+          <span>Gst no: {invoice.shop.gst_number}</span>
+          <span>Phno {invoice.shop.phone || '-'}</span>
+        </div>
+      </div>
+      <div className="a4-store-meta">
+        <span>Invoice No.</span><strong>{invoice.invoiceNo}</strong>
+        <span>Date</span><strong>{invoice.date}</strong>
+        <span>payment mode</span><strong>{invoice.paymentMode}</strong>
+        <span>Transaction ID</span><strong>{invoice.paymentReference || '-'}</strong>
+        <span>Counter</span><strong>{invoice.counterNo || '-'}</strong>
+        <span>Bill Type</span><strong>{taxBillLabel}</strong>
+      </div>
+    </div>
+  );
+}
+
+function A4StoreCustomer({ invoice }) {
+  return (
+    <div className="a4-store-customer">
+      <div>
+        <span>Name&nbsp;&nbsp;:</span><strong>{invoice.customerName || ''}</strong>
+        <span>Address :</span><strong>{invoice.customerAddress || ''}</strong>
+        <span>Phno.&nbsp;&nbsp;:</span><strong>{invoice.customerPhone || ''}</strong>
+        <span>GST NO:</span><strong>{invoice.customerGstin || ''}</strong>
+      </div>
+      <div />
+    </div>
+  );
+}
+
+function A4StoreItemsTable({ rows, startIndex, blankRowCount = 0 }) {
+  return (
+    <table className="a4-store-items">
+      <thead>
+        <tr>
+          <th>sno</th>
+          <th>Barcode</th>
+          <th>Description</th>
+          <th>HSN</th>
+          <th>MRP</th>
+          <th>Discount</th>
+          <th>GST%</th>
+          <th>Qty</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((item, index) => {
+          const discount = Math.max(toNumber(item.mrp) - toNumber(item.unitPrice), 0) * toNumber(item.quantity);
+          return (
+            <tr key={`${item.barcode}-${startIndex + index}`}>
+              <td>{startIndex + index + 1}</td>
+              <td>{item.barcode || '-'}</td>
+              <td><strong>{item.product_name}</strong></td>
+              <td>{item.hsn_code || '-'}</td>
+              <td>{formatPlainMoney(item.mrp)}</td>
+              <td>{formatPlainMoney(discount)}</td>
+              <td>{formatPlainMoney(item.gst_percent)}</td>
+              <td>{formatPlainMoney(item.quantity)}</td>
+              <td><strong>{formatPlainMoney(item.lineTotal)}</strong></td>
+            </tr>
+          );
+        })}
+        {Array.from({ length: blankRowCount }).map((_, index) => (
+          <tr className="a4-store-empty-row" key={`blank-${index}`}><td colSpan="9" /></tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function A4OnePageInvoice({ invoice, template }) {
   const isInterstate = invoice.taxType === 'INTERSTATE';
   const taxBillLabel = getTaxBillLabel(invoice);
@@ -560,12 +708,8 @@ function A4OnePageInvoice({ invoice, template }) {
   const billingTotal = toNumber(invoice.totals.grand);
   const saleTotal = toNumber(invoice.totals.saleGrand || invoice.totals.grand);
   const exchangeTotal = toNumber(invoice.totals.exchangeTotal);
-  const receivedAmount = invoice.paymentMode === 'Cash'
-    ? toNumber(invoice.cashReceived || billingTotal)
-    : billingTotal;
-  const changeAmount = invoice.paymentMode === 'Cash'
-    ? toNumber(invoice.changeReturned)
-    : 0;
+  const receivedAmount = getReceivedAmount(invoice);
+  const changeAmount = getChangeAmount(invoice);
   const taxableTotal = gstRows.reduce((sum, row) => sum + row.taxable, 0);
   const sgstTotal = gstRows.reduce((sum, row) => sum + row.sgst, 0);
   const cgstTotal = gstRows.reduce((sum, row) => sum + row.cgst, 0);
@@ -578,83 +722,11 @@ function A4OnePageInvoice({ invoice, template }) {
   const exchangeItemCount = Array.isArray(invoice.exchangeItems) ? invoice.exchangeItems.length : 0;
   const bottomReserveRows = exchangeItemCount > 0 || gstRows.length > 2 ? 4 : 7;
   const blankRowCount = Math.max(1, bottomReserveRows - invoice.items.length);
+  const pages = splitA4Items(invoice.items);
+  const isMultiPage = pages.length > 1;
 
-  return (
-    <div className={`print-invoice a4-paper a4-one-page a4-store-invoice ${isInterstate ? 'a4-igst-invoice' : 'a4-gst-invoice'}`}>
-      <div className="a4-store-title">
-        <strong>TAX INVOICE</strong>
-        <span>{taxBillLabel}</span>
-      </div>
-
-      <div className="a4-store-top">
-        <div className="a4-store-shop">
-          <div className="a4-store-shop-qr-box">
-            <BillQrCode invoice={invoice} className="a4-bill-qr" />
-          </div>
-          <div className="a4-store-shop-text">
-            <strong>{invoice.shop.shop_name}</strong>
-            {String(invoice.shop.address || '').split(/\s*\|\s*|\n/).filter(Boolean).map((line) => <span key={line}>{line}</span>)}
-            <span>Gst no: {invoice.shop.gst_number}</span>
-            <span>Phno {invoice.shop.phone || '-'}</span>
-          </div>
-        </div>
-        <div className="a4-store-meta">
-          <span>Invoice No.</span><strong>{invoice.invoiceNo}</strong>
-          <span>Date</span><strong>{invoice.date}</strong>
-          <span>payment mode</span><strong>{invoice.paymentMode}</strong>
-          <span>Transaction ID</span><strong>{invoice.paymentReference || '-'}</strong>
-          <span>Counter</span><strong>{invoice.counterNo || '-'}</strong>
-          <span>Bill Type</span><strong>{taxBillLabel}</strong>
-        </div>
-      </div>
-
-      <div className="a4-store-customer">
-        <div>
-          <span>Name&nbsp;&nbsp;:</span><strong>{invoice.customerName || ''}</strong>
-          <span>Address :</span><strong>{invoice.customerAddress || ''}</strong>
-          <span>Phno.&nbsp;&nbsp;:</span><strong>{invoice.customerPhone || ''}</strong>
-          <span>GST NO:</span><strong>{invoice.customerGstin || ''}</strong>
-        </div>
-        <div />
-      </div>
-
-      <table className="a4-store-items">
-        <thead>
-          <tr>
-            <th>sno</th>
-            <th>Barcode</th>
-            <th>Description</th>
-            <th>HSN</th>
-            <th>MRP</th>
-            <th>Discount</th>
-            <th>GST%</th>
-            <th>Qty</th>
-            <th>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {invoice.items.map((item, index) => {
-            const discount = Math.max(toNumber(item.mrp) - toNumber(item.unitPrice), 0) * toNumber(item.quantity);
-            return (
-              <tr key={`${item.barcode}-${index}`}>
-                <td>{index + 1}</td>
-                <td>{item.barcode || '-'}</td>
-                <td><strong>{item.product_name}</strong></td>
-                <td>{item.hsn_code || '-'}</td>
-                <td>{formatPlainMoney(item.mrp)}</td>
-                <td>{formatPlainMoney(discount)}</td>
-                <td>{formatPlainMoney(item.gst_percent)}</td>
-                <td>{formatPlainMoney(item.quantity)}</td>
-                <td><strong>{formatPlainMoney(item.lineTotal)}</strong></td>
-              </tr>
-            );
-          })}
-          {Array.from({ length: blankRowCount }).map((_, index) => (
-            <tr className="a4-store-empty-row" key={`blank-${index}`}><td colSpan="9" /></tr>
-          ))}
-        </tbody>
-      </table>
-
+  const renderBottom = () => (
+    <>
       <ExchangeDetails invoice={invoice} />
       <div className="a4-store-discount">You Have Gained Discount Amount Rs. <strong>{formatPlainMoney(totalDiscount)}</strong></div>
       <div className="a4-store-words">Total Amount In words................................ <strong>INR {amountInWords(invoice.totals.grand)}</strong></div>
@@ -670,6 +742,9 @@ function A4OnePageInvoice({ invoice, template }) {
             {exchangeTotal > 0 && <div><span>Exchange Less</span><strong>-{formatPlainMoney(exchangeTotal)}</strong></div>}
             <div><span>Bill Amount</span><strong>{formatPlainMoney(billingTotal)}</strong></div>
             <div><span>Qty Total</span><strong>{formatPlainMoney(qtyTotal)}</strong></div>
+            {invoice.paymentMode === 'Mixed' && getPaymentSplits(invoice).map((payment) => (
+              <div key={payment.mode}><span>{payment.mode} Paid</span><strong>{formatPlainMoney(payment.amount)}</strong></div>
+            ))}
             <div><span>Received Amount</span><strong>{formatPlainMoney(receivedAmount)}</strong></div>
             <div><span>Given Change Amount</span><strong>{formatPlainMoney(changeAmount)}</strong></div>
           </div>
@@ -700,6 +775,50 @@ function A4OnePageInvoice({ invoice, template }) {
         <div className="a4-store-customer-sign">Customer Signature</div>
         <div className="a4-store-auth"><span>For {invoice.shop.shop_name}</span><strong>Authorised Signature</strong></div>
       </div>
+    </>
+  );
+
+  if (isMultiPage) {
+    return (
+      <div className={`print-invoice a4-multi-page ${isInterstate ? 'a4-igst-invoice' : 'a4-gst-invoice'}`}>
+        {pages.map((page, index) => {
+          const pageNo = index + 1;
+          const isFirst = index === 0;
+          const isLast = index === pages.length - 1;
+          const lastPageBlankRows = isLast ? Math.max(1, A4_LAST_PAGE_ITEMS - page.items.length) : 0;
+          return (
+            <div className={`a4-paper a4-page-sheet a4-store-invoice ${isLast ? 'a4-last-page' : ''}`} key={`${page.type}-${page.startIndex}`}>
+              <A4StoreTitle taxBillLabel={taxBillLabel} pageNo={pageNo} pageCount={pages.length} />
+              {isFirst ? (
+                <>
+                  <A4StoreTop invoice={invoice} />
+                  <A4StoreCustomer invoice={invoice} />
+                </>
+              ) : (
+                <div className="a4-continuation-header">
+                  <strong>{invoice.shop.shop_name}</strong>
+                  <span>Invoice No. {invoice.invoiceNo}</span>
+                  <span>Date {invoice.date}</span>
+                  <span>Continued from previous page</span>
+                </div>
+              )}
+              <A4StoreItemsTable rows={page.items} startIndex={page.startIndex} blankRowCount={lastPageBlankRows} />
+              {!isLast && <div className="a4-continue-note">Continued on next page...</div>}
+              {isLast && renderBottom()}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`print-invoice a4-paper a4-one-page a4-store-invoice ${isInterstate ? 'a4-igst-invoice' : 'a4-gst-invoice'}`}>
+      <A4StoreTitle taxBillLabel={taxBillLabel} pageNo={1} pageCount={1} />
+      <A4StoreTop invoice={invoice} />
+      <A4StoreCustomer invoice={invoice} />
+      <A4StoreItemsTable rows={invoice.items} startIndex={0} blankRowCount={blankRowCount} />
+      {renderBottom()}
     </div>
   );
 }

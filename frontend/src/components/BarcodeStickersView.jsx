@@ -235,8 +235,9 @@ export default function BarcodeStickersView() {
           </div>
 
           {templateInfo && (
-            <div className="change-box">
-              Template file: {templateInfo.template_path}
+            <div className="change-box barcode-template-path-box">
+              <span>Template file:</span>
+              <strong>{templateInfo.template_path}</strong>
             </div>
           )}
         </div>

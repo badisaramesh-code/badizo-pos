@@ -283,6 +283,26 @@ button:disabled {
   color: var(--brand-dark);
 }
 
+.counter-sale-button {
+  justify-self: center;
+  border: 1px solid #0e6f32;
+  border-radius: 7px;
+  background: #167a38;
+  color: #fff;
+  min-height: 28px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: none;
+}
+
+.counter-sale-button:hover {
+  background: #0f6a2e;
+}
+
 .billing-header-meta {
   display: flex;
   align-items: center;
@@ -608,7 +628,7 @@ button:disabled {
 }
 
 .billing-scanner-row {
-  grid-template-columns: 210px minmax(340px, 1fr);
+  grid-template-columns: max-content minmax(520px, 1fr) 118px;
   padding: 8px;
   border: 2px solid var(--brand);
   border-radius: 8px;
@@ -1370,6 +1390,96 @@ button:disabled {
   color: var(--brand-dark);
 }
 
+.mixed-payment-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mixed-payment-reference-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mixed-payment-total {
+  padding: 8px 10px;
+  border: 1px solid #c6ead6;
+  border-radius: 6px;
+  background: #f8fcf9;
+}
+
+.price-check-button {
+  white-space: nowrap;
+  height: 46px;
+  padding: 0 12px;
+}
+
+.price-check-modal {
+  width: min(520px, 100%);
+}
+
+.price-check-entry {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.price-check-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #bde5c8;
+  border-radius: 8px;
+  background: #f8fcf9;
+}
+
+.price-check-card h3 {
+  margin: 4px 0;
+  color: #0d4e1b;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.price-check-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.price-check-metrics div,
+.price-check-offer,
+.price-check-empty {
+  padding: 10px;
+  border: 1px solid #d6e7d8;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.price-check-metrics span,
+.price-check-offer span {
+  display: block;
+  margin-bottom: 4px;
+  color: #667085;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.price-check-metrics strong {
+  font-size: 18px;
+}
+
+.price-check-offer strong {
+  color: #0d4e1b;
+  font-size: 15px;
+}
+
+.price-check-empty {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .file-path-box {
   max-width: 100%;
   padding: 8px 10px;
@@ -1416,7 +1526,7 @@ button:disabled {
 }
 
 .inward-entry-table {
-  min-width: 1740px;
+  min-width: 2120px;
   table-layout: fixed;
 }
 
@@ -1461,41 +1571,40 @@ button:disabled {
 .inward-entry-table td:nth-child(7),
 .inward-entry-table th:nth-child(8),
 .inward-entry-table td:nth-child(8) {
-  width: 104px;
+  width: 120px;
 }
 
 .inward-entry-table th:nth-child(9),
 .inward-entry-table td:nth-child(9),
 .inward-entry-table th:nth-child(10),
 .inward-entry-table td:nth-child(10) {
-  width: 104px;
-}
-
-.inward-entry-table th:nth-child(10),
-.inward-entry-table td:nth-child(10) {
-  padding-right: 14px;
+  width: 116px;
 }
 
 .inward-entry-table th:nth-child(11),
-.inward-entry-table td:nth-child(11) {
-  width: 92px;
-  padding-left: 14px;
+.inward-entry-table td:nth-child(11),
+.inward-entry-table th:nth-child(12),
+.inward-entry-table td:nth-child(12) {
+  width: 110px;
 }
 
-.inward-entry-table th:nth-child(12),
-.inward-entry-table td:nth-child(12),
 .inward-entry-table th:nth-child(13),
-.inward-entry-table td:nth-child(13),
-.inward-entry-table th:nth-child(14),
-.inward-entry-table td:nth-child(14),
-.inward-entry-table th:nth-child(15),
-.inward-entry-table td:nth-child(15) {
+.inward-entry-table td:nth-child(13) {
   width: 118px;
 }
 
+.inward-entry-table th:nth-child(14),
+.inward-entry-table td:nth-child(14),
 .inward-entry-table th:nth-child(15),
-.inward-entry-table td:nth-child(15) {
+.inward-entry-table td:nth-child(15),
+.inward-entry-table th:nth-child(16),
+.inward-entry-table td:nth-child(16) {
   width: 132px;
+}
+
+.inward-entry-table th:nth-child(17),
+.inward-entry-table td:nth-child(17) {
+  width: 148px;
 }
 
 .inward-entry-table th:last-child,
@@ -1503,18 +1612,18 @@ button:disabled {
   width: 76px;
 }
 
-.inward-entry-table td:nth-child(12),
-.inward-entry-table td:nth-child(13),
 .inward-entry-table td:nth-child(14),
-.inward-entry-table td:nth-child(15) {
+.inward-entry-table td:nth-child(15),
+.inward-entry-table td:nth-child(16),
+.inward-entry-table td:nth-child(17) {
   text-align: right;
   white-space: nowrap;
 }
 
-.inward-entry-table th:nth-child(12),
-.inward-entry-table th:nth-child(13),
 .inward-entry-table th:nth-child(14),
-.inward-entry-table th:nth-child(15) {
+.inward-entry-table th:nth-child(15),
+.inward-entry-table th:nth-child(16),
+.inward-entry-table th:nth-child(17) {
   text-align: right;
 }
 
@@ -1699,9 +1808,73 @@ button:disabled {
 
 .user-form-grid {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(150px, 1fr) 130px 110px 120px auto auto;
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.user-form-grid .field,
+.user-form-grid .select,
+.user-form-grid .change-box,
+.user-form-grid button {
+  min-width: 0;
+  width: 100%;
+}
+
+.user-form-grid .change-box {
+  min-height: 38px;
+  padding: 8px 10px;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.user-form-grid .field:disabled {
+  background: #eef5ef;
+  color: #52665a;
+  opacity: 1;
+}
+
+.user-form-grid .secondary-button,
+.user-form-grid .compact-primary {
+  min-width: 0;
+}
+
+.user-form-grid .compact-primary {
+  grid-column: 1 / -1;
+}
+
+.backup-folder-box {
+  display: grid;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.backup-folder-box strong {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.barcode-template-path-box {
+  display: grid;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.barcode-template-path-box strong {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .compact-primary {
@@ -3474,7 +3647,7 @@ button:disabled {
 .a4-store-title {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 12px;
   padding: 4px;
   border-bottom: 1px solid #111;
@@ -3484,8 +3657,67 @@ button:disabled {
 }
 
 .a4-store-title span {
+  min-width: 44mm;
   font-size: 10px;
   font-weight: 900;
+}
+
+.a4-store-title span:first-child {
+  text-align: left;
+}
+
+.a4-store-title span:last-child {
+  text-align: right;
+}
+
+.a4-multi-page {
+  display: block;
+  width: 190mm;
+}
+
+.a4-page-sheet {
+  width: 190mm;
+  min-height: 260mm;
+  max-height: 260mm;
+  margin: 0 auto;
+  padding: 3mm;
+  box-sizing: border-box;
+  overflow: hidden;
+  page-break-after: always;
+  break-after: page;
+}
+
+.a4-page-sheet:last-child {
+  page-break-after: avoid;
+  break-after: avoid;
+}
+
+.a4-continuation-header {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.7fr 1fr;
+  gap: 0;
+  border-bottom: 1px solid #111;
+}
+
+.a4-continuation-header > * {
+  min-height: 7mm;
+  padding: 4px 6px;
+  border-right: 1px solid #111;
+  font-size: 10px;
+}
+
+.a4-continuation-header > *:last-child {
+  border-right: 0;
+  text-align: right;
+}
+
+.a4-continue-note {
+  margin-top: auto;
+  padding: 5px 6px;
+  border-top: 1px solid #111;
+  text-align: right;
+  font-size: 10px;
+  font-weight: 800;
 }
 
 .a4-store-top {
@@ -3978,6 +4210,110 @@ button:disabled {
     font-size: 9px;
   }
 
+  html.printing-reports,
+  html.printing-reports body,
+  body.printing-reports {
+    width: 190mm !important;
+    min-width: 190mm !important;
+    max-width: 190mm !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+  }
+
+  body.printing-reports #root,
+  body.printing-reports .app-shell,
+  body.printing-reports .workspace,
+  body.printing-reports .reports-view,
+  body.printing-reports .reports-print-area {
+    display: block !important;
+    width: 190mm !important;
+    min-width: 190mm !important;
+    max-width: 190mm !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  body.printing-reports .topbar,
+  body.printing-reports .reports-view > :not(.reports-print-area),
+  body.printing-reports .reports-print-area .panel-header .report-header-actions {
+    display: none !important;
+  }
+
+  body.printing-reports .reports-print-area,
+  body.printing-reports .reports-print-area * {
+    visibility: visible !important;
+  }
+
+  body.printing-reports .reports-print-area .panel,
+  body.printing-reports .reports-print-area .panel-body {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    overflow: visible !important;
+  }
+
+  body.printing-reports .reports-print-area .panel-header {
+    display: block !important;
+    margin: 0 0 8px !important;
+    padding: 0 0 6px !important;
+    border: 0 !important;
+    border-bottom: 1px solid #111 !important;
+    background: #fff !important;
+    color: #111 !important;
+  }
+
+  body.printing-reports .reports-print-area .panel-title {
+    margin: 0 !important;
+    font-size: 18px !important;
+    color: #111 !important;
+  }
+
+  body.printing-reports .reports-print-area .history-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 8.5px !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+  }
+
+  body.printing-reports .reports-print-area .history-table th,
+  body.printing-reports .reports-print-area .history-table td {
+    padding: 3px !important;
+    border: 1px solid #111 !important;
+    color: #111 !important;
+    background: #fff !important;
+    vertical-align: top !important;
+    white-space: normal !important;
+  }
+
+  body.printing-reports .reports-print-area .history-table th {
+    font-weight: 700 !important;
+  }
+
+  body.printing-reports .reports-print-area .history-table tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  body.printing-reports .report-summary-strip {
+    border: 1px solid #111 !important;
+    border-radius: 0 !important;
+    padding: 5px !important;
+    margin-bottom: 6px !important;
+    font-size: 9px !important;
+    background: #fff !important;
+  }
+
   body.printing-handover #root,
   body.printing-handover .app-shell,
   body.printing-handover .workspace,
@@ -4117,6 +4453,19 @@ button:disabled {
     break-inside: avoid !important;
   }
 
+  html.printing-a4 .print-host-a4:has(.a4-multi-page),
+  body.printing-a4 .print-host-a4:has(.a4-multi-page),
+  body.printing-a4 .print-area.print-a4:has(.a4-multi-page) {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    page-break-after: auto !important;
+    break-after: auto !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+  }
+
   .app-shell,
   .workspace,
   .billing-grid {
@@ -4171,6 +4520,19 @@ button:disabled {
     overflow: hidden !important;
   }
 
+  html.printing-a4:has(.a4-multi-page),
+  html.printing-a4:has(.a4-multi-page) body,
+  body.printing-a4:has(.a4-multi-page),
+  body.printing-a4:has(.a4-multi-page) #root,
+  body.printing-a4:has(.a4-multi-page) .app-shell,
+  body.printing-a4:has(.a4-multi-page) .workspace,
+  body.printing-a4:has(.a4-multi-page) .billing-grid {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
   body.printing-a4 .print-area.print-a4 {
     position: static !important;
     width: 190mm !important;
@@ -4197,6 +4559,39 @@ button:disabled {
     overflow: hidden !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+  }
+
+  body.printing-a4 .a4-multi-page {
+    display: block !important;
+    width: 190mm !important;
+    min-width: 190mm !important;
+    max-width: 190mm !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  body.printing-a4 .a4-page-sheet {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 190mm !important;
+    min-width: 190mm !important;
+    max-width: 190mm !important;
+    height: 260mm !important;
+    min-height: 260mm !important;
+    max-height: 260mm !important;
+    margin: 0 !important;
+    padding: 3mm !important;
+    overflow: hidden !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  body.printing-a4 .a4-page-sheet:last-child {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
   }
 }
 

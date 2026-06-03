@@ -77,6 +77,109 @@ function enforceSavedStateCounter(user, savedState, counterNo) {
   return { ...savedState, counterNo };
 }
 
+function normalizePaymentSplits(paymentMode, paymentSplits, grandTotal, cashReceived, paymentReference) {
+  const mode = ['Cash', 'UPI', 'Card', 'Mixed'].includes(paymentMode) ? paymentMode : 'Cash';
+  const total = parseMoney(grandTotal);
+  if (mode !== 'Mixed') {
+    return [{
+      payment_mode: mode,
+      amount: total,
+      payment_reference: mode === 'Cash' ? null : paymentReference || null
+    }].filter((row) => row.amount > 0);
+  }
+
+  const source = paymentSplits && typeof paymentSplits === 'object' ? paymentSplits : {};
+  const rows = [
+    { payment_mode: 'Cash', amount: parseMoney(source.cash), payment_reference: null },
+    { payment_mode: 'UPI', amount: parseMoney(source.upi), payment_reference: source.upi_reference || source.reference || paymentReference || null },
+    { payment_mode: 'Card', amount: parseMoney(source.card), payment_reference: source.card_reference || source.reference || paymentReference || null }
+  ].filter((row) => row.amount > 0);
+
+  const paidTotal = rows.reduce((sum, row) => sum + row.amount, 0);
+  if (paidTotal + 0.001 < total) {
+    throw new Error('Mixed payment total must be equal to or greater than bill amount.');
+  }
+  const excess = paidTotal - total;
+  if (excess > 0.001) {
+    const cashRow = rows.find((row) => row.payment_mode === 'Cash' && row.amount > 0);
+    const adjustmentRow = cashRow || rows[rows.length - 1];
+    adjustmentRow.amount = Math.max(adjustmentRow.amount - excess, 0);
+  }
+  return rows.filter((row) => row.amount > 0);
+}
+
+async function consumeBatchStock(connection, invoiceItemId, invoiceNo, barcode, quantity) {
+  let remaining = parseMoney(quantity);
+  if (remaining <= 0) return;
+
+  const [batches] = await connection.query(
+    `SELECT id, batch_no, expiry_date, quantity_available
+     FROM product_batches
+     WHERE barcode = ? AND quantity_available > 0
+     ORDER BY
+       CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END,
+       expiry_date ASC,
+       id ASC
+     FOR UPDATE`,
+    [barcode]
+  );
+
+  for (const batch of batches) {
+    if (remaining <= 0) break;
+    const available = parseMoney(batch.quantity_available);
+    const deductQty = Math.min(available, remaining);
+    if (deductQty <= 0) continue;
+
+    await connection.query(
+      `UPDATE product_batches
+       SET quantity_available = quantity_available - ?
+       WHERE id = ? AND quantity_available >= ?`,
+      [deductQty, batch.id, deductQty]
+    );
+    await connection.query(
+      `INSERT INTO invoice_item_batches
+       (invoice_item_id, invoice_no, barcode, batch_no, expiry_date, quantity)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [invoiceItemId, invoiceNo, barcode, batch.batch_no || '', batch.expiry_date || null, deductQty]
+    );
+    remaining -= deductQty;
+  }
+}
+
+async function restoreBatchStock(connection, invoiceItemId, quantity) {
+  let remaining = parseMoney(quantity);
+  if (remaining <= 0) return;
+
+  const [batchRows] = await connection.query(
+    `SELECT id, barcode, batch_no, expiry_date, quantity, returned_qty
+     FROM invoice_item_batches
+     WHERE invoice_item_id = ? AND returned_qty < quantity
+     ORDER BY id DESC
+     FOR UPDATE`,
+    [invoiceItemId]
+  );
+
+  for (const row of batchRows) {
+    if (remaining <= 0) break;
+    const restoreQty = Math.min(parseMoney(row.quantity) - parseMoney(row.returned_qty), remaining);
+    if (restoreQty <= 0) continue;
+
+    await connection.query(
+      `UPDATE product_batches
+       SET quantity_available = quantity_available + ?
+       WHERE barcode = ? AND batch_no = ? AND (expiry_date <=> ?)`,
+      [restoreQty, row.barcode, row.batch_no || '', row.expiry_date || null]
+    );
+    await connection.query(
+      `UPDATE invoice_item_batches
+       SET returned_qty = returned_qty + ?
+       WHERE id = ?`,
+      [restoreQty, row.id]
+    );
+    remaining -= restoreQty;
+  }
+}
+
 router.get('/invoice/next', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     const counterCount = await getCounterCount();
@@ -122,6 +225,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       payment_mode,
       payment_status,
       payment_reference,
+      payment_splits,
       cash_received,
       change_returned,
       transaction_type,
@@ -159,6 +263,17 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         .filter((item) => item.barcode && item.quantity > 0)
       : [];
     const exchangeTotal = normalizedExchangeItems.reduce((total, item) => total + item.line_total, 0) || parseMoney(exchange_total);
+    const normalizedPaymentMode = ['Cash', 'UPI', 'Card', 'Mixed'].includes(payment_mode) ? payment_mode : 'Cash';
+    const paymentSplits = normalizePaymentSplits(normalizedPaymentMode, payment_splits, grand_total, cash_received, payment_reference);
+    const paidTotal = paymentSplits.reduce((sum, row) => sum + row.amount, 0);
+    const tenderTotal = normalizedPaymentMode === 'Mixed' ? parseMoney(cash_received || paidTotal) : paidTotal;
+    const changeReturned = Math.max(tenderTotal - parseMoney(grand_total), 0);
+    const referenceText = normalizedPaymentMode === 'Mixed'
+      ? paymentSplits
+        .filter((row) => row.payment_reference)
+        .map((row) => `${row.payment_mode}:${row.payment_reference}`)
+        .join(' | ') || null
+      : payment_reference || null;
 
     await connection.query(
       `INSERT INTO invoices
@@ -174,11 +289,11 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         parseMoney(sub_total),
         parseMoney(gst_total),
         parseMoney(grand_total),
-        parseMoney(cash_received),
-        parseMoney(change_returned),
-        payment_mode || 'Cash',
+        normalizedPaymentMode === 'Cash' ? parseMoney(cash_received) : tenderTotal,
+        normalizedPaymentMode === 'Cash' ? parseMoney(change_returned) : changeReturned,
+        normalizedPaymentMode,
         payment_status || 'PAID',
-        payment_reference || null,
+        referenceText,
         `Counter ${counterNo}`,
         transaction_type || 'B2C',
         billing_tier || 'RETAIL',
@@ -192,6 +307,14 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         normalizedExchangeItems.length ? JSON.stringify(normalizedExchangeItems) : null
       ]
     );
+
+    for (const payment of paymentSplits) {
+      await connection.query(
+        `INSERT INTO invoice_payments (invoice_no, payment_mode, amount, payment_reference)
+         VALUES (?, ?, ?, ?)`,
+        [invoiceNo, payment.payment_mode, payment.amount, payment.payment_reference || null]
+      );
+    }
 
     for (const item of items) {
       const quantity = parseMoney(item.quantity) || 1;
@@ -221,7 +344,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         throw new Error(`Insufficient stock or missing product for barcode ${item.barcode}.`);
       }
 
-      await connection.query(
+      const [invoiceItemResult] = await connection.query(
         `INSERT INTO invoice_items
          (invoice_no, barcode, product_name, quantity, sale_price, gst_percent, cgst_amount, sgst_amount, igst_amount)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -237,6 +360,8 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
           igst
         ]
       );
+
+      await consumeBatchStock(connection, invoiceItemResult.insertId, invoiceNo, item.barcode, quantity);
     }
 
     for (const item of normalizedExchangeItems) {
@@ -326,9 +451,18 @@ router.get('/invoice/details', authenticate, authorize('SERVER', 'ADMIN', 'COUNT
       [invoiceNo]
     );
 
+    const [paymentRows] = await db.query(
+      `SELECT payment_mode, amount, payment_reference
+       FROM invoice_payments
+       WHERE invoice_no = ?
+       ORDER BY id ASC`,
+      [invoiceNo]
+    );
+
     res.json({
       invoice: invoiceRows[0],
-      items: itemRows
+      items: itemRows,
+      payments: paymentRows
     });
   } catch (err) {
     console.error('Invoice details failed:', err.message);
@@ -405,7 +539,7 @@ router.post('/invoice/void', authenticate, authorize('SERVER', 'ADMIN'), async (
     }
 
     const [items] = await connection.query(
-      `SELECT barcode, quantity
+      `SELECT id, barcode, quantity
        FROM invoice_items
        WHERE invoice_no = ?`,
       [invoiceNo]
@@ -416,6 +550,7 @@ router.post('/invoice/void', authenticate, authorize('SERVER', 'ADMIN'), async (
         `UPDATE products SET stock_qty = stock_qty + ? WHERE barcode = ?`,
         [parseMoney(item.quantity), item.barcode]
       );
+      await restoreBatchStock(connection, item.id, item.quantity);
     }
 
     await connection.query(
@@ -558,6 +693,7 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
          WHERE barcode = ?`,
         [returnQty, item.barcode]
       );
+      await restoreBatchStock(connection, invoiceItemId, returnQty);
     }
 
     if (refundTotal <= 0) {

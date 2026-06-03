@@ -56,6 +56,14 @@ function normalizePaymentMode(value) {
   return String(value || '').toUpperCase() === 'CASH' ? 'Cash' : 'Credit';
 }
 
+function normalizeExpiryDate(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
 router.get('/recent', async (_req, res) => {
@@ -139,7 +147,7 @@ router.get('/by-number/:inwardNo/details', async (req, res) => {
     const [items] = await db.query(
       `SELECT id, barcode, product_name, hsn_code, gst_percent, purchase_price, discount_percent,
               discount_type, discount_amount, scheme, scheme_type, scheme_value, scheme_amount,
-              mrp, free_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount,
+              batch_no, expiry_date, mrp, free_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount,
               igst_amount, total_amount
        FROM inward_items
        WHERE inward_no = ?
@@ -178,7 +186,7 @@ router.get('/:id/details', async (req, res) => {
     const [items] = await db.query(
       `SELECT id, barcode, product_name, hsn_code, gst_percent, purchase_price, discount_percent,
               discount_type, discount_amount, scheme, scheme_type, scheme_value, scheme_amount,
-              mrp, free_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount,
+              batch_no, expiry_date, mrp, free_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount,
               igst_amount, total_amount
        FROM inward_items
        WHERE inward_no = ?
@@ -215,6 +223,8 @@ router.post('/', async (req, res) => {
         discount_value: parseMoney(line.discount),
         scheme_type: normalizeDiscountType(line.scheme_type),
         scheme_value: parseMoney(line.scheme),
+        batch_no: String(line.batch_no || line.batch || '').trim().toUpperCase(),
+        expiry_date: normalizeExpiryDate(line.expiry_date || line.expiry),
         free_qty: parseMoney(line.free || line.free_qty),
         quantity: parseMoney(line.qty || line.quantity)
       }))
@@ -278,8 +288,8 @@ router.post('/', async (req, res) => {
         `INSERT INTO inward_items
          (inward_no, barcode, product_name, hsn_code, gst_percent, purchase_price, discount_percent,
           discount_type, discount_amount, scheme, scheme_type, scheme_value, scheme_amount,
-          mrp, free_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount, igst_amount, total_amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          batch_no, expiry_date, mrp, free_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount, igst_amount, total_amount)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           finalInwardNo,
           line.barcode,
@@ -294,6 +304,8 @@ router.post('/', async (req, res) => {
           line.scheme_type,
           line.scheme_value,
           calculated.schemeAmount,
+          line.batch_no,
+          line.expiry_date,
           line.mrp,
           line.free_qty,
           line.quantity,
@@ -303,6 +315,28 @@ router.post('/', async (req, res) => {
           calculated.sgstAmount,
           calculated.igstAmount,
           calculated.lineTotal
+        ]
+      );
+
+      await connection.query(
+        `INSERT INTO product_batches
+         (barcode, batch_no, expiry_date, inward_no, purchase_price, mrp, quantity_received, quantity_available)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           inward_no = VALUES(inward_no),
+           purchase_price = VALUES(purchase_price),
+           mrp = VALUES(mrp),
+           quantity_received = quantity_received + VALUES(quantity_received),
+           quantity_available = quantity_available + VALUES(quantity_available)`,
+        [
+          line.barcode,
+          line.batch_no || '',
+          line.expiry_date,
+          finalInwardNo,
+          line.purchase_price,
+          line.mrp,
+          line.quantity + line.free_qty,
+          line.quantity + line.free_qty
         ]
       );
 

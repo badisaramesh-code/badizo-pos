@@ -135,6 +135,8 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
          COALESCE(item_counts.item_count, 0) AS item_count,
          i.sub_total,
          i.gst_total,
+         i.exchange_total,
+         (i.sub_total + i.gst_total) AS sale_total,
          i.grand_total,
          i.payment_mode,
          i.billing_counter,
@@ -156,8 +158,13 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
       itemCount: acc.itemCount + Number(row.item_count || 0),
       taxable: acc.taxable + Number(row.sub_total || 0),
       gst: acc.gst + Number(row.gst_total || 0),
-      total: acc.total + Number(row.grand_total || 0)
-    }), { billCount: 0, itemCount: 0, taxable: 0, gst: 0, total: 0 });
+      saleTotal: acc.saleTotal + Number(row.sale_total || 0),
+      total: acc.total + Number(row.grand_total || 0),
+      exchangeBillCount: acc.exchangeBillCount + (Number(row.exchange_total || 0) > 0 ? 1 : 0),
+      exchangeSaleTotal: acc.exchangeSaleTotal + (Number(row.exchange_total || 0) > 0 ? Number(row.sale_total || 0) : 0),
+      exchangeLess: acc.exchangeLess + Number(row.exchange_total || 0),
+      exchangeNetTotal: acc.exchangeNetTotal + (Number(row.exchange_total || 0) > 0 ? Number(row.grand_total || 0) : 0)
+    }), { billCount: 0, itemCount: 0, taxable: 0, gst: 0, saleTotal: 0, total: 0, exchangeBillCount: 0, exchangeSaleTotal: 0, exchangeLess: 0, exchangeNetTotal: 0 });
 
     res.json({ from, to, counter: counter || 'ALL', rows, totals });
   } catch (err) {
@@ -172,7 +179,7 @@ router.get('/daily-sales/export', authorize('SERVER', 'ADMIN'), async (req, res)
     const to = normalizeDate(req.query.to || from, from);
     const counter = normalizeCounter(req.query.counter);
     const { rows, totals } = await getDailySalesForExport(from, to, counter);
-    const headers = ['invoice_no', 'date', 'time', 'customer', 'items', 'taxable', 'gst', 'total', 'payment_mode', 'counter'];
+    const headers = ['invoice_no', 'date', 'time', 'customer', 'items', 'taxable', 'gst', 'sale_total', 'exchange_less', 'net_total', 'payment_mode', 'counter'];
     const csv = [
       csvLine(headers),
       ...rows.map((row) => csvLine([
@@ -183,12 +190,15 @@ router.get('/daily-sales/export', authorize('SERVER', 'ADMIN'), async (req, res)
         row.item_count,
         row.sub_total,
         row.gst_total,
+        row.sale_total,
+        row.exchange_total,
         row.grand_total,
         row.payment_mode,
         row.billing_counter
       ])),
       '',
-      csvLine(['TOTAL', '', '', '', totals.itemCount, totals.taxable, totals.gst, totals.total, '', counter || 'ALL'])
+      csvLine(['TOTAL', '', '', '', totals.itemCount, totals.taxable, totals.gst, totals.saleTotal, totals.exchangeLess, totals.total, '', counter || 'ALL']),
+      csvLine(['EXCHANGE BILLS', '', '', '', totals.exchangeBillCount, '', '', totals.exchangeSaleTotal, totals.exchangeLess, totals.exchangeNetTotal, '', counter || 'ALL'])
     ].join('\n');
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -197,6 +207,119 @@ router.get('/daily-sales/export', authorize('SERVER', 'ADMIN'), async (req, res)
   } catch (err) {
     console.error('Daily sales export failed:', err.message);
     res.status(500).json({ error: 'Unable to export daily sales report.' });
+  }
+});
+
+router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
+  try {
+    const date = normalizeDate(req.query.date, todayIso());
+    const requestedCounter = normalizeCounterNoFromLabel(req.query.counter) || Number.parseInt(req.query.counter_no, 10) || 0;
+    const userCounter = Number.parseInt(req.user?.counter_no, 10) || 0;
+    const counterNo = req.user?.role === 'COUNTER' && userCounter > 0
+      ? userCounter
+      : requestedCounter || userCounter || 1;
+
+    const [counterRows] = await db.query(
+      `SELECT
+         payment_mode,
+         COUNT(DISTINCT invoice_no) AS bill_count,
+         COALESCE(SUM(amount), 0) AS total
+       FROM (
+         SELECT ip.invoice_no, ip.payment_mode, ip.amount
+         FROM invoice_payments ip
+         INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
+         WHERE DATE(i.created_at) = ?
+           AND i.billing_counter = ?
+           AND i.invoice_status <> 'CANCELLED'
+         UNION ALL
+         SELECT i.invoice_no, i.payment_mode, i.grand_total AS amount
+         FROM invoices i
+         LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
+         WHERE DATE(i.created_at) = ?
+           AND i.billing_counter = ?
+           AND i.invoice_status <> 'CANCELLED'
+           AND ip.id IS NULL
+       ) payments
+       GROUP BY payment_mode`,
+      [date, `Counter ${counterNo}`, date, `Counter ${counterNo}`]
+    );
+
+    const [counterBillRows] = await db.query(
+      `SELECT COUNT(*) AS bill_count
+       FROM invoices
+       WHERE DATE(created_at) = ?
+         AND billing_counter = ?
+         AND invoice_status <> 'CANCELLED'`,
+      [date, `Counter ${counterNo}`]
+    );
+
+    const [allRows] = await db.query(
+      `SELECT
+         payment_mode,
+         COUNT(DISTINCT invoice_no) AS bill_count,
+         COALESCE(SUM(amount), 0) AS total
+       FROM (
+         SELECT ip.invoice_no, ip.payment_mode, ip.amount
+         FROM invoice_payments ip
+         INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
+         WHERE DATE(i.created_at) = ?
+           AND i.invoice_status <> 'CANCELLED'
+         UNION ALL
+         SELECT i.invoice_no, i.payment_mode, i.grand_total AS amount
+         FROM invoices i
+         LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
+         WHERE DATE(i.created_at) = ?
+           AND i.invoice_status <> 'CANCELLED'
+           AND ip.id IS NULL
+       ) payments
+       GROUP BY payment_mode`,
+      [date, date]
+    );
+
+    const [allBillRows] = await db.query(
+      `SELECT COUNT(*) AS bill_count
+       FROM invoices
+       WHERE DATE(created_at) = ?
+         AND invoice_status <> 'CANCELLED'`,
+      [date]
+    );
+
+    const normalizePaymentTotals = (rows) => {
+      const summary = {
+        cashSale: 0,
+        upiSale: 0,
+        cardSale: 0,
+        totalSale: 0,
+        billCount: 0
+      };
+
+      rows.forEach((row) => {
+        const mode = String(row.payment_mode || '').toUpperCase();
+        const total = Number(row.total || 0);
+        if (mode === 'UPI') summary.upiSale += total;
+        else if (mode === 'CARD') summary.cardSale += total;
+        else summary.cashSale += total;
+        summary.totalSale += total;
+        summary.billCount += Number(row.bill_count || 0);
+      });
+
+      return summary;
+    };
+
+    const counterTotals = normalizePaymentTotals(counterRows);
+    counterTotals.billCount = Number(counterBillRows[0]?.bill_count || 0);
+    const allTotals = normalizePaymentTotals(allRows);
+    allTotals.billCount = Number(allBillRows[0]?.bill_count || 0);
+
+    res.json({
+      date,
+      counterNo,
+      counter: counterTotals,
+      allCounters: allTotals
+    });
+  } catch (err) {
+    console.error('Counter sale slip failed:', err.message);
+    res.status(500).json({ error: 'Unable to load counter sale slip.' });
   }
 });
 
@@ -272,6 +395,8 @@ async function getDailySalesForExport(from, to, counter) {
        COALESCE(item_counts.item_count, 0) AS item_count,
        i.sub_total,
        i.gst_total,
+       i.exchange_total,
+       (i.sub_total + i.gst_total) AS sale_total,
        i.grand_total,
        i.payment_mode,
        i.billing_counter,
@@ -293,8 +418,13 @@ async function getDailySalesForExport(from, to, counter) {
     itemCount: acc.itemCount + Number(row.item_count || 0),
     taxable: acc.taxable + Number(row.sub_total || 0),
     gst: acc.gst + Number(row.gst_total || 0),
-    total: acc.total + Number(row.grand_total || 0)
-  }), { billCount: 0, itemCount: 0, taxable: 0, gst: 0, total: 0 });
+    saleTotal: acc.saleTotal + Number(row.sale_total || 0),
+    exchangeLess: acc.exchangeLess + Number(row.exchange_total || 0),
+    total: acc.total + Number(row.grand_total || 0),
+    exchangeBillCount: acc.exchangeBillCount + (Number(row.exchange_total || 0) > 0 ? 1 : 0),
+    exchangeSaleTotal: acc.exchangeSaleTotal + (Number(row.exchange_total || 0) > 0 ? Number(row.sale_total || 0) : 0),
+    exchangeNetTotal: acc.exchangeNetTotal + (Number(row.exchange_total || 0) > 0 ? Number(row.grand_total || 0) : 0)
+  }), { billCount: 0, itemCount: 0, taxable: 0, gst: 0, saleTotal: 0, exchangeLess: 0, total: 0, exchangeBillCount: 0, exchangeSaleTotal: 0, exchangeNetTotal: 0 });
 
   return { rows, totals };
 }

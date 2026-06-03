@@ -65,15 +65,27 @@ function normalizeDenominationRows(denominations) {
 async function getSalesSnapshot(date, counterNo) {
   const [counterRows] = await db.query(
     `SELECT
-       COALESCE(SUM(grand_total), 0) AS total,
-       COALESCE(SUM(CASE WHEN payment_mode = 'Cash' THEN grand_total ELSE 0 END), 0) AS cash,
-       COALESCE(SUM(CASE WHEN payment_mode = 'UPI' THEN grand_total ELSE 0 END), 0) AS upi,
-       COALESCE(SUM(CASE WHEN payment_mode = 'Card' THEN grand_total ELSE 0 END), 0) AS card
-     FROM invoices
-     WHERE DATE(created_at) = ?
-       AND billing_counter = ?
-       AND invoice_status <> 'CANCELLED'`,
-    [date, `Counter ${counterNo}`]
+       COALESCE(SUM(amount), 0) AS total,
+       COALESCE(SUM(CASE WHEN payment_mode = 'Cash' THEN amount ELSE 0 END), 0) AS cash,
+       COALESCE(SUM(CASE WHEN payment_mode = 'UPI' THEN amount ELSE 0 END), 0) AS upi,
+       COALESCE(SUM(CASE WHEN payment_mode = 'Card' THEN amount ELSE 0 END), 0) AS card
+     FROM (
+       SELECT ip.payment_mode, ip.amount
+       FROM invoice_payments ip
+       INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
+       WHERE DATE(i.created_at) = ?
+         AND i.billing_counter = ?
+         AND i.invoice_status <> 'CANCELLED'
+       UNION ALL
+       SELECT i.payment_mode, i.grand_total AS amount
+       FROM invoices i
+       LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
+       WHERE DATE(i.created_at) = ?
+         AND i.billing_counter = ?
+         AND i.invoice_status <> 'CANCELLED'
+         AND ip.id IS NULL
+     ) payments`,
+    [date, `Counter ${counterNo}`, date, `Counter ${counterNo}`]
   );
   const [allRows] = await db.query(
     `SELECT COALESCE(SUM(grand_total), 0) AS total
@@ -123,13 +135,25 @@ async function loadHandoverSheet(date, counterNo) {
 
 async function getExpectedTotals(date, counterNo) {
   const [rows] = await db.query(
-    `SELECT payment_mode, COALESCE(SUM(grand_total), 0) AS total
-     FROM invoices
-     WHERE DATE(created_at) = ?
-       AND billing_counter = ?
-       AND invoice_status <> 'CANCELLED'
+    `SELECT payment_mode, COALESCE(SUM(amount), 0) AS total
+     FROM (
+       SELECT ip.payment_mode, ip.amount
+       FROM invoice_payments ip
+       INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
+       WHERE DATE(i.created_at) = ?
+         AND i.billing_counter = ?
+         AND i.invoice_status <> 'CANCELLED'
+       UNION ALL
+       SELECT i.payment_mode, i.grand_total AS amount
+       FROM invoices i
+       LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
+       WHERE DATE(i.created_at) = ?
+         AND i.billing_counter = ?
+         AND i.invoice_status <> 'CANCELLED'
+         AND ip.id IS NULL
+     ) payments
      GROUP BY payment_mode`,
-    [date, `Counter ${counterNo}`]
+    [date, `Counter ${counterNo}`, date, `Counter ${counterNo}`]
   );
 
   const totals = { Cash: 0, UPI: 0, Card: 0 };

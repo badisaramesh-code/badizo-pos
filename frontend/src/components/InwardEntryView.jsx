@@ -17,6 +17,8 @@ const blankLine = {
   mrp: '',
   gst_percent: '0',
   price: '',
+  batch_no: '',
+  expiry_date: '',
   discount_type: 'PERCENT',
   discount: '',
   scheme_type: 'PERCENT',
@@ -59,6 +61,8 @@ const invoiceColumnAliases = {
   hsn_code: ['hsn', 'hsn code', 'hsn/sac', 'hsn sac'],
   mrp: ['mrp'],
   price: ['price', 'rate', 'purchase price', 'basic rate', 'rate incl of tax', 'rate inclusive tax'],
+  batch_no: ['batch', 'batch no', 'batch number', 'lot', 'lot no'],
+  expiry_date: ['expiry', 'expiry date', 'exp', 'exp date', 'best before'],
   discount: ['discount', 'disc', 'disc%', 'discount%'],
   scheme: ['scheme', 'scheam', 'offer'],
   free: ['free', 'free qty', 'free quantity'],
@@ -204,7 +208,7 @@ function parseInvoiceRows(text) {
   const hasHeader = headerIndex >= 0;
   const headerMap = hasHeader ? buildColumnMap(rows[headerIndex]) : {};
   const dataRows = hasHeader ? rows.slice(headerIndex + 1) : [];
-  const fallbackOrder = ['barcode', 'product', 'hsn_code', 'mrp', 'price', 'discount', 'scheme', 'free', 'gst_percent', 'qty'];
+  const fallbackOrder = ['barcode', 'product', 'hsn_code', 'mrp', 'price', 'batch_no', 'expiry_date', 'discount', 'scheme', 'free', 'gst_percent', 'qty'];
 
   const parsedRows = dataRows.map((row) => {
     const getValue = (field) => {
@@ -219,6 +223,8 @@ function parseInvoiceRows(text) {
       mrp: getValue('mrp'),
       gst_percent: normalizeGstPercent(getValue('gst_percent') || '0'),
       price: getValue('price'),
+      batch_no: getValue('batch_no').toUpperCase(),
+      expiry_date: getValue('expiry_date'),
       discount: getValue('discount'),
       scheme: getValue('scheme'),
       free: getValue('free'),
@@ -790,6 +796,7 @@ export default function InwardEntryView() {
               <thead>
                 <tr>
                   <th>S.No</th><th>Barcode</th><th>Product<br />Name</th><th>HSN</th><th>MRP</th><th>Purchase<br />Rate</th>
+                  <th>Batch<br />No</th><th>Expiry<br />Date</th>
                   <th>
                     <div className="column-mode-header">
                       <span>Discount</span>
@@ -831,6 +838,8 @@ export default function InwardEntryView() {
                       <td><input className="field compact-number-field" value={line.hsn_code} onChange={(event) => updateLine(index, 'hsn_code', event.target.value)} /></td>
                       <td><input className="field compact-number-field" type="number" min="0" step="0.01" value={line.mrp} onChange={(event) => updateLine(index, 'mrp', event.target.value)} /></td>
                       <td><input className="field compact-number-field" type="number" min="0" step="0.01" value={line.price} onChange={(event) => updateLine(index, 'price', event.target.value)} /></td>
+                      <td><input className="field compact-number-field" value={line.batch_no} onChange={(event) => updateLine(index, 'batch_no', event.target.value.toUpperCase())} /></td>
+                      <td><input className="field compact-number-field" type="date" value={line.expiry_date} onChange={(event) => updateLine(index, 'expiry_date', event.target.value)} /></td>
                       <td><input className="field compact-number-field" type="number" min="0" step="0.01" value={line.discount} onChange={(event) => updateLine(index, 'discount', event.target.value)} /></td>
                       <td><input className="field compact-number-field" type="number" min="0" step="0.01" value={line.scheme} onChange={(event) => updateLine(index, 'scheme', event.target.value)} /></td>
                       <td><input className="field compact-number-field" type="number" min="0" step="0.01" value={line.free} onChange={(event) => updateLine(index, 'free', event.target.value)} /></td>
@@ -1012,7 +1021,7 @@ function InwardPrintSheet({ inward }) {
       <table className="inward-print-table">
         <thead>
           <tr>
-            <th>S.No</th><th>Barcode</th><th>Product</th><th>HSN</th><th>MRP</th><th>Rate</th><th>Disc</th><th>Scheme</th><th>Free</th><th>Qty</th><th>GST%</th>
+            <th>S.No</th><th>Barcode</th><th>Product</th><th>HSN</th><th>MRP</th><th>Rate</th><th>Batch</th><th>Expiry</th><th>Disc</th><th>Scheme</th><th>Free</th><th>Qty</th><th>GST%</th>
             {isInterstate ? <th>IGST</th> : <><th>CGST</th><th>SGST</th></>}
             <th>Taxable</th><th>Total</th>
           </tr>
@@ -1026,6 +1035,8 @@ function InwardPrintSheet({ inward }) {
               <td>{item.hsn_code || '-'}</td>
               <td>{formatMoney(item.mrp)}</td>
               <td>{formatMoney(item.purchase_price)}</td>
+              <td>{item.batch_no || '-'}</td>
+              <td>{formatDate(item.expiry_date)}</td>
               <td>{formatMoney(item.discount_amount)}</td>
               <td>{formatMoney(item.scheme_amount)}</td>
               <td>{item.free_qty}</td>

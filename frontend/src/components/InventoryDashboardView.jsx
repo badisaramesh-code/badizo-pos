@@ -298,15 +298,29 @@ export default function InventoryDashboardView() {
   const stockRef = useRef(null);
   const lowStockRef = useRef(null);
   const saveButtonRef = useRef(null);
+  const didMountFilterRef = useRef(false);
+  const pageRef = useRef(page);
+
+  useEffect(() => {
+    pageRef.current = page;
+  }, [page]);
 
   useEffect(() => {
     loadProducts();
   }, [page, limit, gstFilter]);
 
   useEffect(() => {
+    if (!didMountFilterRef.current) {
+      didMountFilterRef.current = true;
+      return undefined;
+    }
+
     const timer = window.setTimeout(() => {
-      setPage(1);
-      loadProducts(1);
+      if (pageRef.current === 1) {
+        loadProducts(1);
+      } else {
+        setPage(1);
+      }
     }, 300);
 
     return () => window.clearTimeout(timer);

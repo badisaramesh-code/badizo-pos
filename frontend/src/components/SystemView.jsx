@@ -317,8 +317,9 @@ export default function SystemView() {
             <button className="secondary-button" onClick={loadBackups}>Refresh</button>
           </div>
           <div className="panel-body form-stack">
-            <div className="change-box">
-              Daily backup runs at 10:30 PM by default. Backup folder: {backupInfo.backupDir || 'backend/backups'}
+            <div className="change-box backup-folder-box">
+              <span>Daily backup runs at 10:30 PM by default.</span>
+              <span>Backup folder: <strong>{backupInfo.backupDir || 'backend/backups'}</strong></span>
             </div>
             <button className="primary-button" onClick={handleBackupNow} disabled={isBackingUp}>
               {isBackingUp ? 'Creating Backup...' : 'Backup Now'}

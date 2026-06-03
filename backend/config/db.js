@@ -91,7 +91,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         grand_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         cash_received DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         change_returned DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-        payment_mode ENUM('Cash', 'UPI', 'Card') NOT NULL DEFAULT 'Cash',
+        payment_mode ENUM('Cash', 'UPI', 'Card', 'Mixed') NOT NULL DEFAULT 'Cash',
         payment_status ENUM('PENDING', 'PAID', 'FAILED') NOT NULL DEFAULT 'PAID',
         payment_reference VARCHAR(120) DEFAULT NULL,
         billing_counter VARCHAR(20) NOT NULL DEFAULT 'Counter 1',
@@ -130,6 +130,57 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         sgst_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         igst_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         returned_qty DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        FOREIGN KEY (invoice_no) REFERENCES invoices(invoice_no) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS product_batches (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        barcode VARCHAR(120) NOT NULL,
+        batch_no VARCHAR(80) NOT NULL DEFAULT '',
+        expiry_date DATE DEFAULT NULL,
+        inward_no VARCHAR(50) DEFAULT NULL,
+        purchase_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        mrp DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        quantity_received DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        quantity_available DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_product_batch (barcode, batch_no, expiry_date),
+        INDEX idx_product_batch_barcode (barcode),
+        INDEX idx_product_batch_expiry (expiry_date)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS invoice_item_batches (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        invoice_item_id BIGINT NOT NULL,
+        invoice_no VARCHAR(50) NOT NULL,
+        barcode VARCHAR(120) NOT NULL,
+        batch_no VARCHAR(80) NOT NULL DEFAULT '',
+        expiry_date DATE DEFAULT NULL,
+        quantity DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        returned_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_invoice_item_batches_invoice (invoice_no),
+        INDEX idx_invoice_item_batches_item (invoice_item_id),
+        INDEX idx_invoice_item_batches_barcode (barcode),
+        FOREIGN KEY (invoice_item_id) REFERENCES invoice_items(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS invoice_payments (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        invoice_no VARCHAR(50) NOT NULL,
+        payment_mode ENUM('Cash', 'UPI', 'Card') NOT NULL,
+        amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        payment_reference VARCHAR(120) DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_invoice_payments_invoice (invoice_no),
+        INDEX idx_invoice_payments_mode (payment_mode),
         FOREIGN KEY (invoice_no) REFERENCES invoices(invoice_no) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
@@ -213,6 +264,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         scheme_type ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT',
         scheme_value DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         scheme_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        batch_no VARCHAR(80) DEFAULT '',
+        expiry_date DATE DEFAULT NULL,
         free_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         mrp DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         quantity DECIMAL(12,2) NOT NULL DEFAULT 0.00,
@@ -461,6 +514,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'products', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER min_stock_alert');
     await ensureColumn(connection, 'products', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at');
     await ensureColumn(connection, 'invoices', 'transaction_type', "ENUM('B2C', 'B2B') NOT NULL DEFAULT 'B2C' AFTER created_at");
+    await connection.query("ALTER TABLE invoices MODIFY payment_mode ENUM('Cash', 'UPI', 'Card', 'Mixed') NOT NULL DEFAULT 'Cash'");
     await ensureColumn(connection, 'invoices', 'payment_status', "ENUM('PENDING', 'PAID', 'FAILED') NOT NULL DEFAULT 'PAID' AFTER payment_mode");
     await ensureColumn(connection, 'invoices', 'payment_reference', 'VARCHAR(120) DEFAULT NULL AFTER payment_status');
     await ensureColumn(connection, 'invoices', 'customer_address', 'VARCHAR(255) DEFAULT NULL AFTER customer_name');
@@ -482,6 +536,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'invoice_items', 'sgst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER cgst_amount');
     await ensureColumn(connection, 'invoice_items', 'igst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER sgst_amount');
     await ensureColumn(connection, 'invoice_items', 'returned_qty', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER igst_amount');
+    await ensureColumn(connection, 'invoice_item_batches', 'returned_qty', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER quantity');
     await ensureColumn(connection, 'inward_entries', 'total_cgst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER gst_total');
     await ensureColumn(connection, 'inward_entries', 'total_sgst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER total_cgst');
     await ensureColumn(connection, 'inward_entries', 'total_igst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER total_sgst');
@@ -492,6 +547,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'inward_items', 'scheme_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER scheme");
     await ensureColumn(connection, 'inward_items', 'scheme_value', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER scheme_type');
     await ensureColumn(connection, 'inward_items', 'scheme_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER scheme_value');
+    await ensureColumn(connection, 'inward_items', 'batch_no', "VARCHAR(80) DEFAULT '' AFTER scheme_amount");
+    await ensureColumn(connection, 'inward_items', 'expiry_date', 'DATE DEFAULT NULL AFTER batch_no');
     await ensureColumn(connection, 'inward_items', 'mrp', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER scheme');
     await ensureColumn(connection, 'inward_items', 'free_qty', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER mrp');
     await ensureColumn(connection, 'inward_items', 'cgst_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER gst_amount');

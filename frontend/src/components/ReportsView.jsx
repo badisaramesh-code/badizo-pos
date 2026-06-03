@@ -45,7 +45,7 @@ function ReportHeader({ title, onExcel, onPdf }) {
     <div className="panel-header green">
       <h2 className="panel-title">{title}</h2>
       <div className="report-header-actions">
-        <button className="header-print-button" type="button" onClick={() => window.print()}>Print Report</button>
+        <button className="header-print-button report-print-trigger" type="button">Print Report</button>
         <button className="header-print-button" type="button" onClick={onExcel}>Export Excel</button>
         <button className="header-print-button" type="button" onClick={onPdf}>Export PDF</button>
       </div>
@@ -58,7 +58,21 @@ export default function ReportsView() {
   const [fromDate, setFromDate] = useState(todayIso());
   const [toDate, setToDate] = useState(todayIso());
   const [counter, setCounter] = useState('');
-  const [dailyReport, setDailyReport] = useState({ rows: [], totals: { billCount: 0, itemCount: 0, taxable: 0, gst: 0, total: 0 } });
+  const [dailyReport, setDailyReport] = useState({
+    rows: [],
+    totals: {
+      billCount: 0,
+      itemCount: 0,
+      taxable: 0,
+      gst: 0,
+      saleTotal: 0,
+      exchangeBillCount: 0,
+      exchangeSaleTotal: 0,
+      exchangeLess: 0,
+      exchangeNetTotal: 0,
+      total: 0
+    }
+  });
   const [hsnReport, setHsnReport] = useState({ rows: [] });
   const [monthlyReport, setMonthlyReport] = useState({ rows: [] });
   const [stockReport, setStockReport] = useState([]);
@@ -110,8 +124,18 @@ export default function ReportsView() {
     loadReports();
   }
 
-  function exportPdf() {
+  function printReport() {
+    document.documentElement.classList.add('printing-reports');
+    document.body.classList.add('printing-reports');
     window.print();
+    setTimeout(() => {
+      document.body.classList.remove('printing-reports');
+      document.documentElement.classList.remove('printing-reports');
+    }, 300);
+  }
+
+  function exportPdf() {
+    printReport();
   }
 
   const counterOptions = useMemo(() => {
@@ -137,6 +161,8 @@ export default function ReportsView() {
     ['Bills', dailyReport.totals.billCount || 0, 'Selected range'],
     ['Taxable', formatCompactMoney(dailyReport.totals.taxable || 0), 'Sales before GST'],
     ['GST', formatCompactMoney(dailyReport.totals.gst || 0), 'Collected tax'],
+    ['Exchange Bills', dailyReport.totals.exchangeBillCount || 0, 'Exchange transactions'],
+    ['Exchange Sales', formatCompactMoney(dailyReport.totals.exchangeSaleTotal || 0), 'Before exchange less'],
     ['Total Sales', formatCompactMoney(dailyReport.totals.total || 0), 'Grand total']
   ];
 
@@ -154,7 +180,9 @@ export default function ReportsView() {
       Items: Number(row.item_count || 0),
       Taxable: Number(row.sub_total || 0),
       GST: Number(row.gst_total || 0),
-      Total: Number(row.grand_total || 0),
+      'Sale Total': Number(row.sale_total || 0),
+      'Exchange Less': Number(row.exchange_total || 0),
+      'Net Total': Number(row.grand_total || 0),
       Mode: row.payment_mode || '',
       Counter: row.billing_counter || ''
     })));
@@ -675,17 +703,26 @@ export default function ReportsView() {
           <section className="panel">
             <ReportHeader title="Daily Sales Report" onExcel={exportDailyExcel} onPdf={exportPdf} />
             <div className="panel-body form-stack">
+              <section className="report-summary-strip">
+                <span>Bills: <strong>{Number(dailyReport.totals.billCount || 0)}</strong></span>
+                <span>Sale Total: <strong>{formatMoney(dailyReport.totals.saleTotal || 0)}</strong></span>
+                <span>Exchange Bills: <strong>{Number(dailyReport.totals.exchangeBillCount || 0)}</strong></span>
+                <span>Exchange Sale: <strong>{formatMoney(dailyReport.totals.exchangeSaleTotal || 0)}</strong></span>
+                <span>Exchange Less: <strong>{formatMoney(dailyReport.totals.exchangeLess || 0)}</strong></span>
+                <span>Exchange Net: <strong>{formatMoney(dailyReport.totals.exchangeNetTotal || 0)}</strong></span>
+                <span>Net Sales: <strong>{formatMoney(dailyReport.totals.total || 0)}</strong></span>
+              </section>
               <table className="history-table">
-                <thead><tr><th>Invoice No</th><th>Date</th><th>Time</th><th>Customer</th><th>Items</th><th>Taxable</th><th>GST</th><th>Total</th><th>Mode</th><th>Counter</th></tr></thead>
+                <thead><tr><th>Invoice No</th><th>Date</th><th>Time</th><th>Customer</th><th>Items</th><th>Taxable</th><th>GST</th><th>Sale Total</th><th>Exchange Less</th><th>Net Total</th><th>Mode</th><th>Counter</th></tr></thead>
                 <tbody>
-                  {dailyReport.rows.length === 0 ? <tr><td colSpan="10">No invoices found for selected date range.</td></tr> : dailyReport.rows.map((row) => (
-                    <tr key={row.invoice_no}><td className="mono">{row.invoice_no}</td><td>{row.bill_date || '-'}</td><td>{row.bill_time}</td><td>{row.customer_name || 'Walk-in Customer'}</td><td>{row.item_count}</td><td>{formatMoney(row.sub_total)}</td><td>{formatMoney(row.gst_total)}</td><td><strong>{formatMoney(row.grand_total)}</strong></td><td>{row.payment_mode}</td><td>{row.billing_counter}</td></tr>
+                  {dailyReport.rows.length === 0 ? <tr><td colSpan="12">No invoices found for selected date range.</td></tr> : dailyReport.rows.map((row) => (
+                    <tr key={row.invoice_no}><td className="mono">{row.invoice_no}</td><td>{row.bill_date || '-'}</td><td>{row.bill_time}</td><td>{row.customer_name || 'Walk-in Customer'}</td><td>{row.item_count}</td><td>{formatMoney(row.sub_total)}</td><td>{formatMoney(row.gst_total)}</td><td>{formatMoney(row.sale_total || row.grand_total)}</td><td>{Number(row.exchange_total || 0) > 0 ? <strong>{formatMoney(row.exchange_total)}</strong> : formatMoney(0)}</td><td><strong>{formatMoney(row.grand_total)}</strong></td><td>{row.payment_mode}</td><td>{row.billing_counter}</td></tr>
                   ))}
                 </tbody>
-                <tfoot><tr><th>Total</th><th></th><th></th><th></th><th>{dailyReport.totals.itemCount || 0}</th><th>{formatMoney(dailyReport.totals.taxable || 0)}</th><th>{formatMoney(dailyReport.totals.gst || 0)}</th><th>{formatMoney(dailyReport.totals.total || 0)}</th><th></th><th></th></tr></tfoot>
+                <tfoot><tr><th>Total</th><th></th><th></th><th></th><th>{dailyReport.totals.itemCount || 0}</th><th>{formatMoney(dailyReport.totals.taxable || 0)}</th><th>{formatMoney(dailyReport.totals.gst || 0)}</th><th>{formatMoney(dailyReport.totals.saleTotal || 0)}</th><th>{formatMoney(dailyReport.totals.exchangeLess || 0)}</th><th>{formatMoney(dailyReport.totals.total || 0)}</th><th></th><th></th></tr></tfoot>
               </table>
               <div className="report-action-row">
-                <button className="primary-button" type="button" onClick={() => window.print()}>Print Report</button>
+                <button className="primary-button" type="button" onClick={printReport}>Print Report</button>
                 <button className="secondary-button" type="button" onClick={exportDailyExcel}>Export Excel</button>
                 <button className="secondary-button" type="button" onClick={exportPdf}>Export PDF</button>
                 <button className="secondary-button" type="button" onClick={() => {
@@ -700,7 +737,7 @@ export default function ReportsView() {
   }
 
   return (
-    <div className="form-stack">
+    <div className="form-stack reports-view">
       {errorMessage && <div className="alert-box">{errorMessage}</div>}
 
       <section className="dashboard-grid reports-metric-grid">
@@ -748,7 +785,13 @@ export default function ReportsView() {
         </div>
       </section>
 
-      {renderSelectedReport()}
+      <div className="reports-print-area" onClick={(event) => {
+        if (event.target.closest('.report-print-trigger')) {
+          printReport();
+        }
+      }}>
+        {renderSelectedReport()}
+      </div>
     </div>
   );
 }

@@ -122,6 +122,13 @@ export async function fetchDailySalesReport({ date, from, to, counter = '' } = {
   return data;
 }
 
+export async function fetchCounterSaleSlip({ date, counterNo } = {}) {
+  const { data } = await api.get('/reports/counter-sale-slip', {
+    params: { date, counter_no: counterNo }
+  });
+  return data;
+}
+
 export async function exportDailySalesReport({ date, from, to, counter = '' } = {}) {
   const { data } = await api.get('/reports/daily-sales/export', {
     params: { date, from, to, counter },

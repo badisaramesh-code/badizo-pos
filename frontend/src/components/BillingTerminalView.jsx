@@ -6,6 +6,7 @@ import {
   createSalesReturn,
   deleteHeldBill,
   fetchHeldBills,
+  fetchCounterSaleSlip,
   fetchInvoiceDetails,
   fetchInvoiceHistory,
   fetchNextInvoice,
@@ -54,6 +55,7 @@ const BILLING_MODES = {
 
 const RETAIL_MODE = 'RETAIL_LOCAL';
 const POS_DRAFT_KEY = 'badizo_pos_active_draft';
+const EMPTY_MIXED_PAYMENT = { cash: '', upi: '', card: '', upi_reference: '', card_reference: '' };
 
 function readActivePosDraft(username) {
   try {
@@ -132,6 +134,47 @@ function isTenDigitPhoneReady(value) {
   return String(value || '').replace(/\D/g, '').length === 10;
 }
 
+function formatSlipAmount(value) {
+  return toNumber(value).toFixed(2);
+}
+
+function localIsoDate(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function CounterSaleSlip({ slip, shop, printedAt }) {
+  const printedDate = printedAt.toLocaleDateString('en-IN');
+  const printedTime = printedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  const counter = slip?.counter || {};
+  const allCounters = slip?.allCounters || {};
+
+  return (
+    <div className="counter-sale-slip">
+      <div className="counter-sale-slip-title">
+        <strong>{shop.shop_name}</strong>
+        <span>{printedDate} | {printedTime}</span>
+      </div>
+      <div className="counter-sale-slip-rule" />
+      <div className="counter-sale-slip-heading">COUNTER SALE</div>
+      <div className="counter-sale-slip-line"><span>Counter Detail</span><strong>Counter {slip?.counterNo || '-'}</strong></div>
+      <div className="counter-sale-slip-rule counter-detail-rule" />
+      <div className="counter-sale-slip-line"><span>Bills</span><strong>{Number(counter.billCount || 0)}</strong></div>
+      <div className="counter-sale-slip-line"><span>UPI Sale</span><strong>{formatSlipAmount(counter.upiSale)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Card Sale</span><strong>{formatSlipAmount(counter.cardSale)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Cash Sale</span><strong>{formatSlipAmount(counter.cashSale)}</strong></div>
+      <div className="counter-sale-slip-total"><span>Total Sale</span><strong>{formatSlipAmount(counter.totalSale)}</strong></div>
+      <div className="counter-sale-slip-rule" />
+      <div className="counter-sale-slip-total all-sale"><span>All Counter Sale</span><strong>{formatSlipAmount(allCounters.totalSale)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Net Sale</span><strong>{formatSlipAmount(allCounters.totalSale)}</strong></div>
+      <div className="counter-sale-slip-rule" />
+      <div className="counter-sale-slip-footer">Cash handover slip</div>
+    </div>
+  );
+}
+
 export default function BillingTerminalView() {
   const currentUser = getStoredUser();
   const initialDraft = readActivePosDraft(currentUser?.username);
@@ -169,6 +212,7 @@ export default function BillingTerminalView() {
   const [companyName, setCompanyName] = useState(initialDraft?.companyName || '');
   const [customerGstin, setCustomerGstin] = useState(initialDraft?.customerGstin || '');
   const [paymentMode, setPaymentMode] = useState(initialDraft?.paymentMode || 'Cash');
+  const [mixedPayment, setMixedPayment] = useState(initialDraft?.mixedPayment || EMPTY_MIXED_PAYMENT);
   const [paymentReference, setPaymentReference] = useState(initialDraft?.paymentReference || '');
   const [paymentConfirmed, setPaymentConfirmed] = useState(Boolean(initialDraft?.paymentConfirmed));
   const [digitalContactModal, setDigitalContactModal] = useState(null);
@@ -183,6 +227,11 @@ export default function BillingTerminalView() {
   const [historyDate, setHistoryDate] = useState('');
   const [heldBills, setHeldBills] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showPriceCheck, setShowPriceCheck] = useState(false);
+  const [priceCheckQuery, setPriceCheckQuery] = useState('');
+  const [priceCheckProduct, setPriceCheckProduct] = useState(null);
+  const [priceCheckError, setPriceCheckError] = useState('');
+  const [isCheckingPrice, setIsCheckingPrice] = useState(false);
   const [printableInvoice, setPrintableInvoice] = useState(null);
   const [loyaltyCustomer, setLoyaltyCustomer] = useState(null);
   const [returnInvoice, setReturnInvoice] = useState(null);
@@ -192,8 +241,12 @@ export default function BillingTerminalView() {
   const scannerRef = useRef(null);
   const exchangeScannerRef = useRef(null);
   const billingTableRef = useRef(null);
+  const priceCheckInputRef = useRef(null);
   const customerNameRef = useRef(null);
   const cashReceivedRef = useRef(null);
+  const mixedCashRef = useRef(null);
+  const mixedUpiRef = useRef(null);
+  const mixedCardRef = useRef(null);
   const customerPhoneRef = useRef(null);
   const customerGstinRef = useRef(null);
   const customerAddressRef = useRef(null);
@@ -227,6 +280,7 @@ export default function BillingTerminalView() {
       || customerGstin
       || cashReceived
       || paymentMode !== 'Cash'
+      || Object.values(mixedPayment).some(Boolean)
       || paymentReference
       || paymentConfirmed
       || printMode !== 'Thermal';
@@ -251,6 +305,7 @@ export default function BillingTerminalView() {
         companyName,
         customerGstin,
         paymentMode,
+        mixedPayment,
         paymentReference,
         paymentConfirmed,
         printMode,
@@ -260,7 +315,7 @@ export default function BillingTerminalView() {
     } catch (err) {
       // Keep billing usable even if browser storage is unavailable.
     }
-  }, [billingMode, cart, cashReceived, companyName, counterNo, currentUser?.username, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, exchangeMode, invoiceNo, paymentConfirmed, paymentMode, paymentReference, printMode]);
+  }, [billingMode, cart, cashReceived, companyName, counterNo, currentUser?.username, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, exchangeMode, invoiceNo, mixedPayment, paymentConfirmed, paymentMode, paymentReference, printMode]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setLiveTime(new Date()), 1000);
@@ -279,7 +334,7 @@ export default function BillingTerminalView() {
 
   useEffect(() => {
     const run = async () => {
-      const cleaned = query.trim();
+      const { search: cleaned } = parseQuantitySearch(query);
       if (cleaned.length < 3) {
         setSuggestions([]);
         setSelectedSuggestion(0);
@@ -373,9 +428,13 @@ export default function BillingTerminalView() {
     };
   }, [cart, billingMode, exchangeItems]);
 
-  const changeDue = Math.max(toNumber(cashReceived) - totals.grand, 0);
+  const mixedPaidTotal = toNumber(mixedPayment.cash) + toNumber(mixedPayment.upi) + toNumber(mixedPayment.card);
+  const mixedHasDigital = toNumber(mixedPayment.upi) > 0 || toNumber(mixedPayment.card) > 0;
+  const changeDue = Math.max((paymentMode === 'Mixed' ? mixedPaidTotal : toNumber(cashReceived)) - totals.grand, 0);
   const cashReceivedAmount = toNumber(cashReceived);
-  const isCashReady = paymentMode !== 'Cash' || cashReceivedAmount >= totals.grand;
+  const isCashReady = paymentMode === 'Mixed'
+    ? mixedPaidTotal >= totals.grand
+    : paymentMode !== 'Cash' || cashReceivedAmount >= totals.grand;
   const canCompleteSale = cart.length > 0 && isCashReady && !cart.some((item) => item.isUnknown);
   const hasUnknownLine = cart.some((item) => item.isUnknown);
   const latestInvoice = invoiceHistory[0];
@@ -421,7 +480,12 @@ export default function BillingTerminalView() {
       customerGstin,
       paymentMode,
       paymentReference,
-      cashReceived: toNumber(cashReceived),
+      paymentSplits: paymentMode === 'Mixed' ? [
+        { mode: 'Cash', amount: toNumber(mixedPayment.cash) },
+        { mode: 'UPI', amount: toNumber(mixedPayment.upi), reference: mixedPayment.upi_reference },
+        { mode: 'Card', amount: toNumber(mixedPayment.card), reference: mixedPayment.card_reference }
+      ].filter((row) => row.amount > 0) : [],
+      cashReceived: paymentMode === 'Mixed' ? mixedPaidTotal : toNumber(cashReceived),
       changeReturned: changeDue,
       taxType: BILLING_MODES[billingMode].taxType,
       itemCount: cart.reduce((sum, item) => sum + toNumber(item.quantity, 1), 0),
@@ -457,7 +521,7 @@ export default function BillingTerminalView() {
         igst: isInterstate ? totals.tax : 0
       }
     };
-  }, [billingMode, cart, cashReceived, changeDue, companyName, counterNo, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, invoiceDate, invoiceNo, paymentMode, shopSettings, totals]);
+  }, [billingMode, cart, cashReceived, changeDue, companyName, counterNo, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, invoiceDate, invoiceNo, mixedPaidTotal, mixedPayment, paymentMode, shopSettings, totals]);
 
   function invoiceDetailsToPrintable(details, duplicate = false) {
     const invoice = details.invoice;
@@ -501,6 +565,11 @@ export default function BillingTerminalView() {
       customerGstin: invoice.customer_gstin,
       paymentMode: invoice.payment_mode,
       paymentReference: invoice.payment_reference || '',
+      paymentSplits: (details.payments || []).map((payment) => ({
+        mode: payment.payment_mode,
+        amount: toNumber(payment.amount),
+        reference: payment.payment_reference || ''
+      })),
       cashReceived: toNumber(invoice.cash_received),
       changeReturned: toNumber(invoice.change_returned),
       taxType: invoice.tax_type,
@@ -623,12 +692,27 @@ export default function BillingTerminalView() {
     }
   }
 
-  function addProduct(product) {
+  function parseQuantitySearch(rawValue) {
+    const cleaned = String(rawValue || '').trim();
+    const match = cleaned.match(/^(\d+(?:\.\d+)?)\s*\*\s*(.+)$/) || cleaned.match(/^(.+?)\s*\*\s*(\d+(?:\.\d+)?)$/);
+    if (!match) return { search: cleaned, quantity: 1 };
+
+    const firstIsQuantity = /^\d+(?:\.\d+)?$/.test(match[1]);
+    const quantity = toNumber(firstIsQuantity ? match[1] : match[2], 1);
+    const search = String(firstIsQuantity ? match[2] : match[1]).trim();
+    return {
+      search,
+      quantity: quantity > 0 ? quantity : 1
+    };
+  }
+
+  function addProduct(product, quantityToAdd = 1) {
+    const addQty = Math.max(toNumber(quantityToAdd, 1), 0.001);
     setCart((current) => {
       const existingIndex = current.findIndex((item) => item.barcode === product.barcode);
       if (existingIndex >= 0) {
         return current.map((item, index) => (
-          index === existingIndex ? { ...item, quantity: toNumber(item.quantity, 1) + 1 } : item
+          index === existingIndex ? { ...item, quantity: toNumber(item.quantity, 1) + addQty } : item
         ));
       }
 
@@ -637,7 +721,7 @@ export default function BillingTerminalView() {
         {
           ...product,
           product_name: String(product.product_name || '').toUpperCase(),
-          quantity: 1,
+          quantity: addQty,
           sale_price: toNumber(product.sale_price || product.mrp),
           wholesale_price: toNumber(product.wholesale_price || product.sale_price || product.mrp),
           mrp: toNumber(product.mrp),
@@ -650,8 +734,93 @@ export default function BillingTerminalView() {
     setQuery('');
     setSuggestions([]);
     setErrorMessage('');
-    setStatusMessage(`${product.product_name} added to bill.`);
+    setStatusMessage(`${product.product_name} x ${addQty} added to bill.`);
     scannerRef.current?.focus();
+  }
+
+  function openPriceCheck() {
+    setShowPriceCheck(true);
+    setPriceCheckQuery('');
+    setPriceCheckProduct(null);
+    setPriceCheckError('');
+    setIsCheckingPrice(false);
+    window.setTimeout(() => priceCheckInputRef.current?.focus(), 50);
+  }
+
+  function closePriceCheck() {
+    setShowPriceCheck(false);
+    setPriceCheckQuery('');
+    setPriceCheckProduct(null);
+    setPriceCheckError('');
+    setIsCheckingPrice(false);
+    scannerRef.current?.focus();
+  }
+
+  function getProductOfferText(product) {
+    const discountValue = toNumber(product?.discount_value);
+    const bulkDiscount = toNumber(product?.bulk_discount_value);
+    const discountType = product?.discount_type === 'VALUE' ? 'Rs' : '%';
+    if (discountValue > 0 && bulkDiscount > 0) {
+      return `${discountValue}${discountType} retail, ${bulkDiscount}% wholesale`;
+    }
+    if (discountValue > 0) return `${discountValue}${discountType} discount`;
+    if (bulkDiscount > 0) return `${bulkDiscount}% wholesale discount`;
+    const mrp = toNumber(product?.mrp);
+    const salePrice = toNumber(product?.sale_price);
+    if (mrp > salePrice && salePrice > 0) return `${formatMoney(mrp - salePrice)} less than MRP`;
+    return 'No active offer';
+  }
+
+  async function runPriceCheck(searchValue = priceCheckQuery) {
+    const cleaned = String(searchValue || '').trim();
+    if (!cleaned) {
+      setPriceCheckError('Scan barcode or type product name.');
+      setPriceCheckProduct(null);
+      return;
+    }
+
+    setIsCheckingPrice(true);
+    setPriceCheckError('');
+    try {
+      const results = await searchProducts(cleaned);
+      if (results.length === 1) {
+        setPriceCheckProduct(results[0]);
+        setPriceCheckError('');
+        return;
+      }
+      if (results.length > 1) {
+        const exact = results.find((product) => (
+          String(product.barcode || '').toUpperCase() === cleaned.toUpperCase()
+          || String(product.product_code || '').toUpperCase() === cleaned.toUpperCase()
+        ));
+        if (exact) {
+          setPriceCheckProduct(exact);
+          setPriceCheckError('');
+          return;
+        }
+        setPriceCheckProduct(null);
+        setPriceCheckError('Multiple products found. Scan exact barcode or type full product name.');
+        return;
+      }
+      setPriceCheckProduct(null);
+      setPriceCheckError('Product not found.');
+    } catch (err) {
+      setPriceCheckProduct(null);
+      setPriceCheckError(err.response?.data?.error || 'Unable to check price.');
+    } finally {
+      setIsCheckingPrice(false);
+    }
+  }
+
+  function handlePriceCheckKeyDown(event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      runPriceCheck();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closePriceCheck();
+    }
   }
 
   async function handleSearchKeyDown(event) {
@@ -667,7 +836,7 @@ export default function BillingTerminalView() {
 
     if (event.key === 'Enter') {
       event.preventDefault();
-      const cleaned = query.trim();
+      const { search: cleaned, quantity } = parseQuantitySearch(query);
 
       if (cleaned.length < 3) {
         setErrorMessage('Enter at least 3 letters or barcode digits.');
@@ -676,7 +845,7 @@ export default function BillingTerminalView() {
 
       try {
         const results = await searchProducts(cleaned);
-        if (results.length === 1) addProduct(results[0]);
+        if (results.length === 1) addProduct(results[0], quantity);
         if (results.length > 1) {
           setSuggestions(results.slice(0, 5));
           setSelectedSuggestion(0);
@@ -871,6 +1040,7 @@ export default function BillingTerminalView() {
     setCompanyName(savedState.companyName || '');
     setCustomerGstin(savedState.customerGstin || '');
     setPaymentMode(savedState.paymentMode || 'Cash');
+    setMixedPayment(savedState.mixedPayment || EMPTY_MIXED_PAYMENT);
     setPaymentReference(savedState.paymentReference || '');
     setPaymentConfirmed(Boolean(savedState.paymentConfirmed));
     setPrintMode(savedState.printMode || 'Thermal');
@@ -937,6 +1107,7 @@ export default function BillingTerminalView() {
     setCustomerGstin('');
     setCashReceived('');
     setPaymentMode('Cash');
+    setMixedPayment(EMPTY_MIXED_PAYMENT);
     setPaymentReference('');
     setPaymentConfirmed(false);
     setPrintMode('Thermal');
@@ -952,6 +1123,142 @@ export default function BillingTerminalView() {
 
     setPrintableInvoice(invoice);
     schedulePrint(printMode, null, invoice);
+  }
+
+  async function printCounterSaleSlip() {
+    try {
+      const printedAt = new Date();
+      const slip = await fetchCounterSaleSlip({ date: localIsoDate(printedAt), counterNo });
+      const slipMarkup = renderToStaticMarkup(<CounterSaleSlip slip={slip} shop={shopSettings} printedAt={printedAt} />);
+      const printFrame = document.createElement('iframe');
+      printFrame.title = 'Counter sale print frame';
+      printFrame.style.position = 'fixed';
+      printFrame.style.left = '-10000px';
+      printFrame.style.top = '0';
+      printFrame.style.width = '90mm';
+      printFrame.style.height = '800mm';
+      printFrame.style.border = '0';
+      printFrame.style.visibility = 'hidden';
+      document.body.appendChild(printFrame);
+
+      const frameDocument = printFrame.contentDocument || printFrame.contentWindow?.document;
+      if (!frameDocument) {
+        printFrame.remove();
+        return;
+      }
+
+      frameDocument.open();
+      frameDocument.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Counter Sale Slip</title>
+  <style>
+    html, body {
+      width: 80mm;
+      min-width: 80mm;
+      max-width: 80mm;
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      color: #000;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    .counter-sale-slip {
+      width: 80mm;
+      box-sizing: border-box;
+      padding: 3mm 3mm 12mm;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .counter-sale-slip-title,
+    .counter-sale-slip-heading,
+    .counter-sale-slip-footer {
+      text-align: center;
+    }
+    .counter-sale-slip-title strong {
+      display: block;
+      font-size: 15px;
+      text-transform: uppercase;
+    }
+    .counter-sale-slip-title span {
+      display: block;
+      margin-top: 2px;
+      font-size: 11px;
+    }
+    .counter-sale-slip-heading {
+      margin: 4px 0;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .counter-sale-slip-rule {
+      border-top: 1px dashed #000;
+      margin: 5px 0;
+    }
+    .counter-detail-rule {
+      margin: 2px 0 4px;
+    }
+    .counter-sale-slip-line,
+    .counter-sale-slip-total {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 3px 0;
+      font-size: 12px;
+    }
+    .counter-sale-slip-line strong,
+    .counter-sale-slip-total strong {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .counter-sale-slip-total {
+      border-top: 1px solid #000;
+      margin-top: 3px;
+      padding-top: 5px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .counter-sale-slip-total.all-sale {
+      border-top: 0;
+      margin-top: 0;
+    }
+    .counter-sale-slip-footer {
+      padding-top: 4px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    @media print {
+      @page { size: 80mm 160mm; margin: 0; }
+      html, body {
+        width: 80mm !important;
+        min-width: 80mm !important;
+        max-width: 80mm !important;
+        height: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+      }
+    }
+  </style>
+</head>
+<body>${slipMarkup}</body>
+</html>`);
+      frameDocument.close();
+
+      const cleanup = () => window.setTimeout(() => printFrame.remove(), 300);
+      const frameWindow = printFrame.contentWindow;
+      frameWindow?.addEventListener('afterprint', cleanup, { once: true });
+      window.setTimeout(() => {
+        frameWindow?.focus();
+        frameWindow?.print();
+        window.setTimeout(() => {
+          if (document.body.contains(printFrame)) printFrame.remove();
+        }, 120000);
+      }, 250);
+      setStatusMessage(`Counter ${counterNo} sale slip ready.`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to print counter sale slip.');
+    }
   }
 
   function schedulePrint(mode = printMode, afterPrint, invoiceForPrint = printableInvoice || printableDraft) {
@@ -1297,7 +1604,11 @@ export default function BillingTerminalView() {
       return;
     }
 
-    focusInput(paymentReferenceRef, 50);
+    if (digitalContactModal.mode === 'Mixed') {
+      focusInput(mixedUpiRef, 50);
+    } else {
+      focusInput(paymentReferenceRef, 50);
+    }
   }
 
   function preparePayment(mode) {
@@ -1310,6 +1621,15 @@ export default function BillingTerminalView() {
       window.setTimeout(() => {
         cashReceivedRef.current?.focus();
         cashReceivedRef.current?.select();
+      }, 50);
+      return;
+    }
+
+    if (mode === 'Mixed') {
+      setPaymentConfirmed(false);
+      window.setTimeout(() => {
+        mixedCashRef.current?.focus();
+        mixedCashRef.current?.select();
       }, 50);
       return;
     }
@@ -1372,6 +1692,7 @@ export default function BillingTerminalView() {
         companyName,
         customerGstin,
         paymentMode,
+        mixedPayment,
         paymentReference,
         paymentConfirmed,
         printMode,
@@ -1508,6 +1829,9 @@ export default function BillingTerminalView() {
     const effectiveCustomerPhone = overrides.customerPhone ?? customerPhone;
     const effectivePaymentReference = overrides.paymentReference ?? paymentReference;
     const effectivePaymentConfirmed = overrides.paymentConfirmed ?? paymentConfirmed;
+    const effectiveMixedPayment = overrides.mixedPayment ?? mixedPayment;
+    const effectiveMixedPaidTotal = toNumber(effectiveMixedPayment.cash) + toNumber(effectiveMixedPayment.upi) + toNumber(effectiveMixedPayment.card);
+    const effectiveMixedHasDigital = toNumber(effectiveMixedPayment.upi) > 0 || toNumber(effectiveMixedPayment.card) > 0;
     setErrorMessage('');
     setStatusMessage('');
 
@@ -1542,15 +1866,30 @@ export default function BillingTerminalView() {
       return;
     }
 
-    const received = activePaymentMode === 'Cash' ? toNumber(cashReceived) : totals.grand;
+    const received = activePaymentMode === 'Cash'
+      ? toNumber(cashReceived)
+      : activePaymentMode === 'Mixed'
+        ? effectiveMixedPaidTotal
+        : totals.grand;
     if (activePaymentMode === 'Cash' && received < totals.grand) {
       setErrorMessage('Cash received must be equal to or greater than the bill total.');
       window.setTimeout(() => cashReceivedRef.current?.focus(), 50);
       return;
     }
 
-    if (activePaymentMode !== 'Cash' && !isDigitalPaymentContactReady(effectiveCustomerPhone)) {
+    if (activePaymentMode === 'Mixed' && received < totals.grand) {
+      setErrorMessage('Mixed payment total must be equal to or greater than the bill total.');
+      window.setTimeout(() => mixedCashRef.current?.focus(), 50);
+      return;
+    }
+
+    if (activePaymentMode !== 'Cash' && activePaymentMode !== 'Mixed' && !isDigitalPaymentContactReady(effectiveCustomerPhone)) {
       openDigitalContactModal(activePaymentMode, true);
+      return;
+    }
+
+    if (activePaymentMode === 'Mixed' && effectiveMixedHasDigital && !isDigitalPaymentContactReady(effectiveCustomerPhone)) {
+      openDigitalContactModal('Mixed', true);
       return;
     }
 
@@ -1575,7 +1914,18 @@ export default function BillingTerminalView() {
         grand_total: totals.grand.toFixed(2),
         payment_mode: activePaymentMode,
         payment_status: 'PAID',
-        payment_reference: activePaymentMode === 'Cash' ? null : effectivePaymentReference,
+        payment_reference: activePaymentMode === 'Cash'
+          ? null
+          : activePaymentMode === 'Mixed'
+            ? null
+            : effectivePaymentReference,
+        payment_splits: activePaymentMode === 'Mixed' ? {
+          cash: toNumber(effectiveMixedPayment.cash).toFixed(2),
+          upi: toNumber(effectiveMixedPayment.upi).toFixed(2),
+          card: toNumber(effectiveMixedPayment.card).toFixed(2),
+          upi_reference: effectiveMixedPayment.upi_reference || '',
+          card_reference: effectiveMixedPayment.card_reference || ''
+        } : undefined,
         cash_received: received.toFixed(2),
         change_returned: Math.max(received - totals.grand, 0).toFixed(2),
         transaction_type: mode.transactionType,
@@ -1603,8 +1953,13 @@ export default function BillingTerminalView() {
         invoiceNo: checkoutResult.invoice_no || invoiceNo,
         customerName: effectiveCustomerName,
         customerPhone: effectiveCustomerPhone,
-        paymentReference: activePaymentMode === 'Cash' ? '' : effectivePaymentReference,
+        paymentReference: activePaymentMode === 'Cash' || activePaymentMode === 'Mixed' ? '' : effectivePaymentReference,
         paymentMode: activePaymentMode,
+        paymentSplits: activePaymentMode === 'Mixed' ? [
+          { mode: 'Cash', amount: toNumber(effectiveMixedPayment.cash) },
+          { mode: 'UPI', amount: toNumber(effectiveMixedPayment.upi), reference: effectiveMixedPayment.upi_reference || '' },
+          { mode: 'Card', amount: toNumber(effectiveMixedPayment.card), reference: effectiveMixedPayment.card_reference || '' }
+        ].filter((row) => row.amount > 0) : [],
         cashReceived: received,
         changeReturned: Math.max(received - totals.grand, 0),
         totals: {
@@ -1633,6 +1988,9 @@ export default function BillingTerminalView() {
             <h2 className="panel-title">{shopSettings.shop_name}</h2>
             <div className="muted">GST: {shopSettings.gst_number} | {shopSettings.address} | Ph: {shopSettings.phone}</div>
           </div>
+          <button className="counter-sale-button" type="button" onClick={printCounterSaleSlip}>
+            Counter Sale
+          </button>
           <div className="billing-header-meta">
             <span className="live-time-chip">{liveTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
             <span className="invoice-chip">Invoice {invoiceNo}</span>
@@ -1715,7 +2073,7 @@ export default function BillingTerminalView() {
                       key={product.barcode}
                       className={`suggestion-row ${index === selectedSuggestion ? 'active' : ''}`}
                       onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => addProduct(product)}
+                      onClick={() => addProduct(product, parseQuantitySearch(query).quantity)}
                     >
                       <span className="mono muted">{product.barcode}</span>
                       <strong>{product.product_name}</strong>
@@ -1728,6 +2086,7 @@ export default function BillingTerminalView() {
                 </div>
               )}
             </div>
+            <button className="secondary-button price-check-button" type="button" onClick={openPriceCheck}>Price Check</button>
           </div>
 
           {exchangeMode && (
@@ -1954,7 +2313,7 @@ export default function BillingTerminalView() {
               <span className="total-label">Net payable</span>
               <span className="total-value">{formatMoney(totals.grand)}</span>
               <span className="amount-words">{amountInWords(totals.grand)}</span>
-              {paymentMode === 'Cash' && (
+              {(paymentMode === 'Cash' || paymentMode === 'Mixed') && (
                 <div className="payment-change-line">
                   <span>Change due</span>
                   <strong>{formatMoney(changeDue)}</strong>
@@ -1990,6 +2349,7 @@ export default function BillingTerminalView() {
                   <option value="Cash">Cash</option>
                   <option value="UPI">UPI</option>
                   <option value="Card">Card</option>
+                  <option value="Mixed">Mixed</option>
                 </select>
               </label>
 
@@ -2014,7 +2374,94 @@ export default function BillingTerminalView() {
                 </>
               )}
 
-              {paymentMode !== 'Cash' && (
+              {paymentMode === 'Mixed' && (
+                <>
+                  <div className="mixed-payment-grid">
+                    <label>
+                      <span className="field-label">Cash</span>
+                      <input
+                        ref={mixedCashRef}
+                        className="field"
+                        type="number"
+                        min="0"
+                        value={mixedPayment.cash}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            mixedUpiRef.current?.focus();
+                          }
+                        }}
+                        onChange={(event) => setMixedPayment((current) => ({ ...current, cash: event.target.value }))}
+                      />
+                    </label>
+                    <label>
+                      <span className="field-label">UPI</span>
+                      <input
+                        ref={mixedUpiRef}
+                        className="field"
+                        type="number"
+                        min="0"
+                        value={mixedPayment.upi}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            mixedCardRef.current?.focus();
+                          }
+                        }}
+                        onChange={(event) => setMixedPayment((current) => ({ ...current, upi: event.target.value }))}
+                      />
+                    </label>
+                    <label>
+                      <span className="field-label">Card</span>
+                      <input
+                        ref={mixedCardRef}
+                        className="field"
+                        type="number"
+                        min="0"
+                        value={mixedPayment.card}
+                        onKeyDown={(event) => handlePaymentEnter(event, 'Mixed')}
+                        onChange={(event) => setMixedPayment((current) => ({ ...current, card: event.target.value }))}
+                      />
+                    </label>
+                  </div>
+                  <div className="mixed-payment-grid mixed-payment-reference-grid">
+                    <label>
+                      <span className="field-label">UPI Ref</span>
+                      <input
+                        className="field"
+                        value={mixedPayment.upi_reference}
+                        onChange={(event) => setMixedPayment((current) => ({ ...current, upi_reference: event.target.value }))}
+                        placeholder="UPI ID / last 4"
+                      />
+                    </label>
+                    <label>
+                      <span className="field-label">Card Ref</span>
+                      <input
+                        className="field"
+                        value={mixedPayment.card_reference}
+                        onChange={(event) => setMixedPayment((current) => ({ ...current, card_reference: event.target.value }))}
+                        placeholder="Approval / slip no"
+                      />
+                    </label>
+                  </div>
+                  <div className="summary-line mixed-payment-total">
+                    <span>Paid total</span>
+                    <strong>{formatMoney(mixedPaidTotal)}</strong>
+                  </div>
+                  {mixedPaidTotal < totals.grand && <div className="alert-box">Cash + UPI + Card total bill amount ki equal or more undali.</div>}
+                  {mixedHasDigital && !isDigitalPaymentContactReady(customerPhone) && <div className="alert-box">UPI/Card split ki phone number 10 digits or NO required.</div>}
+                  <label className="change-box">
+                    <input
+                      type="checkbox"
+                      checked={paymentConfirmed}
+                      onChange={(event) => setPaymentConfirmed(event.target.checked)}
+                    /> Mixed payment received
+                  </label>
+                  {!paymentConfirmed && <div className="alert-box">Confirm Mixed payment before completing sale.</div>}
+                </>
+              )}
+
+              {paymentMode !== 'Cash' && paymentMode !== 'Mixed' && (
                 <>
                   <label>
                     <span className="field-label">{paymentMode} reference</span>
@@ -2043,6 +2490,7 @@ export default function BillingTerminalView() {
                 <button className="secondary-button" onClick={() => preparePayment('Cash')}>F12 Cash</button>
                 <button className="secondary-button" onClick={() => preparePayment('UPI')}>F11 UPI</button>
                 <button className="secondary-button" onClick={() => preparePayment('Card')}>F10 Card</button>
+                <button className="secondary-button" onClick={() => preparePayment('Mixed')}>Mixed</button>
                 <button className="secondary-button" onClick={() => refreshHistory(true)}>F8 Old Bills</button>
                 <button className="secondary-button" onClick={holdCurrentBill}>F6 Hold</button>
                 <button className="secondary-button" onClick={() => printBill(printableInvoice || printableDraft)}>Print</button>
@@ -2052,6 +2500,60 @@ export default function BillingTerminalView() {
         </section>
 
       </aside>
+
+      {showPriceCheck && (
+        <div className="modal-backdrop">
+          <div className="modal price-check-modal">
+            <div className="panel-header">
+              <h2 className="panel-title">Fast Price Check</h2>
+              <button className="secondary-button" type="button" onClick={closePriceCheck}>Close</button>
+            </div>
+            <div className="panel-body form-stack">
+              <div className="price-check-entry">
+                <input
+                  ref={priceCheckInputRef}
+                  className="field search-input"
+                  value={priceCheckQuery}
+                  onChange={(event) => {
+                    setPriceCheckQuery(event.target.value);
+                    if (priceCheckError) setPriceCheckError('');
+                  }}
+                  onKeyDown={handlePriceCheckKeyDown}
+                  placeholder="Scan barcode or type product name"
+                />
+                <button className="primary-button" type="button" onClick={() => runPriceCheck()} disabled={isCheckingPrice}>
+                  {isCheckingPrice ? 'Checking...' : 'Check'}
+                </button>
+              </div>
+              {priceCheckError && <div className="alert-box">{priceCheckError}</div>}
+              {priceCheckProduct && (
+                <div className="price-check-card">
+                  <div>
+                    <span className="mono muted">{priceCheckProduct.barcode}</span>
+                    <h3>{String(priceCheckProduct.product_name || '').toUpperCase()}</h3>
+                    <span className="muted">HSN: {priceCheckProduct.hsn_code || '-'} | GST: {toNumber(priceCheckProduct.gst_percent).toFixed(2)}%</span>
+                  </div>
+                  <div className="price-check-metrics">
+                    <div><span>MRP</span><strong>{formatMoney(priceCheckProduct.mrp)}</strong></div>
+                    <div><span>Retail Price</span><strong>{formatMoney(priceCheckProduct.sale_price)}</strong></div>
+                    <div><span>Wholesale</span><strong>{formatMoney(priceCheckProduct.wholesale_price || priceCheckProduct.sale_price)}</strong></div>
+                    <div className={toNumber(priceCheckProduct.stock_qty) <= toNumber(priceCheckProduct.min_stock_alert, 10) ? 'stock-low' : ''}>
+                      <span>Stock</span><strong>{toNumber(priceCheckProduct.stock_qty).toFixed(2)} {priceCheckProduct.unit_type || 'Nos'}</strong>
+                    </div>
+                  </div>
+                  <div className="price-check-offer">
+                    <span>Offer / Discount</span>
+                    <strong>{getProductOfferText(priceCheckProduct)}</strong>
+                  </div>
+                </div>
+              )}
+              {!priceCheckProduct && !priceCheckError && (
+                <div className="price-check-empty">Product bill lo add avvakunda price, MRP, stock, offer check cheyyachu.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {digitalContactModal && (
         <div className="modal-backdrop">

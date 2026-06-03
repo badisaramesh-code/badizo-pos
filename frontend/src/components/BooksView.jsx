@@ -114,12 +114,30 @@ function exportWorkbook(filename, sheets) {
   XLSX.writeFile(workbook, filename);
 }
 
+function isCountSummaryKey(key) {
+  return ['accounts', 'entries', 'bills', 'sheets', 'itemCount', 'purchaseEntries', 'productCount'].includes(key);
+}
+
 function summaryChips(book) {
   if (!book?.summary) return [];
   return Object.entries(book.summary).map(([key, value]) => [
     key.replace(/([A-Z])/g, ' $1').replace(/^./, (char) => char.toUpperCase()),
-    typeof value === 'number' ? formatMoney(value) : value
+    typeof value === 'number' ? (isCountSummaryKey(key) ? String(value) : formatMoney(value)) : value
   ]);
+}
+
+function getBookCardValue(key, book) {
+  if (!book?.summary) return `${book?.rows?.length || 0} entries`;
+  if (['sundryCreditors', 'sundryDebtors'].includes(key)) {
+    return formatMoney(book.summary.balance || 0);
+  }
+  if (key === 'purchaseBook') return formatMoney(book.summary.purchases || 0);
+  if (key === 'cashBook') return formatMoney(book.summary.closing || 0);
+  if (key === 'counterCashBalance') return formatMoney(book.summary.notesBalance || 0);
+  if (key === 'taxBook') return formatMoney(book.summary.payable || 0);
+  if (key === 'profitLoss') return formatMoney(book.summary.grossProfit || 0);
+  if (key === 'balanceSheet') return formatMoney(book.summary.stockValue || 0);
+  return `${book?.rows?.length || 0} entries`;
 }
 
 export default function BooksView() {
@@ -147,11 +165,10 @@ export default function BooksView() {
 
   const bookCards = useMemo(() => BOOK_ORDER.map(([key, fallbackTitle]) => {
     const book = booksData?.books?.[key] || DEFAULT_BOOKS[key];
-    const chips = summaryChips(book);
     return {
       key,
       title: book?.title || fallbackTitle,
-      value: chips[0]?.[1] || `${book?.rows?.length || 0} entries`,
+      value: getBookCardValue(key, book),
       entries: book?.rows?.length || 0
     };
   }), [booksData]);
