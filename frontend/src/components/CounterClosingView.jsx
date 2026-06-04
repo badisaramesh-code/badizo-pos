@@ -91,6 +91,7 @@ export default function CounterClosingView() {
   const [historyTo, setHistoryTo] = useState(todayIso());
   const [counterNo, setCounterNo] = useState(userCounterNo);
   const [counterCount, setCounterCount] = useState(6);
+  const [shopName, setShopName] = useState('Hyper Fresh Mart LLP');
   const [sheetNo, setSheetNo] = useState('');
   const [snapshot, setSnapshot] = useState({ counter_sales: 0, all_counter_sales: 0, cash_sales: 0, upi_sales: 0, card_sales: 0 });
   const [denominationList, setDenominationList] = useState(DEFAULT_DENOMINATIONS);
@@ -172,6 +173,7 @@ export default function CounterClosingView() {
       const settings = await fetchSettings();
       const count = Math.max(Number.parseInt(settings.counter_count, 10) || 1, 1);
       setCounterCount(count);
+      setShopName(settings.shop_name || 'Hyper Fresh Mart LLP');
       if (!isCounterUser && counterNo > count) setCounterNo(1);
     } catch (err) {
       setCounterCount(6);
@@ -403,7 +405,7 @@ export default function CounterClosingView() {
 
         <div className="panel-body form-stack">
           <div className="handover-heading">
-            <strong>Hyper Fresh Mart LLP</strong>
+            <strong>{shopName}</strong>
             <span className="handover-heading-title">Accounting DR / CR Transactions</span>
             <span className="handover-heading-chip">Date: {date}</span>
             <span className="handover-heading-chip">Sheet: {sheetNo || '-'}</span>
@@ -616,7 +618,7 @@ export default function CounterClosingView() {
 
       <div className="print-area handover-print-area">
         <div className="handover-print-sheet">
-          <h1>hyper fresh mart llp</h1>
+          <h1>{shopName}</h1>
           <div className="handover-print-meta">
             <span>Date: {date}</span>
             <strong>Counter Handover Daily Sheet</strong>

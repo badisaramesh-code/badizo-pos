@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs/promises');
 const path = require('path');
 const { authenticate, authorize } = require('../middleware/auth');
+const db = require('../config/db');
 
 const router = express.Router();
 
@@ -9,6 +10,12 @@ const APP_ROOT = path.resolve(__dirname, '..', '..');
 const TEMPLATE_DIR = path.join(APP_ROOT, 'barcode', 'templates');
 const OUTPUT_DIR = path.join(APP_ROOT, 'barcode', 'output');
 const DEFAULT_TEMPLATE = 'tsc-244-pro-50x50-two-up.prn';
+
+const TEMPLATE_META = {
+  'tsc-244-pro-50x50-two-up.prn': { size: '50 x 50 mm Two-Up', printer: 'TSC-244-Pro' },
+  'tsc-244-1-33x25-single.prn': { size: '33 x 25 mm Product Sticker', printer: 'TSC 244-1' },
+  'tsc-244-2-jewellery-100x15-tail.prn': { size: '100 x 15 mm Jewellery Tail', printer: 'TSC 244-2' }
+};
 
 function cleanTemplateName(value) {
   const fileName = path.basename(String(value || DEFAULT_TEMPLATE));
@@ -91,9 +98,9 @@ function renderLabels(template, data) {
     .replace(/\n/g, '\r\n');
 }
 
-router.use(authenticate, authorize('SERVER', 'ADMIN'));
+router.use(authenticate);
 
-router.get('/template', async (req, res) => {
+router.get('/template', authorize('SERVER', 'ADMIN'), async (req, res) => {
   try {
     const templateName = cleanTemplateName(req.query.template);
     const templatePath = path.join(TEMPLATE_DIR, templateName);
@@ -105,10 +112,52 @@ router.get('/template', async (req, res) => {
   }
 });
 
-router.post('/prn', async (req, res) => {
+router.get('/print-logs', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  const { from, to, search = '' } = req.query || {};
+  const clauses = [];
+  const params = [];
+
+  if (from) {
+    clauses.push('DATE(created_at) >= ?');
+    params.push(from);
+  }
+  if (to) {
+    clauses.push('DATE(created_at) <= ?');
+    params.push(to);
+  }
+  if (String(search).trim()) {
+    clauses.push('(barcode LIKE ? OR product_name LIKE ? OR template_name LIKE ? OR printer_name LIKE ?)');
+    const value = `%${String(search).trim()}%`;
+    params.push(value, value, value, value);
+  }
+
+  try {
+    const [rows] = await db.query(
+      `SELECT id, barcode, product_name, mrp, sale_price, pkd_date, qty, unit,
+              template_name, sticker_size, printer_name, sticker_count, output_name,
+              output_path, created_by, created_at
+       FROM barcode_print_logs
+       ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+       ORDER BY created_at DESC
+       LIMIT 500`,
+      params
+    );
+    const totals = rows.reduce((acc, row) => ({
+      prints: acc.prints + 1,
+      stickers: acc.stickers + Number(row.sticker_count || 0)
+    }), { prints: 0, stickers: 0 });
+    res.json({ rows, totals });
+  } catch (err) {
+    console.error('Barcode print log report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load barcode sticker print report.' });
+  }
+});
+
+router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     await fs.mkdir(OUTPUT_DIR, { recursive: true });
     const templateName = cleanTemplateName(req.body?.template_name);
+    const templateMeta = TEMPLATE_META[templateName] || { size: templateName, printer: '' };
     const templatePath = path.join(TEMPLATE_DIR, templateName);
     const template = await fs.readFile(templatePath, 'utf8');
     const prn = renderLabels(template, req.body || {});
@@ -117,6 +166,30 @@ router.post('/prn', async (req, res) => {
     const outputPath = path.join(OUTPUT_DIR, outputName);
 
     await fs.writeFile(outputPath, prn, 'utf8');
+    const stickerCount = Math.max(Number.parseInt(req.body?.stickerCount, 10) || 1, 1);
+
+    await db.query(
+      `INSERT INTO barcode_print_logs
+       (barcode, product_name, mrp, sale_price, pkd_date, qty, unit, template_name,
+        sticker_size, printer_name, sticker_count, output_name, output_path, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        tsplText(req.body?.barcode, 120),
+        tsplText(req.body?.product_name, 255).toUpperCase(),
+        Number(req.body?.mrp || 0) || 0,
+        Number(req.body?.sale_price || 0) || 0,
+        tsplText(req.body?.pkd_date, 20),
+        tsplText(req.body?.qty, 20),
+        tsplText(req.body?.unit, 20),
+        templateName,
+        templateMeta.size,
+        templateMeta.printer,
+        stickerCount,
+        outputName,
+        outputPath,
+        req.user?.username || ''
+      ]
+    );
 
     res.json({
       prn,
@@ -124,7 +197,9 @@ router.post('/prn', async (req, res) => {
       template_path: templatePath,
       output_name: outputName,
       output_path: outputPath,
-      sticker_count: Math.max(Number.parseInt(req.body?.stickerCount, 10) || 1, 1)
+      sticker_count: stickerCount,
+      sticker_size: templateMeta.size,
+      printer_name: templateMeta.printer
     });
   } catch (err) {
     console.error('Barcode PRN render failed:', err.message);

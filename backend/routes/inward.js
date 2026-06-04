@@ -30,6 +30,27 @@ function calculateLineReduction(baseAmount, value, type) {
 }
 
 function calculateInwardLine(line, taxType) {
+  if (line.last_amount_input === 'TOTAL' && Number.isFinite(line.total_amount)) {
+    const lineTotal = Number(line.total_amount.toFixed(2));
+    const gstFactor = 1 + (line.gst_percent / 100);
+    const taxable = Number((gstFactor > 0 ? lineTotal / gstFactor : lineTotal).toFixed(2));
+    const gstAmount = Number((lineTotal - taxable).toFixed(2));
+    const cgstAmount = taxType === 'LOCAL' ? Number((gstAmount / 2).toFixed(2)) : 0;
+    const sgstAmount = taxType === 'LOCAL' ? Number((gstAmount / 2).toFixed(2)) : 0;
+    const igstAmount = taxType === 'INTERSTATE' ? gstAmount : 0;
+
+    return {
+      discountAmount: 0,
+      schemeAmount: 0,
+      taxable,
+      gstAmount,
+      cgstAmount,
+      sgstAmount,
+      igstAmount,
+      lineTotal
+    };
+  }
+
   const gross = line.purchase_price * line.quantity;
   const discountAmount = calculateLineReduction(gross, line.discount_value, line.discount_type);
   const schemeAmount = calculateLineReduction(gross - discountAmount, line.scheme_value, line.scheme_type);
@@ -226,7 +247,10 @@ router.post('/', async (req, res) => {
         batch_no: String(line.batch_no || line.batch || '').trim().toUpperCase(),
         expiry_date: normalizeExpiryDate(line.expiry_date || line.expiry),
         free_qty: parseMoney(line.free || line.free_qty),
-        quantity: parseMoney(line.qty || line.quantity)
+        quantity: parseMoney(line.qty || line.quantity),
+        total_amount: parseMoney(line.total_amount),
+        last_amount_input: String(line.last_amount_input || '').toUpperCase(),
+        is_adjustment: Boolean(line.is_adjustment) || /^ADJ-/i.test(String(line.barcode || ''))
       }))
       .filter((line) => line.product_name || line.barcode || line.quantity)
     : [];
@@ -235,7 +259,12 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'At least one inward product line is required.' });
   }
 
-  const invalidLine = validLines.find((line) => !line.product_name || !line.barcode || line.quantity <= 0 || line.purchase_price < 0);
+  const invalidLine = validLines.find((line) => (
+    !line.product_name
+    || !line.barcode
+    || line.quantity <= 0
+    || (!line.is_adjustment && line.purchase_price < 0)
+  ));
   if (invalidLine) {
     return res.status(400).json({ error: 'Every inward line needs product, barcode, quantity, and valid price.' });
   }
@@ -318,62 +347,64 @@ router.post('/', async (req, res) => {
         ]
       );
 
-      await connection.query(
-        `INSERT INTO product_batches
-         (barcode, batch_no, expiry_date, inward_no, purchase_price, mrp, quantity_received, quantity_available)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           inward_no = VALUES(inward_no),
-           purchase_price = VALUES(purchase_price),
-           mrp = VALUES(mrp),
-           quantity_received = quantity_received + VALUES(quantity_received),
-           quantity_available = quantity_available + VALUES(quantity_available)`,
-        [
-          line.barcode,
-          line.batch_no || '',
-          line.expiry_date,
-          finalInwardNo,
-          line.purchase_price,
-          line.mrp,
-          line.quantity + line.free_qty,
-          line.quantity + line.free_qty
-        ]
-      );
-
-      const [existingRows] = await connection.query(
-        `SELECT barcode FROM products WHERE barcode = ? LIMIT 1`,
-        [line.barcode]
-      );
-
-      if (existingRows.length) {
+      if (!line.is_adjustment) {
         await connection.query(
-          `UPDATE products
-           SET stock_qty = stock_qty + ?,
-               product_name = COALESCE(NULLIF(?, ''), product_name),
-               hsn_code = COALESCE(NULLIF(?, ''), hsn_code),
-               gst_percent = ?,
-               purchase_price = ?
-           WHERE barcode = ?`,
-          [line.quantity + line.free_qty, line.product_name, line.hsn_code, line.gst_percent, line.purchase_price, line.barcode]
-        );
-      } else {
-        await connection.query(
-          `INSERT INTO products
-           (product_code, barcode, product_name, hsn_code, gst_percent, mrp, purchase_price, sale_price, wholesale_price, stock_qty)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO product_batches
+           (barcode, batch_no, expiry_date, inward_no, purchase_price, mrp, quantity_received, quantity_available)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             inward_no = VALUES(inward_no),
+             purchase_price = VALUES(purchase_price),
+             mrp = VALUES(mrp),
+             quantity_received = quantity_received + VALUES(quantity_received),
+             quantity_available = quantity_available + VALUES(quantity_available)`,
           [
-            `BDZ${Date.now().toString().slice(-8)}`,
             line.barcode,
-            line.product_name,
-            line.hsn_code,
-            line.gst_percent,
-            line.mrp || line.purchase_price,
+            line.batch_no || '',
+            line.expiry_date,
+            finalInwardNo,
             line.purchase_price,
-            line.purchase_price,
-            line.purchase_price,
+            line.mrp,
+            line.quantity + line.free_qty,
             line.quantity + line.free_qty
           ]
         );
+
+        const [existingRows] = await connection.query(
+          `SELECT barcode FROM products WHERE barcode = ? LIMIT 1`,
+          [line.barcode]
+        );
+
+        if (existingRows.length) {
+          await connection.query(
+            `UPDATE products
+             SET stock_qty = stock_qty + ?,
+                 product_name = COALESCE(NULLIF(?, ''), product_name),
+                 hsn_code = COALESCE(NULLIF(?, ''), hsn_code),
+                 gst_percent = ?,
+                 purchase_price = ?
+             WHERE barcode = ?`,
+            [line.quantity + line.free_qty, line.product_name, line.hsn_code, line.gst_percent, line.purchase_price, line.barcode]
+          );
+        } else {
+          await connection.query(
+            `INSERT INTO products
+             (product_code, barcode, product_name, hsn_code, gst_percent, mrp, purchase_price, sale_price, wholesale_price, stock_qty)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              `BDZ${Date.now().toString().slice(-8)}`,
+              line.barcode,
+              line.product_name,
+              line.hsn_code,
+              line.gst_percent,
+              line.mrp || line.purchase_price,
+              line.purchase_price,
+              line.purchase_price,
+              line.purchase_price,
+              line.quantity + line.free_qty
+            ]
+          );
+        }
       }
     }
 

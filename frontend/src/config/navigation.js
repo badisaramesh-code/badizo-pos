@@ -9,7 +9,7 @@ export const APP_TABS = [
   { key: 'billing', label: 'Billing (POS)', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN, USER_ROLES.COUNTER] },
   { key: 'closing', label: 'Counter Closing', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN, USER_ROLES.COUNTER] },
   { key: 'inventory', label: 'Products', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN, USER_ROLES.COUNTER] },
-  { key: 'barcode', label: 'Barcode', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
+  { key: 'barcode', label: 'Barcode', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN, USER_ROLES.COUNTER] },
   { key: 'inward', label: 'Inward', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'reports', label: 'Reports', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'books', label: 'Ledger Books', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },

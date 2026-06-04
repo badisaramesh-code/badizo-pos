@@ -1,7 +1,9 @@
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
+const { JWT_SECRET } = require('../middleware/auth');
 
 const ALLOWED_SETTINGS = new Set([
   'shop_name',
@@ -17,12 +19,80 @@ const ALLOWED_SETTINGS = new Set([
   'default_print_mode'
 ]);
 
+const VAULT_CATEGORIES = new Set(['BADIZO_PRODUCT', 'STORE_PROTECTED']);
+
+const VAULT_DEFAULTS = {
+  BADIZO_PRODUCT: {
+    1: { title: 'SQL Root Password', username: 'root' },
+    2: { title: 'Database Backup Password', username: '' },
+    3: { title: 'Badizo Software Admin', username: 'badizo' },
+    4: { title: 'Backend Server Login', username: '' },
+    5: { title: 'Remote Support Password', username: '' }
+  },
+  STORE_PROTECTED: {
+    1: { title: 'Store Server Login', username: 'server' },
+    2: { title: 'Store Admin Login', username: 'admin' },
+    3: { title: 'Counter 1 Login', username: 'counter1' },
+    4: { title: 'Counter 2 Login', username: 'counter2' },
+    5: { title: 'Counter 3 Login', username: 'counter3' }
+  }
+};
+
+function normalizeVaultCategory(value) {
+  const category = String(value || 'STORE_PROTECTED').trim().toUpperCase();
+  return VAULT_CATEGORIES.has(category) ? category : 'STORE_PROTECTED';
+}
+
 async function readSettings() {
   const [rows] = await db.query(`SELECT setting_key, setting_value FROM app_settings`);
   return rows.reduce((settings, row) => {
     settings[row.setting_key] = row.setting_value;
     return settings;
   }, {});
+}
+
+function vaultKey() {
+  return crypto
+    .createHash('sha256')
+    .update(String(process.env.PASSWORD_VAULT_KEY || JWT_SECRET || 'badizo-password-vault'))
+    .digest();
+}
+
+function encryptSecret(value) {
+  const text = String(value || '');
+  if (!text) return null;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', vaultKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString('base64')}:${tag.toString('base64')}:${encrypted.toString('base64')}`;
+}
+
+function decryptSecret(payload) {
+  if (!payload) return '';
+  const [ivText, tagText, encryptedText] = String(payload).split(':');
+  if (!ivText || !tagText || !encryptedText) return '';
+  const decipher = crypto.createDecipheriv('aes-256-gcm', vaultKey(), Buffer.from(ivText, 'base64'));
+  decipher.setAuthTag(Buffer.from(tagText, 'base64'));
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(encryptedText, 'base64')),
+    decipher.final()
+  ]);
+  return decrypted.toString('utf8');
+}
+
+function publicVaultSlot(row, slotNo, category = 'STORE_PROTECTED') {
+  const defaults = VAULT_DEFAULTS[category]?.[slotNo] || {};
+  return {
+    category,
+    slot_no: slotNo,
+    title: row?.title || defaults.title || '',
+    username: row?.username || defaults.username || '',
+    notes: row?.notes || '',
+    has_password: Boolean(row?.secret_encrypted),
+    updated_by: row?.updated_by || '',
+    updated_at: row?.updated_at || null
+  };
 }
 
 router.get('/', async (_req, res) => {
@@ -75,6 +145,95 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
   } catch (err) {
     console.error('Settings save failed:', err.message);
     res.status(500).json({ error: 'Unable to save settings.' });
+  }
+});
+
+router.get('/password-vault', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  const category = normalizeVaultCategory(req.query?.category);
+  try {
+    const [rows] = await db.query(
+      `SELECT category, slot_no, title, username, secret_encrypted, notes, updated_by, updated_at
+       FROM password_vault
+       WHERE category = ?
+       ORDER BY slot_no ASC`,
+      [category]
+    );
+    const bySlot = new Map(rows.map((row) => [Number(row.slot_no), row]));
+    const slots = Array.from({ length: 10 }, (_, index) => publicVaultSlot(bySlot.get(index + 1), index + 1, category));
+    res.json({ category, slots });
+  } catch (err) {
+    console.error('Password vault list failed:', err.message);
+    res.status(500).json({ error: 'Unable to load password vault.' });
+  }
+});
+
+router.post('/password-vault/:slotNo', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  const slotNo = Number.parseInt(req.params.slotNo, 10);
+  const category = normalizeVaultCategory(req.body?.category || req.query?.category);
+  if (slotNo < 1 || slotNo > 10) {
+    return res.status(400).json({ error: 'Password slot must be between 1 and 10.' });
+  }
+
+  try {
+    const title = String(req.body?.title || '').trim().slice(0, 120);
+    const username = String(req.body?.username || '').trim().slice(0, 120);
+    const notes = String(req.body?.notes || '').trim().slice(0, 255);
+    const password = String(req.body?.password ?? '');
+    const shouldUpdateSecret = Boolean(req.body?.update_password);
+
+    const values = [category, slotNo, title, username, notes, req.user?.username || ''];
+    let insertSecretSql = 'NULL';
+    let updateSecretSql = '';
+
+    if (shouldUpdateSecret) {
+      insertSecretSql = '?';
+      updateSecretSql = ', secret_encrypted = VALUES(secret_encrypted)';
+      values.splice(4, 0, encryptSecret(password));
+    }
+
+    await db.query(
+      `INSERT INTO password_vault
+       (category, slot_no, title, username, secret_encrypted, notes, updated_by)
+       VALUES (?, ?, ?, ?, ${insertSecretSql}, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         title = VALUES(title),
+         username = VALUES(username),
+         notes = VALUES(notes),
+         updated_by = VALUES(updated_by)
+         ${updateSecretSql}`,
+      values
+    );
+
+    const [rows] = await db.query(
+      `SELECT category, slot_no, title, username, secret_encrypted, notes, updated_by, updated_at
+       FROM password_vault
+       WHERE category = ? AND slot_no = ?
+       LIMIT 1`,
+      [category, slotNo]
+    );
+    res.json(publicVaultSlot(rows[0], slotNo, category));
+  } catch (err) {
+    console.error('Password vault save failed:', err.message);
+    res.status(500).json({ error: 'Unable to save password vault entry.' });
+  }
+});
+
+router.get('/password-vault/:slotNo/reveal', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  const slotNo = Number.parseInt(req.params.slotNo, 10);
+  const category = normalizeVaultCategory(req.query?.category);
+  if (slotNo < 1 || slotNo > 10) {
+    return res.status(400).json({ error: 'Password slot must be between 1 and 10.' });
+  }
+
+  try {
+    const [rows] = await db.query(
+      `SELECT secret_encrypted FROM password_vault WHERE category = ? AND slot_no = ? LIMIT 1`,
+      [category, slotNo]
+    );
+    res.json({ category, slot_no: slotNo, password: decryptSecret(rows[0]?.secret_encrypted || '') });
+  } catch (err) {
+    console.error('Password vault reveal failed:', err.message);
+    res.status(500).json({ error: 'Unable to reveal password.' });
   }
 });
 

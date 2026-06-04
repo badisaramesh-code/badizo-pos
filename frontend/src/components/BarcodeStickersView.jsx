@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { fetchBarcodeTemplate, generateBarcodePrn, searchProducts } from '../api/client';
+import { approveSensitiveBillingMode, fetchBarcodeTemplate, generateBarcodePrn, searchProducts } from '../api/client';
 
 const TEMPLATE_OPTIONS = [
   {
@@ -21,6 +21,25 @@ const TEMPLATE_OPTIONS = [
     help: '65mm printable tail split into price side and shop/address side.'
   }
 ];
+
+const BARCODE_STORE_SETTINGS_KEY = 'badizo_barcode_store_settings';
+const DEFAULT_STORE_SETTINGS = {
+  company: 'hyper fresh mart llp',
+  address_line_1: 'H.NO: 3-41, Behind GV Mall, Morisetti Vari street',
+  address_line_2: 'Sathupally, Khammam(dt), Telangana-507303',
+  customer_care: 'Customer care: 08760 295000 - hyperfreshmart@gmail.com',
+  phone: '08760 295000'
+};
+
+function loadBarcodeStoreSettings() {
+  try {
+    const raw = window.localStorage.getItem(BARCODE_STORE_SETTINGS_KEY);
+    if (!raw) return DEFAULT_STORE_SETTINGS;
+    return { ...DEFAULT_STORE_SETTINGS, ...JSON.parse(raw) };
+  } catch (err) {
+    return DEFAULT_STORE_SETTINGS;
+  }
+}
 
 function todayStickerDate() {
   return new Date().toLocaleDateString('en-GB', {
@@ -49,20 +68,26 @@ function downloadTextFile(text, filename) {
 }
 
 export default function BarcodeStickersView() {
+  const savedStoreSettings = loadBarcodeStoreSettings();
+  const [screenMode, setScreenMode] = useState('print');
   const [templateName, setTemplateName] = useState(TEMPLATE_OPTIONS[0].name);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [setupUnlocked, setSetupUnlocked] = useState(false);
+  const [setupPassword, setSetupPassword] = useState({ username: '', password: '' });
   const [form, setForm] = useState({
-    product_name: 'AASIRWADH FARM AATA',
-    barcode: '01234567890',
-    mrp: '0000.00',
-    sale_price: '0000.00',
+    product_name: '',
+    barcode: '',
+    mrp: '0.00',
+    sale_price: '0.00',
     pkd_date: todayStickerDate(),
-    qty: '000',
-    unit: 'Nos/kg/gms',
-    company: 'hyper fresh mart llp',
-    address_line_1: 'H.NO: 3-41, Behind GV Mall, Morisetti Vari street',
-    address_line_2: 'Sathupally, Khammam(dt), Telangana-507303',
-    customer_care: 'Customer care: 08760 295000 - hyperfreshmart@gmail.com',
-    phone: '08760 295000',
+    qty: '1',
+    unit: 'Nos',
+    company: savedStoreSettings.company,
+    address_line_1: savedStoreSettings.address_line_1,
+    address_line_2: savedStoreSettings.address_line_2,
+    customer_care: savedStoreSettings.customer_care,
+    phone: savedStoreSettings.phone,
     stickerCount: '2'
   });
   const [templateInfo, setTemplateInfo] = useState(null);
@@ -75,8 +100,12 @@ export default function BarcodeStickersView() {
   useEffect(() => {
     setPrn('');
     setOutputInfo(null);
-    loadTemplate();
-  }, [templateName]);
+    if (screenMode === 'setup' && setupUnlocked) {
+      loadTemplate();
+    } else {
+      setTemplateInfo(null);
+    }
+  }, [templateName, screenMode, setupUnlocked]);
 
   async function loadTemplate() {
     try {
@@ -87,14 +116,64 @@ export default function BarcodeStickersView() {
     }
   }
 
+  async function unlockTemplateSetup(event) {
+    event.preventDefault();
+    setErrorMessage('');
+    setStatusMessage('');
+    try {
+      await approveSensitiveBillingMode({
+        username: setupPassword.username,
+        password: setupPassword.password,
+        reason: 'Barcode PRN template setup'
+      });
+      setSetupUnlocked(true);
+      setSetupPassword({ username: '', password: '' });
+      setStatusMessage('PRN Template Setup unlocked.');
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Admin password required for PRN Template Setup.');
+    }
+  }
+
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
-  async function loadProductByCode() {
-    const code = form.barcode.trim();
-    if (!code) {
-      setErrorMessage('Enter barcode or product code first.');
+  function saveStoreSettings() {
+    const settings = {
+      company: form.company,
+      address_line_1: form.address_line_1,
+      address_line_2: form.address_line_2,
+      customer_care: form.customer_care,
+      phone: form.phone
+    };
+    window.localStorage.setItem(BARCODE_STORE_SETTINGS_KEY, JSON.stringify(settings));
+    setStatusMessage('PRN store details saved. Refresh tarvata kuda same details vastayi.');
+    setErrorMessage('');
+  }
+
+  function applyProduct(product) {
+    setForm((current) => ({
+      ...current,
+      product_name: String(product.product_name || '').toUpperCase(),
+      barcode: product.barcode || current.barcode,
+      mrp: moneyTwoDecimals(product.mrp ?? 0),
+      sale_price: moneyTwoDecimals(product.sale_price ?? product.mrp ?? 0),
+      pkd_date: todayStickerDate(),
+      qty: '1',
+      unit: product.unit_type || 'Nos'
+    }));
+    setSearchQuery(product.barcode || product.product_name || '');
+    setSuggestions([]);
+    setPrn('');
+    setOutputInfo(null);
+    setStatusMessage(`${product.product_name} loaded for sticker.`);
+    setErrorMessage('');
+  }
+
+  async function searchAndLoadProduct(query = searchQuery) {
+    const cleaned = String(query || '').trim();
+    if (!cleaned) {
+      setErrorMessage('Scan barcode or type product name first.');
       return;
     }
 
@@ -102,31 +181,37 @@ export default function BarcodeStickersView() {
     setStatusMessage('');
 
     try {
-      const products = await searchProducts(code);
-      const product = products[0];
-      if (!product) {
-        setErrorMessage('Product not found for this barcode/product code.');
+      const products = await searchProducts(cleaned);
+      if (!products.length) {
+        setErrorMessage('Product not found for this barcode/product name.');
         return;
       }
-
-    setForm((current) => ({
-      ...current,
-      product_name: String(product.product_name || current.product_name).toUpperCase(),
-        barcode: product.barcode || current.barcode,
-        mrp: moneyTwoDecimals(product.mrp ?? current.mrp),
-        sale_price: moneyTwoDecimals(product.sale_price ?? current.sale_price),
-        unit: product.unit_type || current.unit,
-        qty: current.qty || '1'
-      }));
-      setStatusMessage(`${product.product_name} loaded for sticker.`);
+      if (products.length === 1) {
+        applyProduct(products[0]);
+        return;
+      }
+      const exact = products.find((product) => (
+        String(product.barcode || '').toUpperCase() === cleaned.toUpperCase()
+        || String(product.product_code || '').toUpperCase() === cleaned.toUpperCase()
+      ));
+      if (exact) {
+        applyProduct(exact);
+        return;
+      }
+      setSuggestions(products.slice(0, 8));
+      setStatusMessage(`${products.length} products found. Select one product.`);
     } catch (err) {
-      setErrorMessage(err.response?.data?.error || 'Unable to load product from barcode/product code.');
+      setErrorMessage(err.response?.data?.error || 'Unable to load product from barcode/product name.');
     }
   }
 
   async function generatePrn() {
     setErrorMessage('');
     setStatusMessage('');
+    if (!form.barcode || !form.product_name) {
+      setErrorMessage('Scan/search a product before printing sticker.');
+      return;
+    }
     try {
       const result = await generateBarcodePrn({
         ...form,
@@ -136,7 +221,7 @@ export default function BarcodeStickersView() {
       });
       setPrn(result.prn || '');
       setOutputInfo(result);
-      setStatusMessage(`PRN generated: ${result.output_name}. Printer: ${selectedTemplate.printer}`);
+      setStatusMessage(`Sticker print file ready and report saved: ${result.output_name}. Printer: ${result.printer_name || selectedTemplate.printer}`);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to generate PRN.');
     }
@@ -145,7 +230,29 @@ export default function BarcodeStickersView() {
   function copyPrn() {
     if (!prn) return;
     window.navigator.clipboard?.writeText(prn);
-    setStatusMessage('PRN copied. Save/send it to the TSC printer.');
+    setStatusMessage('PRN copied.');
+  }
+
+  function openStickerPrint() {
+    setScreenMode('print');
+    setSetupUnlocked(false);
+    setSetupPassword({ username: '', password: '' });
+    setTemplateInfo(null);
+    setPrn('');
+    setOutputInfo(null);
+    setErrorMessage('');
+    setStatusMessage('');
+  }
+
+  function openTemplateSetup() {
+    setScreenMode('setup');
+    setSetupUnlocked(false);
+    setSetupPassword({ username: '', password: '' });
+    setTemplateInfo(null);
+    setPrn('');
+    setOutputInfo(null);
+    setErrorMessage('');
+    setStatusMessage('');
   }
 
   const stickerRows = useMemo(() => {
@@ -156,16 +263,36 @@ export default function BarcodeStickersView() {
       ['sale_price', 'Price'],
       ['pkd_date', 'Packed Date'],
       ['qty', 'Qty'],
-      ['unit', 'Unit'],
-      ['stickerCount', 'Sticker Count']
+      ['unit', 'Unit']
     ];
     return fields;
   }, []);
 
   return (
-    <div className="barcode-grid">
+    <div className="form-stack">
+      <section className="panel barcode-screen-switcher">
+        <div className="panel-body barcode-mode-row">
+          <button
+            className={`segment-button ${screenMode === 'print' ? 'active' : ''}`}
+            type="button"
+            onClick={openStickerPrint}
+          >
+            Sticker Print
+          </button>
+          <button
+            className={`segment-button ${screenMode === 'setup' ? 'active' : ''}`}
+            type="button"
+            onClick={openTemplateSetup}
+          >
+            PRN Template Setup
+          </button>
+        </div>
+      </section>
+
+      {screenMode === 'print' ? (
+      <div className="barcode-grid barcode-print-grid">
       <section className="panel">
-        <div className="panel-header green"><h2 className="panel-title">Barcode Sticker Print</h2></div>
+        <div className="panel-header green"><h2 className="panel-title">Sticker Print</h2></div>
         <div className="panel-body form-stack">
           {errorMessage && <div className="alert-box">{errorMessage}</div>}
           {statusMessage && <div className="change-box">{statusMessage}</div>}
@@ -174,7 +301,7 @@ export default function BarcodeStickersView() {
           )}
 
           <label>
-            <span className="field-label">Sticker Size / PRN Template</span>
+            <span className="field-label">Sticker Size</span>
             <select className="select" value={templateName} onChange={(event) => setTemplateName(event.target.value)}>
               {TEMPLATE_OPTIONS.map((option) => (
                 <option key={option.name} value={option.name}>{option.label}</option>
@@ -186,70 +313,237 @@ export default function BarcodeStickersView() {
             Printer Name: <strong>{selectedTemplate.printer}</strong> | {selectedTemplate.help}
           </div>
 
+          <label>
+            <span className="field-label">Scan Barcode / Search Product Name</span>
+            <input
+              className="field"
+              value={searchQuery}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                setSuggestions([]);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  searchAndLoadProduct();
+                }
+              }}
+              placeholder="Scan barcode or type product name"
+            />
+          </label>
+          <button className="secondary-button" type="button" onClick={() => searchAndLoadProduct()}>Load Product</button>
+
+          {suggestions.length > 0 && (
+            <div className="barcode-product-suggestions">
+              {suggestions.map((product) => (
+                <button key={product.barcode} type="button" onClick={() => applyProduct(product)}>
+                  <span className="mono">{product.barcode}</span>
+                  <strong>{product.product_name}</strong>
+                  <span>{moneyTwoDecimals(product.sale_price)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           {stickerRows.map(([field, label]) => (
             <label key={field}>
               <span className="field-label">{label}</span>
               <input
                 className="field"
                 value={form[field]}
-                onChange={(event) => update(field, event.target.value)}
+                readOnly={!['product_name', 'barcode'].includes(field)}
+                onChange={(event) => {
+                  if (field === 'product_name') {
+                    const value = event.target.value.toUpperCase();
+                    update(field, value);
+                    setSearchQuery(value);
+                    setSuggestions([]);
+                  } else if (field === 'barcode') {
+                    const value = event.target.value.toUpperCase();
+                    update(field, value);
+                    setSearchQuery(value);
+                    setSuggestions([]);
+                  }
+                }}
                 onKeyDown={(event) => {
-                  if (field === 'barcode' && event.key === 'Enter') {
+                  if (event.key === 'Enter' && ['product_name', 'barcode'].includes(field)) {
                     event.preventDefault();
-                    loadProductByCode();
+                    searchAndLoadProduct(form[field]);
                   }
                 }}
               />
             </label>
           ))}
 
-          <button className="secondary-button" type="button" onClick={loadProductByCode}>Load Product From Code</button>
+          <label>
+            <span className="field-label">How many stickers?</span>
+            <input
+              className="field"
+              type="number"
+              min="1"
+              step="1"
+              value={form.stickerCount}
+              onChange={(event) => update('stickerCount', event.target.value)}
+            />
+          </label>
 
           <label>
             <span className="field-label">Store Name</span>
-            <input className="field" value={form.company} onChange={(event) => update('company', event.target.value)} />
+            <input className="field" value={form.company} readOnly />
           </label>
           <label>
             <span className="field-label">Address Line 1</span>
-            <input className="field" value={form.address_line_1} onChange={(event) => update('address_line_1', event.target.value)} />
+            <input className="field" value={form.address_line_1} readOnly />
           </label>
           <label>
             <span className="field-label">Address Line 2</span>
-            <input className="field" value={form.address_line_2} onChange={(event) => update('address_line_2', event.target.value)} />
+            <input className="field" value={form.address_line_2} readOnly />
           </label>
           <label>
             <span className="field-label">Phone Number</span>
-            <input className="field" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
+            <input className="field" value={form.phone} readOnly />
           </label>
           <label>
             <span className="field-label">Customer Care Line</span>
-            <input className="field" value={form.customer_care} onChange={(event) => update('customer_care', event.target.value)} />
+            <input className="field" value={form.customer_care} readOnly />
           </label>
 
-          <button className="primary-button" type="button" onClick={generatePrn}>Generate PRN</button>
-          <button className="secondary-button" type="button" onClick={() => prn && downloadTextFile(prn, outputInfo?.output_name || 'barcode-sticker.prn')} disabled={!prn}>Download PRN</button>
-          <button className="secondary-button" type="button" onClick={copyPrn} disabled={!prn}>Copy PRN</button>
+          <button className="primary-button" type="button" onClick={generatePrn}>Print Stickers</button>
+          <button className="secondary-button" type="button" onClick={() => prn && downloadTextFile(prn, outputInfo?.output_name || 'barcode-sticker.prn')} disabled={!prn}>Download Print File</button>
 
           <div className="change-box">
-            Generate PRN, then send the generated file from barcode/output to the selected TSC printer. Template files stay external in barcode/templates for store-wise adjustment.
+            Scan/search product, enter only sticker count, then print/download the generated file from barcode/output.
           </div>
-
-          {templateInfo && (
-            <div className="change-box barcode-template-path-box">
-              <span>Template file:</span>
-              <strong>{templateInfo.template_path}</strong>
-            </div>
-          )}
         </div>
       </section>
 
       <section className="panel">
-        <div className="panel-header green"><h2 className="panel-title">{selectedTemplate.label} Preview and TSC PRN</h2></div>
+        <div className="panel-header green"><h2 className="panel-title">{selectedTemplate.label} Preview</h2></div>
         <div className="panel-body barcode-preview-wrap">
           <StickerPreview form={form} templateName={templateName} />
-          <pre className="prn-output">{prn || `Click Generate PRN to create TSC command file from barcode/templates/${templateName}`}</pre>
+          <div className="change-box">
+            Output printer: <strong>{selectedTemplate.printer}</strong>. Print history is saved in Reports - Barcode Stickers.
+          </div>
         </div>
       </section>
+    </div>
+      ) : (
+      <div className="barcode-grid">
+        <section className="panel">
+          <div className="panel-header green"><h2 className="panel-title">PRN Template Setup</h2></div>
+          <div className="panel-body form-stack">
+            {errorMessage && <div className="alert-box">{errorMessage}</div>}
+            {statusMessage && <div className="change-box">{statusMessage}</div>}
+
+            {!setupUnlocked ? (
+              <form className="form-stack" onSubmit={unlockTemplateSetup}>
+                <div className="alert-box">
+                  PRN template setup is for admin/server use only. Unlock this screen, create/check the size template, keep the PRN template in the system folder, then close this screen.
+                </div>
+                <label>
+                  <span className="field-label">Admin Username</span>
+                  <input className="field" value={setupPassword.username} onChange={(event) => setSetupPassword((current) => ({ ...current, username: event.target.value }))} autoComplete="username" />
+                </label>
+                <label>
+                  <span className="field-label">Password</span>
+                  <input className="field" type="password" value={setupPassword.password} onChange={(event) => setSetupPassword((current) => ({ ...current, password: event.target.value }))} autoComplete="current-password" />
+                </label>
+                <button className="primary-button" type="submit">Unlock PRN Setup</button>
+              </form>
+            ) : (
+              <>
+                <label>
+                  <span className="field-label">Sticker Size / Template</span>
+                  <select className="select" value={templateName} onChange={(event) => setTemplateName(event.target.value)}>
+                    {TEMPLATE_OPTIONS.map((option) => (
+                      <option key={option.name} value={option.name}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="change-box">
+                  Printer Name: <strong>{selectedTemplate.printer}</strong> | {selectedTemplate.help}
+                </div>
+                <div className="change-box">
+                  Edit these sample values only for PRN template testing. Store sticker print screen will still auto-fill product data.
+                </div>
+                <div className="two-column-form">
+                  {stickerRows.map(([field, label]) => (
+                    <label key={field}>
+                      <span className="field-label">{label}</span>
+                      <input
+                        className="field"
+                        value={form[field]}
+                        onChange={(event) => update(field, field === 'product_name' ? event.target.value.toUpperCase() : event.target.value)}
+                      />
+                    </label>
+                  ))}
+                  <label>
+                    <span className="field-label">How many test stickers?</span>
+                    <input
+                      className="field"
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={form.stickerCount}
+                      onChange={(event) => update('stickerCount', event.target.value)}
+                    />
+                  </label>
+                </div>
+                <div className="two-column-form">
+                  <label>
+                    <span className="field-label">Store Name</span>
+                    <input className="field" value={form.company} onChange={(event) => update('company', event.target.value)} />
+                  </label>
+                  <label>
+                    <span className="field-label">Phone Number</span>
+                    <input className="field" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
+                  </label>
+                  <label>
+                    <span className="field-label">Address Line 1</span>
+                    <input className="field" value={form.address_line_1} onChange={(event) => update('address_line_1', event.target.value)} />
+                  </label>
+                  <label>
+                    <span className="field-label">Address Line 2</span>
+                    <input className="field" value={form.address_line_2} onChange={(event) => update('address_line_2', event.target.value)} />
+                  </label>
+                  <label className="wide-field">
+                    <span className="field-label">Customer Care Line</span>
+                    <input className="field" value={form.customer_care} onChange={(event) => update('customer_care', event.target.value)} />
+                  </label>
+                </div>
+                <button className="primary-button" type="button" onClick={saveStoreSettings}>Save Store Details</button>
+                {templateInfo && (
+                  <div className="change-box barcode-template-path-box">
+                    <span>Template file:</span>
+                    <strong>{templateInfo.template_path}</strong>
+                  </div>
+                )}
+                <button className="secondary-button" type="button" onClick={loadTemplate}>Reload Template</button>
+                <button className="secondary-button" type="button" onClick={generatePrn}>Create Test PRN From Current Product</button>
+                <button className="secondary-button" type="button" onClick={copyPrn} disabled={!prn}>Copy Test PRN</button>
+                <button className="secondary-button" type="button" onClick={() => {
+                  setSetupUnlocked(false);
+                  setTemplateInfo(null);
+                  setPrn('');
+                }}>Close PRN Setup</button>
+              </>
+            )}
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header green"><h2 className="panel-title">{selectedTemplate.label} Template Preview</h2></div>
+          <div className="panel-body barcode-preview-wrap">
+            <StickerPreview form={form} templateName={templateName} />
+            <pre className="prn-output">
+              {setupUnlocked
+                ? (prn || templateInfo?.template || `Template file will load from barcode/templates/${templateName}`)
+                : 'Unlock PRN Template Setup to view template details.'}
+            </pre>
+          </div>
+        </section>
+      </div>
+      )}
     </div>
   );
 }

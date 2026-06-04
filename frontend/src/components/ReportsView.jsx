@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import {
   exportDailySalesReport,
+  fetchBarcodePrintLogs,
   fetchCounterHandoverReport,
   fetchDailySalesReport,
   fetchExchangeBillsReport,
@@ -58,6 +59,7 @@ export default function ReportsView() {
   const [fromDate, setFromDate] = useState(todayIso());
   const [toDate, setToDate] = useState(todayIso());
   const [counter, setCounter] = useState('');
+  const [reportSearch, setReportSearch] = useState('');
   const [dailyReport, setDailyReport] = useState({
     rows: [],
     totals: {
@@ -82,6 +84,7 @@ export default function ReportsView() {
   const [counterHandoverReport, setCounterHandoverReport] = useState({ rows: [], totals: {} });
   const [exceptionReport, setExceptionReport] = useState({ cancelled: [], returns: [] });
   const [exchangeReport, setExchangeReport] = useState({ rows: [], totals: {} });
+  const [barcodePrintReport, setBarcodePrintReport] = useState({ rows: [], totals: {} });
   const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
@@ -92,7 +95,7 @@ export default function ReportsView() {
     setErrorMessage('');
     const { from, to } = getOrderedRange(fromDate, toDate);
     try {
-      const [daily, hsn, monthly, stock, top, tax, gstr1, handover, exceptions, exchange] = await Promise.all([
+      const [daily, hsn, monthly, stock, top, tax, gstr1, handover, exceptions, exchange, barcodePrints] = await Promise.all([
         fetchDailySalesReport({ from, to, counter }),
         fetchGstHsnReport({ from, to }),
         fetchMonthlySalesReport(from.slice(0, 7)),
@@ -102,7 +105,8 @@ export default function ReportsView() {
         fetchGstr1Report({ from, to }),
         fetchCounterHandoverReport({ from, to, counter }),
         fetchExceptionReport({ from, to }),
-        fetchExchangeBillsReport({ from, to, counter })
+        fetchExchangeBillsReport({ from, to, counter }),
+        fetchBarcodePrintLogs({ from, to, search: reportSearch })
       ]);
       setDailyReport(daily);
       setHsnReport(hsn);
@@ -114,6 +118,7 @@ export default function ReportsView() {
       setCounterHandoverReport(handover);
       setExceptionReport(exceptions);
       setExchangeReport(exchange);
+      setBarcodePrintReport(barcodePrints);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to load reports from database.');
     }
@@ -153,6 +158,7 @@ export default function ReportsView() {
     { key: 'gstr1', title: 'GSTR-1 / GST Returns', note: `${(gstr1Report.b2b?.length || 0) + (gstr1Report.b2cl?.length || 0) + (gstr1Report.b2c?.length || 0)} rows` },
     { key: 'handover', title: 'Counter Handover', note: `${counterHandoverReport.totals?.sheets || 0} sheets` },
     { key: 'exchange', title: 'Exchange Bills', note: `${exchangeReport.totals?.billCount || 0} bills` },
+    { key: 'barcodePrints', title: 'Barcode Stickers', note: `${barcodePrintReport.totals?.stickers || 0} stickers` },
     { key: 'returns', title: 'Returns', note: `${exceptionReport.returns.length} returns` },
     { key: 'cancelled', title: 'Cancelled Bills', note: `${exceptionReport.cancelled.length} bills` }
   ];
@@ -231,6 +237,23 @@ export default function ReportsView() {
       Product: row.product_name,
       Qty: Number(row.quantity || 0),
       Total: Number(row.total || 0)
+    })));
+  }
+
+  function exportBarcodePrintsExcel() {
+    exportRows('barcode_sticker_prints', (barcodePrintReport.rows || []).map((row) => ({
+      Date: row.created_at,
+      Barcode: row.barcode,
+      Product: row.product_name,
+      MRP: Number(row.mrp || 0),
+      Price: Number(row.sale_price || 0),
+      'Pkd Date': row.pkd_date || '',
+      Qty: row.qty || '',
+      Unit: row.unit || '',
+      Size: row.sticker_size || row.template_name,
+      Printer: row.printer_name || '',
+      Stickers: Number(row.sticker_count || 0),
+      User: row.created_by || ''
     })));
   }
 
@@ -682,6 +705,54 @@ export default function ReportsView() {
             </div>
           </section>
         );
+      case 'barcodePrints':
+        return (
+          <section className="panel">
+            <ReportHeader title="Barcode Sticker Print Report" onExcel={exportBarcodePrintsExcel} onPdf={exportPdf} />
+            <div className="panel-body form-stack">
+              <section className="report-summary-strip">
+                <span>Print Runs: <strong>{Number(barcodePrintReport.totals?.prints || 0)}</strong></span>
+                <span>Total Stickers: <strong>{Number(barcodePrintReport.totals?.stickers || 0)}</strong></span>
+              </section>
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Date / Time</th>
+                    <th>Barcode</th>
+                    <th>Product</th>
+                    <th>MRP</th>
+                    <th>Price</th>
+                    <th>Pkd Date</th>
+                    <th>Qty</th>
+                    <th>Size</th>
+                    <th>Printer</th>
+                    <th>Stickers</th>
+                    <th>File</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(barcodePrintReport.rows || []).length === 0 ? (
+                    <tr><td colSpan="11">No barcode sticker print history found.</td></tr>
+                  ) : barcodePrintReport.rows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.created_at || '-'}</td>
+                      <td className="mono">{row.barcode || '-'}</td>
+                      <td>{row.product_name || '-'}</td>
+                      <td>{formatMoney(row.mrp)}</td>
+                      <td>{formatMoney(row.sale_price)}</td>
+                      <td>{row.pkd_date || '-'}</td>
+                      <td>{row.qty || '-'} {row.unit || ''}</td>
+                      <td>{row.sticker_size || row.template_name || '-'}</td>
+                      <td>{row.printer_name || '-'}</td>
+                      <td><strong>{Number(row.sticker_count || 0)}</strong></td>
+                      <td>{row.output_name || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        );
       case 'cancelled':
         return (
           <section className="panel">
@@ -766,6 +837,15 @@ export default function ReportsView() {
               <option value="">All Counters</option>
               {counterOptions.map((option) => <option key={option} value={option}>{option}</option>)}
             </select>
+            <label className="date-range-field">
+              <span className="field-label">Search</span>
+              <input
+                className="field"
+                value={reportSearch}
+                onChange={(event) => setReportSearch(event.target.value)}
+                placeholder="Barcode / product / printer"
+              />
+            </label>
             <button className="secondary-button" type="submit">View Result</button>
           </form>
 

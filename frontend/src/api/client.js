@@ -110,6 +110,13 @@ export async function generateBarcodePrn(payload) {
   return data;
 }
 
+export async function fetchBarcodePrintLogs({ from, to, search = '' } = {}) {
+  const { data } = await api.get('/barcode/print-logs', {
+    params: { from, to, search }
+  });
+  return data;
+}
+
 export async function fetchDashboardReport() {
   const { data } = await api.get('/reports/dashboard');
   return data;
@@ -204,6 +211,25 @@ export async function fetchSettings() {
 
 export async function saveSettings(settings) {
   const { data } = await api.post('/settings', settings);
+  return data;
+}
+
+export async function fetchPasswordVault(category = 'STORE_PROTECTED') {
+  const { data } = await api.get('/settings/password-vault', {
+    params: { category }
+  });
+  return data;
+}
+
+export async function savePasswordVaultSlot(slotNo, payload, category = 'STORE_PROTECTED') {
+  const { data } = await api.post(`/settings/password-vault/${slotNo}`, { ...payload, category });
+  return data;
+}
+
+export async function revealPasswordVaultSlot(slotNo, category = 'STORE_PROTECTED') {
+  const { data } = await api.get(`/settings/password-vault/${slotNo}/reveal`, {
+    params: { category }
+  });
   return data;
 }
 

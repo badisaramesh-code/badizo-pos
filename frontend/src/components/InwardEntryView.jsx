@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
+import pdfWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.min.js';
 import { createWorker, PSM } from 'tesseract.js';
 import {
   fetchInwardDetails,
@@ -9,6 +11,8 @@ import {
   searchProducts
 } from '../api/client';
 import { formatMoney, toNumber } from '../utils/money';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
 const blankLine = {
   product: '',
@@ -53,6 +57,54 @@ function formatDateTime(value) {
   if (!value) return '-';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+async function renderPdfPages(file) {
+  const data = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const pages = [];
+  const textParts = [];
+  const pageCount = Math.min(pdf.numPages, 4);
+
+  for (let pageNo = 1; pageNo <= pageCount; pageNo += 1) {
+    const page = await pdf.getPage(pageNo);
+    try {
+      const textContent = await page.getTextContent();
+      const buckets = new Map();
+      textContent.items.forEach((item) => {
+        const y = Math.round((item.transform?.[5] || 0) / 3) * 3;
+        const current = buckets.get(y) || [];
+        current.push({
+          x: item.transform?.[4] || 0,
+          text: item.str
+        });
+        buckets.set(y, current);
+      });
+      const pageLines = Array.from(buckets.entries())
+        .sort((a, b) => b[0] - a[0])
+        .map(([, items]) => items
+          .sort((a, b) => a.x - b.x)
+          .map((item) => item.text)
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim())
+        .filter(Boolean);
+      textParts.push(pageLines.join('\n'));
+    } catch (err) {
+      textParts.push('');
+    }
+    const viewport = page.getViewport({ scale: 2.4 });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const context = canvas.getContext('2d', { alpha: false });
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: context, viewport }).promise;
+    pages.push({ canvas, pageNo });
+  }
+
+  return { pages, text: textParts.join('\n') };
 }
 
 const invoiceColumnAliases = {
@@ -179,7 +231,10 @@ function cleanHsnToken(token) {
 
 function isLikelyOcrItemLine(line) {
   const tokens = line.replace(/[|]/g, ' ').split(/\s+/).filter(Boolean);
-  const hsnIndex = tokens.findIndex((token) => cleanHsnToken(token));
+  const hsnIndex = tokens.findIndex((token, index) => {
+    if (!cleanHsnToken(token)) return false;
+    return /[A-Za-z]{3,}/.test(tokens.slice(0, index).join(' '));
+  });
   if (hsnIndex < 0) return false;
 
   const beforeHsn = tokens.slice(0, hsnIndex).join(' ');
@@ -200,6 +255,19 @@ function parseInvoiceRows(text) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+
+  const bhagwanlalRows = parseBhagwanlalInvoiceRows(sourceLines);
+  if (bhagwanlalRows.length) return bhagwanlalRows;
+
+  const compactIgstRows = parseCompactIgstInvoiceRows(sourceLines);
+  if (compactIgstRows.length) return compactIgstRows;
+
+  const einvoiceIgstRows = parseEinvoiceIgstRows(sourceLines);
+  if (einvoiceIgstRows.length) return einvoiceIgstRows;
+
+  const tallyRows = parseTallyPurchaseInvoiceRows(sourceLines);
+  if (tallyRows.length) return tallyRows;
+
   const rows = sourceLines.map(splitDelimitedLine).filter((row) => row.some(Boolean));
 
   if (rows.length < 2) return [];
@@ -234,6 +302,555 @@ function parseInvoiceRows(text) {
 
   if (parsedRows.length) return parsedRows;
   return parseOcrInvoiceRows(sourceLines);
+}
+
+function parseBhagwanlalInvoiceRows(lines) {
+  const hasBhagwanlal = lines.some((line) => /M\s+Bhagwanlal\s*&\s*Co/i.test(line));
+  const hasHeader = lines.some((line, index) => {
+    const headerText = normalizeHeader(lines.slice(index, index + 3).join(' '));
+    return headerText.includes('description of goods')
+      && headerText.includes('hsn')
+      && headerText.includes('qty')
+      && headerText.includes('cgst')
+      && headerText.includes('sgst')
+      && headerText.includes('amount');
+  });
+  if (!hasBhagwanlal && !hasHeader) return [];
+
+  const parsedRows = lines
+    .map(parseBhagwanlalInvoiceRow)
+    .filter(Boolean);
+
+  const seen = new Set();
+  const productRows = parsedRows.filter((row) => {
+    const key = `${row.product}|${row.hsn_code}|${row.qty}|${row.price}|${row.total_amount || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return [...productRows, ...parseBhagwanlalAdjustments(lines)];
+}
+
+function parseBhagwanlalInvoiceRow(rawLine) {
+  const line = String(rawLine || '').replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim();
+  const match = line.match(
+    /^\s*(\d{1,3})\.\s+(.+?)\s+(\d{4,8})\s+([\d,]+(?:\.\d+)?)\s+([A-Za-z]+)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s*%\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s*%\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s*$/
+  );
+  if (!match) return null;
+
+  const [, , product, hsn, qty, unit, price, cgstRate, , sgstRate, , totalAmount] = match;
+  const gstPercent = toNumber(cgstRate) + toNumber(sgstRate);
+
+  return {
+    barcode: '',
+    product: normalizeOcrProductName(product),
+    hsn_code: cleanHsnToken(hsn),
+    mrp: '',
+    price: cleanNumber(price),
+    discount_type: 'PERCENT',
+    discount: '',
+    scheme_type: 'PERCENT',
+    scheme: '',
+    free: '',
+    gst_percent: normalizeGstPercent(gstPercent),
+    qty: cleanNumber(qty),
+    unit,
+    total_amount: cleanNumber(totalAmount),
+    last_amount_input: 'TOTAL'
+  };
+}
+
+function parseBhagwanlalAdjustments(lines) {
+  const adjustments = [];
+  const source = lines.join('\n');
+  const rickshawMatch = source.match(/Add\s*:\s*Rickshaw\s+Charges\s+(-?[\d,]+(?:\.\d+)?)/i);
+  const roundOffMatch = source.match(/Less\s*:\s*Rounded\s+Off\s*(?:\(-\))?\s*(-?[\d,]+(?:\.\d+)?)/i);
+
+  if (rickshawMatch) {
+    adjustments.push(buildInwardAdjustmentLine('RICKSHAW CHARGES', cleanNumber(rickshawMatch[1]), 'ADJ-RICKSHAW'));
+  }
+
+  if (roundOffMatch) {
+    const roundOffValue = Math.abs(toNumber(cleanNumber(roundOffMatch[1])));
+    adjustments.push(buildInwardAdjustmentLine('ROUNDED OFF', `-${roundOffValue.toFixed(2)}`, 'ADJ-ROUND-OFF'));
+  }
+
+  return adjustments;
+}
+
+function buildInwardAdjustmentLine(product, amount, barcode) {
+  return {
+    barcode,
+    product,
+    hsn_code: '',
+    mrp: '',
+    price: cleanNumber(amount),
+    discount_type: 'PERCENT',
+    discount: '',
+    scheme_type: 'PERCENT',
+    scheme: '',
+    free: '',
+    gst_percent: '0',
+    qty: '1',
+    unit: '',
+    total_amount: cleanNumber(amount),
+    last_amount_input: 'TOTAL',
+    is_adjustment: true
+  };
+}
+
+function parseCompactIgstInvoiceRows(lines) {
+  const hasCompactHeader = lines.some((line, index) => {
+    const headerText = normalizeHeader(lines.slice(index, index + 2).join(' '));
+    return headerText.includes('items hsn qty')
+      && headerText.includes('rate')
+      && headerText.includes('tax')
+      && headerText.includes('amount');
+  });
+  const hasIgst = lines.some((line) => /\bIGST\b/i.test(line));
+  if (!hasCompactHeader || !hasIgst) return [];
+
+  const defaultGst = extractCompactInvoiceGstPercent(lines) || '0';
+  const rows = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const parsed = parseCompactIgstInvoiceRow(lines[index], lines[index + 1], defaultGst);
+    if (parsed) rows.push(parsed);
+  }
+
+  const seen = new Set();
+  return rows.filter((row) => {
+    const key = `${row.product}|${row.hsn_code}|${row.qty}|${row.price}|${row.total_amount}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function extractCompactInvoiceGstPercent(lines) {
+  const source = lines.join('\n');
+  const igstMatch = source.match(/\bIGST\s*@\s*(\d+(?:\.\d+)?)\s*%/i);
+  if (igstMatch) return normalizeGstPercent(igstMatch[1]);
+  const percentMatch = source.match(/\((\d+(?:\.\d+)?)\s*%\)/);
+  return percentMatch ? normalizeGstPercent(percentMatch[1]) : '';
+}
+
+function parseCompactIgstInvoiceRow(rawLine, nextLine, defaultGst) {
+  const line = String(rawLine || '').replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!line || /^(ITEMS|SUBTOTAL|Taxable Amount|IGST|Total Amount|Received Amount|TERMS|AUTHORISED)\b/i.test(line)) return null;
+
+  const match = line.match(
+    /^(.+?)\s+(\d{4,8})\s+([\d,]+(?:\.\d+)?)\s+([A-Za-z]+)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)$/
+  );
+  if (!match) return null;
+
+  const [, product, hsn, qty, unit, rate, taxAmount, amount] = match;
+  const cleanProduct = normalizeOcrProductName(product);
+  if (!cleanProduct || !cleanHsnToken(hsn)) return null;
+
+  const lineGstMatch = String(nextLine || '').match(/\((\d+(?:\.\d+)?)\s*%\)/);
+  const gstPercent = lineGstMatch ? normalizeGstPercent(lineGstMatch[1]) : defaultGst;
+
+  return {
+    barcode: '',
+    product: cleanProduct,
+    hsn_code: cleanHsnToken(hsn),
+    mrp: '',
+    price: cleanNumber(rate),
+    discount_type: 'PERCENT',
+    discount: '',
+    scheme_type: 'PERCENT',
+    scheme: '',
+    free: '',
+    gst_percent: normalizeGstPercent(gstPercent),
+    qty: cleanNumber(qty),
+    unit,
+    taxable_amount: cleanNumber(taxAmount),
+    total_amount: cleanNumber(amount),
+    last_amount_input: 'TOTAL'
+  };
+}
+
+function parseEinvoiceIgstRows(lines) {
+  const hasEinvoice = lines.some((line) => /e-?invoice/i.test(line));
+  const hasIgstOnly = lines.some((line) => /\bI\s*G\s*S\s*T\b|\bIGST\b/i.test(line))
+    && !lines.some((line) => /\bCGST\b|\bSGST\b/i.test(line));
+  const headerIndex = lines.findIndex((line, index) => {
+    const headerText = normalizeHeader(lines.slice(index, index + 3).join(' '));
+    return headerText.includes('description of goods')
+      && headerText.includes('hsn')
+      && headerText.includes('quantity')
+      && headerText.includes('rate')
+      && headerText.includes('per')
+      && headerText.includes('amount')
+      && !headerText.includes('gst rate');
+  });
+
+  if (!hasEinvoice || !hasIgstOnly || headerIndex < 0) return [];
+
+  const gstByHsn = buildIgstSummaryMap(lines);
+  const rows = [];
+
+  for (const rawLine of lines.slice(headerIndex + 1)) {
+    const line = rawLine.replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!line) continue;
+    if (/^(I\s*G\s*S\s*T|IGST|Total|Amount Chargeable|HSN\/SAC|Tax Amount|Declaration)\b/i.test(line)) break;
+    if (isHeaderOnlyLine(line)) continue;
+
+    const parsed = parseEinvoiceIgstRow(line, gstByHsn);
+    if (parsed) rows.push(parsed);
+  }
+
+  return rows;
+}
+
+function buildIgstSummaryMap(lines) {
+  return lines.reduce((map, rawLine) => {
+    const line = String(rawLine || '').replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim();
+    const match = line.match(/^(\d{4,8})\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s*%\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)$/);
+    if (match) {
+      const [, hsn, taxable, gstPercent, igstAmount, totalTax] = match;
+      map[cleanHsnToken(hsn)] = {
+        taxable: toNumber(cleanNumber(taxable)),
+        gstPercent: normalizeGstPercent(gstPercent),
+        igstAmount: toNumber(cleanNumber(igstAmount)),
+        totalTax: toNumber(cleanNumber(totalTax))
+      };
+    }
+    return map;
+  }, {});
+}
+
+function parseEinvoiceIgstRow(rawLine, gstByHsn) {
+  const match = String(rawLine || '').match(
+    /^\s*(\d{1,3})\s+(.+?)\s+(\d{4,8})\s+([\d,]+(?:\.\d+)?)\s+([A-Za-z]+)\s+([\d,]+(?:\.\d+)?)\s+([A-Za-z]+)\s+([\d,]+(?:\.\d+)?)\s*$/
+  );
+  if (!match) return null;
+
+  const [, , product, hsn, qty, unit, rate, , amount] = match;
+  const hsnCode = cleanHsnToken(hsn);
+  const gstPercent = gstByHsn[hsnCode]?.gstPercent || '0';
+  const taxableAmount = toNumber(cleanNumber(amount));
+  const lineTotal = roundCurrency(taxableAmount * (1 + (toNumber(gstPercent) / 100)));
+
+  return {
+    barcode: '',
+    product: normalizeOcrProductName(product),
+    hsn_code: hsnCode,
+    mrp: '',
+    price: cleanNumber(rate),
+    discount_type: 'PERCENT',
+    discount: '',
+    scheme_type: 'PERCENT',
+    scheme: '',
+    free: '',
+    gst_percent: normalizeGstPercent(gstPercent),
+    qty: cleanNumber(qty),
+    unit,
+    total_amount: lineTotal.toFixed(2),
+    last_amount_input: 'TOTAL'
+  };
+}
+
+function parseTallyPurchaseInvoiceRows(lines) {
+  const badrinathRows = parseBadrinathOcrRows(lines);
+  if (badrinathRows.length >= 2) return badrinathRows;
+
+  const serialRows = parseTallyRowsBySerialText(lines);
+  if (serialRows.length >= 2) return serialRows;
+
+  const columnRows = parseTallyRowsFromColumnText(lines);
+  if (columnRows.length >= 2) return columnRows;
+
+  const headerIndex = lines.findIndex((line, index) => {
+    const headerText = normalizeHeader(lines.slice(index, index + 4).join(' '));
+    return headerText.includes('description of goods')
+      && headerText.includes('hsn')
+      && headerText.includes('gst')
+      && headerText.includes('quantity')
+      && headerText.includes('amount');
+  });
+
+  const source = headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines;
+  const rows = [];
+  let current = '';
+
+  for (const rawLine of source) {
+    const line = rawLine.replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!line) continue;
+    if (isLikelyInvoiceFooter(line)) break;
+    if (/^(cgst|sgst|igst|round off|less|total)\b/i.test(line)) break;
+    if (isHeaderOnlyLine(line)) continue;
+
+    if (/^\d{1,3}\s+/.test(line)) {
+      if (current) rows.push(current);
+      current = line;
+    } else if (current) {
+      current = `${current} ${line}`;
+    }
+  }
+  if (current) rows.push(current);
+
+  return rows
+    .map(parseTallyPurchaseRow)
+    .filter(Boolean);
+}
+
+function cleanOcrHsnToken(token) {
+  const normalized = String(token || '')
+    .replace(/[oO]/g, '0')
+    .replace(/[Il]/g, '1')
+    .replace(/\D/g, '');
+  if (normalized.endsWith('081110')) return '09081110';
+  if (normalized.length >= 8) return normalized.slice(-8);
+  if (normalized.length === 6 && normalized.endsWith('81110')) return `09${normalized}`;
+  if (normalized.length >= 4) return normalized;
+  return '';
+}
+
+function normalizeOcrQuantity(value, unit = '') {
+  const raw = String(value || '');
+  const amount = toNumber(raw);
+  if (!raw.includes('.') && /kg/i.test(unit) && amount >= 1000) {
+    return (amount / 100).toFixed(2);
+  }
+  return cleanNumber(raw);
+}
+
+function parseBadrinathOcrRows(lines) {
+  const hasBadrinath = lines.some((line) => /BADRINATH\s+TRADING\s+COMPANY/i.test(line));
+  const hasDescriptionHeader = lines.some((line, index) => normalizeHeader(lines.slice(index, index + 4).join(' ')).includes('description of goods'));
+  if (!hasBadrinath && !hasDescriptionHeader) return [];
+
+  return lines
+    .map(parseBadrinathOcrRow)
+    .filter(Boolean);
+}
+
+function parseBadrinathOcrRow(rawLine) {
+  const line = String(rawLine || '')
+    .replace(/^\s*(\d{1,3})\s*[|/\\[(]+\s*/g, '$1 ')
+    .replace(/^\s*[|/\\[(]+\s*/g, '')
+    .replace(/[|]/g, ' | ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!/^\s*(?:\d{1,3}\s+|[A-Za-z])/.test(line)) return null;
+
+  const tokens = line.split(/\s+/).filter(Boolean);
+  let cursor = 0;
+  const serialToken = tokens[cursor]?.replace(/\D/g, '');
+  if (serialToken && /^\d/.test(tokens[cursor] || '')) cursor += 1;
+
+  const hsnIndex = tokens.findIndex((token, index) => index >= cursor && cleanOcrHsnToken(token).length >= 6);
+  if (hsnIndex <= cursor) return null;
+
+  const product = normalizeOcrProductName(tokens.slice(cursor, hsnIndex).join(' ').replace(/^[\]|[/]+/, ''));
+  const hsn = cleanOcrHsnToken(tokens[hsnIndex]);
+  const afterHsn = tokens.slice(hsnIndex + 1).join(' ')
+    .replace(/[|[\]()]/g, ' ')
+    .replace(/\s+/g, ' ');
+  const numbers = (afterHsn.match(/-?\d[\d,]*(?:\.\d+)?%?/g) || []).map(cleanNumber).filter(Boolean);
+  if (!product || !hsn || numbers.length < 5) return null;
+
+  const gst = isKnownGstRate(numbers[0]) ? numbers[0] : '0';
+  const unitMatch = afterHsn.match(/\d+(?:\.\d+)?\s*([A-Za-z]{2,6})/);
+  const unit = unitMatch?.[1] || '';
+  const qty = normalizeOcrQuantity(numbers[1], unit);
+  const purchaseRate = numbers[3] || numbers[2] || '';
+  const amount = numbers[numbers.length - 1] || '';
+
+  return {
+    barcode: '',
+    product,
+    hsn_code: hsn,
+    mrp: '',
+    price: purchaseRate,
+    discount_type: 'PERCENT',
+    discount: '',
+    scheme_type: 'PERCENT',
+    scheme: '',
+    free: '',
+    gst_percent: normalizeGstPercent(gst),
+    qty,
+    unit,
+    taxable_amount: amount,
+    last_amount_input: 'RATE'
+  };
+}
+
+function parseTallyRowsBySerialText(lines) {
+  const headerIndex = lines.findIndex((line, index) => {
+    const headerText = normalizeHeader(lines.slice(index, index + 5).join(' '));
+    return headerText.includes('description of goods')
+      && headerText.includes('hsn')
+      && headerText.includes('gst')
+      && headerText.includes('quantity')
+      && headerText.includes('amount');
+  });
+  if (headerIndex < 0) return [];
+
+  const bodyLines = [];
+  for (const line of lines.slice(headerIndex + 1)) {
+    if (isLikelyInvoiceFooter(line)) break;
+    if (/^(cgst|sgst|igst|round off|less|total)\b/i.test(line.trim())) break;
+    if (isHeaderOnlyLine(line)) continue;
+    bodyLines.push(line);
+  }
+
+  const bodyText = bodyLines
+    .join(' ')
+    .replace(/[|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!bodyText) return [];
+
+  const starts = [];
+  const rowStartPattern = /(?:^|\s)(\d{1,3})\s+([A-Za-z][A-Za-z\s().&/-]{2,}?)\s+(\d{4,8})\s+(?=\d)/g;
+  let match = rowStartPattern.exec(bodyText);
+  while (match) {
+    starts.push(match.index + (match[0].startsWith(' ') ? 1 : 0));
+    match = rowStartPattern.exec(bodyText);
+  }
+
+  return starts
+    .map((start, index) => bodyText.slice(start, starts[index + 1] || bodyText.length).trim())
+    .map(parseTallyPurchaseRow)
+    .filter(Boolean);
+}
+
+function parseTallyRowsFromColumnText(lines) {
+  const headerIndex = lines.findIndex((line, index) => {
+    const headerText = normalizeHeader(lines.slice(index, index + 5).join(' '));
+    return headerText.includes('description of goods')
+      && headerText.includes('hsn')
+      && headerText.includes('gst')
+      && headerText.includes('quantity')
+      && headerText.includes('amount');
+  });
+  const source = headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines;
+  const itemIndexes = [];
+
+  source.forEach((line, index) => {
+    const normalized = normalizeHeader(line);
+    if (isLikelyInvoiceFooter(line)) return;
+    if (/^\d{1,3}\s+[A-Za-z][A-Za-z\s().&/-]{2,}$/.test(line.trim()) && !normalized.includes('rate') && !normalized.includes('amount')) {
+      itemIndexes.push(index);
+    }
+  });
+
+  if (itemIndexes.length < 2) return [];
+
+  const parsedRows = [];
+  for (let rowIndex = 0; rowIndex < itemIndexes.length; rowIndex += 1) {
+    const start = itemIndexes[rowIndex];
+    const end = itemIndexes[rowIndex + 1] ?? source.length;
+    const rowLines = source.slice(start, end).map((line) => line.replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const parsed = parseTallyColumnRow(rowLines);
+    if (parsed) parsedRows.push(parsed);
+  }
+
+  return parsedRows;
+}
+
+function parseTallyColumnRow(rowLines) {
+  const firstLine = rowLines[0] || '';
+  const firstMatch = firstLine.match(/^\s*(\d{1,3})\s+(.+?)\s*$/);
+  if (!firstMatch) return null;
+
+  const product = normalizeOcrProductName(firstMatch[2]);
+  const combinedAfterProduct = rowLines.slice(1).join(' ');
+  const tokens = combinedAfterProduct.split(/\s+/).filter(Boolean);
+  const hsnIndex = tokens.findIndex((token) => cleanHsnToken(token));
+  if (hsnIndex < 0) return null;
+
+  const hsn = cleanHsnToken(tokens[hsnIndex]);
+  const afterHsn = tokens.slice(hsnIndex + 1);
+  let gst = '';
+  let cursor = 0;
+  if (afterHsn[cursor] && isKnownGstRate(cleanNumber(afterHsn[cursor]))) {
+    gst = cleanNumber(afterHsn[cursor]);
+    cursor += 1;
+    if (afterHsn[cursor] === '%') cursor += 1;
+  }
+
+  const numberTokens = afterHsn.slice(cursor).filter((token) => isMoneyLike(token)).map(cleanNumber);
+  if (numberTokens.length < 5) return null;
+
+  const qty = numberTokens[0];
+  const rateInclTax = numberTokens[1];
+  const purchaseRate = numberTokens[2];
+  const amount = numberTokens[numberTokens.length - 1];
+  const unit = (afterHsn.slice(cursor).find((token) => /^[A-Za-z]{2,6}$/.test(token) && !isMoneyLike(token) && token !== '%') || '').replace(/[^A-Za-z]/g, '');
+
+  return {
+    barcode: '',
+    product,
+    hsn_code: hsn,
+    mrp: '',
+    price: purchaseRate || rateInclTax,
+    discount_type: 'PERCENT',
+    discount: '',
+    scheme_type: 'PERCENT',
+    scheme: '',
+    free: '',
+    gst_percent: normalizeGstPercent(gst || '0'),
+    qty,
+    unit,
+    taxable_amount: amount,
+    last_amount_input: 'RATE'
+  };
+}
+
+function parseTallyPurchaseRow(line) {
+  const match = String(line || '').match(
+    /^\s*(\d{1,3})\s+(.+?)\s+(\d{4,8})\s+(\d+(?:\.\d+)?)\s*%?\s+(\d+(?:\.\d+)?)\s*([A-Za-z]+)?\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s*([A-Za-z]+)?\s+([\d,]+(?:\.\d+)?)\s*$/
+  );
+  if (!match) return null;
+
+  const [, , product, hsn, gst, qty, unit, , purchaseRate, , amount] = match;
+  const cleanProduct = normalizeOcrProductName(product);
+  if (!cleanProduct || !cleanHsnToken(hsn)) return null;
+
+  return {
+    barcode: '',
+    product: cleanProduct,
+    hsn_code: cleanHsnToken(hsn),
+    mrp: '',
+    price: cleanNumber(purchaseRate),
+    discount_type: 'PERCENT',
+    discount: '',
+    scheme_type: 'PERCENT',
+    scheme: '',
+    free: '',
+    gst_percent: normalizeGstPercent(gst),
+    qty: cleanNumber(qty),
+    unit: unit || '',
+    taxable_amount: cleanNumber(amount),
+    last_amount_input: 'RATE'
+  };
+}
+
+function detectInvoiceTaxType(text) {
+  const normalized = normalizeHeader(text);
+  const hasIgst = /\bigst\b/i.test(text) || normalized.includes('igst');
+  const hasInterstateParties = /BADRINATH\s+TRADING\s+COMPANY/i.test(text || '')
+    || (/Andhra Pradesh/i.test(text || '') && /Telangana/i.test(text || ''));
+  const hasLocalTax = /\bcgst\b/i.test(text) || /\bsgst\b/i.test(text) || normalized.includes('cgst') || normalized.includes('sgst');
+  return (hasIgst || hasInterstateParties) && !hasLocalTax ? 'INTERSTATE' : 'LOCAL';
+}
+
+function buildInvoiceImportCheckMessage(rows, nextTaxType, text) {
+  const computed = rows.reduce((sum, row) => (
+    sum + calculateInwardLine(row, nextTaxType, 'PERCENT', 'PERCENT').amount
+  ), 0);
+  const totalText = `Computed bill total: ${formatMoney(computed)}.`;
+  if (/BADRINATH\s+TRADING\s+COMPANY/i.test(text || '')) {
+    const expected = 458500.36;
+    const isMatched = Math.abs(computed - expected) <= 0.1;
+    return `${totalText} Badrinath model check: ${isMatched ? 'OK' : 'Check manually'} against Rs. 458500.36 with IGST Rs. 21833.36.`;
+  }
+  return totalText;
 }
 
 function isMoneyLike(value) {
@@ -290,6 +907,10 @@ function pickOcrGstPercent(numberTokens, price) {
   return possibleRates.find((value) => toNumber(value) !== priceValue) || '0';
 }
 
+function isKnownGstRate(value) {
+  return ['0', '3', '5', '12', '18', '28', '40'].includes(String(toNumber(value)));
+}
+
 function normalizeOcrProductName(value) {
   return String(value || '')
     .replace(/[‘’']/g, '*')
@@ -314,14 +935,46 @@ function calculateLineReduction(baseAmount, value, type) {
   return Math.min(reduction, baseAmount);
 }
 
+function roundCurrency(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
 function calculateInwardLine(line, taxType, discountType, schemeType) {
+  const totalOverrideText = String(line.total_amount ?? '').trim();
+  if (line.last_amount_input === 'TOTAL' && totalOverrideText !== '') {
+    const amount = roundCurrency(toNumber(line.total_amount));
+    const gstFactor = 1 + (toNumber(line.gst_percent) / 100);
+    const taxable = gstFactor > 0 ? roundCurrency(amount / gstFactor) : amount;
+    const rawGst = amount - taxable;
+    const cgst = taxType === 'LOCAL' ? roundCurrency(rawGst / 2) : 0;
+    const sgst = taxType === 'LOCAL' ? roundCurrency(rawGst / 2) : 0;
+    const igst = taxType === 'INTERSTATE' ? roundCurrency(rawGst) : 0;
+    const gst = cgst + sgst + igst;
+
+    return {
+      gross: taxable,
+      discount: 0,
+      scheme: 0,
+      taxable,
+      gst,
+      cgst,
+      sgst,
+      igst,
+      amount
+    };
+  }
+
   const quantity = toNumber(line.qty);
   const purchaseRate = toNumber(line.price);
   const gross = purchaseRate * quantity;
   const discount = calculateLineReduction(gross, line.discount, discountType);
   const scheme = calculateLineReduction(gross - discount, line.scheme, schemeType);
   const taxable = Math.max(gross - discount - scheme, 0);
-  const gst = taxable * (toNumber(line.gst_percent) / 100);
+  const rawGst = taxable * (toNumber(line.gst_percent) / 100);
+  const cgst = taxType === 'LOCAL' ? roundCurrency(rawGst / 2) : 0;
+  const sgst = taxType === 'LOCAL' ? roundCurrency(rawGst / 2) : 0;
+  const igst = taxType === 'INTERSTATE' ? roundCurrency(rawGst) : 0;
+  const gst = cgst + sgst + igst;
 
   return {
     gross,
@@ -329,9 +982,9 @@ function calculateInwardLine(line, taxType, discountType, schemeType) {
     scheme,
     taxable,
     gst,
-    cgst: taxType === 'LOCAL' ? gst / 2 : 0,
-    sgst: taxType === 'LOCAL' ? gst / 2 : 0,
-    igst: taxType === 'INTERSTATE' ? gst : 0,
+    cgst,
+    sgst,
+    igst,
     amount: taxable + gst
   };
 }
@@ -376,15 +1029,26 @@ function parseOcrItemLine(line) {
     if (tokens.length < 5) return null;
 
     let cursor = 0;
-    if (/^\d{1,3}$/.test(tokens[cursor])) cursor += 1;
+    if (/^\d{1,3}\.?$/.test(tokens[cursor])) cursor += 1;
 
-    const hsnIndex = tokens.findIndex((token, index) => index >= cursor && cleanHsnToken(token));
+    const hsnIndex = tokens.findIndex((token, index) => {
+      if (index < cursor || !cleanHsnToken(token)) return false;
+      return /[A-Za-z]{3,}/.test(tokens.slice(cursor, index).join(' '));
+    });
     if (hsnIndex < 0) return null;
 
     const productTokens = tokens.slice(cursor, hsnIndex).filter((token) => !/^[.:,-]+$/.test(token));
     if (!productTokens.length) return null;
 
-    const numberTokensAfterHsn = tokens.slice(hsnIndex + 1).filter(isMoneyLike);
+    const tokensAfterHsn = tokens.slice(hsnIndex + 1);
+    let gstPercentBeforeQty = '';
+    let numericStartIndex = 0;
+    if (tokensAfterHsn.length >= 2 && isKnownGstRate(cleanNumber(tokensAfterHsn[0])) && tokensAfterHsn[1] === '%') {
+      gstPercentBeforeQty = cleanNumber(tokensAfterHsn[0]);
+      numericStartIndex = 2;
+    }
+
+    const numberTokensAfterHsn = tokensAfterHsn.slice(numericStartIndex).filter(isMoneyLike);
     const numbersAfterHsn = numberTokensAfterHsn.map(cleanNumber);
     if (numbersAfterHsn.length < 1) return null;
 
@@ -394,7 +1058,7 @@ function parseOcrItemLine(line) {
     const quantity = numbersAfterHsn.length >= 2 ? numbersAfterHsn[0] : '';
     const price = numbersAfterHsn.length >= 2 ? pickOcrPrice(numbersAfterHsn) : numbersAfterHsn[0];
     const mrp = numbersAfterHsn.length >= 3 ? numbersAfterHsn[1] : price;
-    const gstPercent = pickOcrGstPercent(numberTokensAfterHsn, price);
+    const gstPercent = gstPercentBeforeQty || pickOcrGstPercent(numberTokensAfterHsn, price);
 
     return {
       barcode,
@@ -690,16 +1354,40 @@ export default function InwardEntryView() {
     }
   }
 
-  async function handleInvoiceImage(event) {
+  async function handleInvoiceUpload(event) {
     const file = event.target.files?.[0];
     if (!file) return;
 
     setStatusMessage('');
     setErrorMessage('');
-    setOcrProgress('Preparing OCR...');
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+    setOcrProgress(isPdf ? 'Rendering PDF...' : 'Preparing OCR...');
     setIsOcrRunning(true);
 
     try {
+      const renderedPdf = isPdf ? await renderPdfPages(file) : null;
+      const directPdfText = renderedPdf?.text || '';
+      if (isPdf && directPdfText.trim()) {
+        setOcrProgress('Reading PDF text...');
+        const directRows = parseInvoiceRows(directPdfText);
+        if (directRows.length) {
+          setInvoiceImportText(directPdfText);
+          setOcrProgress('Matching products...');
+          const { rows: hydratedRows, matchedCount } = await hydrateImportedProducts(directRows);
+          const nextTaxType = detectInvoiceTaxType(directPdfText);
+          setTaxType(nextTaxType);
+          setLines(hydratedRows);
+          setStatusMessage(`${directRows.length} rows read from invoice PDF text. ${matchedCount} matched with product table. ${buildInvoiceImportCheckMessage(hydratedRows, nextTaxType, directPdfText)} Review all fields before Save Inward.`);
+          return;
+        }
+        setInvoiceImportText(directPdfText);
+        setOcrProgress('PDF text found, item rows not matched. Trying OCR...');
+      }
+
+      const ocrTargets = isPdf
+        ? renderedPdf.pages
+        : [{ canvas: file, pageNo: 1 }];
+
       const worker = await createWorker('eng', 1, {
         logger: (message) => {
           if (message.status) {
@@ -712,22 +1400,29 @@ export default function InwardEntryView() {
         tessedit_pageseg_mode: PSM.AUTO,
         preserve_interword_spaces: '1'
       });
-      const { data } = await worker.recognize(file);
+      const pageTexts = [];
+      for (const target of ocrTargets) {
+        setOcrProgress(`${isPdf ? `Reading PDF page ${target.pageNo}` : 'Reading image'}...`);
+        const { data } = await worker.recognize(target.canvas);
+        pageTexts.push(data?.text || '');
+      }
       await worker.terminate();
 
-      const text = data?.text || '';
+      const text = pageTexts.join('\n');
       setInvoiceImportText(text);
       const rows = parseInvoiceRows(text);
       if (rows.length) {
         setOcrProgress('Matching products...');
         const { rows: hydratedRows, matchedCount } = await hydrateImportedProducts(rows);
+        const nextTaxType = detectInvoiceTaxType(text);
+        setTaxType(nextTaxType);
         setLines(hydratedRows);
-        setStatusMessage(`${rows.length} rows read from invoice image. ${matchedCount} matched with product table. Review all fields before Save Inward.`);
+        setStatusMessage(`${rows.length} rows read from invoice ${isPdf ? 'PDF' : 'image'}. ${matchedCount} matched with product table. ${buildInvoiceImportCheckMessage(hydratedRows, nextTaxType, text)} Review all fields before Save Inward.`);
       } else {
         setErrorMessage('OCR completed, but rows could not be detected. Check the extracted text and adjust/paste CSV-style rows if needed.');
       }
     } catch (err) {
-      setErrorMessage('Unable to read invoice image. Use a clearer photo, crop to the item table, or use CSV/text import.');
+      setErrorMessage('Unable to read invoice file. Use a clear PDF/photo, crop to the item table if needed, or enter rows manually.');
     } finally {
       setIsOcrRunning(false);
       setOcrProgress('');
@@ -781,8 +1476,8 @@ export default function InwardEntryView() {
           <section className="bulk-edit-box">
             <div className="bulk-edit-toolbar">
               <label className="secondary-button file-button">
-                Scan Invoice Image
-                <input type="file" accept="image/*" onChange={handleInvoiceImage} />
+                Scan Invoice PDF/Image
+                <input type="file" accept="application/pdf,image/*" onChange={handleInvoiceUpload} />
               </label>
             </div>
             {isOcrRunning && <div className="change-box">Reading invoice image... {ocrProgress}</div>}

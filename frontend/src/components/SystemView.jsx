@@ -1,5 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { downloadBackup, fetchAuditLogs, fetchBackups, fetchSettings, fetchUsers, restoreBackup, runBackup, saveSettings, saveUser } from '../api/client';
+import {
+  approveSensitiveBillingMode,
+  downloadBackup,
+  fetchAuditLogs,
+  fetchBackups,
+  fetchPasswordVault,
+  fetchSettings,
+  fetchUsers,
+  restoreBackup,
+  revealPasswordVaultSlot,
+  runBackup,
+  savePasswordVaultSlot,
+  saveSettings,
+  saveUser
+} from '../api/client';
 
 const emptyUserForm = {
   id: null,
@@ -9,6 +23,19 @@ const emptyUserForm = {
   counter_no: 1,
   is_active: true
 };
+
+const PASSWORD_VAULT_FOLDERS = [
+  {
+    key: 'BADIZO_PRODUCT',
+    label: 'Badizo Product Passwords',
+    note: 'Software product, SQL/root, backend, support and designer-side passwords.'
+  },
+  {
+    key: 'STORE_PROTECTED',
+    label: 'Store Protected Passwords',
+    note: 'Server/admin/counter operating passwords given to store.'
+  }
+];
 
 export default function SystemView() {
   const [settings, setSettings] = useState({
@@ -31,6 +58,11 @@ export default function SystemView() {
   const [users, setUsers] = useState([]);
   const [userForm, setUserForm] = useState(emptyUserForm);
   const [isBackingUp, setIsBackingUp] = useState(false);
+  const [setupUnlocked, setSetupUnlocked] = useState(false);
+  const [setupPassword, setSetupPassword] = useState({ username: '', password: '' });
+  const [passwordVaultFolder, setPasswordVaultFolder] = useState('BADIZO_PRODUCT');
+  const [passwordVault, setPasswordVault] = useState([]);
+  const [visiblePasswords, setVisiblePasswords] = useState({});
 
   useEffect(() => {
     loadSettings();
@@ -105,6 +137,84 @@ export default function SystemView() {
       setStatusMessage('Settings saved. Restart or refresh counters to apply the new counter list.');
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save settings.');
+    }
+  }
+
+  async function unlockSetupFolder(event) {
+    event.preventDefault();
+    setStatusMessage('');
+    setErrorMessage('');
+    try {
+      await approveSensitiveBillingMode({
+        username: setupPassword.username,
+        password: setupPassword.password,
+        reason: 'Open password protected store setup folder'
+      });
+      setSetupUnlocked(true);
+      setSetupPassword({ username: '', password: '' });
+      setStatusMessage('Password protected setup folder opened.');
+      await loadPasswordVault();
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Admin password required to open setup folder.');
+    }
+  }
+
+  async function loadPasswordVault(category = passwordVaultFolder) {
+    try {
+      const result = await fetchPasswordVault(category);
+      const slots = result.slots || [];
+      setPasswordVault(slots);
+      setVisiblePasswords(slots.reduce((acc, slot) => (
+        slot.has_password ? { ...acc, [slot.slot_no]: '********' } : acc
+      ), {}));
+    } catch (err) {
+      setPasswordVault([]);
+    }
+  }
+
+  async function changePasswordVaultFolder(category) {
+    setPasswordVaultFolder(category);
+    if (setupUnlocked) {
+      await loadPasswordVault(category);
+    }
+  }
+
+  function updateVaultSlot(slotNo, field, value) {
+    setPasswordVault((current) => current.map((slot) => (
+      Number(slot.slot_no) === Number(slotNo) ? { ...slot, [field]: value } : slot
+    )));
+  }
+
+  async function saveVaultSlot(slot) {
+    setStatusMessage('');
+    setErrorMessage('');
+    try {
+      const password = slot.password_input || '';
+      const saved = await savePasswordVaultSlot(slot.slot_no, {
+        title: slot.title,
+        username: slot.username,
+        notes: slot.notes,
+        password,
+        update_password: Boolean(password)
+      }, passwordVaultFolder);
+      setPasswordVault((current) => current.map((item) => (
+        Number(item.slot_no) === Number(slot.slot_no) ? { ...saved, password_input: '' } : item
+      )));
+      setVisiblePasswords((current) => ({ ...current, [slot.slot_no]: saved.has_password ? '********' : undefined }));
+      setStatusMessage(`Password slot ${slot.slot_no} saved.`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to save password slot.');
+    }
+  }
+
+  async function revealVaultPassword(slotNo) {
+    setStatusMessage('');
+    setErrorMessage('');
+    try {
+      const result = await revealPasswordVaultSlot(slotNo, passwordVaultFolder);
+      setVisiblePasswords((current) => ({ ...current, [slotNo]: result.password || '' }));
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to view password.');
     }
   }
 
@@ -192,12 +302,29 @@ export default function SystemView() {
       </section>
 
       <section className="system-grid">
-        <div className="panel">
-          <div className="panel-header green"><h2 className="panel-title">System Settings</h2></div>
+        <div className={`panel ${setupUnlocked ? 'setup-folder-panel' : ''}`}>
+          <div className="panel-header green"><h2 className="panel-title">Password Protected Store Setup Folder</h2></div>
           <div className="panel-body form-stack">
             {errorMessage && <div className="alert-box">{errorMessage}</div>}
             {statusMessage && <div className="change-box">{statusMessage}</div>}
 
+            {!setupUnlocked ? (
+              <form className="form-stack" onSubmit={unlockSetupFolder}>
+                <div className="alert-box">
+                  Store name, POS/A4 bill heading, bank details, counter closing sheet heading, counters and user passwords are protected here.
+                </div>
+                <label>
+                  <span className="field-label">Admin Username</span>
+                  <input className="field" value={setupPassword.username} onChange={(event) => setSetupPassword((current) => ({ ...current, username: event.target.value }))} autoComplete="username" />
+                </label>
+                <label>
+                  <span className="field-label">Password</span>
+                  <input className="field" type="password" value={setupPassword.password} onChange={(event) => setSetupPassword((current) => ({ ...current, password: event.target.value }))} autoComplete="current-password" />
+                </label>
+                <button className="primary-button" type="submit">Open Setup Folder</button>
+              </form>
+            ) : (
+            <>
             <div className="settings-section">
               <div className="settings-section-title">Store Details</div>
               <label><span className="field-label">Shop Name</span><input className="field" value={settings.shop_name || ''} onChange={(event) => updateSetting('shop_name', event.target.value)} /></label>
@@ -244,9 +371,102 @@ export default function SystemView() {
               </label>
             </div>
             <button className="primary-button" onClick={handleSave}>Save Settings</button>
+            <button className="secondary-button" type="button" onClick={() => setSetupUnlocked(false)}>Close Setup Folder</button>
+
+            <div className="settings-section">
+              <div className="settings-section-title">Password Protected Files</div>
+              <div className="alert-box">
+                Badizo product passwords and store operating passwords are stored separately. Password value is shown only after pressing View.
+              </div>
+              <div className="password-folder-tabs">
+                {PASSWORD_VAULT_FOLDERS.map((folder) => (
+                  <button
+                    key={folder.key}
+                    className={`password-folder-tab ${passwordVaultFolder === folder.key ? 'active' : ''}`}
+                    type="button"
+                    onClick={() => changePasswordVaultFolder(folder.key)}
+                  >
+                    <strong>{folder.label}</strong>
+                    <span>{folder.note}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="change-box">
+                Current file: <strong>{PASSWORD_VAULT_FOLDERS.find((folder) => folder.key === passwordVaultFolder)?.label}</strong> - 10 password slots.
+              </div>
+              <div className="table-scroll">
+                <table className="history-table password-vault-table">
+                  <thead>
+                    <tr>
+                      <th>No</th>
+                      <th>Detail</th>
+                      <th>User / Login</th>
+                      <th>Password</th>
+                      <th>New Password</th>
+                      <th>Notes</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {passwordVault.length === 0 ? (
+                      <tr><td colSpan="7">Open setup folder to load password vault.</td></tr>
+                    ) : passwordVault.map((slot) => (
+                      <tr key={slot.slot_no}>
+                        <td>{slot.slot_no}</td>
+                        <td>
+                          <input
+                            className="field"
+                            value={slot.title || ''}
+                            onChange={(event) => updateVaultSlot(slot.slot_no, 'title', event.target.value)}
+                            placeholder={slot.slot_no === 1 ? 'SQL Root Password' : 'Password detail'}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className="field"
+                            value={slot.username || ''}
+                            onChange={(event) => updateVaultSlot(slot.slot_no, 'username', event.target.value)}
+                            placeholder={slot.slot_no === 1 ? 'root' : 'Username'}
+                          />
+                        </td>
+                        <td className="password-vault-secret">
+                          <span className="mono">
+                            {visiblePasswords[slot.slot_no] !== undefined
+                              ? (visiblePasswords[slot.slot_no] || '(empty)')
+                              : (slot.has_password ? '••••••••' : 'Not saved')}
+                          </span>
+                          <button className="secondary-button" type="button" onClick={() => revealVaultPassword(slot.slot_no)} disabled={!slot.has_password}>View</button>
+                        </td>
+                        <td>
+                          <input
+                            className="field"
+                            type="password"
+                            value={slot.password_input || ''}
+                            onChange={(event) => updateVaultSlot(slot.slot_no, 'password_input', event.target.value)}
+                            placeholder="Enter to change"
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className="field"
+                            value={slot.notes || ''}
+                            onChange={(event) => updateVaultSlot(slot.slot_no, 'notes', event.target.value)}
+                            placeholder="Where used"
+                          />
+                        </td>
+                        <td><button className="primary-button compact-primary" type="button" onClick={() => saveVaultSlot(slot)}>Save</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            </>
+            )}
           </div>
         </div>
 
+        {setupUnlocked && (
         <div className="panel">
           <div className="panel-header green"><h2 className="panel-title">User Management</h2></div>
           <div className="panel-body form-stack">
@@ -310,6 +530,7 @@ export default function SystemView() {
             </table>
           </div>
         </div>
+        )}
 
         <div className="panel">
           <div className="panel-header green">

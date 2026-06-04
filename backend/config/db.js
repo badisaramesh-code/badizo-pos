@@ -154,6 +154,47 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
 
     await connection.query(`
+      CREATE TABLE IF NOT EXISTS barcode_print_logs (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        barcode VARCHAR(120) NOT NULL,
+        product_name VARCHAR(255) NOT NULL,
+        mrp DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        sale_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        pkd_date VARCHAR(20) DEFAULT '',
+        qty VARCHAR(20) DEFAULT '',
+        unit VARCHAR(20) DEFAULT '',
+        template_name VARCHAR(120) NOT NULL,
+        sticker_size VARCHAR(80) DEFAULT '',
+        printer_name VARCHAR(120) DEFAULT '',
+        sticker_count INT NOT NULL DEFAULT 1,
+        output_name VARCHAR(255) DEFAULT '',
+        output_path VARCHAR(500) DEFAULT '',
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_barcode_print_created_at (created_at),
+        INDEX idx_barcode_print_barcode (barcode),
+        INDEX idx_barcode_print_product (product_name)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS password_vault (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        category VARCHAR(40) NOT NULL DEFAULT 'STORE_PROTECTED',
+        slot_no TINYINT NOT NULL UNIQUE,
+        title VARCHAR(120) NOT NULL DEFAULT '',
+        username VARCHAR(120) DEFAULT '',
+        secret_encrypted TEXT DEFAULT NULL,
+        notes VARCHAR(255) DEFAULT '',
+        updated_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_password_vault_slot (slot_no),
+        INDEX idx_password_vault_category (category)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
       CREATE TABLE IF NOT EXISTS invoice_item_batches (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         invoice_item_id BIGINT NOT NULL,
@@ -560,6 +601,32 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'held_bills', 'bill_total', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER customer_phone');
     await ensureColumn(connection, 'held_bills', 'item_count', 'INT NOT NULL DEFAULT 0 AFTER bill_total');
     await ensureColumn(connection, 'held_bills', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at');
+    await ensureColumn(connection, 'password_vault', 'category', "VARCHAR(40) NOT NULL DEFAULT 'STORE_PROTECTED' AFTER id");
+    await connection.query("UPDATE password_vault SET category = 'STORE_PROTECTED' WHERE category IS NULL OR category = ''");
+    const [passwordVaultIndexes] = await connection.query(
+      `SELECT INDEX_NAME
+       FROM INFORMATION_SCHEMA.STATISTICS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'password_vault'
+         AND NON_UNIQUE = 0
+         AND INDEX_NAME <> 'PRIMARY'
+       GROUP BY INDEX_NAME
+       HAVING GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) = 'slot_no'`
+    );
+    for (const row of passwordVaultIndexes) {
+      await connection.query(`ALTER TABLE password_vault DROP INDEX ${row.INDEX_NAME}`);
+    }
+    const [passwordVaultCategoryIndex] = await connection.query(
+      `SELECT INDEX_NAME
+       FROM INFORMATION_SCHEMA.STATISTICS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'password_vault'
+         AND INDEX_NAME = 'uniq_password_vault_category_slot'
+       LIMIT 1`
+    );
+    if (passwordVaultCategoryIndex.length === 0) {
+      await connection.query('ALTER TABLE password_vault ADD UNIQUE KEY uniq_password_vault_category_slot (category, slot_no)');
+    }
     await ensureColumn(connection, 'users', 'password_hash', 'VARCHAR(255) NOT NULL AFTER username');
     await ensureColumn(connection, 'users', 'role', "ENUM('SERVER', 'ADMIN', 'COUNTER') NOT NULL DEFAULT 'COUNTER' AFTER password_hash");
     await ensureColumn(connection, 'users', 'counter_no', 'INT DEFAULT NULL AFTER role');
