@@ -13,7 +13,8 @@ function inwardNo() {
     String(now.getDate()).padStart(2, '0'),
     String(now.getHours()).padStart(2, '0'),
     String(now.getMinutes()).padStart(2, '0'),
-    String(now.getSeconds()).padStart(2, '0')
+    String(now.getSeconds()).padStart(2, '0'),
+    String(now.getMilliseconds()).padStart(3, '0')
   ].join('');
   return `INW-${stamp}`;
 }
@@ -38,10 +39,12 @@ function calculateInwardLine(line, taxType) {
     const cgstAmount = taxType === 'LOCAL' ? Number((gstAmount / 2).toFixed(2)) : 0;
     const sgstAmount = taxType === 'LOCAL' ? Number((gstAmount / 2).toFixed(2)) : 0;
     const igstAmount = taxType === 'INTERSTATE' ? gstAmount : 0;
+    const discountAmount = line.discount_type === 'VALUE' ? parseMoney(line.discount_value) : 0;
+    const schemeAmount = line.scheme_type === 'VALUE' ? parseMoney(line.scheme_value) : 0;
 
     return {
-      discountAmount: 0,
-      schemeAmount: 0,
+      discountAmount,
+      schemeAmount,
       taxable,
       gstAmount,
       cgstAmount,
@@ -85,6 +88,29 @@ function normalizeExpiryDate(value) {
   return date.toISOString().slice(0, 10);
 }
 
+function normalizeStockConversionFactor(value) {
+  const factor = parseMoney(value);
+  return factor > 0 ? factor : 1;
+}
+
+function generatedBarcodeForInwardLine(line) {
+  const source = `${line.product_name || ''}|${line.hsn_code || ''}`;
+  let hash = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash << 5) - hash) + source.charCodeAt(index);
+    hash |= 0;
+  }
+  return `INV-${Math.abs(hash).toString(36).toUpperCase().padStart(6, '0')}`;
+}
+
+function pendingBarcodeForDraftLine(line) {
+  return generatedBarcodeForInwardLine(line).replace(/^INV-/, 'PENDING-');
+}
+
+function isInternalBarcode(value) {
+  return /^(INV|PENDING)-/i.test(String(value || ''));
+}
+
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
 router.get('/recent', async (_req, res) => {
@@ -92,7 +118,7 @@ router.get('/recent', async (_req, res) => {
     const [rows] = await db.query(
       `SELECT id, inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date, payment_mode,
               item_count, total_qty, taxable_total, gst_total, total_cgst, total_sgst, total_igst,
-              grand_total, tax_type, created_by, created_at
+              grand_total, tax_type, posting_status, created_by, created_at
        FROM inward_entries
        ORDER BY created_at DESC
        LIMIT 25`
@@ -130,7 +156,7 @@ router.get('/history', async (req, res) => {
     const [rows] = await db.query(
       `SELECT id, inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date, payment_mode,
               item_count, total_qty, taxable_total, gst_total, total_cgst, total_sgst, total_igst,
-              grand_total, tax_type, created_by, created_at
+              grand_total, tax_type, posting_status, created_by, created_at
        FROM inward_entries
        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
        ORDER BY id DESC
@@ -144,6 +170,46 @@ router.get('/history', async (req, res) => {
   }
 });
 
+router.get('/suppliers/search', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+
+  if (q.length < 3) {
+    return res.json([]);
+  }
+
+  const like = `%${q}%`;
+
+  try {
+    const [rows] = await db.query(
+      `SELECT e.supplier_name, e.supplier_address, e.supplier_gstin, e.supplier_phone,
+              e.supplier_invoice_no, e.supplier_invoice_date, e.created_at
+       FROM inward_entries e
+       INNER JOIN (
+         SELECT MAX(id) AS id
+         FROM inward_entries
+         WHERE supplier_name LIKE ? OR supplier_gstin LIKE ? OR supplier_phone LIKE ?
+         GROUP BY UPPER(TRIM(supplier_name)), UPPER(TRIM(COALESCE(supplier_gstin, '')))
+       ) latest ON latest.id = e.id
+       ORDER BY e.id DESC
+       LIMIT 12`,
+      [like, like, like]
+    );
+
+    res.json(rows.map((row) => ({
+      name: row.supplier_name || '',
+      address: row.supplier_address || '',
+      gstin: row.supplier_gstin || '',
+      phone: row.supplier_phone || '',
+      last_invoice_no: row.supplier_invoice_no || '',
+      last_invoice_date: row.supplier_invoice_date || '',
+      last_used_at: row.created_at || ''
+    })));
+  } catch (err) {
+    console.error('Supplier lookup failed:', err.message);
+    res.status(500).json({ error: 'Unable to search old suppliers.' });
+  }
+});
+
 router.get('/by-number/:inwardNo/details', async (req, res) => {
   const inwardNo = String(req.params.inwardNo || '').trim();
   if (!inwardNo) {
@@ -154,7 +220,7 @@ router.get('/by-number/:inwardNo/details', async (req, res) => {
     const [entryRows] = await db.query(
       `SELECT id, inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
               supplier_invoice_no, supplier_invoice_date, payment_mode, item_count, total_qty, taxable_total,
-              gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, created_by, created_at
+              gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, posting_status, created_by, created_at
        FROM inward_entries
        WHERE inward_no = ?
        LIMIT 1`,
@@ -193,7 +259,7 @@ router.get('/:id/details', async (req, res) => {
     const [entryRows] = await db.query(
       `SELECT id, inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
               supplier_invoice_no, supplier_invoice_date, payment_mode, item_count, total_qty, taxable_total,
-              gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, created_by, created_at
+              gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, posting_status, created_by, created_at
        FROM inward_entries
        WHERE id = ?
        LIMIT 1`,
@@ -226,6 +292,7 @@ router.post('/', async (req, res) => {
   const { supplier = {}, lines = [] } = req.body || {};
   const taxType = req.body?.tax_type === 'INTERSTATE' ? 'INTERSTATE' : 'LOCAL';
   const paymentMode = normalizePaymentMode(req.body?.payment_mode || supplier.payment_mode);
+  const isDraft = req.body?.posting_status === 'DRAFT' || req.body?.is_draft === true;
 
   if (!supplier.name || !String(supplier.name).trim()) {
     return res.status(400).json({ error: 'Supplier name is required.' });
@@ -233,25 +300,32 @@ router.post('/', async (req, res) => {
 
   const validLines = Array.isArray(lines)
     ? lines
-      .map((line) => ({
-        product_name: normalizeProductName(line.product || line.product_name),
-        barcode: String(line.barcode || '').trim().toUpperCase(),
-        hsn_code: String(line.hsn_code || '').trim(),
-        gst_percent: parseMoney(line.gst_percent),
-        mrp: parseMoney(line.mrp),
-        purchase_price: parseMoney(line.price || line.purchase_price),
-        discount_type: normalizeDiscountType(line.discount_type),
-        discount_value: parseMoney(line.discount),
-        scheme_type: normalizeDiscountType(line.scheme_type),
-        scheme_value: parseMoney(line.scheme),
-        batch_no: String(line.batch_no || line.batch || '').trim().toUpperCase(),
-        expiry_date: normalizeExpiryDate(line.expiry_date || line.expiry),
-        free_qty: parseMoney(line.free || line.free_qty),
-        quantity: parseMoney(line.qty || line.quantity),
-        total_amount: parseMoney(line.total_amount),
-        last_amount_input: String(line.last_amount_input || '').toUpperCase(),
-        is_adjustment: Boolean(line.is_adjustment) || /^ADJ-/i.test(String(line.barcode || ''))
-      }))
+      .map((line) => {
+        const normalized = {
+          product_name: normalizeProductName(line.product || line.product_name),
+          barcode: String(line.barcode || '').trim().toUpperCase(),
+          hsn_code: String(line.hsn_code || '').trim(),
+          gst_percent: parseMoney(line.gst_percent),
+          mrp: parseMoney(line.mrp),
+          purchase_price: parseMoney(line.price || line.purchase_price),
+          discount_type: normalizeDiscountType(line.discount_type),
+          discount_value: parseMoney(line.discount),
+          scheme_type: normalizeDiscountType(line.scheme_type),
+          scheme_value: parseMoney(line.scheme),
+          batch_no: String(line.batch_no || line.batch || '').trim().toUpperCase(),
+          expiry_date: normalizeExpiryDate(line.expiry_date || line.expiry),
+          free_qty: parseMoney(line.free || line.free_qty),
+          quantity: parseMoney(line.qty || line.quantity),
+          stock_conversion_factor: normalizeStockConversionFactor(line.stock_conversion_factor || line.purchase_unit_size),
+          total_amount: parseMoney(line.total_amount),
+          last_amount_input: String(line.last_amount_input || '').toUpperCase(),
+          is_adjustment: Boolean(line.is_adjustment) || /^ADJ-/i.test(String(line.barcode || ''))
+        };
+        if (!normalized.barcode && normalized.product_name && !normalized.is_adjustment && isDraft) {
+          normalized.barcode = pendingBarcodeForDraftLine(normalized);
+        }
+        return normalized;
+      })
       .filter((line) => line.product_name || line.barcode || line.quantity)
     : [];
 
@@ -262,11 +336,12 @@ router.post('/', async (req, res) => {
   const invalidLine = validLines.find((line) => (
     !line.product_name
     || !line.barcode
+    || (!isDraft && !line.is_adjustment && isInternalBarcode(line.barcode))
     || line.quantity <= 0
     || (!line.is_adjustment && line.purchase_price < 0)
   ));
   if (invalidLine) {
-    return res.status(400).json({ error: 'Every inward line needs product, barcode, quantity, and valid price.' });
+    return res.status(400).json({ error: isDraft ? 'Every draft line needs product and quantity.' : 'Before posting inward, every product line needs mapped real barcode, quantity, and valid price.' });
   }
 
   const connection = await db.getConnection();
@@ -286,8 +361,8 @@ router.post('/', async (req, res) => {
       `INSERT INTO inward_entries
        (inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
         supplier_invoice_no, supplier_invoice_date, payment_mode, item_count, total_qty, taxable_total,
-        gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, ?, ?)`,
+        gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, posting_status, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, ?, ?, ?)`,
       [
         finalInwardNo,
         String(supplier.name || '').trim(),
@@ -298,14 +373,17 @@ router.post('/', async (req, res) => {
         supplier.invoice_date || null,
         paymentMode,
         taxType,
+        isDraft ? 'DRAFT' : 'POSTED',
         req.user.username
       ]
     );
 
     for (const line of validLines) {
       const calculated = calculateInwardLine(line, taxType);
+      const stockQty = (line.is_adjustment || isDraft) ? 0 : (line.quantity + line.free_qty) * line.stock_conversion_factor;
+      const basePurchasePrice = line.stock_conversion_factor > 0 ? line.purchase_price / line.stock_conversion_factor : line.purchase_price;
 
-      totalQty += line.quantity + line.free_qty;
+      totalQty += (line.is_adjustment || isDraft) ? 0 : stockQty;
       taxableTotal += calculated.taxable;
       gstTotal += calculated.gstAmount;
       cgstTotal += calculated.cgstAmount;
@@ -347,7 +425,7 @@ router.post('/', async (req, res) => {
         ]
       );
 
-      if (!line.is_adjustment) {
+      if (!line.is_adjustment && !isDraft) {
         await connection.query(
           `INSERT INTO product_batches
            (barcode, batch_no, expiry_date, inward_no, purchase_price, mrp, quantity_received, quantity_available)
@@ -363,10 +441,10 @@ router.post('/', async (req, res) => {
             line.batch_no || '',
             line.expiry_date,
             finalInwardNo,
-            line.purchase_price,
+            basePurchasePrice,
             line.mrp,
-            line.quantity + line.free_qty,
-            line.quantity + line.free_qty
+            stockQty,
+            stockQty
           ]
         );
 
@@ -384,7 +462,7 @@ router.post('/', async (req, res) => {
                  gst_percent = ?,
                  purchase_price = ?
              WHERE barcode = ?`,
-            [line.quantity + line.free_qty, line.product_name, line.hsn_code, line.gst_percent, line.purchase_price, line.barcode]
+            [stockQty, line.product_name, line.hsn_code, line.gst_percent, basePurchasePrice, line.barcode]
           );
         } else {
           await connection.query(
@@ -392,16 +470,16 @@ router.post('/', async (req, res) => {
              (product_code, barcode, product_name, hsn_code, gst_percent, mrp, purchase_price, sale_price, wholesale_price, stock_qty)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-              `BDZ${Date.now().toString().slice(-8)}`,
+              line.barcode,
               line.barcode,
               line.product_name,
               line.hsn_code,
               line.gst_percent,
-              line.mrp || line.purchase_price,
-              line.purchase_price,
-              line.purchase_price,
-              line.purchase_price,
-              line.quantity + line.free_qty
+              line.mrp || basePurchasePrice,
+              basePurchasePrice,
+              basePurchasePrice,
+              basePurchasePrice,
+              stockQty
             ]
           );
         }
@@ -427,10 +505,18 @@ router.post('/', async (req, res) => {
         itemCount: validLines.length,
         totalQty,
         grandTotal,
-        taxType
+        taxType,
+        postingStatus: isDraft ? 'DRAFT' : 'POSTED'
       },
       connection
     });
+
+    if (!isDraft && Number(req.body?.source_draft_id || 0) > 0) {
+      await connection.query(
+        `DELETE FROM inward_entries WHERE id = ? AND posting_status = 'DRAFT'`,
+        [Number(req.body.source_draft_id)]
+      );
+    }
 
     await connection.commit();
     res.json({
@@ -441,6 +527,7 @@ router.post('/', async (req, res) => {
       item_count: validLines.length,
       total_qty: totalQty,
       payment_mode: paymentMode,
+      posting_status: isDraft ? 'DRAFT' : 'POSTED',
       grand_total: grandTotal
     });
   } catch (err) {

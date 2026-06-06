@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import {
+  bulkDeleteProductDropbox,
   bulkUpdateProducts,
   fetchBulkEditableProducts,
+  fetchProductDropbox,
   exportProducts,
   fetchProducts,
   getStoredUser,
@@ -16,9 +18,12 @@ const emptyForm = {
   code_mode: 'AUTO',
   barcode: '',
   product_name: '',
+  alias_names: '',
   hsn_code: '',
   gst_percent: '',
   unit_type: '',
+  purchase_unit_type: 'Loose',
+  purchase_unit_size: '1',
   mrp: '',
   purchase_price: '',
   sale_price: '',
@@ -35,14 +40,19 @@ const emptyForm = {
 
 const GST_OPTIONS = ['0', '3', '5', '12', '18', '28', '40'];
 const UNIT_OPTIONS = ['Nos', 'Gm', 'Kg', 'Ml', 'Ltr', 'Pack'];
+const PURCHASE_UNIT_OPTIONS = ['Loose', 'Carton', 'Bag', 'Box', 'Case', 'Bundle', 'Pack'];
+const PRODUCT_DROPBOX_DAYS = 1470;
 const PRODUCT_EXCEL_HEADERS = [
   'Sno',
   'Product Code',
   'Description',
+  'Alias Names',
   'HSN',
   'MRP',
   'Sale GST %',
   'Unit',
+  'Purchase Unit',
+  'Stock Per Purchase Unit',
   'Purchase Price',
   'Discount',
   'Sale Net Price',
@@ -52,19 +62,22 @@ const PRODUCT_EXCEL_HEADERS = [
 ];
 
 const PRODUCT_EXCEL_SAMPLE_ROWS = [
-  ['1', '89100100', 'KCP SUGAR', '123456', '80.00', '5', '1.KG', '60.00', '10.00', '70.00', '68.00', '100', '10'],
-  ['2', '89102256', 'NAYASA BUCKET', '2515', '500.00', '18', '1', '400.00', '100.00', '300.00', '285.00', '25', '5'],
-  ['3', '8100123', 'ONION', '44155', '', '0', '1.KG', '25.00', '', '30.00', '28.00', '50', '10'],
-  ['4', '892456', 'THUMS UP 2.LT BOTTLE', '51456', '100.00', '40', '1', '80.00', '10.00', '90.00', '87.00', '20', '5']
+  ['1', '89100100', 'KCP SUGAR', 'KCP SUGAR 1KG, SUGAR KCP', '123456', '80.00', '5', 'Kg', 'Bag', '50', '60.00', '10.00', '70.00', '68.00', '100', '10'],
+  ['2', '89102256', 'NAYASA BUCKET', 'NAYASA PLASTCK BUCKET BIG', '2515', '500.00', '18', 'Nos', 'Carton', '12', '400.00', '100.00', '300.00', '285.00', '25', '5'],
+  ['3', '8100123', 'ONION', 'ONIONS, PYAJ', '44155', '', '0', 'Kg', 'Bag', '40', '25.00', '', '30.00', '28.00', '50', '10'],
+  ['4', '892456', 'THUMS UP 2.LT BOTTLE', 'THUMS UP 2L, THUMSUP 2LT', '51456', '100.00', '40', 'Nos', 'Case', '6', '80.00', '10.00', '90.00', '87.00', '20', '5']
 ];
 
 const PRODUCT_API_IMPORT_HEADERS = [
   'product_code',
   'barcode',
   'product_name',
+  'alias_names',
   'hsn_code',
   'gst_percent',
   'unit_type',
+  'purchase_unit_type',
+  'purchase_unit_size',
   'mrp',
   'purchase_price',
   'sale_price',
@@ -169,10 +182,13 @@ function rowsToApiImportCsv(rows) {
     productCode: columnIndex(['Product Code', 'product_code', 'item code', 'code']),
     barcode: columnIndex(['Barcode', 'bar code', 'ean']),
     productName: columnIndex(['Description', 'Product Name', 'product_name', 'item name', 'product']),
+    aliasNames: columnIndex(['Alias Names', 'alias_names', 'aliases', 'invoice names', 'supplier names']),
     hsn: columnIndex(['HSN', 'HSN Code', 'hsn_code', 'HSN/SAC']),
     mrp: columnIndex(['MRP']),
     gst: columnIndex(['Sale GST %', 'GST %', 'gst_percent', 'GST']),
     unit: columnIndex(['Unit', 'Unit Type', 'unit_type', 'UOM']),
+    purchaseUnit: columnIndex(['Purchase Unit', 'purchase_unit_type', 'purchase pack', 'pack type']),
+    purchaseUnitSize: columnIndex(['Stock Per Purchase Unit', 'purchase_unit_size', 'units per pack', 'qty per pack', 'pcs per carton', 'kg per bag', 'conversion']),
     purchasePrice: columnIndex(['Purchase Price', 'purchase_price', 'purchase rate', 'cost price', 'cost']),
     wholesalePrice: columnIndex(['Wholesale Price', 'wholesale_price', 'wholesale rate']),
     discount: columnIndex(['Discount', 'discount_value', 'disc']),
@@ -197,9 +213,12 @@ function rowsToApiImportCsv(rows) {
         product_code: productCode,
         barcode,
         product_name: uppercaseProductName(valueAt(row, indexes.productName)),
+        alias_names: uppercaseProductName(valueAt(row, indexes.aliasNames)),
         hsn_code: valueAt(row, indexes.hsn),
         gst_percent: valueAt(row, indexes.gst) || '0',
         unit_type: valueAt(row, indexes.unit) || 'Nos',
+        purchase_unit_type: valueAt(row, indexes.purchaseUnit) || 'Loose',
+        purchase_unit_size: valueAt(row, indexes.purchaseUnitSize) || '1',
         mrp: valueAt(row, indexes.mrp),
         purchase_price: valueAt(row, indexes.purchasePrice),
         sale_price: valueAt(row, indexes.salePrice),
@@ -229,10 +248,13 @@ function downloadProductExcelTemplate() {
     { wch: 6 },
     { wch: 16 },
     { wch: 30 },
+    { wch: 34 },
     { wch: 12 },
     { wch: 10 },
     { wch: 12 },
     { wch: 10 },
+    { wch: 14 },
+    { wch: 22 },
     { wch: 15 },
     { wch: 12 },
     { wch: 15 },
@@ -278,6 +300,14 @@ export default function InventoryDashboardView() {
   const [bulkPatch, setBulkPatch] = useState({ hsn_code: '', gst_percent: '', unit_type: '' });
   const [isBulkLoading, setIsBulkLoading] = useState(false);
   const [isBulkSaving, setIsBulkSaving] = useState(false);
+  const [isDropboxOpen, setIsDropboxOpen] = useState(false);
+  const [dropboxSearch, setDropboxSearch] = useState('');
+  const [dropboxRows, setDropboxRows] = useState([]);
+  const [dropboxSummary, setDropboxSummary] = useState({ total: 0, stockQty: 0 });
+  const [selectedDropboxBarcodes, setSelectedDropboxBarcodes] = useState([]);
+  const [dropboxApproval, setDropboxApproval] = useState({ username: '', password: '' });
+  const [isDropboxLoading, setIsDropboxLoading] = useState(false);
+  const [isDropboxDeleting, setIsDropboxDeleting] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const currentUser = getStoredUser();
@@ -285,9 +315,12 @@ export default function InventoryDashboardView() {
   const productCodeRef = useRef(null);
   const barcodeRef = useRef(null);
   const productNameRef = useRef(null);
+  const aliasNamesRef = useRef(null);
   const hsnRef = useRef(null);
   const gstRef = useRef(null);
   const unitRef = useRef(null);
+  const purchaseUnitRef = useRef(null);
+  const purchaseUnitSizeRef = useRef(null);
   const mrpRef = useRef(null);
   const purchasePriceRef = useRef(null);
   const salePriceRef = useRef(null);
@@ -369,7 +402,7 @@ export default function InventoryDashboardView() {
 
   function updateField(field, value) {
     setForm((current) => {
-      const next = { ...current, [field]: field === 'product_name' ? value.toUpperCase() : value };
+      const next = { ...current, [field]: ['product_name', 'alias_names'].includes(field) ? value.toUpperCase() : value };
       const discountType = field === 'discount_type' ? value : next.discount_type;
 
       if (field === 'mrp') {
@@ -415,6 +448,8 @@ export default function InventoryDashboardView() {
       ['hsn_code', 'HSN code'],
       ['gst_percent', 'GST percent'],
       ['unit_type', 'Unit'],
+      ['purchase_unit_type', 'Purchase unit'],
+      ['purchase_unit_size', 'Stock per purchase unit'],
       ['mrp', 'MRP'],
       ['purchase_price', 'Purchase price'],
       ['sale_price', 'Retail sale price'],
@@ -434,10 +469,12 @@ export default function InventoryDashboardView() {
     const salePrice = toNumber(form.sale_price);
     const wholesalePrice = toNumber(form.wholesale_price);
     const purchasePrice = toNumber(form.purchase_price);
+    const purchaseUnitSize = toNumber(form.purchase_unit_size);
 
     if (salePrice > mrp && mrp > 0) return 'Retail sale price cannot be greater than MRP.';
     if (wholesalePrice > mrp && mrp > 0) return 'Wholesale price cannot be greater than MRP.';
     if (purchasePrice < 0) return 'Purchase price cannot be negative.';
+    if (purchaseUnitSize <= 0) return 'Stock per purchase unit must be greater than zero.';
     return '';
   }
 
@@ -447,9 +484,12 @@ export default function InventoryDashboardView() {
       code_mode: product.product_code ? 'MANUAL' : 'AUTO',
       barcode: product.barcode || '',
       product_name: product.product_name || '',
+      alias_names: product.alias_names || '',
       hsn_code: product.hsn_code || '',
       gst_percent: String(product.gst_percent ?? '18'),
       unit_type: product.unit_type || 'Nos',
+      purchase_unit_type: product.purchase_unit_type || 'Loose',
+      purchase_unit_size: String(product.purchase_unit_size ?? '1'),
       mrp: String(product.mrp ?? ''),
       purchase_price: String(product.purchase_price ?? ''),
       sale_price: String(product.sale_price ?? ''),
@@ -478,12 +518,14 @@ export default function InventoryDashboardView() {
     }
 
     try {
-      await saveProduct({
+      const result = await saveProduct({
         ...form,
         barcode: form.barcode.trim(),
-        product_name: uppercaseProductName(form.product_name)
+        product_name: uppercaseProductName(form.product_name),
+        alias_names: uppercaseProductName(form.alias_names)
       });
-      setStatusMessage(`${form.product_name} saved.`);
+      const syncedText = result.taxSynced > 1 ? ` HSN/GST synced for ${result.taxSynced} matching products.` : '';
+      setStatusMessage(`${form.product_name} saved.${syncedText}`);
       resetProductForm();
       await loadProducts();
     } catch (err) {
@@ -503,7 +545,8 @@ export default function InventoryDashboardView() {
       const csv = await readProductImportFile(file);
       const result = await importProducts(csv);
       setImportSummary(result.summary);
-      setStatusMessage(`Import complete: ${result.summary.inserted} inserted, ${result.summary.updated} updated.`);
+      const syncedText = result.summary.taxSynced ? ` HSN/GST synced for ${result.summary.taxSynced} matching products.` : '';
+      setStatusMessage(`Import complete: ${result.summary.inserted} inserted, ${result.summary.updated} updated.${syncedText}`);
       await loadProducts(1);
       setPage(1);
     } catch (err) {
@@ -571,7 +614,8 @@ export default function InventoryDashboardView() {
     setIsBulkSaving(true);
     try {
       const result = await bulkUpdateProducts(bulkRows);
-      setStatusMessage(`${result.updated} products updated.`);
+      const syncedText = result.taxSynced ? ` HSN/GST synced for ${result.taxSynced} matching products.` : '';
+      setStatusMessage(`${result.updated} products updated.${syncedText}`);
       await loadProducts(1);
       setPage(1);
     } catch (err) {
@@ -581,8 +625,85 @@ export default function InventoryDashboardView() {
     }
   }
 
+  async function loadProductDropbox() {
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsDropboxOpen(true);
+    setIsDropboxLoading(true);
+
+    try {
+      const result = await fetchProductDropbox({
+        search: dropboxSearch,
+        ageDays: PRODUCT_DROPBOX_DAYS,
+        limit: 500
+      });
+      const rows = Array.isArray(result.rows) ? result.rows : [];
+      setDropboxRows(rows);
+      setDropboxSummary(result.summary || { total: rows.length, stockQty: 0 });
+      setSelectedDropboxBarcodes((current) => current.filter((barcode) => rows.some((row) => row.barcode === barcode)));
+      setStatusMessage(`${rows.length} old unused products loaded in Product Dropbox.`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load product dropbox.');
+    } finally {
+      setIsDropboxLoading(false);
+    }
+  }
+
+  function toggleDropboxRow(barcode) {
+    setSelectedDropboxBarcodes((current) => (
+      current.includes(barcode)
+        ? current.filter((item) => item !== barcode)
+        : [...current, barcode]
+    ));
+  }
+
+  function toggleAllDropboxRows() {
+    setSelectedDropboxBarcodes((current) => (
+      current.length === dropboxRows.length ? [] : dropboxRows.map((row) => row.barcode)
+    ));
+  }
+
+  async function deleteSelectedDropboxProducts() {
+    setStatusMessage('');
+    setErrorMessage('');
+
+    if (!selectedDropboxBarcodes.length) {
+      setErrorMessage('Select products from Product Dropbox before delete.');
+      return;
+    }
+
+    if (!dropboxApproval.username.trim() || !dropboxApproval.password) {
+      setErrorMessage('Enter supervisor username and password for product dropbox delete.');
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete ${selectedDropboxBarcodes.length} old unused products permanently?`);
+    if (!confirmed) return;
+
+    setIsDropboxDeleting(true);
+    try {
+      const result = await bulkDeleteProductDropbox({
+        barcodes: selectedDropboxBarcodes,
+        username: dropboxApproval.username,
+        password: dropboxApproval.password,
+        ageDays: PRODUCT_DROPBOX_DAYS
+      });
+      setStatusMessage(`${result.deleted} product dropbox items deleted. ${result.skipped || 0} skipped.`);
+      setDropboxApproval((current) => ({ ...current, password: '' }));
+      setSelectedDropboxBarcodes([]);
+      await loadProductDropbox();
+      await loadProducts(1);
+      setPage(1);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to delete product dropbox items.');
+    } finally {
+      setIsDropboxDeleting(false);
+    }
+  }
+
   const showProductCodeColumn = filter.trim().length > 0;
-  const inventoryColSpan = showProductCodeColumn ? 14 : 13;
+  const inventoryColSpan = showProductCodeColumn ? 15 : 14;
+  const selectedDropboxRows = dropboxRows.filter((row) => selectedDropboxBarcodes.includes(row.barcode));
 
   return (
     <div className="inventory-layout">
@@ -624,7 +745,19 @@ export default function InventoryDashboardView() {
 
           <label>
             <span className="field-label">Product name</span>
-            <input ref={productNameRef} className="field" value={form.product_name} onChange={(event) => updateField('product_name', event.target.value)} onKeyDown={(event) => moveOnEnter(event, hsnRef)} required />
+            <input ref={productNameRef} className="field" value={form.product_name} onChange={(event) => updateField('product_name', event.target.value)} onKeyDown={(event) => moveOnEnter(event, aliasNamesRef)} required />
+          </label>
+
+          <label>
+            <span className="field-label">Alias / invoice names</span>
+            <input
+              ref={aliasNamesRef}
+              className="field"
+              value={form.alias_names}
+              onChange={(event) => updateField('alias_names', event.target.value)}
+              onKeyDown={(event) => moveOnEnter(event, hsnRef)}
+              placeholder="Supplier invoice names, comma separated"
+            />
           </label>
 
           <label>
@@ -641,11 +774,34 @@ export default function InventoryDashboardView() {
           </label>
 
           <label>
-            <span className="field-label">Unit / Nos</span>
-            <select ref={unitRef} className="select" value={form.unit_type} onChange={(event) => updateField('unit_type', event.target.value)} onKeyDown={(event) => moveOnEnter(event, mrpRef)}>
+            <span className="field-label">Selling / stock unit</span>
+            <select ref={unitRef} className="select" value={form.unit_type} onChange={(event) => updateField('unit_type', event.target.value)} onKeyDown={(event) => moveOnEnter(event, purchaseUnitRef)}>
               <option value="">Select Unit</option>
               {UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
             </select>
+          </label>
+
+          <label>
+            <span className="field-label">Purchase unit</span>
+            <select ref={purchaseUnitRef} className="select" value={form.purchase_unit_type} onChange={(event) => updateField('purchase_unit_type', event.target.value)} onKeyDown={(event) => moveOnEnter(event, purchaseUnitSizeRef)}>
+              {PURCHASE_UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+            </select>
+          </label>
+
+          <label>
+            <span className="field-label">Stock per purchase unit</span>
+            <input
+              ref={purchaseUnitSizeRef}
+              className="field"
+              type="number"
+              step="0.001"
+              min="0.001"
+              value={form.purchase_unit_size}
+              onChange={(event) => updateField('purchase_unit_size', event.target.value)}
+              onKeyDown={(event) => moveOnEnter(event, mrpRef)}
+              placeholder="Carton 72 Nos / Bag 50 Kg"
+              required
+            />
           </label>
 
           <label>
@@ -731,6 +887,98 @@ export default function InventoryDashboardView() {
               <div className="change-box" style={{ marginBottom: 12 }}>
                 Download the sample Excel file, fill product rows, then upload the same .xlsx file. CSV/TSV also works.
               </div>
+
+              <section className="product-dropbox-box">
+                <div className="product-dropbox-header">
+                  <div>
+                    <h3>Product Dropbox</h3>
+                    <p>{PRODUCT_DROPBOX_DAYS} days old, unused, zero-stock SKUs for password-protected cleanup.</p>
+                  </div>
+                  <button className="secondary-button" type="button" onClick={() => (isDropboxOpen ? setIsDropboxOpen(false) : loadProductDropbox())}>
+                    {isDropboxOpen ? 'Close Dropbox' : 'Open Dropbox'}
+                  </button>
+                </div>
+
+                {isDropboxOpen && (
+                  <div className="product-dropbox-body">
+                    <div className="product-dropbox-toolbar">
+                      <input
+                        className="field"
+                        value={dropboxSearch}
+                        onChange={(event) => setDropboxSearch(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') loadProductDropbox();
+                        }}
+                        placeholder="Search dropbox product, barcode, alias, code"
+                      />
+                      <button className="secondary-button" type="button" onClick={loadProductDropbox} disabled={isDropboxLoading}>
+                        {isDropboxLoading ? 'Loading...' : 'Load'}
+                      </button>
+                      <button className="secondary-button" type="button" onClick={toggleAllDropboxRows} disabled={!dropboxRows.length}>
+                        {selectedDropboxBarcodes.length === dropboxRows.length && dropboxRows.length ? 'Clear All' : 'Select All'}
+                      </button>
+                    </div>
+
+                    <div className="inventory-stats">
+                      <span className="status-chip">{dropboxSummary.total || 0} eligible</span>
+                      <span className="status-chip">{selectedDropboxRows.length} selected</span>
+                      <span className="status-chip">Zero stock only</span>
+                    </div>
+
+                    <div className="product-dropbox-approval">
+                      <input
+                        className="field"
+                        value={dropboxApproval.username}
+                        onChange={(event) => setDropboxApproval((current) => ({ ...current, username: event.target.value }))}
+                        placeholder="Supervisor username"
+                      />
+                      <input
+                        className="field"
+                        type="password"
+                        value={dropboxApproval.password}
+                        onChange={(event) => setDropboxApproval((current) => ({ ...current, password: event.target.value }))}
+                        placeholder="Supervisor password"
+                      />
+                      <button className="danger-button" type="button" onClick={deleteSelectedDropboxProducts} disabled={isDropboxDeleting || !selectedDropboxBarcodes.length}>
+                        {isDropboxDeleting ? 'Deleting...' : 'Bulk Delete'}
+                      </button>
+                    </div>
+
+                    <div className="bulk-table-wrap">
+                      <table className="history-table">
+                        <thead>
+                          <tr><th></th><th>Barcode</th><th>Product</th><th>Last Activity</th><th>Stock</th><th>MRP</th></tr>
+                        </thead>
+                        <tbody>
+                          {dropboxRows.length === 0 ? (
+                            <tr><td colSpan="6">No old unused products in dropbox.</td></tr>
+                          ) : (
+                            dropboxRows.map((product) => (
+                              <tr key={product.barcode}>
+                                <td>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedDropboxBarcodes.includes(product.barcode)}
+                                    onChange={() => toggleDropboxRow(product.barcode)}
+                                  />
+                                </td>
+                                <td className="mono muted">{product.barcode}</td>
+                                <td>
+                                  <strong>{product.product_name}</strong>
+                                  {product.product_code && <div className="muted compact-cell-text">{product.product_code}</div>}
+                                </td>
+                                <td>{formatProductDate(product.last_activity_at || product.updated_at || product.created_at)}</td>
+                                <td>{product.stock_qty}</td>
+                                <td>{formatMoney(product.mrp)}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </section>
 
               <section className="bulk-edit-box">
                 <div className="bulk-edit-toolbar">
@@ -834,7 +1082,7 @@ export default function InventoryDashboardView() {
               className="field"
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
-              placeholder="Search product name, barcode, or product code"
+              placeholder="Search product name, alias, barcode, or product code"
             />
             <select className="select" value={gstFilter} onChange={(event) => { setGstFilter(event.target.value); setPage(1); }}>
               <option value="ALL">All GST</option>
@@ -864,6 +1112,7 @@ export default function InventoryDashboardView() {
                   <th>Product</th>
                   <th>GST</th>
                   <th>Unit</th>
+                  <th>Purchase Pack</th>
                   <th>MRP</th>
                   <th>Purchase</th>
                   <th>Retail</th>
@@ -885,9 +1134,13 @@ export default function InventoryDashboardView() {
                       <tr key={product.barcode}>
                         <td className="mono muted">{product.barcode}</td>
                         {showProductCodeColumn && <td>{product.product_code || '-'}</td>}
-                        <td><strong>{product.product_name}</strong></td>
+                        <td>
+                          <strong>{product.product_name}</strong>
+                          {product.alias_names && <div className="muted compact-cell-text">{product.alias_names}</div>}
+                        </td>
                         <td>{product.gst_percent}%</td>
                         <td>{product.unit_type || 'Nos'}</td>
+                        <td>{product.purchase_unit_type || 'Loose'} x {Number(product.purchase_unit_size || 1)}</td>
                         <td>{formatMoney(product.mrp)}</td>
                         <td>{formatMoney(product.purchase_price)}</td>
                         <td><strong>{formatMoney(product.sale_price)}</strong></td>

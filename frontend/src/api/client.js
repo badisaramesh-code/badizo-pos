@@ -67,6 +67,13 @@ export async function fetchBulkEditableProducts(search = '') {
   return Array.isArray(data) ? data : [];
 }
 
+export async function fetchProductDropbox({ search = '', ageDays = 1470, limit = 500 } = {}) {
+  const { data } = await api.get('/products/dropbox', {
+    params: { search, ageDays, limit }
+  });
+  return data;
+}
+
 export async function saveProduct(product) {
   const { data } = await api.post('/products/save', product);
   return data;
@@ -74,6 +81,13 @@ export async function saveProduct(product) {
 
 export async function bulkUpdateProducts(rows) {
   const { data } = await api.post('/products/bulk-update', { rows });
+  return data;
+}
+
+export async function bulkDeleteProductDropbox({ barcodes, username, password, ageDays = 1470 }) {
+  const { data } = await api.delete('/products/dropbox/bulk-delete', {
+    data: { barcodes, username, password, ageDays }
+  });
   return data;
 }
 
@@ -311,6 +325,16 @@ export async function fetchRecentInwards() {
 export async function fetchInwardHistory({ from = '', to = '', supplier = '', invoice = '' } = {}) {
   const { data } = await api.get('/inward/history', {
     params: { from, to, supplier, invoice }
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function searchInwardSuppliers(search = '') {
+  const trimmed = String(search || '').trim();
+  if (trimmed.length < 3) return [];
+
+  const { data } = await api.get('/inward/suppliers/search', {
+    params: { q: trimmed }
   });
   return Array.isArray(data) ? data : [];
 }

@@ -58,9 +58,12 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         product_code VARCHAR(60) DEFAULT NULL UNIQUE,
         barcode VARCHAR(120) NOT NULL UNIQUE,
         product_name VARCHAR(255) NOT NULL,
+        alias_names TEXT DEFAULT NULL,
         hsn_code VARCHAR(20) DEFAULT NULL,
         gst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
         unit_type VARCHAR(20) NOT NULL DEFAULT 'Nos',
+        purchase_unit_type VARCHAR(30) NOT NULL DEFAULT 'Loose',
+        purchase_unit_size DECIMAL(12,3) NOT NULL DEFAULT 1.000,
         mrp DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         purchase_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         sale_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -546,7 +549,10 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'products', 'purchase_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER mrp');
     await ensureColumn(connection, 'products', 'wholesale_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER sale_price');
     await ensureColumn(connection, 'products', 'product_code', 'VARCHAR(60) DEFAULT NULL UNIQUE AFTER id');
+    await ensureColumn(connection, 'products', 'alias_names', 'TEXT DEFAULT NULL AFTER product_name');
     await ensureColumn(connection, 'products', 'unit_type', "VARCHAR(20) NOT NULL DEFAULT 'Nos' AFTER gst_percent");
+    await ensureColumn(connection, 'products', 'purchase_unit_type', "VARCHAR(30) NOT NULL DEFAULT 'Loose' AFTER unit_type");
+    await ensureColumn(connection, 'products', 'purchase_unit_size', 'DECIMAL(12,3) NOT NULL DEFAULT 1.000 AFTER purchase_unit_type');
     await ensureColumn(connection, 'products', 'discount_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER wholesale_price");
     await ensureColumn(connection, 'products', 'discount_value', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER discount_type');
     await ensureColumn(connection, 'products', 'bulk_discount_value', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER discount_value');
@@ -583,6 +589,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'inward_entries', 'total_igst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER total_sgst');
     await ensureColumn(connection, 'inward_entries', 'tax_type', "ENUM('LOCAL', 'INTERSTATE') NOT NULL DEFAULT 'LOCAL' AFTER grand_total");
     await ensureColumn(connection, 'inward_entries', 'payment_mode', "ENUM('Credit', 'Cash') NOT NULL DEFAULT 'Credit' AFTER supplier_invoice_date");
+    await ensureColumn(connection, 'inward_entries', 'posting_status', "ENUM('DRAFT', 'POSTED') NOT NULL DEFAULT 'POSTED' AFTER tax_type");
     await ensureColumn(connection, 'inward_items', 'discount_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER discount_percent");
     await ensureColumn(connection, 'inward_items', 'discount_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER discount_type');
     await ensureColumn(connection, 'inward_items', 'scheme_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER scheme");
