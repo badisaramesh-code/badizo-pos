@@ -175,7 +175,7 @@ function CounterSaleSlip({ slip, shop, printedAt }) {
   );
 }
 
-export default function BillingTerminalView() {
+export default function BillingTerminalView({ isActive = true }) {
   const currentUser = getStoredUser();
   const initialDraft = readActivePosDraft(currentUser?.username);
   const [invoiceNo, setInvoiceNo] = useState(initialDraft?.invoiceNo || 'Loading...');
@@ -226,6 +226,8 @@ export default function BillingTerminalView() {
   const [historySearch, setHistorySearch] = useState('');
   const [historyDate, setHistoryDate] = useState('');
   const [heldBills, setHeldBills] = useState([]);
+  const [isLastBillOpen, setIsLastBillOpen] = useState(false);
+  const [isHeldBillsOpen, setIsHeldBillsOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showPriceCheck, setShowPriceCheck] = useState(false);
   const [priceCheckQuery, setPriceCheckQuery] = useState('');
@@ -267,6 +269,24 @@ export default function BillingTerminalView() {
     loadSettings();
     refreshHistory(false);
   }, []);
+
+  useEffect(() => {
+    if (!isActive) return undefined;
+    const timer = window.setTimeout(() => {
+      scannerRef.current?.focus();
+      scannerRef.current?.select?.();
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [isActive]);
+
+  useEffect(() => {
+    if (!isActive || !exchangeMode) return undefined;
+    const timer = window.setTimeout(() => {
+      exchangeScannerRef.current?.focus();
+      exchangeScannerRef.current?.select?.();
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [exchangeMode, isActive]);
 
   useEffect(() => {
     const hasDraft = cart.length > 0
@@ -368,7 +388,8 @@ export default function BillingTerminalView() {
 
       if (event.key === 'F6') {
         event.preventDefault();
-        holdCurrentBill();
+        setIsHeldBillsOpen((current) => !current);
+        refreshHeldBills(counterNo);
       }
 
       if (event.key === 'F10') {
@@ -544,6 +565,7 @@ export default function BillingTerminalView() {
 
       return {
         ...item,
+        is_free_bonus: Boolean(item.is_free_bonus),
         unitPrice,
         quantity,
         gst_percent: gstPercent,
@@ -554,7 +576,8 @@ export default function BillingTerminalView() {
     });
 
     return {
-      invoiceNo: `${invoice.invoice_no}${duplicate ? ' - DUPLICATE COPY' : ''}`,
+      invoiceNo: invoice.invoice_no,
+      isDuplicate: duplicate,
       counterNo: String(invoice.billing_counter || '').replace(/\D/g, '') || 1,
       date: invoice.created_at ? new Date(invoice.created_at).toLocaleDateString('en-IN') : '',
       time: invoice.created_at ? new Date(invoice.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '',
@@ -884,6 +907,10 @@ export default function BillingTerminalView() {
   function removeLine(index) {
     setErrorMessage('');
     setCart((current) => current.filter((_, itemIndex) => itemIndex !== index));
+    window.setTimeout(() => {
+      scannerRef.current?.focus();
+      scannerRef.current?.select?.();
+    }, 50);
   }
 
   function addExchangeProduct(product) {
@@ -913,7 +940,10 @@ export default function BillingTerminalView() {
     setExchangeQuery('');
     setErrorMessage('');
     setStatusMessage(`${product.product_name} added to exchange.`);
-    exchangeScannerRef.current?.focus();
+    window.setTimeout(() => {
+      scannerRef.current?.focus();
+      scannerRef.current?.select?.();
+    }, 60);
   }
 
   async function handleExchangeSearchKeyDown(event) {
@@ -1288,8 +1318,8 @@ export default function BillingTerminalView() {
     printFrame.style.position = 'fixed';
     printFrame.style.left = '-10000px';
     printFrame.style.top = '0';
-    printFrame.style.width = mode === 'A4' ? '210mm' : '90mm';
-    printFrame.style.height = mode === 'A4' ? '297mm' : '2000mm';
+    printFrame.style.width = mode === 'A4' ? '210mm' : '80mm';
+    printFrame.style.height = mode === 'A4' ? '260mm' : '2000mm';
     printFrame.style.border = '0';
     printFrame.style.visibility = 'hidden';
     document.body.appendChild(printFrame);
@@ -1325,12 +1355,42 @@ export default function BillingTerminalView() {
       width: 80mm !important;
       min-width: 80mm !important;
       max-width: 80mm !important;
+      box-sizing: border-box !important;
       overflow: visible !important;
     }
     .print-host-a4 {
       width: 190mm !important;
       min-width: 190mm !important;
       max-width: 190mm !important;
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      overflow: hidden !important;
+    }
+    html.printing-a4,
+    html.printing-a4 body,
+    body.printing-a4 {
+      width: 210mm !important;
+      min-width: 210mm !important;
+      max-width: 210mm !important;
+      height: 250mm !important;
+      min-height: 250mm !important;
+      max-height: 250mm !important;
+      overflow: hidden !important;
+    }
+    body.printing-a4 .print-host-a4,
+    body.printing-a4 .a4-paper.a4-one-page {
+      height: 250mm !important;
+      min-height: 0 !important;
+      max-height: 250mm !important;
+      page-break-before: avoid !important;
+      page-break-after: avoid !important;
+      page-break-inside: avoid !important;
+      break-before: avoid !important;
+      break-after: avoid !important;
+      break-inside: avoid !important;
+    }
+    body.printing-a4 .a4-paper.a4-one-page {
       overflow: hidden !important;
     }
     html.printing-thermal,
@@ -1339,6 +1399,7 @@ export default function BillingTerminalView() {
       width: 80mm !important;
       min-width: 80mm !important;
       max-width: 80mm !important;
+      box-sizing: border-box !important;
       height: auto !important;
       min-height: 0 !important;
       max-height: none !important;
@@ -1362,8 +1423,9 @@ export default function BillingTerminalView() {
       break-inside: auto !important;
     }
     body.printing-thermal .thermal-paper {
-      padding: 2mm 2.5mm 14mm !important;
-      font-size: 9.4px !important;
+      box-sizing: border-box !important;
+      padding: 2mm 1.5mm 14mm !important;
+      font-size: 10px !important;
       line-height: 1.05 !important;
     }
     body.printing-thermal .thermal-logo-slot {
@@ -1390,7 +1452,7 @@ export default function BillingTerminalView() {
     body.printing-thermal .gst-summary-table th,
     body.printing-thermal .gst-summary-table td {
       padding: 1.5px 1px !important;
-      font-size: 8.3px !important;
+      font-size: 8.8px !important;
       line-height: 1.02 !important;
     }
     body.printing-thermal .thermal-total-box {
@@ -1431,10 +1493,34 @@ export default function BillingTerminalView() {
         margin: 0 !important;
         padding: 0 !important;
       }
+      html.printing-a4,
+      html.printing-a4 body,
+      body.printing-a4 {
+        width: 210mm !important;
+        min-width: 210mm !important;
+        max-width: 210mm !important;
+        height: 250mm !important;
+        min-height: 250mm !important;
+        max-height: 250mm !important;
+        overflow: hidden !important;
+      }
       body.${printClass} .print-host {
         display: block !important;
         position: static !important;
         visibility: visible !important;
+      }
+      body.printing-a4 .print-host-a4,
+      body.printing-a4 .a4-paper.a4-one-page {
+        height: 250mm !important;
+        min-height: 0 !important;
+        max-height: 250mm !important;
+        overflow: hidden !important;
+        page-break-before: avoid !important;
+        page-break-after: avoid !important;
+        page-break-inside: avoid !important;
+        break-before: avoid !important;
+        break-after: avoid !important;
+        break-inside: avoid !important;
       }
       body.${printClass} .print-host * {
         visibility: visible !important;
@@ -1502,6 +1588,7 @@ export default function BillingTerminalView() {
                 width: 80mm !important;
                 min-width: 80mm !important;
                 max-width: 80mm !important;
+                box-sizing: border-box !important;
                 height: auto !important;
                 min-height: ${contentHeightMm}mm !important;
                 max-height: none !important;
@@ -1611,13 +1698,14 @@ export default function BillingTerminalView() {
     }
   }
 
-  function preparePayment(mode) {
+  function selectPaymentMode(mode) {
     setPaymentMode(mode);
     setErrorMessage('');
     setStatusMessage('');
+    setPaymentReference('');
+    setPaymentConfirmed(false);
 
     if (mode === 'Cash') {
-      setPaymentConfirmed(false);
       window.setTimeout(() => {
         cashReceivedRef.current?.focus();
         cashReceivedRef.current?.select();
@@ -1626,7 +1714,6 @@ export default function BillingTerminalView() {
     }
 
     if (mode === 'Mixed') {
-      setPaymentConfirmed(false);
       window.setTimeout(() => {
         mixedCashRef.current?.focus();
         mixedCashRef.current?.select();
@@ -1634,15 +1721,22 @@ export default function BillingTerminalView() {
       return;
     }
 
-    setPaymentConfirmed(true);
     window.setTimeout(() => {
       if (!isDigitalPaymentContactReady(customerPhone)) {
-        openDigitalContactModal(mode, true);
+        openDigitalContactModal(mode, false);
         return;
       }
       paymentReferenceRef.current?.focus();
       paymentReferenceRef.current?.select();
     }, 50);
+  }
+
+  function preparePayment(mode) {
+    selectPaymentMode(mode);
+  }
+
+  function toggleMixedPayment(checked) {
+    selectPaymentMode(checked ? 'Mixed' : 'Cash');
   }
 
   function handlePaymentEnter(event, mode = paymentMode) {
@@ -1756,13 +1850,14 @@ export default function BillingTerminalView() {
     }
   }
 
-  async function handleReprint(invoiceNoForReprint) {
+  async function handleReprint(invoiceNoForReprint, reprintMode = printMode) {
     try {
       const details = await fetchInvoiceDetails(invoiceNoForReprint);
-      await recordInvoiceReprint(invoiceNoForReprint);
+      await recordInvoiceReprint(invoiceNoForReprint, reprintMode);
       const invoiceToPrint = invoiceDetailsToPrintable(details, true);
       setPrintableInvoice(invoiceToPrint);
-      schedulePrint(printMode, () => refreshHistory(false), invoiceToPrint);
+      schedulePrint(reprintMode, () => refreshHistory(false), invoiceToPrint);
+      setStatusMessage(`${invoiceNoForReprint} duplicate bill printing in ${reprintMode} format.`);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to reprint invoice.');
     }
@@ -1948,6 +2043,20 @@ export default function BillingTerminalView() {
         print_mode: printMode
       });
 
+      const freeInvoiceItems = (checkoutResult.free_items || []).map((item) => ({
+        ...item,
+        product_name: String(item.product_name || '').toUpperCase(),
+        quantity: toNumber(item.quantity, 1),
+        unitPrice: 0,
+        sale_price: 0,
+        mrp: 0,
+        gst_percent: 0,
+        lineTotal: 0,
+        taxableRate: 0,
+        taxAmount: 0,
+        is_free_bonus: true
+      }));
+
       const completedInvoice = {
         ...printableDraft,
         invoiceNo: checkoutResult.invoice_no || invoiceNo,
@@ -1967,6 +2076,8 @@ export default function BillingTerminalView() {
           grand: Math.round(totals.grand),
           roundOff: Math.round(totals.grand) - totals.grand
         },
+        items: [...printableDraft.items, ...freeInvoiceItems],
+        itemCount: printableDraft.itemCount + freeInvoiceItems.reduce((sum, item) => sum + toNumber(item.quantity), 0),
         exchangeItems: printableDraft.exchangeItems
       };
       setPrintableInvoice(completedInvoice);
@@ -2139,7 +2250,11 @@ export default function BillingTerminalView() {
             <div className="activity-action-row">
               <button className="secondary-button" onClick={() => refreshHistory(true)}>Old Bills / Reprint (F8)</button>
               {latestInvoice ? (
-                <details className="activity-details activity-last-bill-details">
+                <details
+                  className="activity-details activity-last-bill-details"
+                  open={isLastBillOpen}
+                  onToggle={(event) => setIsLastBillOpen(event.currentTarget.open)}
+                >
                   <summary>
                     <span>Last Bill</span>
                     <strong className="mono">{latestInvoice.invoice_no}</strong>
@@ -2149,12 +2264,18 @@ export default function BillingTerminalView() {
                     <span>Cash Given</span><strong>{formatMoney(latestInvoice.cash_received)}</strong>
                     <span>Change</span><strong className="stock-low">{formatMoney(latestInvoice.change_returned)}</strong>
                   </div>
+                  <div className="activity-detail-footer">
+                    <button className="close-action-button" type="button" onClick={() => setIsLastBillOpen(false)}>Close</button>
+                  </div>
                 </details>
               ) : (
                 <button className="secondary-button" disabled>Last Bill</button>
               )}
-              <button className="secondary-button" onClick={holdCurrentBill}>Hold Bill (F6)</button>
-              <details className="activity-details activity-held-details">
+              <details
+                className="activity-details activity-held-details"
+                open={isHeldBillsOpen}
+                onToggle={(event) => setIsHeldBillsOpen(event.currentTarget.open)}
+              >
                 <summary>
                   <span>Held Bills</span>
                   <strong>{heldBills.length}</strong>
@@ -2176,6 +2297,9 @@ export default function BillingTerminalView() {
                       </div>
                     ))
                   )}
+                </div>
+                <div className="activity-detail-footer">
+                  <button className="close-action-button" type="button" onClick={() => setIsHeldBillsOpen(false)}>Close</button>
                 </div>
               </details>
             </div>
@@ -2340,17 +2464,21 @@ export default function BillingTerminalView() {
                 <select
                   className="select"
                   value={paymentMode}
-                  onChange={(event) => {
-                    setPaymentMode(event.target.value);
-                    setPaymentReference('');
-                    setPaymentConfirmed(false);
-                  }}
+                  onChange={(event) => selectPaymentMode(event.target.value)}
                 >
                   <option value="Cash">Cash</option>
                   <option value="UPI">UPI</option>
                   <option value="Card">Card</option>
                   <option value="Mixed">Mixed</option>
                 </select>
+              </label>
+
+              <label className="change-box mix-payment-toggle">
+                <input
+                  type="checkbox"
+                  checked={paymentMode === 'Mixed'}
+                  onChange={(event) => toggleMixedPayment(event.target.checked)}
+                /> Mix payment
               </label>
 
               {paymentMode === 'Cash' && (
@@ -2492,7 +2620,10 @@ export default function BillingTerminalView() {
                 <button className="secondary-button" onClick={() => preparePayment('Card')}>F10 Card</button>
                 <button className="secondary-button" onClick={() => preparePayment('Mixed')}>Mixed</button>
                 <button className="secondary-button" onClick={() => refreshHistory(true)}>F8 Old Bills</button>
-                <button className="secondary-button" onClick={holdCurrentBill}>F6 Hold</button>
+                <button className="secondary-button" onClick={() => {
+                  setIsHeldBillsOpen((current) => !current);
+                  refreshHeldBills(counterNo);
+                }}>F6 Held Bills</button>
                 <button className="secondary-button" onClick={() => printBill(printableInvoice || printableDraft)}>Print</button>
               </div>
             </div>
@@ -2506,7 +2637,7 @@ export default function BillingTerminalView() {
           <div className="modal price-check-modal">
             <div className="panel-header">
               <h2 className="panel-title">Fast Price Check</h2>
-              <button className="secondary-button" type="button" onClick={closePriceCheck}>Close</button>
+              <button className="close-action-button" type="button" onClick={closePriceCheck}>Close</button>
             </div>
             <div className="panel-body form-stack">
               <div className="price-check-entry">
@@ -2566,7 +2697,7 @@ export default function BillingTerminalView() {
           >
             <div className="panel-header">
               <h2 className="panel-title">{digitalContactModal.title || `${digitalContactModal.mode} customer detail required`}</h2>
-              <button className="secondary-button" type="button" onClick={() => setDigitalContactModal(null)}>Cancel</button>
+              <button className="close-action-button" type="button" onClick={() => setDigitalContactModal(null)}>Cancel</button>
             </div>
             <div className="panel-body form-stack">
               <div className="alert-box">
@@ -2610,7 +2741,7 @@ export default function BillingTerminalView() {
           <div className="modal">
             <div className="panel-header">
               <h2 className="panel-title">Recent Invoices</h2>
-              <button className="secondary-button" onClick={() => setShowHistory(false)}>Close</button>
+              <button className="close-action-button" type="button" onClick={() => setShowHistory(false)}>Close</button>
             </div>
             <div className="panel-body">
               <div className="history-search-row">
@@ -2665,7 +2796,8 @@ export default function BillingTerminalView() {
                         <td>{invoice.created_at ? new Date(invoice.created_at).toLocaleString() : '-'}</td>
                         <td>
                           <div className="table-actions">
-                            <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no)}>Reprint</button>
+                            <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no, 'Thermal')}>Reprint</button>
+                            <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no, 'A4')}>A4 Reprint</button>
                             {canManageInvoice && invoice.invoice_status !== 'CANCELLED' && invoice.invoice_status !== 'RETURNED' && (
                               <button className="secondary-button" onClick={() => openReturnInvoice(invoice.invoice_no)}>Return</button>
                             )}
@@ -2689,7 +2821,7 @@ export default function BillingTerminalView() {
           <div className="modal">
             <div className="panel-header">
               <h2 className="panel-title">Sales Return - {returnInvoice.invoice.invoice_no}</h2>
-              <button className="secondary-button" onClick={() => setReturnInvoice(null)}>Close</button>
+              <button className="close-action-button" type="button" onClick={() => setReturnInvoice(null)}>Close</button>
             </div>
             <div className="panel-body form-stack">
               <div className="customer-grid">
@@ -2749,7 +2881,7 @@ export default function BillingTerminalView() {
           <form className="modal supervisor-approval-modal" onSubmit={submitModeApproval}>
             <div className="panel-header">
               <h2 className="panel-title">{approvalDialog.title}</h2>
-              <button className="secondary-button" type="button" onClick={closeApprovalDialog}>Cancel</button>
+              <button className="close-action-button" type="button" onClick={closeApprovalDialog}>Cancel</button>
             </div>
             <div className="panel-body form-stack">
               <div className="sensitive-bill-warning">{approvalDialog.message}</div>

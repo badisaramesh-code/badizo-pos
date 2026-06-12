@@ -3,6 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
 import pdfWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.min.js';
 import { createWorker, PSM } from 'tesseract.js';
 import {
+  deleteInwardEntry,
   fetchInwardDetails,
   fetchInwardDetailsByNumber,
   fetchInwardHistory,
@@ -29,6 +30,11 @@ const blankLine = {
   scheme_type: 'PERCENT',
   scheme: '',
   free: '',
+  free_offer_enabled: false,
+  free_offer_barcode: '',
+  free_offer_product_name: '',
+  free_offer_qty_per_sale: '1',
+  free_offer_total_qty: '',
   qty: '',
   purchase_unit_type: 'Loose',
   purchase_unit_size: '1',
@@ -260,6 +266,9 @@ function parseInvoiceRows(text) {
     .map((line) => line.trim())
     .filter(Boolean);
 
+  const metroRows = parseMetroCashCarryInvoiceRows(sourceLines);
+  if (metroRows.length) return metroRows;
+
   const bhagwanlalRows = parseBhagwanlalInvoiceRows(sourceLines);
   if (bhagwanlalRows.length) return bhagwanlalRows;
 
@@ -318,6 +327,122 @@ function parseInvoiceRows(text) {
 
   if (parsedRows.length) return parsedRows;
   return parseOcrInvoiceRows(sourceLines);
+}
+
+function parseMetroCashCarryInvoiceRows(lines) {
+  const sourceText = lines.join('\n');
+  const hasMetroInvoice = /Metro\s+Cash\s+and\s+Carry/i.test(sourceText)
+    && /Item\s+Details/i.test(sourceText)
+    && /Total\s+Value\s*\(Incl\.?of\s+Tax\)/i.test(sourceText);
+  if (!hasMetroInvoice) return [];
+
+  const gstByHsn = buildMetroHsnGstMap(lines);
+  const headerIndex = lines.findIndex((line) => /Item\s+Details/i.test(line));
+  const rows = [];
+
+  for (let index = Math.max(headerIndex + 1, 0); index < lines.length; index += 1) {
+    const line = String(lines[index] || '').replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!line || isHeaderOnlyLine(line)) continue;
+    if (/^(Total|Net Amount|Wallet Amount|Total Amount|Rupees|Total Savings|Tax Summary)\b/i.test(line)) break;
+
+    const previousLine = String(lines[index - 1] || '').replace(/\s+/g, ' ').trim();
+    const nextLine = String(lines[index + 1] || '').replace(/\s+/g, ' ').trim();
+    const parsed = parseMetroCashCarryInvoiceRow(line, previousLine, nextLine, gstByHsn);
+    if (parsed) {
+      rows.push(parsed);
+      if (parsed.consumedNextLine) index += 1;
+    }
+  }
+
+  return rows.map(({ consumedNextLine, ...row }) => row);
+}
+
+function buildMetroHsnGstMap(lines) {
+  const map = {};
+  const summaryIndex = lines.findIndex((line) => /^Tax Summary$/i.test(String(line || '').trim()));
+  if (summaryIndex < 0) return map;
+
+  for (const rawLine of lines.slice(summaryIndex + 1)) {
+    const line = String(rawLine || '').replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (/^Total\b/i.test(line)) break;
+    const match = line.match(/^(\d{4,8})\s+(.+)$/);
+    if (!match) continue;
+
+    const hsnCode = cleanHsnToken(match[1]);
+    const numbers = match[2].match(/-?\d+(?:\.\d+)?/g) || [];
+    if (hsnCode && numbers.length >= 10) {
+      map[hsnCode] = {
+        taxable: toNumber(numbers[0]),
+        gstPercent: normalizeGstPercent(numbers[5]),
+        igstAmount: toNumber(numbers[6]),
+        totalTax: toNumber(numbers[numbers.length - 1])
+      };
+    }
+  }
+
+  return map;
+}
+
+function parseMetroCashCarryInvoiceRow(rawLine, previousLine, nextLine, gstByHsn) {
+  const line = String(rawLine || '').replace(/[|]/g, ' ').replace(/\s+/g, ' ').trim();
+  const deliveryMatch = line.match(/^(\d{1,3})\s+(\d{4,8})\s+Delivery\s+Charges\s+-\s+([\d,]+(?:\.\d+)?)$/i);
+  if (deliveryMatch) {
+    const [, , hsn, totalAmount] = deliveryMatch;
+    return buildInwardAdjustmentLine('DELIVERY CHARGES', cleanNumber(totalAmount), 'ADJ-DELIVERY', {
+      hsn_code: cleanHsnToken(hsn),
+      gst_percent: gstByHsn[cleanHsnToken(hsn)]?.gstPercent || '18'
+    });
+  }
+
+  const sameLineMatch = line.match(
+    /^(\d{1,3})\s+(\d{4,8})\s+(.+?)\s+([\d,]+(?:\.\d+)?|-)\s+([\d,]+(?:\.\d+)?|-)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)$/
+  );
+  if (sameLineMatch) {
+    const [, , hsn, product, mrp, , discount, netPrice, qty, totalAmount] = sameLineMatch;
+    return buildMetroCashCarryItemRow(product, hsn, mrp, discount, netPrice, qty, totalAmount, gstByHsn);
+  }
+
+  const wrappedLineMatch = line.match(
+    /^(\d{1,3})\s+(\d{4,8})\s+([\d,]+(?:\.\d+)?|-)\s+([\d,]+(?:\.\d+)?|-)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)$/
+  );
+  if (wrappedLineMatch) {
+    const [, , hsn, mrp, , discount, netPrice, qty, totalAmount] = wrappedLineMatch;
+    const product = `${previousLine || ''} ${nextLine || ''}`.trim();
+    if (!/[A-Za-z]{3,}/.test(product)) return null;
+    return {
+      ...buildMetroCashCarryItemRow(product, hsn, mrp, discount, netPrice, qty, totalAmount, gstByHsn),
+      consumedNextLine: Boolean(nextLine)
+    };
+  }
+
+  return null;
+}
+
+function buildMetroCashCarryItemRow(product, hsn, mrp, discount, netPrice, qty, totalAmount, gstByHsn) {
+  const hsnCode = cleanHsnToken(hsn);
+  const quantity = cleanNumber(qty);
+  const lineTotal = cleanNumber(totalAmount);
+  const unitRate = toNumber(quantity) > 0
+    ? (toNumber(lineTotal) / toNumber(quantity)).toFixed(2)
+    : cleanNumber(netPrice);
+
+  return {
+    barcode: '',
+    product: normalizeOcrProductName(product),
+    hsn_code: hsnCode,
+    mrp: cleanNumber(mrp),
+    price: unitRate,
+    discount_type: 'VALUE',
+    discount: '',
+    scheme_type: 'PERCENT',
+    scheme: '',
+    free: '',
+    gst_percent: gstByHsn[hsnCode]?.gstPercent || '0',
+    qty: quantity,
+    unit: 'PCS',
+    total_amount: lineTotal,
+    last_amount_input: 'TOTAL'
+  };
 }
 
 function parseBhagwanlalInvoiceRows(lines) {
@@ -395,11 +520,11 @@ function parseBhagwanlalAdjustments(lines) {
   return adjustments;
 }
 
-function buildInwardAdjustmentLine(product, amount, barcode) {
+function buildInwardAdjustmentLine(product, amount, barcode, overrides = {}) {
   return {
     barcode,
     product,
-    hsn_code: '',
+    hsn_code: overrides.hsn_code || '',
     mrp: '',
     price: cleanNumber(amount),
     discount_type: 'PERCENT',
@@ -407,7 +532,7 @@ function buildInwardAdjustmentLine(product, amount, barcode) {
     scheme_type: 'PERCENT',
     scheme: '',
     free: '',
-    gst_percent: '0',
+    gst_percent: normalizeGstPercent(overrides.gst_percent || '0'),
     qty: '1',
     unit: '',
     total_amount: cleanNumber(amount),
@@ -553,13 +678,14 @@ function parseTallyMrpInvoiceRows(lines) {
 
 function parseTallyMrpInvoiceRow(rawLine) {
   const line = String(rawLine || '')
+    .replace(/^\s*[|/\\[\](]*\s*(\d{1,3})\s*[./|/\\[\](]+\s*/g, '$1 ')
     .replace(/[|[\]]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   const serialMatch = line.match(/^\D*(\d{1,3})[./\s]+(.+)$/);
-  if (!serialMatch) return null;
+  if (!serialMatch && !/[A-Za-z]{3,}.*\d{6,8}.*\d{1,2}\s*%/.test(line)) return null;
 
-  const body = serialMatch[2];
+  const body = serialMatch ? serialMatch[2] : line.replace(/^[^A-Za-z0-9]+/, '');
   const tokens = body.split(/\s+/).filter(Boolean);
   const hsnIndex = tokens.findIndex((token, index) => index > 0 && cleanTallyMrpHsnToken(token, tokens.slice(0, index).join(' ')));
   if (hsnIndex <= 0) return null;
@@ -570,7 +696,7 @@ function parseTallyMrpInvoiceRow(rawLine) {
   const gstMatch = afterHsn.match(/(\d{1,2})\s*%/);
   const gstPercent = gstMatch ? normalizeGstPercent(gstMatch[1]) : '';
   const qtyMatch = afterHsn.match(/(?:\d{1,2}\s*%\s*)?([\d,.]+)\s*([A-Za-z0-9]{2,5})/);
-  const amountMatch = afterHsn.match(/([\d,]+(?:\.\d{2})?)\s*$/);
+  const amountMatch = afterHsn.match(/(\d[\d,.]*(?:\.\d{2})?)\s*$/);
   if (!product || !hsn || !gstPercent || !qtyMatch || !amountMatch) return null;
 
   const qty = normalizeOcrQuantity(qtyMatch[1], qtyMatch[2]);
@@ -1096,7 +1222,7 @@ function cleanOcrHsnToken(token) {
 function normalizeOcrQuantity(value, unit = '') {
   const raw = String(value || '');
   const amount = toNumber(raw);
-  if (!raw.includes('.') && /(nos|n0s|pc|pcs)/i.test(unit) && amount >= 100) {
+  if (!raw.includes('.') && /(nos|n0s|no5|pc|pcs)/i.test(unit) && amount >= 100) {
     return (amount / 100).toFixed(2);
   }
   if (!raw.includes('.') && /kg/i.test(unit) && amount >= 1000) {
@@ -1444,32 +1570,6 @@ function roundCurrency(value) {
 function calculateInwardLine(line, taxType, discountType, schemeType) {
   const effectiveDiscountType = normalizeDiscountType(line.discount_type || discountType);
   const effectiveSchemeType = normalizeDiscountType(line.scheme_type || schemeType);
-  const totalOverrideText = String(line.total_amount ?? '').trim();
-  if (line.last_amount_input === 'TOTAL' && totalOverrideText !== '') {
-    const amount = roundCurrency(toNumber(line.total_amount));
-    const gstFactor = 1 + (toNumber(line.gst_percent) / 100);
-    const taxable = gstFactor > 0 ? roundCurrency(amount / gstFactor) : amount;
-    const rawGst = amount - taxable;
-    const cgst = taxType === 'LOCAL' ? roundCurrency(rawGst / 2) : 0;
-    const sgst = taxType === 'LOCAL' ? roundCurrency(rawGst / 2) : 0;
-    const igst = taxType === 'INTERSTATE' ? roundCurrency(rawGst) : 0;
-    const gst = cgst + sgst + igst;
-    const displayedDiscount = effectiveDiscountType === 'VALUE' ? toNumber(line.discount) : 0;
-    const displayedScheme = effectiveSchemeType === 'VALUE' ? toNumber(line.scheme) : 0;
-
-    return {
-      gross: taxable,
-      discount: displayedDiscount,
-      scheme: displayedScheme,
-      taxable,
-      gst,
-      cgst,
-      sgst,
-      igst,
-      amount
-    };
-  }
-
   const quantity = toNumber(line.qty);
   const purchaseRate = toNumber(line.price);
   const gross = purchaseRate * quantity;
@@ -1481,6 +1581,37 @@ function calculateInwardLine(line, taxType, discountType, schemeType) {
   const sgst = taxType === 'LOCAL' ? roundCurrency(rawGst / 2) : 0;
   const igst = taxType === 'INTERSTATE' ? roundCurrency(rawGst) : 0;
   const gst = cgst + sgst + igst;
+  const rateBasedAmount = taxable + gst;
+  const totalOverrideText = String(line.total_amount ?? '').trim();
+  const freeQty = toNumber(line.free);
+  if (
+    line.last_amount_input === 'TOTAL'
+    && totalOverrideText !== ''
+    && !(freeQty > 0 && toNumber(line.total_amount) > rateBasedAmount + 0.01)
+  ) {
+    const amount = roundCurrency(toNumber(line.total_amount));
+    const gstFactor = 1 + (toNumber(line.gst_percent) / 100);
+    const overrideTaxable = gstFactor > 0 ? roundCurrency(amount / gstFactor) : amount;
+    const overrideRawGst = amount - overrideTaxable;
+    const overrideCgst = taxType === 'LOCAL' ? roundCurrency(overrideRawGst / 2) : 0;
+    const overrideSgst = taxType === 'LOCAL' ? roundCurrency(overrideRawGst / 2) : 0;
+    const overrideIgst = taxType === 'INTERSTATE' ? roundCurrency(overrideRawGst) : 0;
+    const overrideGst = overrideCgst + overrideSgst + overrideIgst;
+    const displayedDiscount = effectiveDiscountType === 'VALUE' ? toNumber(line.discount) : 0;
+    const displayedScheme = effectiveSchemeType === 'VALUE' ? toNumber(line.scheme) : 0;
+
+    return {
+      gross: overrideTaxable,
+      discount: displayedDiscount,
+      scheme: displayedScheme,
+      taxable: overrideTaxable,
+      gst: overrideGst,
+      cgst: overrideCgst,
+      sgst: overrideSgst,
+      igst: overrideIgst,
+      amount
+    };
+  }
 
   return {
     gross,
@@ -1496,6 +1627,7 @@ function calculateInwardLine(line, taxType, discountType, schemeType) {
 }
 
 function getInwardStockQuantity(line) {
+  if (line.is_adjustment) return 0;
   const factor = Math.max(toNumber(line.stock_conversion_factor || line.purchase_unit_size || 1), 0.001);
   return (toNumber(line.qty) + toNumber(line.free)) * factor;
 }
@@ -1626,6 +1758,7 @@ export default function InwardEntryView() {
   const [historyFilters, setHistoryFilters] = useState({ from: '', to: '', supplier: '', invoice: '' });
   const [viewedInward, setViewedInward] = useState(null);
   const [sourceDraftId, setSourceDraftId] = useState(null);
+  const [editingInward, setEditingInward] = useState(null);
   const [isLoadingInward, setIsLoadingInward] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -1780,7 +1913,7 @@ export default function InwardEntryView() {
 
       const nextValue = field === 'gst_percent'
         ? normalizeGstPercent(value)
-        : (field === 'product' ? value.toUpperCase() : value);
+        : (field === 'product' || field === 'free_offer_product_name' ? value.toUpperCase() : value);
       const nextLine = { ...line, [field]: nextValue };
 
       if (field === 'taxable_amount') {
@@ -1906,6 +2039,37 @@ export default function InwardEntryView() {
     }
   }
 
+  async function fillFreeOfferProduct(index) {
+    const line = lines[index];
+    const query = String(line.free_offer_barcode || line.free_offer_product_name || '').trim();
+    if (query.length < 3) {
+      setErrorMessage('Enter free item barcode or at least 3 letters before lookup.');
+      return;
+    }
+
+    try {
+      const results = await searchProducts(query);
+      const product = results[0];
+      if (!product) {
+        setErrorMessage('Free item not found in product master. Add the free item product first, then map it here.');
+        return;
+      }
+
+      setLines((current) => current.map((currentLine, lineIndex) => (
+        lineIndex === index
+          ? {
+            ...currentLine,
+            free_offer_barcode: product.barcode || currentLine.free_offer_barcode,
+            free_offer_product_name: String(product.product_name || currentLine.free_offer_product_name || '').toUpperCase()
+          }
+          : currentLine
+      )));
+      setErrorMessage('');
+    } catch (err) {
+      setErrorMessage('Unable to lookup free item.');
+    }
+  }
+
   function hasUnmappedProductLines() {
     return lines.some((line) => (
       !line.is_adjustment
@@ -1919,12 +2083,13 @@ export default function InwardEntryView() {
     setSupplier(blankSupplier);
     setPaymentMode('Credit');
     setSourceDraftId(null);
+    setEditingInward(null);
     setLines([{ ...blankLine }]);
   }
 
   function closePendingInvoiceEdit() {
     resetInwardForm();
-    setStatusMessage('Pending invoice closed without changes. Draft is still available in Pending Invoices.');
+    setStatusMessage(editingInward ? 'Inward edit closed without changes.' : 'Pending invoice closed without changes. Draft is still available in Pending Invoices.');
     setErrorMessage('');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -1945,6 +2110,9 @@ export default function InwardEntryView() {
         payment_mode: paymentMode,
         posting_status: postingStatus,
         source_draft_id: postingStatus === 'POSTED' ? sourceDraftId : null,
+        replace_inward_id: editingInward
+          ? editingInward.id
+          : (postingStatus === 'DRAFT' && sourceDraftId ? sourceDraftId : null),
         lines: lines.map((line) => ({
           ...line,
           discount_type: line.discount_type || discountType,
@@ -1952,8 +2120,10 @@ export default function InwardEntryView() {
         }))
       });
       setStatusMessage(postingStatus === 'DRAFT'
-        ? `Draft bill S.No ${result.serial_no || result.id} (${result.inward_no}) saved. Stock not updated yet.`
-        : `Inward S.No ${result.serial_no || result.id} (${result.inward_no}) posted. Stock updated for ${result.item_count} products.`);
+        ? `Draft bill S.No ${result.serial_no || result.id} (${result.inward_no}) saved/updated. Stock not updated yet.`
+        : editingInward
+          ? `Inward S.No ${result.serial_no || result.id} (${result.inward_no}) updated. Stock recalculated for ${result.item_count} products.`
+          : `Inward S.No ${result.serial_no || result.id} (${result.inward_no}) posted. Stock updated for ${result.item_count} products.`);
       resetInwardForm();
       await loadRecentInwards();
       if (result.id || result.inward_no) await handleViewInward(result);
@@ -1978,6 +2148,7 @@ export default function InwardEntryView() {
     setTaxType(entry.tax_type === 'INTERSTATE' ? 'INTERSTATE' : 'LOCAL');
     setPaymentMode(entry.payment_mode || 'Credit');
     setSourceDraftId(entry.posting_status === 'DRAFT' ? entry.id : null);
+    setEditingInward(entry.posting_status === 'POSTED' ? { id: entry.id, inward_no: entry.inward_no } : null);
     setLines(items.map((item) => ({
       ...blankLine,
       product: item.product_name || '',
@@ -1993,17 +2164,37 @@ export default function InwardEntryView() {
       scheme_type: item.scheme_type || 'PERCENT',
       scheme: String(item.scheme_value ?? item.scheme_amount ?? item.scheme ?? ''),
       free: String(item.free_qty ?? ''),
+      free_offer_enabled: Boolean(item.free_offer_enabled),
+      free_offer_barcode: item.free_offer_barcode || '',
+      free_offer_product_name: item.free_offer_product_name || '',
+      free_offer_qty_per_sale: String(item.free_offer_qty_per_sale ?? '1'),
+      free_offer_total_qty: String(item.free_offer_total_qty ?? ''),
       qty: String(item.quantity ?? ''),
       total_amount: String(item.total_amount ?? ''),
       last_amount_input: 'TOTAL'
     })));
     setViewedInward(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    setStatusMessage('Draft loaded. Add barcode / POS product names, then press Post Inward.');
+    setStatusMessage(entry.posting_status === 'POSTED'
+      ? `Editing posted inward ${entry.inward_no}. Press Update Inward to replace it.`
+      : 'Draft loaded. Add barcode / POS product names, then press Post Inward.');
   }
 
   function loadViewedInwardForPosting() {
     loadInwardDetailsForPosting(viewedInward);
+  }
+
+  async function handleEditInward(entry) {
+    setIsLoadingInward(true);
+    setErrorMessage('');
+    try {
+      const details = await fetchInwardDetails(entry.id);
+      loadInwardDetailsForPosting(details);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load inward for edit.');
+    } finally {
+      setIsLoadingInward(false);
+    }
   }
 
   async function handleLoadPendingInward(entry) {
@@ -2014,6 +2205,26 @@ export default function InwardEntryView() {
       loadInwardDetailsForPosting(details);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to open pending invoice.');
+    } finally {
+      setIsLoadingInward(false);
+    }
+  }
+
+  async function handleDeletePendingInward(entry) {
+    if (!entry?.id || entry.posting_status !== 'DRAFT') return;
+    const confirmed = window.confirm(`Delete pending invoice S.No ${entry.id} (${entry.inward_no})? Stock is not affected because this is only a draft.`);
+    if (!confirmed) return;
+
+    setIsLoadingInward(true);
+    setErrorMessage('');
+    try {
+      await deleteInwardEntry(entry.id);
+      if (sourceDraftId === entry.id) resetInwardForm();
+      setViewedInward((current) => (current?.entry?.id === entry.id ? null : current));
+      setStatusMessage(`Pending invoice S.No ${entry.id} deleted.`);
+      await loadRecentInwards();
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to delete pending invoice.');
     } finally {
       setIsLoadingInward(false);
     }
@@ -2102,6 +2313,11 @@ export default function InwardEntryView() {
         <div className="panel-body form-stack">
           {errorMessage && <div className="alert-box">{errorMessage}</div>}
           {statusMessage && <div className="change-box">{statusMessage}</div>}
+          {editingInward && (
+            <div className="alert-box">
+              Editing posted inward {editingInward.inward_no}. Update is allowed only before this inward stock/free offer is used in billing.
+            </div>
+          )}
 
           <div className="customer-grid">
             {Object.entries({
@@ -2282,16 +2498,16 @@ export default function InwardEntryView() {
             {taxType === 'INTERSTATE' && <span>IGST: <strong>{formatMoney(totals.igst)}</strong></span>}
             <span>Grand Total: <strong>{formatMoney(totals.total)}</strong></span>
             <button className="secondary-button" onClick={addRow}>Add Row</button>
-            {sourceDraftId && (
+            {(sourceDraftId || editingInward) && (
               <button className="secondary-button" type="button" onClick={closePendingInvoiceEdit} disabled={isSaving}>
-                Close Pending Invoice
+                {editingInward ? 'Close Edit' : 'Close Pending Invoice'}
               </button>
             )}
             <button className="secondary-button" onClick={() => handleSave('DRAFT')} disabled={isSaving}>
               {isSaving ? 'Saving...' : 'Save Draft Bill'}
             </button>
             <button className="primary-button compact-primary" onClick={() => handleSave('POSTED')} disabled={isSaving}>
-              {isSaving ? 'Saving...' : 'Post Inward'}
+              {isSaving ? 'Saving...' : editingInward ? 'Update Inward' : 'Post Inward'}
             </button>
           </div>
         </div>
@@ -2313,9 +2529,14 @@ export default function InwardEntryView() {
                     <strong>S.No {entry.id} - {entry.supplier_name}</strong>
                     <span className="muted">Invoice: {entry.supplier_invoice_no || '-'} | {formatDate(entry.supplier_invoice_date)} | {formatMoney(entry.grand_total)}</span>
                   </div>
-                  <button className="primary-button compact-primary" type="button" disabled={isLoadingInward} onClick={() => handleLoadPendingInward(entry)}>
-                    Open / Map Products
-                  </button>
+                  <div className="actions-row">
+                    <button className="primary-button compact-primary" type="button" disabled={isLoadingInward} onClick={() => handleLoadPendingInward(entry)}>
+                      Edit
+                    </button>
+                    <button className="secondary-button danger-button" type="button" disabled={isLoadingInward} onClick={() => handleDeletePendingInward(entry)}>
+                      Delete
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -2380,6 +2601,9 @@ export default function InwardEntryView() {
                       <button className="secondary-button" type="button" disabled={isLoadingInward} onClick={() => handleViewInward(entry)}>
                         View / Print
                       </button>
+                      <button className="secondary-button" type="button" disabled={isLoadingInward} onClick={() => handleEditInward(entry)}>
+                        Edit
+                      </button>
                     </td>
                   </tr>
                 ))
@@ -2398,6 +2622,9 @@ export default function InwardEntryView() {
                 <button className="secondary-button" type="button" onClick={handlePrintInward}>Print</button>
                 {viewedInward.entry.posting_status === 'DRAFT' && (
                   <button className="primary-button compact-primary" type="button" onClick={loadViewedInwardForPosting}>Load for Posting</button>
+                )}
+                {viewedInward.entry.posting_status === 'POSTED' && (
+                  <button className="primary-button compact-primary" type="button" disabled={isLoadingInward} onClick={() => loadInwardDetailsForPosting(viewedInward)}>Edit</button>
                 )}
                 <button className="secondary-button" type="button" onClick={() => setViewedInward(null)}>Close</button>
               </div>

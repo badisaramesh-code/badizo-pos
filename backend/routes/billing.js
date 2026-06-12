@@ -110,7 +110,8 @@ function normalizePaymentSplits(paymentMode, paymentSplits, grandTotal, cashRece
 
 async function consumeBatchStock(connection, invoiceItemId, invoiceNo, barcode, quantity) {
   let remaining = parseMoney(quantity);
-  if (remaining <= 0) return;
+  const allocations = [];
+  if (remaining <= 0) return allocations;
 
   const [batches] = await connection.query(
     `SELECT id, batch_no, expiry_date, quantity_available
@@ -142,8 +143,131 @@ async function consumeBatchStock(connection, invoiceItemId, invoiceNo, barcode, 
        VALUES (?, ?, ?, ?, ?, ?)`,
       [invoiceItemId, invoiceNo, barcode, batch.batch_no || '', batch.expiry_date || null, deductQty]
     );
+    allocations.push({
+      barcode,
+      batch_no: batch.batch_no || '',
+      expiry_date: batch.expiry_date || null,
+      quantity: deductQty
+    });
     remaining -= deductQty;
   }
+
+  return allocations;
+}
+
+async function applyBatchFreeOffers(connection, invoiceNo, batchAllocations) {
+  const freeLines = [];
+
+  for (const allocation of batchAllocations) {
+    const saleQty = parseMoney(allocation.quantity);
+    if (!allocation.barcode || saleQty <= 0) continue;
+
+    const [offers] = await connection.query(
+      `SELECT id, free_barcode, free_product_name, free_qty_per_sale, free_qty_remaining
+       FROM batch_free_offers
+       WHERE trigger_barcode = ?
+         AND trigger_batch_no = ?
+         AND (trigger_expiry_date <=> ?)
+         AND is_active = 1
+         AND free_qty_remaining > 0
+       ORDER BY id ASC
+       FOR UPDATE`,
+      [allocation.barcode, allocation.batch_no || '', allocation.expiry_date || null]
+    );
+
+    for (const offer of offers) {
+      if (!String(offer.free_product_name || '').trim()) continue;
+      const perSale = Math.max(parseMoney(offer.free_qty_per_sale), 0);
+      const intendedQty = perSale * saleQty;
+      const freeQty = Math.min(intendedQty, parseMoney(offer.free_qty_remaining));
+      if (freeQty <= 0) continue;
+
+      await connection.query(
+        `UPDATE batch_free_offers
+         SET free_qty_remaining = free_qty_remaining - ?,
+             is_active = CASE WHEN free_qty_remaining - ? <= 0 THEN 0 ELSE is_active END
+         WHERE id = ? AND free_qty_remaining >= ?`,
+        [freeQty, freeQty, offer.id, freeQty]
+      );
+
+      const [freeItemResult] = await connection.query(
+        `INSERT INTO invoice_items
+         (invoice_no, barcode, product_name, quantity, sale_price, gst_percent, cgst_amount, sgst_amount, igst_amount, is_free_bonus, free_offer_id)
+         VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 1, ?)`,
+        [invoiceNo, offer.free_barcode, offer.free_product_name, freeQty, offer.id]
+      );
+
+      freeLines.push({
+        barcode: offer.free_barcode,
+        product_name: offer.free_product_name,
+        quantity: freeQty,
+        sale_price: 0,
+        gst_percent: 0,
+        is_free_bonus: true,
+        trigger_barcode: allocation.barcode,
+        trigger_batch_no: allocation.batch_no || ''
+      });
+    }
+  }
+
+  return freeLines;
+}
+
+async function applyProductFreePromotions(connection, invoiceNo, soldItems) {
+  const freeLines = [];
+
+  for (const sold of soldItems) {
+    const saleQty = parseMoney(sold.quantity);
+    if (!sold.barcode || saleQty <= 0) continue;
+
+    const [promoRows] = await connection.query(
+      `SELECT barcode, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
+              free_promo_total_qty, free_promo_remaining_qty
+       FROM products
+       WHERE barcode = ?
+       FOR UPDATE`,
+      [sold.barcode]
+    );
+    const promo = promoRows[0];
+    if (!promo?.free_promo_enabled || !String(promo.free_promo_name || '').trim()) continue;
+
+    const perSale = Math.max(parseMoney(promo.free_promo_qty_per_sale), 0);
+    const intendedQty = perSale * saleQty;
+    if (intendedQty <= 0) continue;
+
+    const hasLimit = parseMoney(promo.free_promo_total_qty) > 0;
+    const freeQty = hasLimit ? Math.min(intendedQty, parseMoney(promo.free_promo_remaining_qty)) : intendedQty;
+    if (freeQty <= 0) continue;
+
+    if (hasLimit) {
+      await connection.query(
+        `UPDATE products
+         SET free_promo_remaining_qty = free_promo_remaining_qty - ?,
+             free_promo_enabled = CASE WHEN free_promo_remaining_qty - ? <= 0 THEN 0 ELSE free_promo_enabled END
+         WHERE barcode = ? AND free_promo_remaining_qty >= ?`,
+        [freeQty, freeQty, sold.barcode, freeQty]
+      );
+    }
+
+    await connection.query(
+      `INSERT INTO invoice_items
+       (invoice_no, barcode, product_name, quantity, sale_price, gst_percent, cgst_amount, sgst_amount, igst_amount, is_free_bonus, free_offer_id)
+       VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 1, NULL)`,
+      [invoiceNo, sold.barcode, promo.free_promo_name, freeQty]
+    );
+
+    freeLines.push({
+      barcode: sold.barcode,
+      product_name: promo.free_promo_name,
+      quantity: freeQty,
+      sale_price: 0,
+      gst_percent: 0,
+      is_free_bonus: true,
+      trigger_barcode: sold.barcode
+    });
+  }
+
+  return freeLines;
 }
 
 async function restoreBatchStock(connection, invoiceItemId, quantity) {
@@ -178,6 +302,46 @@ async function restoreBatchStock(connection, invoiceItemId, quantity) {
     );
     remaining -= restoreQty;
   }
+}
+
+async function restoreFreeOfferQuantity(connection, invoiceItemId, quantity) {
+  const [rows] = await connection.query(
+    `SELECT free_offer_id, is_free_bonus
+     FROM invoice_items
+     WHERE id = ?
+     LIMIT 1`,
+    [invoiceItemId]
+  );
+  const item = rows[0];
+  if (!item?.is_free_bonus || !item.free_offer_id) return;
+
+  await connection.query(
+    `UPDATE batch_free_offers
+     SET free_qty_remaining = free_qty_remaining + ?,
+         is_active = 1
+     WHERE id = ?`,
+    [parseMoney(quantity), item.free_offer_id]
+  );
+}
+
+async function restoreProductFreePromotionQuantity(connection, invoiceItemId, quantity) {
+  const [rows] = await connection.query(
+    `SELECT barcode, free_offer_id, is_free_bonus
+     FROM invoice_items
+     WHERE id = ?
+     LIMIT 1`,
+    [invoiceItemId]
+  );
+  const item = rows[0];
+  if (!item?.is_free_bonus || item.free_offer_id) return;
+
+  await connection.query(
+    `UPDATE products
+     SET free_promo_remaining_qty = free_promo_remaining_qty + ?,
+         free_promo_enabled = CASE WHEN free_promo_total_qty > 0 THEN 1 ELSE free_promo_enabled END
+     WHERE barcode = ? AND free_promo_total_qty > 0`,
+    [parseMoney(quantity), item.barcode]
+  );
 }
 
 router.get('/invoice/next', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
@@ -316,6 +480,9 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       );
     }
 
+    const soldBatchAllocations = [];
+    const soldItemsForPromotions = [];
+
     for (const item of items) {
       const quantity = parseMoney(item.quantity) || 1;
       const salePrice = parseMoney(item.sale_price);
@@ -361,8 +528,14 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         ]
       );
 
-      await consumeBatchStock(connection, invoiceItemResult.insertId, invoiceNo, item.barcode, quantity);
+      const allocations = await consumeBatchStock(connection, invoiceItemResult.insertId, invoiceNo, item.barcode, quantity);
+      soldBatchAllocations.push(...allocations);
+      soldItemsForPromotions.push({ barcode: item.barcode, quantity });
     }
+
+    const productPromotionFreeItems = await applyProductFreePromotions(connection, invoiceNo, soldItemsForPromotions);
+    const batchFreeItems = await applyBatchFreeOffers(connection, invoiceNo, soldBatchAllocations);
+    const freeItems = [...productPromotionFreeItems, ...batchFreeItems];
 
     for (const item of normalizedExchangeItems) {
       const [stockResult] = await connection.query(
@@ -387,6 +560,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         paymentMode: payment_mode || 'Cash',
         grandTotal: parseMoney(grand_total),
         itemCount: items.length,
+        freeItemCount: freeItems.length,
         exchangeTotal,
         exchangeItemCount: normalizedExchangeItems.length
       },
@@ -409,7 +583,8 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       invoice_no: invoiceNo,
       financial_year: allocatedInvoice.financialYear,
       counter_no: counterNo,
-      sequence_no: allocatedInvoice.sequenceNo
+      sequence_no: allocatedInvoice.sequenceNo,
+      free_items: freeItems
     });
   } catch (err) {
     await connection.rollback();
@@ -441,7 +616,7 @@ router.get('/invoice/details', authenticate, authorize('SERVER', 'ADMIN', 'COUNT
 
     const [itemRows] = await db.query(
       `SELECT ii.id, ii.invoice_no, ii.barcode, ii.product_name, ii.quantity, ii.sale_price, ii.gst_percent,
-              ii.cgst_amount, ii.sgst_amount, ii.igst_amount, ii.returned_qty,
+              ii.cgst_amount, ii.sgst_amount, ii.igst_amount, ii.is_free_bonus, ii.free_offer_id, ii.returned_qty,
               COALESCE(p.mrp, 0) AS mrp,
               COALESCE(p.hsn_code, '') AS hsn_code
        FROM invoice_items ii
@@ -472,6 +647,7 @@ router.get('/invoice/details', authenticate, authorize('SERVER', 'ADMIN', 'COUNT
 
 router.post('/invoice/reprint', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   const invoiceNo = String(req.body?.invoice_no || '').trim();
+  const printMode = req.body?.print_mode === 'A4' ? 'A4' : 'Thermal';
   if (!invoiceNo) {
     return res.status(400).json({ error: 'Invoice number is required.' });
   }
@@ -492,7 +668,8 @@ router.post('/invoice/reprint', authenticate, authorize('SERVER', 'ADMIN', 'COUN
       user: req.user,
       action: 'INVOICE_REPRINTED',
       entityType: 'INVOICE',
-      entityId: invoiceNo
+      entityId: invoiceNo,
+      details: { print_mode: printMode }
     });
 
     res.json({ success: true });
@@ -539,18 +716,22 @@ router.post('/invoice/void', authenticate, authorize('SERVER', 'ADMIN'), async (
     }
 
     const [items] = await connection.query(
-      `SELECT id, barcode, quantity
+      `SELECT id, barcode, quantity, is_free_bonus, free_offer_id
        FROM invoice_items
        WHERE invoice_no = ?`,
       [invoiceNo]
     );
 
     for (const item of items) {
-      await connection.query(
-        `UPDATE products SET stock_qty = stock_qty + ? WHERE barcode = ?`,
-        [parseMoney(item.quantity), item.barcode]
-      );
-      await restoreBatchStock(connection, item.id, item.quantity);
+      if (!item.is_free_bonus) {
+        await connection.query(
+          `UPDATE products SET stock_qty = stock_qty + ? WHERE barcode = ?`,
+          [parseMoney(item.quantity), item.barcode]
+        );
+        await restoreBatchStock(connection, item.id, item.quantity);
+      }
+      await restoreFreeOfferQuantity(connection, item.id, item.quantity);
+      await restoreProductFreePromotionQuantity(connection, item.id, item.quantity);
     }
 
     await connection.query(
@@ -635,7 +816,7 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
       if (!invoiceItemId || returnQty <= 0) continue;
 
       const [itemRows] = await connection.query(
-        `SELECT id, barcode, product_name, quantity, sale_price, gst_percent, returned_qty
+        `SELECT id, barcode, product_name, quantity, sale_price, gst_percent, returned_qty, is_free_bonus
          FROM invoice_items
          WHERE id = ? AND invoice_no = ?
          FOR UPDATE`,
@@ -645,6 +826,10 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
 
       if (!item) {
         throw new Error(`Invoice item ${invoiceItemId} not found.`);
+      }
+
+      if (item.is_free_bonus) {
+        throw new Error('Free counter items cannot be returned in POS return billing.');
       }
 
       const availableQty = parseMoney(item.quantity) - parseMoney(item.returned_qty);

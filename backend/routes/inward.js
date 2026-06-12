@@ -31,34 +31,40 @@ function calculateLineReduction(baseAmount, value, type) {
 }
 
 function calculateInwardLine(line, taxType) {
-  if (line.last_amount_input === 'TOTAL' && Number.isFinite(line.total_amount)) {
+  const gross = line.purchase_price * line.quantity;
+  const discountAmount = calculateLineReduction(gross, line.discount_value, line.discount_type);
+  const schemeAmount = calculateLineReduction(gross - discountAmount, line.scheme_value, line.scheme_type);
+  const taxable = Math.max(gross - discountAmount - schemeAmount, 0);
+  const gstAmount = taxable * (line.gst_percent / 100);
+  const rateBasedTotal = taxable + gstAmount;
+  const hasFreeQty = parseMoney(line.free_qty) > 0;
+
+  if (
+    line.last_amount_input === 'TOTAL'
+    && Number.isFinite(line.total_amount)
+    && !(hasFreeQty && line.total_amount > rateBasedTotal + 0.01)
+  ) {
     const lineTotal = Number(line.total_amount.toFixed(2));
     const gstFactor = 1 + (line.gst_percent / 100);
-    const taxable = Number((gstFactor > 0 ? lineTotal / gstFactor : lineTotal).toFixed(2));
-    const gstAmount = Number((lineTotal - taxable).toFixed(2));
-    const cgstAmount = taxType === 'LOCAL' ? Number((gstAmount / 2).toFixed(2)) : 0;
-    const sgstAmount = taxType === 'LOCAL' ? Number((gstAmount / 2).toFixed(2)) : 0;
-    const igstAmount = taxType === 'INTERSTATE' ? gstAmount : 0;
-    const discountAmount = line.discount_type === 'VALUE' ? parseMoney(line.discount_value) : 0;
-    const schemeAmount = line.scheme_type === 'VALUE' ? parseMoney(line.scheme_value) : 0;
+    const overrideTaxable = Number((gstFactor > 0 ? lineTotal / gstFactor : lineTotal).toFixed(2));
+    const overrideGstAmount = Number((lineTotal - overrideTaxable).toFixed(2));
+    const cgstAmount = taxType === 'LOCAL' ? Number((overrideGstAmount / 2).toFixed(2)) : 0;
+    const sgstAmount = taxType === 'LOCAL' ? Number((overrideGstAmount / 2).toFixed(2)) : 0;
+    const igstAmount = taxType === 'INTERSTATE' ? overrideGstAmount : 0;
+    const overrideDiscountAmount = line.discount_type === 'VALUE' ? parseMoney(line.discount_value) : 0;
+    const overrideSchemeAmount = line.scheme_type === 'VALUE' ? parseMoney(line.scheme_value) : 0;
 
     return {
-      discountAmount,
-      schemeAmount,
-      taxable,
-      gstAmount,
+      discountAmount: overrideDiscountAmount,
+      schemeAmount: overrideSchemeAmount,
+      taxable: overrideTaxable,
+      gstAmount: overrideGstAmount,
       cgstAmount,
       sgstAmount,
       igstAmount,
       lineTotal
     };
   }
-
-  const gross = line.purchase_price * line.quantity;
-  const discountAmount = calculateLineReduction(gross, line.discount_value, line.discount_type);
-  const schemeAmount = calculateLineReduction(gross - discountAmount, line.scheme_value, line.scheme_type);
-  const taxable = Math.max(gross - discountAmount - schemeAmount, 0);
-  const gstAmount = taxable * (line.gst_percent / 100);
 
   return {
     discountAmount,
@@ -109,6 +115,186 @@ function pendingBarcodeForDraftLine(line) {
 
 function isInternalBarcode(value) {
   return /^(INV|PENDING)-/i.test(String(value || ''));
+}
+
+function batchKey(barcode, batchNo = '', expiryDate = null) {
+  const expiry = expiryDate ? new Date(expiryDate).toISOString().slice(0, 10) : '';
+  return `${String(barcode || '').trim().toUpperCase()}|${String(batchNo || '').trim().toUpperCase()}|${expiry}`;
+}
+
+function stockQuantityForLine(line) {
+  return (line.quantity + line.free_qty) * line.stock_conversion_factor;
+}
+
+function batchMetaForLine(line, inwardNo) {
+  const stockQty = stockQuantityForLine(line);
+  const basePurchasePrice = line.stock_conversion_factor > 0 ? line.purchase_price / line.stock_conversion_factor : line.purchase_price;
+  return {
+    barcode: line.barcode,
+    product_name: line.product_name,
+    hsn_code: line.hsn_code,
+    gst_percent: line.gst_percent,
+    batch_no: line.batch_no || '',
+    expiry_date: line.expiry_date,
+    inward_no: inwardNo,
+    purchase_price: basePurchasePrice,
+    mrp: line.mrp,
+    stockQty
+  };
+}
+
+async function applyPostedInwardStockDelta(connection, inwardNo, validLines) {
+  const [oldBatches] = await connection.query(
+    `SELECT barcode, batch_no, expiry_date, quantity_received, quantity_available
+     FROM product_batches
+     WHERE inward_no = ?
+     FOR UPDATE`,
+    [inwardNo]
+  );
+
+  const oldByKey = new Map(oldBatches.map((batch) => [batchKey(batch.barcode, batch.batch_no, batch.expiry_date), batch]));
+  const newByKey = new Map();
+
+  for (const line of validLines) {
+    if (line.is_adjustment) continue;
+    const meta = batchMetaForLine(line, inwardNo);
+    const key = batchKey(meta.barcode, meta.batch_no, meta.expiry_date);
+    const current = newByKey.get(key) || { ...meta, stockQty: 0 };
+    current.stockQty += meta.stockQty;
+    newByKey.set(key, current);
+  }
+
+  for (const [key, oldBatch] of oldByKey.entries()) {
+    const oldReceived = parseMoney(oldBatch.quantity_received);
+    const oldAvailable = parseMoney(oldBatch.quantity_available);
+    const consumed = oldReceived - oldAvailable;
+    const nextMeta = newByKey.get(key);
+    const nextQty = nextMeta ? nextMeta.stockQty : 0;
+    const delta = nextQty - oldReceived;
+
+    if (consumed > 0.001 && delta < -0.001) {
+      throw new Error(`Cannot reduce/remove ${oldBatch.barcode} batch ${oldBatch.batch_no || '-'}. Some quantity is already sold. You can add/increase only.`);
+    }
+
+    if (Math.abs(delta) <= 0.001) {
+      newByKey.delete(key);
+      continue;
+    }
+
+    if (delta < 0) {
+      const reduceQty = Math.abs(delta);
+      const [productResult] = await connection.query(
+        `UPDATE products
+         SET stock_qty = stock_qty - ?
+         WHERE barcode = ? AND stock_qty >= ?`,
+        [reduceQty, oldBatch.barcode, reduceQty]
+      );
+      if (productResult.affectedRows !== 1) {
+        throw new Error(`Cannot reduce ${oldBatch.barcode}. Current stock is lower than reduce quantity.`);
+      }
+    } else {
+      await connection.query(
+        `UPDATE products SET stock_qty = stock_qty + ? WHERE barcode = ?`,
+        [delta, oldBatch.barcode]
+      );
+    }
+
+    if (nextQty <= 0.001) {
+      await connection.query(
+        `DELETE FROM product_batches
+         WHERE inward_no = ? AND barcode = ? AND batch_no = ? AND (expiry_date <=> ?)`,
+        [inwardNo, oldBatch.barcode, oldBatch.batch_no || '', oldBatch.expiry_date || null]
+      );
+    } else {
+      await connection.query(
+        `UPDATE product_batches
+         SET quantity_received = ?, quantity_available = quantity_available + ?, updated_at = CURRENT_TIMESTAMP
+         WHERE inward_no = ? AND barcode = ? AND batch_no = ? AND (expiry_date <=> ?)`,
+        [nextQty, delta, inwardNo, oldBatch.barcode, oldBatch.batch_no || '', oldBatch.expiry_date || null]
+      );
+    }
+
+    newByKey.delete(key);
+  }
+
+  for (const meta of newByKey.values()) {
+    if (meta.stockQty <= 0) continue;
+    await connection.query(
+      `INSERT INTO product_batches
+       (barcode, batch_no, expiry_date, inward_no, purchase_price, mrp, quantity_received, quantity_available)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [meta.barcode, meta.batch_no, meta.expiry_date, inwardNo, meta.purchase_price, meta.mrp, meta.stockQty, meta.stockQty]
+    );
+    const [productRows] = await connection.query(`SELECT barcode FROM products WHERE barcode = ? LIMIT 1`, [meta.barcode]);
+    if (productRows.length) {
+      await connection.query(`UPDATE products SET stock_qty = stock_qty + ? WHERE barcode = ?`, [meta.stockQty, meta.barcode]);
+    } else {
+      await connection.query(
+        `INSERT INTO products
+         (product_code, barcode, product_name, hsn_code, gst_percent, mrp, purchase_price, sale_price, wholesale_price, stock_qty)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          meta.barcode,
+          meta.barcode,
+          meta.product_name || meta.barcode,
+          meta.hsn_code || '',
+          meta.gst_percent || 0,
+          meta.mrp || meta.purchase_price,
+          meta.purchase_price,
+          meta.purchase_price,
+          meta.purchase_price,
+          meta.stockQty
+        ]
+      );
+    }
+  }
+}
+
+async function reversePostedInward(connection, inwardNo) {
+  const [batchRows] = await connection.query(
+    `SELECT barcode, batch_no, expiry_date, quantity_received, quantity_available
+     FROM product_batches
+     WHERE inward_no = ?
+     FOR UPDATE`,
+    [inwardNo]
+  );
+
+  const consumedBatch = batchRows.find((batch) => parseMoney(batch.quantity_available) + 0.001 < parseMoney(batch.quantity_received));
+  if (consumedBatch) {
+    throw new Error(`Cannot edit/delete inward ${inwardNo}. Stock from batch ${consumedBatch.batch_no || '-'} has already been sold.`);
+  }
+
+  const [offerRows] = await connection.query(
+    `SELECT id, free_qty_total, free_qty_remaining
+     FROM batch_free_offers
+     WHERE inward_no = ?
+     FOR UPDATE`,
+    [inwardNo]
+  );
+  const usedOffer = offerRows.find((offer) => parseMoney(offer.free_qty_remaining) + 0.001 < parseMoney(offer.free_qty_total));
+  if (usedOffer) {
+    throw new Error(`Cannot edit/delete inward ${inwardNo}. Free item offer has already been used in billing.`);
+  }
+
+  const stockByBarcode = batchRows.reduce((acc, batch) => {
+    acc[batch.barcode] = (acc[batch.barcode] || 0) + parseMoney(batch.quantity_received);
+    return acc;
+  }, {});
+
+  for (const [barcode, qty] of Object.entries(stockByBarcode)) {
+    const [result] = await connection.query(
+      `UPDATE products
+       SET stock_qty = stock_qty - ?
+       WHERE barcode = ? AND stock_qty >= ?`,
+      [qty, barcode, qty]
+    );
+    if (result.affectedRows !== 1) {
+      throw new Error(`Cannot reverse stock for ${barcode}. Current stock is lower than inward quantity.`);
+    }
+  }
+
+  await connection.query(`DELETE FROM batch_free_offers WHERE inward_no = ?`, [inwardNo]);
+  await connection.query(`DELETE FROM product_batches WHERE inward_no = ?`, [inwardNo]);
 }
 
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
@@ -234,7 +420,8 @@ router.get('/by-number/:inwardNo/details', async (req, res) => {
     const [items] = await db.query(
       `SELECT id, barcode, product_name, hsn_code, gst_percent, purchase_price, discount_percent,
               discount_type, discount_amount, scheme, scheme_type, scheme_value, scheme_amount,
-              batch_no, expiry_date, mrp, free_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount,
+              batch_no, expiry_date, mrp, free_qty, free_offer_enabled, free_offer_barcode, free_offer_product_name,
+              free_offer_qty_per_sale, free_offer_total_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount,
               igst_amount, total_amount
        FROM inward_items
        WHERE inward_no = ?
@@ -273,7 +460,8 @@ router.get('/:id/details', async (req, res) => {
     const [items] = await db.query(
       `SELECT id, barcode, product_name, hsn_code, gst_percent, purchase_price, discount_percent,
               discount_type, discount_amount, scheme, scheme_type, scheme_value, scheme_amount,
-              batch_no, expiry_date, mrp, free_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount,
+              batch_no, expiry_date, mrp, free_qty, free_offer_enabled, free_offer_barcode, free_offer_product_name,
+              free_offer_qty_per_sale, free_offer_total_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount,
               igst_amount, total_amount
        FROM inward_items
        WHERE inward_no = ?
@@ -293,6 +481,7 @@ router.post('/', async (req, res) => {
   const taxType = req.body?.tax_type === 'INTERSTATE' ? 'INTERSTATE' : 'LOCAL';
   const paymentMode = normalizePaymentMode(req.body?.payment_mode || supplier.payment_mode);
   const isDraft = req.body?.posting_status === 'DRAFT' || req.body?.is_draft === true;
+  const replaceInwardId = Number(req.body?.replace_inward_id || 0);
 
   if (!supplier.name || !String(supplier.name).trim()) {
     return res.status(400).json({ error: 'Supplier name is required.' });
@@ -315,6 +504,11 @@ router.post('/', async (req, res) => {
           batch_no: String(line.batch_no || line.batch || '').trim().toUpperCase(),
           expiry_date: normalizeExpiryDate(line.expiry_date || line.expiry),
           free_qty: parseMoney(line.free || line.free_qty),
+          free_offer_enabled: Boolean(line.free_offer_enabled),
+          free_offer_barcode: String(line.free_offer_barcode || '').trim().toUpperCase(),
+          free_offer_product_name: normalizeProductName(line.free_offer_product_name),
+          free_offer_qty_per_sale: parseMoney(line.free_offer_qty_per_sale) || 1,
+          free_offer_total_qty: parseMoney(line.free_offer_total_qty),
           quantity: parseMoney(line.qty || line.quantity),
           stock_conversion_factor: normalizeStockConversionFactor(line.stock_conversion_factor || line.purchase_unit_size),
           total_amount: parseMoney(line.total_amount),
@@ -344,10 +538,113 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: isDraft ? 'Every draft line needs product and quantity.' : 'Before posting inward, every product line needs mapped real barcode, quantity, and valid price.' });
   }
 
+  const invalidFreeOfferLine = !isDraft && validLines.find((line) => (
+    line.free_offer_enabled
+    && (!line.batch_no || !line.free_offer_barcode || !line.free_offer_product_name || line.free_offer_total_qty <= 0)
+  ));
+  if (invalidFreeOfferLine) {
+    return res.status(400).json({ error: 'Free item offer needs batch code, free counter code/name, and total free item count.' });
+  }
+
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
-    const finalInwardNo = inwardNo();
+    let finalInwardNo = inwardNo();
+    let entryResult = null;
+    let replacingEntry = null;
+    let skipStockMutationForReplacement = false;
+
+    if (replaceInwardId > 0 && isDraft) {
+      const [replaceRows] = await connection.query(
+        `SELECT id, inward_no, posting_status
+         FROM inward_entries
+         WHERE id = ?
+         FOR UPDATE`,
+        [replaceInwardId]
+      );
+      replacingEntry = replaceRows[0];
+      if (!replacingEntry) {
+        throw new Error('Pending inward bill selected for edit was not found.');
+      }
+      if (replacingEntry.posting_status !== 'DRAFT') {
+        throw new Error('Only pending inward bills can be updated as draft.');
+      }
+      finalInwardNo = replacingEntry.inward_no;
+      await connection.query(`DELETE FROM inward_items WHERE inward_no = ?`, [finalInwardNo]);
+      await connection.query(
+        `UPDATE inward_entries
+         SET supplier_name = ?, supplier_address = ?, supplier_gstin = ?, supplier_phone = ?,
+             supplier_invoice_no = ?, supplier_invoice_date = ?, payment_mode = ?, item_count = 0,
+             total_qty = 0, taxable_total = 0, gst_total = 0, total_cgst = 0, total_sgst = 0,
+             total_igst = 0, grand_total = 0, tax_type = ?, posting_status = 'DRAFT', created_by = ?
+         WHERE inward_no = ?`,
+        [
+          String(supplier.name || '').trim(),
+          String(supplier.address || '').trim(),
+          String(supplier.gstin || '').trim().toUpperCase(),
+          String(supplier.phone || '').trim(),
+          String(supplier.invoice_no || '').trim(),
+          supplier.invoice_date || null,
+          paymentMode,
+          taxType,
+          req.user.username,
+          finalInwardNo
+        ]
+      );
+      entryResult = { insertId: replacingEntry.id };
+    }
+
+    if (replaceInwardId > 0 && !isDraft) {
+      const [replaceRows] = await connection.query(
+        `SELECT id, inward_no, posting_status
+         FROM inward_entries
+         WHERE id = ?
+         FOR UPDATE`,
+        [replaceInwardId]
+      );
+      replacingEntry = replaceRows[0];
+      if (!replacingEntry) {
+        throw new Error('Inward bill selected for edit was not found.');
+      }
+      if (replacingEntry.posting_status !== 'POSTED') {
+        throw new Error('Only posted inward bills can be replaced from edit mode.');
+      }
+      finalInwardNo = replacingEntry.inward_no;
+      const [soldBatchRows] = await connection.query(
+        `SELECT COUNT(*) AS sold_count
+         FROM product_batches
+         WHERE inward_no = ? AND quantity_available < quantity_received`,
+        [finalInwardNo]
+      );
+      skipStockMutationForReplacement = Number(soldBatchRows[0]?.sold_count || 0) > 0;
+      if (skipStockMutationForReplacement) {
+        await applyPostedInwardStockDelta(connection, finalInwardNo, validLines);
+      } else {
+        await reversePostedInward(connection, finalInwardNo);
+      }
+      await connection.query(`DELETE FROM inward_items WHERE inward_no = ?`, [finalInwardNo]);
+      await connection.query(
+        `UPDATE inward_entries
+         SET supplier_name = ?, supplier_address = ?, supplier_gstin = ?, supplier_phone = ?,
+             supplier_invoice_no = ?, supplier_invoice_date = ?, payment_mode = ?, item_count = 0,
+             total_qty = 0, taxable_total = 0, gst_total = 0, total_cgst = 0, total_sgst = 0,
+             total_igst = 0, grand_total = 0, tax_type = ?, posting_status = 'POSTED', created_by = ?
+         WHERE inward_no = ?`,
+        [
+          String(supplier.name || '').trim(),
+          String(supplier.address || '').trim(),
+          String(supplier.gstin || '').trim().toUpperCase(),
+          String(supplier.phone || '').trim(),
+          String(supplier.invoice_no || '').trim(),
+          supplier.invoice_date || null,
+          paymentMode,
+          taxType,
+          req.user.username,
+          finalInwardNo
+        ]
+      );
+      entryResult = { insertId: replacingEntry.id };
+    }
 
     let totalQty = 0;
     let taxableTotal = 0;
@@ -357,31 +654,34 @@ router.post('/', async (req, res) => {
     let igstTotal = 0;
     let grandTotal = 0;
 
-    const [entryResult] = await connection.query(
-      `INSERT INTO inward_entries
-       (inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
-        supplier_invoice_no, supplier_invoice_date, payment_mode, item_count, total_qty, taxable_total,
-        gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, posting_status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, ?, ?, ?)`,
-      [
-        finalInwardNo,
-        String(supplier.name || '').trim(),
-        String(supplier.address || '').trim(),
-        String(supplier.gstin || '').trim().toUpperCase(),
-        String(supplier.phone || '').trim(),
-        String(supplier.invoice_no || '').trim(),
-        supplier.invoice_date || null,
-        paymentMode,
-        taxType,
-        isDraft ? 'DRAFT' : 'POSTED',
-        req.user.username
-      ]
-    );
+    if (!entryResult) {
+      [entryResult] = await connection.query(
+        `INSERT INTO inward_entries
+         (inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
+          supplier_invoice_no, supplier_invoice_date, payment_mode, item_count, total_qty, taxable_total,
+          gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, posting_status, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, ?, ?, ?)`,
+        [
+          finalInwardNo,
+          String(supplier.name || '').trim(),
+          String(supplier.address || '').trim(),
+          String(supplier.gstin || '').trim().toUpperCase(),
+          String(supplier.phone || '').trim(),
+          String(supplier.invoice_no || '').trim(),
+          supplier.invoice_date || null,
+          paymentMode,
+          taxType,
+          isDraft ? 'DRAFT' : 'POSTED',
+          req.user.username
+        ]
+      );
+    }
 
     for (const line of validLines) {
       const calculated = calculateInwardLine(line, taxType);
       const stockQty = (line.is_adjustment || isDraft) ? 0 : (line.quantity + line.free_qty) * line.stock_conversion_factor;
       const basePurchasePrice = line.stock_conversion_factor > 0 ? line.purchase_price / line.stock_conversion_factor : line.purchase_price;
+      const hasFreeOffer = Boolean(line.free_offer_enabled && line.free_offer_barcode && line.free_offer_product_name && line.free_offer_total_qty > 0);
 
       totalQty += (line.is_adjustment || isDraft) ? 0 : stockQty;
       taxableTotal += calculated.taxable;
@@ -395,8 +695,9 @@ router.post('/', async (req, res) => {
         `INSERT INTO inward_items
          (inward_no, barcode, product_name, hsn_code, gst_percent, purchase_price, discount_percent,
           discount_type, discount_amount, scheme, scheme_type, scheme_value, scheme_amount,
-          batch_no, expiry_date, mrp, free_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount, igst_amount, total_amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          batch_no, expiry_date, mrp, free_qty, free_offer_enabled, free_offer_barcode, free_offer_product_name,
+          free_offer_qty_per_sale, free_offer_total_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount, igst_amount, total_amount)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           finalInwardNo,
           line.barcode,
@@ -415,6 +716,11 @@ router.post('/', async (req, res) => {
           line.expiry_date,
           line.mrp,
           line.free_qty,
+          hasFreeOffer ? 1 : 0,
+          hasFreeOffer ? line.free_offer_barcode : '',
+          hasFreeOffer ? line.free_offer_product_name : '',
+          hasFreeOffer ? line.free_offer_qty_per_sale : 1,
+          hasFreeOffer ? line.free_offer_total_qty : 0,
           line.quantity,
           calculated.taxable,
           calculated.gstAmount,
@@ -425,7 +731,7 @@ router.post('/', async (req, res) => {
         ]
       );
 
-      if (!line.is_adjustment && !isDraft) {
+      if (!line.is_adjustment && !isDraft && !skipStockMutationForReplacement) {
         await connection.query(
           `INSERT INTO product_batches
            (barcode, batch_no, expiry_date, inward_no, purchase_price, mrp, quantity_received, quantity_available)
@@ -483,6 +789,33 @@ router.post('/', async (req, res) => {
             ]
           );
         }
+
+        if (hasFreeOffer) {
+          await connection.query(
+            `INSERT INTO batch_free_offers
+             (trigger_barcode, trigger_batch_no, trigger_expiry_date, inward_no, free_barcode, free_product_name,
+              free_qty_per_sale, free_qty_total, free_qty_remaining, is_active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+             ON DUPLICATE KEY UPDATE
+               inward_no = VALUES(inward_no),
+               free_product_name = VALUES(free_product_name),
+               free_qty_per_sale = VALUES(free_qty_per_sale),
+               free_qty_total = free_qty_total + VALUES(free_qty_total),
+               free_qty_remaining = free_qty_remaining + VALUES(free_qty_remaining),
+               is_active = 1`,
+            [
+              line.barcode,
+              line.batch_no || '',
+              line.expiry_date,
+              finalInwardNo,
+              line.free_offer_barcode,
+              line.free_offer_product_name,
+              line.free_offer_qty_per_sale,
+              line.free_offer_total_qty,
+              line.free_offer_total_qty
+            ]
+          );
+        }
       }
     }
 
@@ -496,7 +829,7 @@ router.post('/', async (req, res) => {
 
     await writeAuditLog({
       user: req.user,
-      action: 'INWARD_CREATED',
+      action: replacingEntry ? 'INWARD_UPDATED' : 'INWARD_CREATED',
       entityType: 'INWARD',
       entityId: finalInwardNo,
       details: {
@@ -534,6 +867,52 @@ router.post('/', async (req, res) => {
     await connection.rollback();
     console.error('Inward save failed:', err.message);
     res.status(500).json({ error: err.message || 'Unable to save inward entry.' });
+  } finally {
+    connection.release();
+  }
+});
+
+router.delete('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Valid inward S.No is required.' });
+  }
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [entryRows] = await connection.query(
+      `SELECT id, inward_no, posting_status
+       FROM inward_entries
+       WHERE id = ?
+       FOR UPDATE`,
+      [id]
+    );
+    const entry = entryRows[0];
+    if (!entry) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Inward bill not found.' });
+    }
+
+    if (entry.posting_status === 'POSTED') {
+      await reversePostedInward(connection, entry.inward_no);
+    }
+
+    await connection.query(`DELETE FROM inward_entries WHERE id = ?`, [id]);
+    await writeAuditLog({
+      user: req.user,
+      action: 'INWARD_DELETED',
+      entityType: 'INWARD',
+      entityId: entry.inward_no,
+      details: { postingStatus: entry.posting_status },
+      connection
+    });
+    await connection.commit();
+    res.json({ success: true, inward_no: entry.inward_no });
+  } catch (err) {
+    await connection.rollback();
+    console.error('Inward delete failed:', err.message);
+    res.status(500).json({ error: err.message || 'Unable to delete inward bill.' });
   } finally {
     connection.release();
   }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import BarcodeStickersView from './components/BarcodeStickersView';
 import BillingTerminalView from './components/BillingTerminalView';
 import BooksView from './components/BooksView';
@@ -15,7 +15,17 @@ import './styles.css';
 
 export default function App() {
   const [activeWorkspace, setActiveWorkspace] = useState('billing');
+  const [mountedWorkspaces, setMountedWorkspaces] = useState(() => new Set(['billing']));
   const [currentUser, setCurrentUser] = useState(getStoredUser);
+
+  useEffect(() => {
+    setMountedWorkspaces((current) => {
+      if (current.has(activeWorkspace)) return current;
+      const next = new Set(current);
+      next.add(activeWorkspace);
+      return next;
+    });
+  }, [activeWorkspace]);
 
   if (!currentUser) {
     return <LoginView onLogin={setCurrentUser} />;
@@ -25,12 +35,12 @@ export default function App() {
 
   const views = {
     dashboard: <DashboardView setActiveWorkspace={setActiveWorkspace} />,
-    billing: <BillingTerminalView />,
+    billing: <BillingTerminalView isActive={activeWorkspace === 'billing'} />,
     closing: <CounterClosingView />,
     inventory: <InventoryDashboardView />,
     barcode: <BarcodeStickersView />,
     inward: <InwardEntryView />,
-    reports: <ReportsView />,
+    reports: <ReportsView isActive={activeWorkspace === 'reports'} onClose={() => setActiveWorkspace('billing')} />,
     books: <BooksView />,
     system: <SystemView />
   };
@@ -65,7 +75,17 @@ export default function App() {
       </header>
 
       <main className="workspace">
-        {views[activeWorkspace]}
+        {allowedTabs.map((tab) => (
+          mountedWorkspaces.has(tab.key) ? (
+            <section
+              key={tab.key}
+              className="workspace-screen"
+              hidden={activeWorkspace !== tab.key}
+            >
+              {views[tab.key]}
+            </section>
+          ) : null
+        ))}
       </main>
     </div>
   );

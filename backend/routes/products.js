@@ -38,6 +38,11 @@ function toProduct(row) {
     discount_value: Number(row.discount_value || 0),
     bulk_discount_value: Number(row.bulk_discount_value || 0),
     is_free_item: Boolean(row.is_free_item),
+    free_promo_enabled: Boolean(row.free_promo_enabled),
+    free_promo_name: row.free_promo_name || '',
+    free_promo_qty_per_sale: Number(row.free_promo_qty_per_sale || 1),
+    free_promo_total_qty: Number(row.free_promo_total_qty || 0),
+    free_promo_remaining_qty: Number(row.free_promo_remaining_qty || 0),
     stock_qty: Number(row.stock_qty || 0),
     min_stock_alert: Number(row.min_stock_alert || 10),
     created_at: row.created_at,
@@ -95,6 +100,11 @@ const PRODUCT_EXPORT_HEADERS = [
   'discount_value',
   'bulk_discount_value',
   'is_free_item',
+  'free_promo_enabled',
+  'free_promo_name',
+  'free_promo_qty_per_sale',
+  'free_promo_total_qty',
+  'free_promo_remaining_qty',
   'stock_qty',
   'min_stock_alert'
 ];
@@ -873,6 +883,10 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     discount_value,
     bulk_discount_value,
     is_free_item,
+    free_promo_enabled,
+    free_promo_name,
+    free_promo_qty_per_sale,
+    free_promo_total_qty,
     stock_qty,
     min_stock_alert
   } = req.body;
@@ -898,6 +912,10 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       discountValue: Number(discount_value) || 0,
       bulkDiscountValue: Number(bulk_discount_value) || 0,
       isFreeItem: is_free_item ? 1 : 0,
+      freePromoEnabled: free_promo_enabled ? 1 : 0,
+      freePromoName: normalizeProductName(free_promo_name),
+      freePromoQtyPerSale: Math.max(Number(free_promo_qty_per_sale) || 1, 0.001),
+      freePromoTotalQty: Math.max(Number(free_promo_total_qty) || 0, 0),
       stockQty: Number(stock_qty) || 0,
       minStockAlert: Number(min_stock_alert) || 10
     };
@@ -914,11 +932,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     if (!String(mrp ?? '').trim()) requiredErrors.push('MRP');
     if (!String(purchase_price ?? '').trim()) requiredErrors.push('Purchase price');
     if (!String(sale_price ?? '').trim()) requiredErrors.push('Retail sale price');
-    if (!String(wholesale_price ?? '').trim()) requiredErrors.push('Wholesale price');
-    if (!String(discount_value ?? '').trim()) requiredErrors.push('Discount');
-    if (!String(bulk_discount_value ?? '').trim()) requiredErrors.push('Wholesale discount');
     if (!String(stock_qty ?? '').trim()) requiredErrors.push('Current stock');
     if (!String(min_stock_alert ?? '').trim()) requiredErrors.push('Low stock alert');
+    if (values.freePromoEnabled && !values.freePromoName) requiredErrors.push('Free promo item name');
 
     if (requiredErrors.length) {
       return res.status(400).json({ error: `Fill all product columns before saving. Missing: ${requiredErrors.join(', ')}.` });
@@ -949,8 +965,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     await db.query(
       `INSERT INTO products
        (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price,
-        discount_type, discount_value, bulk_discount_value, is_free_item, stock_qty, min_stock_alert)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        discount_type, discount_value, bulk_discount_value, is_free_item, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
+        free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          product_code = VALUES(product_code),
          product_name = VALUES(product_name),
@@ -968,6 +985,11 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
          discount_value = VALUES(discount_value),
          bulk_discount_value = VALUES(bulk_discount_value),
          is_free_item = VALUES(is_free_item),
+         free_promo_enabled = VALUES(free_promo_enabled),
+         free_promo_name = VALUES(free_promo_name),
+         free_promo_qty_per_sale = VALUES(free_promo_qty_per_sale),
+         free_promo_total_qty = VALUES(free_promo_total_qty),
+         free_promo_remaining_qty = VALUES(free_promo_remaining_qty),
          stock_qty = VALUES(stock_qty),
          min_stock_alert = VALUES(min_stock_alert),
          updated_at = CURRENT_TIMESTAMP`,
@@ -989,6 +1011,11 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
         values.discountValue,
         values.bulkDiscountValue,
         values.isFreeItem,
+        values.freePromoEnabled,
+        values.freePromoEnabled ? values.freePromoName : '',
+        values.freePromoQtyPerSale,
+        values.freePromoEnabled ? values.freePromoTotalQty : 0,
+        values.freePromoEnabled ? values.freePromoTotalQty : 0,
         values.stockQty,
         values.minStockAlert
       ]

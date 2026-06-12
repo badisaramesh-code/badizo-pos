@@ -131,6 +131,29 @@ function getGstRows(items, isInterstate) {
   }));
 }
 
+function getExchangeGstRows(items, isInterstate) {
+  const normalized = (items || []).map((item) => {
+    const unitPrice = toNumber(item.unitPrice || item.sale_price || item.mrp);
+    const quantity = toNumber(item.quantity, 1);
+    return {
+      ...item,
+      unitPrice,
+      quantity,
+      gst_percent: toNumber(item.gst_percent),
+      lineTotal: unitPrice * quantity
+    };
+  });
+  return getGstRows(normalized, isInterstate);
+}
+
+function getValidFreeItems(items) {
+  return (items || []).filter((item) => (
+    item.is_free_bonus
+    && String(item.product_name || '').trim()
+    && toNumber(item.quantity) > 0
+  ));
+}
+
 function StoreHeader({ invoice }) {
   const taxBillLabel = getTaxBillLabel(invoice);
   return (
@@ -140,6 +163,7 @@ function StoreHeader({ invoice }) {
       <p>GSTIN: {invoice.shop.gst_number}</p>
       <SectionLine />
       <strong>GST INVOICE</strong>
+      {invoice.isDuplicate && <strong className="duplicate-invoice-label">DUPLICATE INVOICE</strong>}
       <strong className="print-tax-type-label">{taxBillLabel}</strong>
       <SectionLine />
     </div>
@@ -182,6 +206,8 @@ function ThermalCustomer({ invoice }) {
 }
 
 function ThermalItemTable({ invoice, template }) {
+  const saleItems = invoice.items.filter((item) => !item.is_free_bonus);
+
   return (
     <table className="print-table thermal-items">
       <thead>
@@ -192,7 +218,7 @@ function ThermalItemTable({ invoice, template }) {
         </tr>
       </thead>
       <tbody>
-        {invoice.items.map((item, index) => {
+        {saleItems.map((item, index) => {
           const discount = Math.max(toNumber(item.mrp) - toNumber(item.unitPrice), 0);
           return (
             <React.Fragment key={`${item.barcode}-${index}`}>
@@ -205,7 +231,7 @@ function ThermalItemTable({ invoice, template }) {
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.lineTotal)}</td>
               </tr>
               <tr className="thermal-product-row">
-                <td colSpan="6"><strong className="thermal-product-name">{item.product_name}</strong></td>
+                <td colSpan="6"><strong className="thermal-product-name">{index + 1}. {item.product_name}</strong></td>
               </tr>
               <tr className="thermal-hsn-row">
                 <td colSpan="6">HSN Code: {item.hsn_code || '-'}</td>
@@ -215,6 +241,33 @@ function ThermalItemTable({ invoice, template }) {
         })}
       </tbody>
     </table>
+  );
+}
+
+function ThermalFreeProducts({ invoice, title }) {
+  const saleItems = invoice.items.filter((item) => !item.is_free_bonus);
+  const freeItems = getValidFreeItems(invoice.items);
+  if (!freeItems.length) return null;
+
+  return (
+    <>
+      <SectionLine />
+      <div className="thermal-free-products-box">
+        <div className="print-center"><strong>{title}</strong></div>
+        {freeItems.map((freeItem, index) => {
+          const trigger = saleItems.find((item) => (
+            freeItem.trigger_barcode === item.barcode || freeItem.barcode === item.barcode
+          ));
+          return (
+            <div className="thermal-free-product-line" key={`${freeItem.barcode}-${index}`}>
+              <strong>{freeItem.product_name}</strong>
+              <span>x {formatPlainMoney(freeItem.quantity)} - Free Counter</span>
+              {trigger && <em>For: {trigger.product_name}</em>}
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
@@ -241,6 +294,8 @@ function ThermalTotals({ invoice }) {
 function ExchangeDetails({ invoice, compact = false }) {
   const rows = Array.isArray(invoice.exchangeItems) ? invoice.exchangeItems : [];
   if (!rows.length) return null;
+  const isInterstate = invoice.taxType === 'INTERSTATE';
+  const gstRows = getExchangeGstRows(rows, isInterstate);
 
   return (
     <>
@@ -275,6 +330,40 @@ function ExchangeDetails({ invoice, compact = false }) {
           <tr><th colSpan="4">Exchange Less</th><th style={{ textAlign: 'right' }}>{formatPlainMoney(invoice.totals.exchangeTotal)}</th></tr>
         </tfoot>
       </table>
+      {gstRows.length > 0 && (
+        <>
+          <div className="print-center exchange-gst-title"><strong>Exchange GST Summary</strong></div>
+          <table className={`print-table gst-summary-table ${compact ? 'thermal-exchange-gst-table' : 'a4-exchange-gst-table'}`}>
+            <thead>
+              {isInterstate ? (
+                <tr><th>Taxable</th><th>GST%</th><th>IGST</th><th>Total</th></tr>
+              ) : (
+                <tr><th>Taxable</th><th>GST%</th><th>CGST</th><th>SGST</th><th>Total</th></tr>
+              )}
+            </thead>
+            <tbody>
+              {gstRows.map((row) => (
+                isInterstate ? (
+                  <tr key={row.gst}>
+                    <td>{formatPlainMoney(row.taxable)}</td>
+                    <td>{formatPlainMoney(row.gst)}</td>
+                    <td>{formatPlainMoney(row.igst)}</td>
+                    <td>{formatPlainMoney(row.taxable + row.tax)}</td>
+                  </tr>
+                ) : (
+                  <tr key={row.gst}>
+                    <td>{formatPlainMoney(row.taxable)}</td>
+                    <td>{formatPlainMoney(row.gst)}</td>
+                    <td>{formatPlainMoney(row.cgst)}</td>
+                    <td>{formatPlainMoney(row.sgst)}</td>
+                    <td>{formatPlainMoney(row.taxable + row.tax)}</td>
+                  </tr>
+                )
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </>
   );
 }
@@ -633,6 +722,7 @@ function A4StoreTop({ invoice }) {
         </div>
       </div>
       <div className="a4-store-meta">
+        {invoice.isDuplicate && <><span>Copy</span><strong className="duplicate-invoice-label">DUPLICATE INVOICE</strong></>}
         <span>Invoice No.</span><strong>{invoice.invoiceNo}</strong>
         <span>Date</span><strong>{invoice.date}</strong>
         <span>payment mode</span><strong>{invoice.paymentMode}</strong>
@@ -658,7 +748,7 @@ function A4StoreCustomer({ invoice }) {
   );
 }
 
-function A4StoreItemsTable({ rows, startIndex, blankRowCount = 0 }) {
+function A4StoreItemsTable({ rows, freeItems = [], startIndex, blankRowCount = 0 }) {
   return (
     <table className="a4-store-items">
       <thead>
@@ -677,18 +767,28 @@ function A4StoreItemsTable({ rows, startIndex, blankRowCount = 0 }) {
       <tbody>
         {rows.map((item, index) => {
           const discount = Math.max(toNumber(item.mrp) - toNumber(item.unitPrice), 0) * toNumber(item.quantity);
+          const itemFreebies = freeItems.filter((freeItem) => freeItem.trigger_barcode === item.barcode || freeItem.barcode === item.barcode);
           return (
-            <tr key={`${item.barcode}-${startIndex + index}`}>
-              <td>{startIndex + index + 1}</td>
-              <td>{item.barcode || '-'}</td>
-              <td><strong>{item.product_name}</strong></td>
-              <td>{item.hsn_code || '-'}</td>
-              <td>{formatPlainMoney(item.mrp)}</td>
-              <td>{formatPlainMoney(discount)}</td>
-              <td>{formatPlainMoney(item.gst_percent)}</td>
-              <td>{formatPlainMoney(item.quantity)}</td>
-              <td><strong>{formatPlainMoney(item.lineTotal)}</strong></td>
-            </tr>
+            <React.Fragment key={`${item.barcode}-${startIndex + index}`}>
+              <tr>
+                <td>{startIndex + index + 1}</td>
+                <td>{item.barcode || '-'}</td>
+                <td><strong>{item.product_name}</strong></td>
+                <td>{item.hsn_code || '-'}</td>
+                <td>{formatPlainMoney(item.mrp)}</td>
+                <td>{formatPlainMoney(discount)}</td>
+                <td>{formatPlainMoney(item.gst_percent)}</td>
+                <td>{formatPlainMoney(item.quantity)}</td>
+                <td><strong>{formatPlainMoney(item.lineTotal)}</strong></td>
+              </tr>
+              {itemFreebies.map((freeItem, freeIndex) => (
+                <tr className="a4-free-inline-row" key={`${item.barcode}-free-${freeIndex}`}>
+                  <td />
+                  <td colSpan="7"><strong>Free:</strong> {freeItem.product_name} x {formatPlainMoney(freeItem.quantity)} <span>Issue at Free Counter</span></td>
+                  <td />
+                </tr>
+              ))}
+            </React.Fragment>
           );
         })}
         {Array.from({ length: blankRowCount }).map((_, index) => (
@@ -702,9 +802,11 @@ function A4StoreItemsTable({ rows, startIndex, blankRowCount = 0 }) {
 function A4OnePageInvoice({ invoice, template }) {
   const isInterstate = invoice.taxType === 'INTERSTATE';
   const taxBillLabel = getTaxBillLabel(invoice);
-  const gstRows = getGstRows(invoice.items, isInterstate);
+  const saleItems = invoice.items.filter((item) => !item.is_free_bonus);
+  const freeItems = getValidFreeItems(invoice.items);
+  const gstRows = getGstRows(saleItems, isInterstate);
   const bankDetails = getA4BankDetails(invoice.shop, template);
-  const qtyTotal = invoice.items.reduce((sum, item) => sum + toNumber(item.quantity), 0);
+  const qtyTotal = saleItems.reduce((sum, item) => sum + toNumber(item.quantity), 0);
   const billingTotal = toNumber(invoice.totals.grand);
   const saleTotal = toNumber(invoice.totals.saleGrand || invoice.totals.grand);
   const exchangeTotal = toNumber(invoice.totals.exchangeTotal);
@@ -715,14 +817,14 @@ function A4OnePageInvoice({ invoice, template }) {
   const cgstTotal = gstRows.reduce((sum, row) => sum + row.cgst, 0);
   const igstTotal = gstRows.reduce((sum, row) => sum + row.igst, 0);
   const taxTotal = gstRows.reduce((sum, row) => sum + row.tax, 0);
-  const totalDiscount = invoice.items.reduce((sum, item) => {
+  const totalDiscount = saleItems.reduce((sum, item) => {
     const discount = Math.max(toNumber(item.mrp) - toNumber(item.unitPrice), 0) * toNumber(item.quantity);
     return sum + discount;
   }, 0);
   const exchangeItemCount = Array.isArray(invoice.exchangeItems) ? invoice.exchangeItems.length : 0;
-  const bottomReserveRows = exchangeItemCount > 0 || gstRows.length > 2 ? 4 : 7;
-  const blankRowCount = Math.max(1, bottomReserveRows - invoice.items.length);
-  const pages = splitA4Items(invoice.items);
+  const bottomReserveRows = exchangeItemCount > 0 || gstRows.length > 2 || freeItems.length > 0 ? 4 : 7;
+  const blankRowCount = Math.max(1, bottomReserveRows - saleItems.length);
+  const pages = splitA4Items(saleItems);
   const isMultiPage = pages.length > 1;
 
   const renderBottom = () => (
@@ -802,7 +904,7 @@ function A4OnePageInvoice({ invoice, template }) {
                   <span>Continued from previous page</span>
                 </div>
               )}
-              <A4StoreItemsTable rows={page.items} startIndex={page.startIndex} blankRowCount={lastPageBlankRows} />
+              <A4StoreItemsTable rows={page.items} freeItems={freeItems} startIndex={page.startIndex} blankRowCount={lastPageBlankRows} />
               {!isLast && <div className="a4-continue-note">Continued on next page...</div>}
               {isLast && renderBottom()}
             </div>
@@ -817,7 +919,7 @@ function A4OnePageInvoice({ invoice, template }) {
       <A4StoreTitle taxBillLabel={taxBillLabel} pageNo={1} pageCount={1} />
       <A4StoreTop invoice={invoice} />
       <A4StoreCustomer invoice={invoice} />
-      <A4StoreItemsTable rows={invoice.items} startIndex={0} blankRowCount={blankRowCount} />
+      <A4StoreItemsTable rows={saleItems} freeItems={freeItems} startIndex={0} blankRowCount={blankRowCount} />
       {renderBottom()}
     </div>
   );
@@ -840,7 +942,7 @@ function renderSection(section, invoice, template) {
     case 'itemTable':
       return <ThermalItemTable invoice={invoice} template={template} />;
     case 'freeProducts':
-      return <><SectionLine /><div className="print-center"><strong>{section.title}</strong></div></>;
+      return <ThermalFreeProducts invoice={invoice} title={section.title} />;
     case 'thermalTotals':
       return <><SectionLine /><ThermalTotals invoice={invoice} /></>;
     case 'amountWords':

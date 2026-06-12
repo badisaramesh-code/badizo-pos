@@ -206,6 +206,11 @@ export async function fetchExchangeBillsReport({ from, to, counter = '' } = {}) 
   return data;
 }
 
+export async function fetchReprintReport({ from, to, counter = '', search = '' } = {}) {
+  const { data } = await api.get('/reports/reprints', { params: { from, to, counter, search } });
+  return data;
+}
+
 export async function checkout(payload) {
   const { data } = await api.post('/billing/checkout', payload);
   return data;
@@ -281,8 +286,8 @@ export async function fetchInvoiceDetails(invoiceNo) {
   return data;
 }
 
-export async function recordInvoiceReprint(invoiceNo) {
-  const { data } = await api.post('/billing/invoice/reprint', { invoice_no: invoiceNo });
+export async function recordInvoiceReprint(invoiceNo, printMode = 'Thermal') {
+  const { data } = await api.post('/billing/invoice/reprint', { invoice_no: invoiceNo, print_mode: printMode });
   return data;
 }
 
@@ -351,6 +356,11 @@ export async function fetchInwardDetailsByNumber(inwardNo) {
 
 export async function saveInwardEntry(payload) {
   const { data } = await api.post('/inward', payload);
+  return data;
+}
+
+export async function deleteInwardEntry(id) {
+  const { data } = await api.delete(`/inward/${encodeURIComponent(id)}`);
   return data;
 }
 

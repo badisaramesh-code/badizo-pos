@@ -210,6 +210,71 @@ router.get('/daily-sales/export', authorize('SERVER', 'ADMIN'), async (req, res)
   }
 });
 
+router.get('/reprints', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const from = normalizeDate(req.query.from);
+    const to = normalizeDate(req.query.to, from);
+    const counter = normalizeCounter(req.query.counter);
+    const search = String(req.query.search || '').trim();
+    const values = [from, to];
+    const filters = ['DATE(al.created_at) BETWEEN ? AND ?'];
+
+    if (counter) {
+      filters.push('i.billing_counter = ?');
+      values.push(counter);
+    }
+
+    if (search) {
+      filters.push(`(
+        al.entity_id LIKE ?
+        OR i.customer_name LIKE ?
+        OR al.username LIKE ?
+        OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(al.details, '$.print_mode')), 'Thermal') LIKE ?
+      )`);
+      const like = `%${search}%`;
+      values.push(like, like, like, like);
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+         al.id,
+         al.entity_id AS invoice_no,
+         DATE_FORMAT(al.created_at, '%d-%m-%Y') AS reprint_date,
+         TIME_FORMAT(al.created_at, '%H:%i:%s') AS reprint_time,
+         al.created_at,
+         al.username AS reprinted_by,
+         COALESCE(JSON_UNQUOTE(JSON_EXTRACT(al.details, '$.print_mode')), 'Thermal') AS print_mode,
+         i.customer_name,
+         i.grand_total,
+         i.payment_mode,
+         i.billing_counter,
+         i.created_at AS invoice_created_at,
+         i.reprint_count
+       FROM audit_logs al
+       LEFT JOIN invoices i ON i.invoice_no = al.entity_id
+       WHERE al.action = 'INVOICE_REPRINTED'
+         AND al.entity_type = 'INVOICE'
+         AND ${filters.join(' AND ')}
+       ORDER BY al.created_at DESC, al.id DESC`,
+      values
+    );
+
+    const totals = rows.reduce((acc, row) => {
+      const mode = row.print_mode === 'A4' ? 'A4' : 'Thermal';
+      return {
+        count: acc.count + 1,
+        thermal: acc.thermal + (mode === 'Thermal' ? 1 : 0),
+        a4: acc.a4 + (mode === 'A4' ? 1 : 0)
+      };
+    }, { count: 0, thermal: 0, a4: 0 });
+
+    res.json({ from, to, counter: counter || 'ALL', rows, totals });
+  } catch (err) {
+    console.error('Reprint report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load reprint report.' });
+  }
+});
+
 router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     const date = normalizeDate(req.query.date, todayIso());

@@ -10,6 +10,7 @@ import {
   fetchGstHsnReport,
   fetchGstr1Report,
   fetchMonthlySalesReport,
+  fetchReprintReport,
   fetchStockReport,
   fetchTaxSummaryReport,
   fetchTopProductsReport
@@ -54,7 +55,7 @@ function ReportHeader({ title, onExcel, onPdf }) {
   );
 }
 
-export default function ReportsView() {
+export default function ReportsView({ isActive = true, onClose }) {
   const [activeReport, setActiveReport] = useState('daily');
   const [fromDate, setFromDate] = useState(todayIso());
   const [toDate, setToDate] = useState(todayIso());
@@ -85,17 +86,22 @@ export default function ReportsView() {
   const [exceptionReport, setExceptionReport] = useState({ cancelled: [], returns: [] });
   const [exchangeReport, setExchangeReport] = useState({ rows: [], totals: {} });
   const [barcodePrintReport, setBarcodePrintReport] = useState({ rows: [], totals: {} });
+  const [reprintReport, setReprintReport] = useState({ rows: [], totals: {} });
   const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
     loadReports();
   }, []);
 
+  useEffect(() => {
+    if (isActive) loadReports();
+  }, [isActive]);
+
   async function loadReports() {
     setErrorMessage('');
     const { from, to } = getOrderedRange(fromDate, toDate);
     try {
-      const [daily, hsn, monthly, stock, top, tax, gstr1, handover, exceptions, exchange, barcodePrints] = await Promise.all([
+      const [daily, hsn, monthly, stock, top, tax, gstr1, handover, exceptions, exchange, barcodePrints, reprints] = await Promise.all([
         fetchDailySalesReport({ from, to, counter }),
         fetchGstHsnReport({ from, to }),
         fetchMonthlySalesReport(from.slice(0, 7)),
@@ -106,7 +112,8 @@ export default function ReportsView() {
         fetchCounterHandoverReport({ from, to, counter }),
         fetchExceptionReport({ from, to }),
         fetchExchangeBillsReport({ from, to, counter }),
-        fetchBarcodePrintLogs({ from, to, search: reportSearch })
+        fetchBarcodePrintLogs({ from, to, search: reportSearch }),
+        fetchReprintReport({ from, to, counter, search: reportSearch })
       ]);
       setDailyReport(daily);
       setHsnReport(hsn);
@@ -119,6 +126,7 @@ export default function ReportsView() {
       setExceptionReport(exceptions);
       setExchangeReport(exchange);
       setBarcodePrintReport(barcodePrints);
+      setReprintReport(reprints);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to load reports from database.');
     }
@@ -158,6 +166,7 @@ export default function ReportsView() {
     { key: 'gstr1', title: 'GSTR-1 / GST Returns', note: `${(gstr1Report.b2b?.length || 0) + (gstr1Report.b2cl?.length || 0) + (gstr1Report.b2c?.length || 0)} rows` },
     { key: 'handover', title: 'Counter Handover', note: `${counterHandoverReport.totals?.sheets || 0} sheets` },
     { key: 'exchange', title: 'Exchange Bills', note: `${exchangeReport.totals?.billCount || 0} bills` },
+    { key: 'reprints', title: 'Reprints', note: `${reprintReport.totals?.count || 0} prints` },
     { key: 'barcodePrints', title: 'Barcode Stickers', note: `${barcodePrintReport.totals?.stickers || 0} stickers` },
     { key: 'returns', title: 'Returns', note: `${exceptionReport.returns.length} returns` },
     { key: 'cancelled', title: 'Cancelled Bills', note: `${exceptionReport.cancelled.length} bills` }
@@ -254,6 +263,22 @@ export default function ReportsView() {
       Printer: row.printer_name || '',
       Stickers: Number(row.sticker_count || 0),
       User: row.created_by || ''
+    })));
+  }
+
+  function exportReprintsExcel() {
+    exportRows('bill_reprints', (reprintReport.rows || []).map((row) => ({
+      Date: row.reprint_date || '',
+      Time: row.reprint_time || '',
+      'Invoice No': row.invoice_no || '',
+      Format: row.print_mode || 'Thermal',
+      Customer: row.customer_name || 'Walk-in Customer',
+      Total: Number(row.grand_total || 0),
+      Payment: row.payment_mode || '',
+      Counter: row.billing_counter || '',
+      'Reprinted By': row.reprinted_by || '',
+      'Invoice Date': row.invoice_created_at || '',
+      'Invoice Reprint Count': Number(row.reprint_count || 0)
     })));
   }
 
@@ -753,6 +778,51 @@ export default function ReportsView() {
             </div>
           </section>
         );
+      case 'reprints':
+        return (
+          <section className="panel">
+            <ReportHeader title="Bill Reprints Report" onExcel={exportReprintsExcel} onPdf={exportPdf} />
+            <div className="panel-body form-stack">
+              <section className="report-summary-strip">
+                <span>Total Reprints: <strong>{Number(reprintReport.totals?.count || 0)}</strong></span>
+                <span>Thermal: <strong>{Number(reprintReport.totals?.thermal || 0)}</strong></span>
+                <span>A4: <strong>{Number(reprintReport.totals?.a4 || 0)}</strong></span>
+              </section>
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th>Invoice No</th>
+                    <th>Format</th>
+                    <th>Customer</th>
+                    <th>Total</th>
+                    <th>Payment</th>
+                    <th>Counter</th>
+                    <th>Reprinted By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(reprintReport.rows || []).length === 0 ? (
+                    <tr><td colSpan="9">No bill reprints found for selected date range.</td></tr>
+                  ) : reprintReport.rows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.reprint_date || '-'}</td>
+                      <td>{row.reprint_time || '-'}</td>
+                      <td className="mono">{row.invoice_no || '-'}</td>
+                      <td><strong>{row.print_mode || 'Thermal'}</strong></td>
+                      <td>{row.customer_name || 'Walk-in Customer'}</td>
+                      <td>{formatMoney(row.grand_total)}</td>
+                      <td>{row.payment_mode || '-'}</td>
+                      <td>{row.billing_counter || '-'}</td>
+                      <td>{row.reprinted_by || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        );
       case 'cancelled':
         return (
           <section className="panel">
@@ -843,10 +913,11 @@ export default function ReportsView() {
                 className="field"
                 value={reportSearch}
                 onChange={(event) => setReportSearch(event.target.value)}
-                placeholder="Barcode / product / printer"
+                placeholder="Invoice / customer / barcode / user"
               />
             </label>
-            <button className="secondary-button" type="submit">View Result</button>
+            <button className="secondary-button" type="button" onClick={loadReports}>View</button>
+            <button className="close-action-button" type="button" onClick={onClose}>Close</button>
           </form>
 
           <div className="report-selector-grid">

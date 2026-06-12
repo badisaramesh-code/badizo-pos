@@ -32,6 +32,10 @@ const emptyForm = {
   discount_value: '',
   bulk_discount_value: '',
   is_free_item: false,
+  free_promo_enabled: false,
+  free_promo_name: '',
+  free_promo_qty_per_sale: '1',
+  free_promo_total_qty: '',
   stock_qty: '100',
   min_stock_alert: '10',
   created_at: '',
@@ -440,9 +444,21 @@ export default function InventoryDashboardView() {
     });
   }
 
-  function validateProductForm() {
+  function normalizedProductForm(source = form) {
+    return {
+      ...source,
+      wholesale_price: String(source.wholesale_price ?? '').trim() === '' ? source.sale_price : source.wholesale_price,
+      discount_value: String(source.discount_value ?? '').trim() === '' ? '0' : source.discount_value,
+      bulk_discount_value: String(source.bulk_discount_value ?? '').trim() === '' ? '0' : source.bulk_discount_value,
+      free_promo_qty_per_sale: String(source.free_promo_qty_per_sale ?? '').trim() === '' ? '1' : source.free_promo_qty_per_sale,
+      free_promo_total_qty: String(source.free_promo_total_qty ?? '').trim() === '' ? '0' : source.free_promo_total_qty
+    };
+  }
+
+  function validateProductForm(source = form) {
+    const productForm = normalizedProductForm(source);
     const requiredFields = [
-      ...(form.code_mode === 'MANUAL' ? [['product_code', 'Product Code']] : []),
+      ...(productForm.code_mode === 'MANUAL' ? [['product_code', 'Product Code']] : []),
       ['barcode', 'Barcode'],
       ['product_name', 'Product name'],
       ['hsn_code', 'HSN code'],
@@ -460,21 +476,22 @@ export default function InventoryDashboardView() {
       ['min_stock_alert', 'Low stock alert']
     ];
     const missing = requiredFields
-      .filter(([field]) => String(form[field] ?? '').trim() === '')
+      .filter(([field]) => String(productForm[field] ?? '').trim() === '')
       .map(([, label]) => label);
 
     if (missing.length) return `Fill all product columns before saving. Missing: ${missing.join(', ')}.`;
 
-    const mrp = toNumber(form.mrp);
-    const salePrice = toNumber(form.sale_price);
-    const wholesalePrice = toNumber(form.wholesale_price);
-    const purchasePrice = toNumber(form.purchase_price);
-    const purchaseUnitSize = toNumber(form.purchase_unit_size);
+    const mrp = toNumber(productForm.mrp);
+    const salePrice = toNumber(productForm.sale_price);
+    const wholesalePrice = toNumber(productForm.wholesale_price);
+    const purchasePrice = toNumber(productForm.purchase_price);
+    const purchaseUnitSize = toNumber(productForm.purchase_unit_size);
 
     if (salePrice > mrp && mrp > 0) return 'Retail sale price cannot be greater than MRP.';
     if (wholesalePrice > mrp && mrp > 0) return 'Wholesale price cannot be greater than MRP.';
     if (purchasePrice < 0) return 'Purchase price cannot be negative.';
     if (purchaseUnitSize <= 0) return 'Stock per purchase unit must be greater than zero.';
+    if (productForm.free_promo_enabled && !uppercaseProductName(productForm.free_promo_name)) return 'Enter free item name for product promotion.';
     return '';
   }
 
@@ -498,6 +515,10 @@ export default function InventoryDashboardView() {
       discount_value: String(product.discount_value ?? ''),
       bulk_discount_value: String(product.bulk_discount_value ?? ''),
       is_free_item: Boolean(product.is_free_item),
+      free_promo_enabled: Boolean(product.free_promo_enabled),
+      free_promo_name: product.free_promo_name || '',
+      free_promo_qty_per_sale: String(product.free_promo_qty_per_sale ?? '1'),
+      free_promo_total_qty: String(product.free_promo_total_qty ?? ''),
       stock_qty: String(product.stock_qty ?? '0'),
       min_stock_alert: String(product.min_stock_alert ?? '10'),
       created_at: product.created_at || product.updated_at || todayIso(),
@@ -511,7 +532,8 @@ export default function InventoryDashboardView() {
     setStatusMessage('');
     setErrorMessage('');
 
-    const validationError = validateProductForm();
+    const productForm = normalizedProductForm();
+    const validationError = validateProductForm(productForm);
     if (validationError) {
       setErrorMessage(validationError);
       return;
@@ -519,10 +541,11 @@ export default function InventoryDashboardView() {
 
     try {
       const result = await saveProduct({
-        ...form,
-        barcode: form.barcode.trim(),
-        product_name: uppercaseProductName(form.product_name),
-        alias_names: uppercaseProductName(form.alias_names)
+        ...productForm,
+        barcode: productForm.barcode.trim(),
+        product_name: uppercaseProductName(productForm.product_name),
+        alias_names: uppercaseProductName(productForm.alias_names),
+        free_promo_name: uppercaseProductName(productForm.free_promo_name)
       });
       const syncedText = result.taxSynced > 1 ? ` HSN/GST synced for ${result.taxSynced} matching products.` : '';
       setStatusMessage(`${form.product_name} saved.${syncedText}`);
@@ -845,6 +868,27 @@ export default function InventoryDashboardView() {
           <label className="change-box">
             <input type="checkbox" checked={form.is_free_item} onChange={(event) => updateField('is_free_item', event.target.checked)} /> Free product entry
           </label>
+
+          <label className="change-box">
+            <input type="checkbox" checked={form.free_promo_enabled} onChange={(event) => updateField('free_promo_enabled', event.target.checked)} /> Free promotion on this product
+          </label>
+
+          {form.free_promo_enabled && (
+            <>
+              <label>
+                <span className="field-label">Free item name on bill</span>
+                <input className="field" value={form.free_promo_name} onChange={(event) => updateField('free_promo_name', event.target.value.toUpperCase())} placeholder="CRICKET BALL FREE" />
+              </label>
+              <label>
+                <span className="field-label">Free qty per sale qty</span>
+                <input className="field" type="number" step="0.001" min="0.001" value={form.free_promo_qty_per_sale} onChange={(event) => updateField('free_promo_qty_per_sale', event.target.value)} />
+              </label>
+              <label>
+                <span className="field-label">Total promo count</span>
+                <input className="field" type="number" step="0.01" min="0" value={form.free_promo_total_qty} onChange={(event) => updateField('free_promo_total_qty', event.target.value)} placeholder="0 or blank = no limit" />
+              </label>
+            </>
+          )}
 
           <label>
             <span className="field-label">Current stock</span>

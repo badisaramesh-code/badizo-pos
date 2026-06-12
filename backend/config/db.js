@@ -72,6 +72,11 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         discount_value DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         bulk_discount_value DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         is_free_item TINYINT(1) NOT NULL DEFAULT 0,
+        free_promo_enabled TINYINT(1) NOT NULL DEFAULT 0,
+        free_promo_name VARCHAR(255) DEFAULT '',
+        free_promo_qty_per_sale DECIMAL(12,3) NOT NULL DEFAULT 1.000,
+        free_promo_total_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        free_promo_remaining_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         stock_qty DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         min_stock_alert DECIMAL(10,2) NOT NULL DEFAULT 10.00,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -132,6 +137,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         cgst_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         sgst_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         igst_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        is_free_bonus TINYINT(1) NOT NULL DEFAULT 0,
+        free_offer_id BIGINT DEFAULT NULL,
         returned_qty DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         FOREIGN KEY (invoice_no) REFERENCES invoices(invoice_no) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -212,6 +219,28 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         INDEX idx_invoice_item_batches_item (invoice_item_id),
         INDEX idx_invoice_item_batches_barcode (barcode),
         FOREIGN KEY (invoice_item_id) REFERENCES invoice_items(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS batch_free_offers (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        trigger_barcode VARCHAR(120) NOT NULL,
+        trigger_batch_no VARCHAR(80) NOT NULL DEFAULT '',
+        trigger_expiry_date DATE DEFAULT NULL,
+        inward_no VARCHAR(50) DEFAULT NULL,
+        free_barcode VARCHAR(120) NOT NULL,
+        free_product_name VARCHAR(255) NOT NULL,
+        free_qty_per_sale DECIMAL(12,3) NOT NULL DEFAULT 1.000,
+        free_qty_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        free_qty_remaining DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_batch_free_offer (trigger_barcode, trigger_batch_no, trigger_expiry_date, free_barcode),
+        INDEX idx_batch_free_trigger (trigger_barcode, trigger_batch_no),
+        INDEX idx_batch_free_item (free_barcode),
+        INDEX idx_batch_free_active (is_active, free_qty_remaining)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
@@ -311,6 +340,11 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         batch_no VARCHAR(80) DEFAULT '',
         expiry_date DATE DEFAULT NULL,
         free_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        free_offer_enabled TINYINT(1) NOT NULL DEFAULT 0,
+        free_offer_barcode VARCHAR(120) DEFAULT '',
+        free_offer_product_name VARCHAR(255) DEFAULT '',
+        free_offer_qty_per_sale DECIMAL(12,3) NOT NULL DEFAULT 1.000,
+        free_offer_total_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         mrp DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         quantity DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         taxable_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
@@ -557,6 +591,11 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'products', 'discount_value', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER discount_type');
     await ensureColumn(connection, 'products', 'bulk_discount_value', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER discount_value');
     await ensureColumn(connection, 'products', 'is_free_item', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER bulk_discount_value');
+    await ensureColumn(connection, 'products', 'free_promo_enabled', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER is_free_item');
+    await ensureColumn(connection, 'products', 'free_promo_name', "VARCHAR(255) DEFAULT '' AFTER free_promo_enabled");
+    await ensureColumn(connection, 'products', 'free_promo_qty_per_sale', 'DECIMAL(12,3) NOT NULL DEFAULT 1.000 AFTER free_promo_name');
+    await ensureColumn(connection, 'products', 'free_promo_total_qty', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER free_promo_qty_per_sale');
+    await ensureColumn(connection, 'products', 'free_promo_remaining_qty', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER free_promo_total_qty');
     await ensureColumn(connection, 'products', 'min_stock_alert', 'DECIMAL(10,2) NOT NULL DEFAULT 10.00 AFTER stock_qty');
     await ensureColumn(connection, 'products', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER min_stock_alert');
     await ensureColumn(connection, 'products', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at');
@@ -582,8 +621,11 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'invoice_items', 'cgst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER gst_percent');
     await ensureColumn(connection, 'invoice_items', 'sgst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER cgst_amount');
     await ensureColumn(connection, 'invoice_items', 'igst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER sgst_amount');
+    await ensureColumn(connection, 'invoice_items', 'is_free_bonus', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER igst_amount');
+    await ensureColumn(connection, 'invoice_items', 'free_offer_id', 'BIGINT DEFAULT NULL AFTER is_free_bonus');
     await ensureColumn(connection, 'invoice_items', 'returned_qty', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER igst_amount');
     await ensureColumn(connection, 'invoice_item_batches', 'returned_qty', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER quantity');
+    await ensureColumn(connection, 'batch_free_offers', 'free_qty_per_sale', 'DECIMAL(12,3) NOT NULL DEFAULT 1.000 AFTER free_product_name');
     await ensureColumn(connection, 'inward_entries', 'total_cgst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER gst_total');
     await ensureColumn(connection, 'inward_entries', 'total_sgst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER total_cgst');
     await ensureColumn(connection, 'inward_entries', 'total_igst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER total_sgst');
@@ -599,6 +641,11 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'inward_items', 'expiry_date', 'DATE DEFAULT NULL AFTER batch_no');
     await ensureColumn(connection, 'inward_items', 'mrp', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER scheme');
     await ensureColumn(connection, 'inward_items', 'free_qty', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER mrp');
+    await ensureColumn(connection, 'inward_items', 'free_offer_enabled', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER free_qty');
+    await ensureColumn(connection, 'inward_items', 'free_offer_barcode', "VARCHAR(120) DEFAULT '' AFTER free_offer_enabled");
+    await ensureColumn(connection, 'inward_items', 'free_offer_product_name', "VARCHAR(255) DEFAULT '' AFTER free_offer_barcode");
+    await ensureColumn(connection, 'inward_items', 'free_offer_qty_per_sale', 'DECIMAL(12,3) NOT NULL DEFAULT 1.000 AFTER free_offer_product_name');
+    await ensureColumn(connection, 'inward_items', 'free_offer_total_qty', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER free_offer_qty_per_sale');
     await ensureColumn(connection, 'inward_items', 'cgst_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER gst_amount');
     await ensureColumn(connection, 'inward_items', 'sgst_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER cgst_amount');
     await ensureColumn(connection, 'inward_items', 'igst_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER sgst_amount');
