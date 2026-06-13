@@ -16,7 +16,23 @@ mountRoutes(app);
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`BADIZO POS API running on port ${PORT}`);
-  scheduleDailyBackup();
-});
+function startServer(port = PORT) {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port, () => {
+      console.log(`BADIZO POS API running on port ${port}`);
+      scheduleDailyBackup();
+      resolve(server);
+    });
+
+    server.on('error', reject);
+  });
+}
+
+if (require.main === module) {
+  startServer().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = { app, startServer };

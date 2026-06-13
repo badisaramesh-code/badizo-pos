@@ -1,9 +1,9 @@
 {
-  "name": "badizo-pos-desktop",
+  "name": "badizo-desktop",
   "version": "1.0.0",
-  "description": "Badizo POS desktop application wrapper",
+  "description": "Badizo desktop application",
   "main": "main.js",
-  "author": "Badizo POS",
+  "author": "Badizo",
   "private": true,
   "scripts": {
     "start": "electron .",
@@ -12,7 +12,7 @@
   },
   "build": {
     "appId": "com.badizo.pos",
-    "productName": "Badizo POS",
+    "productName": "Badizo",
     "directories": {
       "output": "dist"
     },
@@ -25,6 +25,20 @@
       {
         "from": "app-config.json",
         "to": "app-config.json"
+      },
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!node_modules/**",
+          "!backups/**",
+          "!*.log"
+        ]
+      },
+      {
+        "from": "../frontend/build",
+        "to": "frontend"
       }
     ],
     "win": {
@@ -38,8 +52,15 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Badizo POS"
+      "shortcutName": "Badizo"
     }
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^4.22.2",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.22.4"
   },
   "devDependencies": {
     "electron": "^31.7.7",

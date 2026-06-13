@@ -1,6 +1,6 @@
-# Badizo POS Desktop App
+# Badizo Desktop App
 
-This Electron app opens Badizo POS as a Windows desktop application.
+This Electron app opens Badizo as a Windows desktop application.
 
 ## Local testing on this laptop
 
