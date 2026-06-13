@@ -5,3 +5,6 @@ backend/backups/
 *.log
 *.traineddata
 barcode/output/
+electron/dist/
+pdf_preview/
+jyothi_ocr_debug.txt

@@ -1,0 +1,48 @@
+{
+  "name": "badizo-pos-desktop",
+  "version": "1.0.0",
+  "description": "Badizo POS desktop application wrapper",
+  "main": "main.js",
+  "author": "Badizo POS",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis",
+    "pack": "electron-builder --win dir"
+  },
+  "build": {
+    "appId": "com.badizo.pos",
+    "productName": "Badizo POS",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "app-config.json",
+      "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "app-config.json",
+        "to": "app-config.json"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/badizo.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Badizo POS"
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  }
+}

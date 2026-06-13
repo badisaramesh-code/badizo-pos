@@ -117,6 +117,44 @@ function isInternalBarcode(value) {
   return /^(INV|PENDING)-/i.test(String(value || ''));
 }
 
+function normalizeInwardLines(rawLines, isDraft) {
+  return Array.isArray(rawLines)
+    ? rawLines
+      .map((line) => {
+        const normalized = {
+          product_name: normalizeProductName(line.product || line.product_name),
+          barcode: String(line.barcode || '').trim().toUpperCase(),
+          hsn_code: String(line.hsn_code || '').trim(),
+          gst_percent: parseMoney(line.gst_percent),
+          mrp: parseMoney(line.mrp),
+          purchase_price: parseMoney(line.price || line.purchase_price),
+          discount_type: normalizeDiscountType(line.discount_type),
+          discount_value: parseMoney(line.discount),
+          scheme_type: normalizeDiscountType(line.scheme_type),
+          scheme_value: parseMoney(line.scheme),
+          batch_no: String(line.batch_no || line.batch || '').trim().toUpperCase(),
+          expiry_date: normalizeExpiryDate(line.expiry_date || line.expiry),
+          free_qty: parseMoney(line.free || line.free_qty),
+          free_offer_enabled: Boolean(line.free_offer_enabled),
+          free_offer_barcode: String(line.free_offer_barcode || '').trim().toUpperCase(),
+          free_offer_product_name: normalizeProductName(line.free_offer_product_name),
+          free_offer_qty_per_sale: parseMoney(line.free_offer_qty_per_sale) || 1,
+          free_offer_total_qty: parseMoney(line.free_offer_total_qty),
+          quantity: parseMoney(line.qty || line.quantity),
+          stock_conversion_factor: normalizeStockConversionFactor(line.stock_conversion_factor || line.purchase_unit_size),
+          total_amount: parseMoney(line.total_amount),
+          last_amount_input: String(line.last_amount_input || '').toUpperCase(),
+          is_adjustment: Boolean(line.is_adjustment) || /^ADJ-/i.test(String(line.barcode || ''))
+        };
+        if (!normalized.barcode && normalized.product_name && !normalized.is_adjustment && isDraft) {
+          normalized.barcode = pendingBarcodeForDraftLine(normalized);
+        }
+        return normalized;
+      })
+      .filter((line) => line.product_name || line.barcode || line.quantity)
+    : [];
+}
+
 function batchKey(barcode, batchNo = '', expiryDate = null) {
   const expiry = expiryDate ? new Date(expiryDate).toISOString().slice(0, 10) : '';
   return `${String(barcode || '').trim().toUpperCase()}|${String(batchNo || '').trim().toUpperCase()}|${expiry}`;
@@ -487,40 +525,9 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'Supplier name is required.' });
   }
 
-  const validLines = Array.isArray(lines)
-    ? lines
-      .map((line) => {
-        const normalized = {
-          product_name: normalizeProductName(line.product || line.product_name),
-          barcode: String(line.barcode || '').trim().toUpperCase(),
-          hsn_code: String(line.hsn_code || '').trim(),
-          gst_percent: parseMoney(line.gst_percent),
-          mrp: parseMoney(line.mrp),
-          purchase_price: parseMoney(line.price || line.purchase_price),
-          discount_type: normalizeDiscountType(line.discount_type),
-          discount_value: parseMoney(line.discount),
-          scheme_type: normalizeDiscountType(line.scheme_type),
-          scheme_value: parseMoney(line.scheme),
-          batch_no: String(line.batch_no || line.batch || '').trim().toUpperCase(),
-          expiry_date: normalizeExpiryDate(line.expiry_date || line.expiry),
-          free_qty: parseMoney(line.free || line.free_qty),
-          free_offer_enabled: Boolean(line.free_offer_enabled),
-          free_offer_barcode: String(line.free_offer_barcode || '').trim().toUpperCase(),
-          free_offer_product_name: normalizeProductName(line.free_offer_product_name),
-          free_offer_qty_per_sale: parseMoney(line.free_offer_qty_per_sale) || 1,
-          free_offer_total_qty: parseMoney(line.free_offer_total_qty),
-          quantity: parseMoney(line.qty || line.quantity),
-          stock_conversion_factor: normalizeStockConversionFactor(line.stock_conversion_factor || line.purchase_unit_size),
-          total_amount: parseMoney(line.total_amount),
-          last_amount_input: String(line.last_amount_input || '').toUpperCase(),
-          is_adjustment: Boolean(line.is_adjustment) || /^ADJ-/i.test(String(line.barcode || ''))
-        };
-        if (!normalized.barcode && normalized.product_name && !normalized.is_adjustment && isDraft) {
-          normalized.barcode = pendingBarcodeForDraftLine(normalized);
-        }
-        return normalized;
-      })
-      .filter((line) => line.product_name || line.barcode || line.quantity)
+  const validLines = normalizeInwardLines(lines, isDraft);
+  const pendingLines = !isDraft && Number(req.body?.source_draft_id || 0) > 0
+    ? normalizeInwardLines(req.body?.pending_lines || [], true)
     : [];
 
   if (validLines.length === 0) {
@@ -544,6 +551,16 @@ router.post('/', async (req, res) => {
   ));
   if (invalidFreeOfferLine) {
     return res.status(400).json({ error: 'Free item offer needs batch code, free counter code/name, and total free item count.' });
+  }
+
+  const invalidPendingLine = pendingLines.find((line) => (
+    !line.product_name
+    || !line.barcode
+    || line.quantity <= 0
+    || (!line.is_adjustment && line.purchase_price < 0)
+  ));
+  if (invalidPendingLine) {
+    return res.status(400).json({ error: 'Pending invoice rows need product and quantity.' });
   }
 
   const connection = await db.getConnection();
@@ -844,11 +861,124 @@ router.post('/', async (req, res) => {
       connection
     });
 
-    if (!isDraft && Number(req.body?.source_draft_id || 0) > 0) {
-      await connection.query(
-        `DELETE FROM inward_entries WHERE id = ? AND posting_status = 'DRAFT'`,
-        [Number(req.body.source_draft_id)]
-      );
+    const sourceDraftId = Number(req.body?.source_draft_id || 0);
+    if (!isDraft && sourceDraftId > 0) {
+      if (pendingLines.length) {
+        const [draftRows] = await connection.query(
+          `SELECT id, inward_no
+           FROM inward_entries
+           WHERE id = ? AND posting_status = 'DRAFT'
+           FOR UPDATE`,
+          [sourceDraftId]
+        );
+        const draftEntry = draftRows[0];
+        if (!draftEntry) {
+          throw new Error('Pending inward bill selected for remaining rows was not found.');
+        }
+
+        await connection.query(`DELETE FROM inward_items WHERE inward_no = ?`, [draftEntry.inward_no]);
+        await connection.query(
+          `UPDATE inward_entries
+           SET supplier_name = ?, supplier_address = ?, supplier_gstin = ?, supplier_phone = ?,
+               supplier_invoice_no = ?, supplier_invoice_date = ?, payment_mode = ?, item_count = 0,
+               total_qty = 0, taxable_total = 0, gst_total = 0, total_cgst = 0, total_sgst = 0,
+               total_igst = 0, grand_total = 0, tax_type = ?, posting_status = 'DRAFT', created_by = ?
+           WHERE inward_no = ?`,
+          [
+            String(supplier.name || '').trim(),
+            String(supplier.address || '').trim(),
+            String(supplier.gstin || '').trim().toUpperCase(),
+            String(supplier.phone || '').trim(),
+            String(supplier.invoice_no || '').trim(),
+            supplier.invoice_date || null,
+            paymentMode,
+            taxType,
+            req.user.username,
+            draftEntry.inward_no
+          ]
+        );
+
+        let pendingTaxableTotal = 0;
+        let pendingGstTotal = 0;
+        let pendingCgstTotal = 0;
+        let pendingSgstTotal = 0;
+        let pendingIgstTotal = 0;
+        let pendingGrandTotal = 0;
+
+        for (const line of pendingLines) {
+          const calculated = calculateInwardLine(line, taxType);
+          const hasFreeOffer = Boolean(line.free_offer_enabled && line.free_offer_barcode && line.free_offer_product_name && line.free_offer_total_qty > 0);
+
+          pendingTaxableTotal += calculated.taxable;
+          pendingGstTotal += calculated.gstAmount;
+          pendingCgstTotal += calculated.cgstAmount;
+          pendingSgstTotal += calculated.sgstAmount;
+          pendingIgstTotal += calculated.igstAmount;
+          pendingGrandTotal += calculated.lineTotal;
+
+          await connection.query(
+            `INSERT INTO inward_items
+             (inward_no, barcode, product_name, hsn_code, gst_percent, purchase_price, discount_percent,
+              discount_type, discount_amount, scheme, scheme_type, scheme_value, scheme_amount,
+              batch_no, expiry_date, mrp, free_qty, free_offer_enabled, free_offer_barcode, free_offer_product_name,
+              free_offer_qty_per_sale, free_offer_total_qty, quantity, taxable_amount, gst_amount, cgst_amount, sgst_amount, igst_amount, total_amount)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              draftEntry.inward_no,
+              line.barcode,
+              line.product_name,
+              line.hsn_code,
+              line.gst_percent,
+              line.purchase_price,
+              line.discount_type === 'PERCENT' ? line.discount_value : 0,
+              line.discount_type,
+              calculated.discountAmount,
+              String(line.scheme_value || ''),
+              line.scheme_type,
+              line.scheme_value,
+              calculated.schemeAmount,
+              line.batch_no,
+              line.expiry_date,
+              line.mrp,
+              line.free_qty,
+              hasFreeOffer ? 1 : 0,
+              hasFreeOffer ? line.free_offer_barcode : '',
+              hasFreeOffer ? line.free_offer_product_name : '',
+              hasFreeOffer ? line.free_offer_qty_per_sale : 1,
+              hasFreeOffer ? line.free_offer_total_qty : 0,
+              line.quantity,
+              calculated.taxable,
+              calculated.gstAmount,
+              calculated.cgstAmount,
+              calculated.sgstAmount,
+              calculated.igstAmount,
+              calculated.lineTotal
+            ]
+          );
+        }
+
+        await connection.query(
+          `UPDATE inward_entries
+           SET item_count = ?, total_qty = 0, taxable_total = ?, gst_total = ?,
+               total_cgst = ?, total_sgst = ?, total_igst = ?, grand_total = ?
+           WHERE inward_no = ?`,
+          [
+            pendingLines.length,
+            pendingTaxableTotal,
+            pendingGstTotal,
+            pendingCgstTotal,
+            pendingSgstTotal,
+            pendingIgstTotal,
+            pendingGrandTotal,
+            draftEntry.inward_no
+          ]
+        );
+      } else {
+        await connection.query(
+          `DELETE FROM inward_entries WHERE id = ? AND posting_status = 'DRAFT'`,
+          [sourceDraftId]
+        );
+      }
     }
 
     await connection.commit();
@@ -858,6 +988,7 @@ router.post('/', async (req, res) => {
       serial_no: entryResult.insertId,
       inward_no: finalInwardNo,
       item_count: validLines.length,
+      pending_item_count: pendingLines.length,
       total_qty: totalQty,
       payment_mode: paymentMode,
       posting_status: isDraft ? 'DRAFT' : 'POSTED',

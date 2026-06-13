@@ -1,0 +1,5 @@
+{
+  "appUrl": "http://localhost:3000",
+  "kiosk": false,
+  "devTools": false
+}

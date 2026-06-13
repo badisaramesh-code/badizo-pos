@@ -74,7 +74,7 @@ async function renderPdfPages(file) {
   const pdf = await pdfjsLib.getDocument({ data }).promise;
   const pages = [];
   const textParts = [];
-  const pageCount = Math.min(pdf.numPages, 4);
+  const pageCount = Math.min(pdf.numPages, 8);
 
   for (let pageNo = 1; pageNo <= pageCount; pageNo += 1) {
     const page = await pdf.getPage(pageNo);
@@ -271,6 +271,9 @@ function parseInvoiceRows(text) {
 
   const bhagwanlalRows = parseBhagwanlalInvoiceRows(sourceLines);
   if (bhagwanlalRows.length) return bhagwanlalRows;
+
+  const agrawalRows = parseAgrawalDistributorInvoiceRows(sourceLines);
+  if (agrawalRows.length) return agrawalRows;
 
   const powerbiltRows = parsePowerbiltInvoiceRows(sourceLines);
   if (powerbiltRows.length) return powerbiltRows;
@@ -518,6 +521,153 @@ function parseBhagwanlalAdjustments(lines) {
   }
 
   return adjustments;
+}
+
+function parseAgrawalDistributorInvoiceRows(lines) {
+  const sourceText = lines.join('\n');
+  const hasAgrawal = /AGRAWAL\s+DISTRIBUTORS/i.test(sourceText);
+  const hasAgrawalHeader = lines.some((line, index) => {
+    const headerText = normalizeHeader(lines.slice(index, index + 4).join(' '));
+    return headerText.includes('description')
+      && headerText.includes('hsn')
+      && headerText.includes('d p')
+      && headerText.includes('qty')
+      && headerText.includes('cgst')
+      && headerText.includes('sgst')
+      && headerText.includes('total');
+  });
+  if (!hasAgrawal && !hasAgrawalHeader) return [];
+
+  const rows = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!isAgrawalItemStartLine(lines[index])) continue;
+
+    let parsed = null;
+    let consumed = 0;
+
+    for (let span = 1; span <= 4; span += 1) {
+      const candidate = lines.slice(index, index + span).join(' ');
+      parsed = parseAgrawalDistributorInvoiceRow(candidate);
+      if (parsed) {
+        consumed = span - 1;
+        break;
+      }
+    }
+
+    if (parsed) {
+      rows.push(parsed);
+      index += consumed;
+    }
+  }
+
+  const seen = new Set();
+  const productRows = rows.filter((row) => {
+    const key = `${row.product}|${row.hsn_code}|${row.qty}|${row.price}|${row.total_amount}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return [...productRows, ...parseAgrawalDistributorAdjustments(lines, productRows)];
+}
+
+function isAgrawalItemStartLine(line) {
+  return /^\s*[^\w\s]*(\d{1,3})\s+[A-Za-z]/.test(String(line || ''));
+}
+
+function parseAgrawalDistributorInvoiceRow(rawLine) {
+  const line = String(rawLine || '')
+    .replace(/[|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const serialMatch = line.match(/^\s*[^\w\s]*(\d{1,3})\s+(.+)$/);
+  if (!serialMatch) return null;
+  const serialNo = toNumber(serialMatch[1]);
+  if (serialNo <= 0 || serialNo > 999 || !/^[A-Za-z]/.test(serialMatch[2])) return null;
+
+  const tokens = serialMatch[2].split(/\s+/).filter(Boolean);
+  const hsnIndex = tokens.findIndex((token, index) => {
+    if (index <= 0 || !cleanAgrawalHsnToken(token)) return false;
+    if (!isMoneyLike(tokens[index + 1])) return false;
+    const afterHsn = tokens.slice(index + 1).filter(isMoneyLike);
+    return /[A-Za-z]{3,}/.test(tokens.slice(0, index).join(' ')) && afterHsn.length >= 6;
+  });
+  if (hsnIndex <= 0) return null;
+
+  const product = normalizeOcrProductName(tokens.slice(0, hsnIndex).join(' '));
+  if (!product || /^(TOTAL|CLOSING BALANCE|BASIC AMT|RUPEES)$/i.test(product)) return null;
+
+  const numbers = tokens.slice(hsnIndex + 1)
+    .filter(isMoneyLike)
+    .map(cleanNumber);
+  if (numbers.length < 6) return null;
+
+  const [dealerPrice, quantity, rate] = numbers;
+  const totalAmount = numbers[numbers.length - 1];
+  const taxTail = numbers.slice(3, -1);
+  if (toNumber(quantity) <= 0 || toNumber(rate) <= 0 || toNumber(totalAmount) <= 0 || taxTail.length < 3) return null;
+
+  const taxableAmount = taxTail[taxTail.length - 3];
+  const cgstRate = taxTail[taxTail.length - 2];
+  const sgstRate = taxTail[taxTail.length - 1];
+  const reductions = taxTail.slice(0, -3);
+  const gstPercent = toNumber(cgstRate) + toNumber(sgstRate);
+  const calculatedRate = toNumber(quantity) > 0 ? roundCurrency(toNumber(taxableAmount) / toNumber(quantity)) : toNumber(rate);
+  const normalizedRate = calculatedRate > 0 && Math.abs(calculatedRate - toNumber(rate)) > 0.01
+    ? calculatedRate.toFixed(2)
+    : cleanNumber(rate);
+
+  return {
+    barcode: '',
+    product,
+    hsn_code: cleanAgrawalHsnToken(tokens[hsnIndex]),
+    mrp: cleanNumber(dealerPrice),
+    price: normalizedRate,
+    discount_type: 'PERCENT',
+    discount: cleanNumber(reductions[0] || ''),
+    scheme_type: 'PERCENT',
+    scheme: cleanNumber(reductions[1] || ''),
+    free: '',
+    gst_percent: normalizeGstPercent(gstPercent),
+    qty: cleanNumber(quantity),
+    taxable_amount: cleanNumber(taxableAmount),
+    total_amount: cleanNumber(totalAmount),
+    last_amount_input: 'TOTAL'
+  };
+}
+
+function cleanAgrawalHsnToken(token) {
+  const digits = String(token || '').replace(/\D/g, '');
+  return /^\d{6,8}$/.test(digits) ? digits : '';
+}
+
+function parseAgrawalDistributorAdjustments(lines, rows) {
+  const source = lines.join('\n');
+  const netAmount = extractAgrawalNetAmount(source);
+  if (!netAmount || !rows.length) return [];
+
+  const rowTotal = rows.reduce((sum, row) => sum + toNumber(row.total_amount), 0);
+  const adjustment = roundCurrency(netAmount - rowTotal);
+  if (Math.abs(adjustment) < 0.01) return [];
+
+  return [buildInwardAdjustmentLine('ROUND OFF', adjustment.toFixed(2), 'ADJ-AGRAWAL-ROUND')];
+}
+
+function extractAgrawalNetAmount(text) {
+  const match = String(text || '').match(/Net\s+Amount\s+([\d,]+(?:\.\d+)?)/i);
+  return match ? toNumber(cleanNumber(match[1])) : 0;
+}
+
+function extractAgrawalTaxSummary(text) {
+  const source = String(text || '');
+  const cgstMatch = source.match(/Add\s*:\s*CGST\s+([\d,]+(?:\.\d+)?)/i);
+  const sgstMatch = source.match(/Add\s*:\s*SGST\s+([\d,]+(?:\.\d+)?)/i);
+  const roundOffMatch = source.match(/Round\s*off\s+(-?[\d,]+(?:\.\d+)?)/i);
+  return {
+    cgst: cgstMatch ? toNumber(cleanNumber(cgstMatch[1])) : 0,
+    sgst: sgstMatch ? toNumber(cleanNumber(sgstMatch[1])) : 0,
+    roundOff: roundOffMatch ? toNumber(cleanNumber(roundOffMatch[1])) : 0
+  };
 }
 
 function buildInwardAdjustmentLine(product, amount, barcode, overrides = {}) {
@@ -1473,6 +1623,17 @@ function buildInvoiceImportCheckMessage(rows, nextTaxType, text) {
     const isMatched = Math.abs(computed - expected) <= 0.5;
     return `${totalText} Unilever UPC model check: ${isMatched ? 'OK' : 'Check manually'} against invoice grand total ${formatMoney(expected)}.`;
   }
+  if (/AGRAWAL\s+DISTRIBUTORS/i.test(text || '')) {
+    const expected = extractAgrawalNetAmount(text);
+    const taxSummary = extractAgrawalTaxSummary(text);
+    if (expected > 0) {
+      const isMatched = Math.abs(computed - expected) <= 0.5;
+      const taxText = taxSummary.cgst || taxSummary.sgst
+        ? ` CGST ${formatMoney(taxSummary.cgst)}, SGST ${formatMoney(taxSummary.sgst)}, round off ${formatMoney(taxSummary.roundOff)}.`
+        : '';
+      return `${totalText} Agrawal GST model check: ${isMatched ? 'OK' : 'Check manually'} against net amount ${formatMoney(expected)}.${taxText}`;
+    }
+  }
   return totalText;
 }
 
@@ -2079,6 +2240,16 @@ export default function InwardEntryView() {
     ));
   }
 
+  function isPostableInwardLine(line) {
+    if (line.is_adjustment) return true;
+    return Boolean(
+      normalizeOcrProductName(line.product)
+      && toNumber(line.qty) > 0
+      && String(line.barcode || '').trim()
+      && !/^(INV|PENDING)-/i.test(String(line.barcode || ''))
+    );
+  }
+
   function resetInwardForm() {
     setSupplier(blankSupplier);
     setPaymentMode('Credit');
@@ -2097,8 +2268,17 @@ export default function InwardEntryView() {
   async function handleSave(postingStatus = 'POSTED') {
     setStatusMessage('');
     setErrorMessage('');
-    if (postingStatus === 'POSTED' && hasUnmappedProductLines()) {
-      setErrorMessage('Map barcode / POS product name for all product rows before posting inward. Use Save Draft Bill first if mapping is pending.');
+    const canPartialPostDraft = postingStatus === 'POSTED' && sourceDraftId && !editingInward;
+    const shouldSaveUnmappedAsDraft = postingStatus === 'POSTED'
+      && !sourceDraftId
+      && !editingInward
+      && hasUnmappedProductLines();
+    const effectivePostingStatus = shouldSaveUnmappedAsDraft ? 'DRAFT' : postingStatus;
+    const postableLines = canPartialPostDraft ? lines.filter(isPostableInwardLine) : lines;
+    const pendingLines = canPartialPostDraft ? lines.filter((line) => !isPostableInwardLine(line)) : [];
+
+    if (postingStatus === 'POSTED' && canPartialPostDraft && postableLines.length === 0) {
+      setErrorMessage('Add barcode / POS product name for at least one row before posting. Unmapped rows will stay in Pending Invoices.');
       return;
     }
     setIsSaving(true);
@@ -2108,22 +2288,31 @@ export default function InwardEntryView() {
         supplier,
         tax_type: taxType,
         payment_mode: paymentMode,
-        posting_status: postingStatus,
+        posting_status: effectivePostingStatus,
         source_draft_id: postingStatus === 'POSTED' ? sourceDraftId : null,
         replace_inward_id: editingInward
           ? editingInward.id
-          : (postingStatus === 'DRAFT' && sourceDraftId ? sourceDraftId : null),
-        lines: lines.map((line) => ({
+          : (effectivePostingStatus === 'DRAFT' && sourceDraftId ? sourceDraftId : null),
+        lines: postableLines.map((line) => ({
+          ...line,
+          discount_type: line.discount_type || discountType,
+          scheme_type: line.scheme_type || schemeType
+        })),
+        pending_lines: pendingLines.map((line) => ({
           ...line,
           discount_type: line.discount_type || discountType,
           scheme_type: line.scheme_type || schemeType
         }))
       });
-      setStatusMessage(postingStatus === 'DRAFT'
-        ? `Draft bill S.No ${result.serial_no || result.id} (${result.inward_no}) saved/updated. Stock not updated yet.`
+      setStatusMessage(effectivePostingStatus === 'DRAFT'
+        ? shouldSaveUnmappedAsDraft
+          ? `Invoice mapping pending, so bill S.No ${result.serial_no || result.id} (${result.inward_no}) moved to Pending Invoices. Stock not updated yet.`
+          : `Draft bill S.No ${result.serial_no || result.id} (${result.inward_no}) saved/updated. Stock not updated yet.`
         : editingInward
           ? `Inward S.No ${result.serial_no || result.id} (${result.inward_no}) updated. Stock recalculated for ${result.item_count} products.`
-          : `Inward S.No ${result.serial_no || result.id} (${result.inward_no}) posted. Stock updated for ${result.item_count} products.`);
+          : result.pending_item_count > 0
+            ? `Inward S.No ${result.serial_no || result.id} (${result.inward_no}) posted for ${result.item_count} mapped products. ${result.pending_item_count} rows stayed in Pending Invoices.`
+            : `Inward S.No ${result.serial_no || result.id} (${result.inward_no}) posted. Stock updated for ${result.item_count} products.`);
       resetInwardForm();
       await loadRecentInwards();
       if (result.id || result.inward_no) await handleViewInward(result);
@@ -2231,19 +2420,30 @@ export default function InwardEntryView() {
   }
 
   async function handleInvoiceUpload(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
 
     setStatusMessage('');
     setErrorMessage('');
-    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
-    setOcrProgress(isPdf ? 'Rendering PDF...' : 'Preparing OCR...');
+    const hasPdf = files.some((file) => file.type === 'application/pdf' || /\.pdf$/i.test(file.name || ''));
+    setOcrProgress(hasPdf ? 'Rendering PDF...' : 'Preparing OCR...');
     setIsOcrRunning(true);
 
     try {
-      const renderedPdf = isPdf ? await renderPdfPages(file) : null;
-      const directPdfText = renderedPdf?.text || '';
-      if (isPdf && directPdfText.trim()) {
+      const renderedFiles = [];
+      for (const [fileIndex, file] of files.entries()) {
+        const isPdfFile = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+        if (isPdfFile) {
+          setOcrProgress(`Rendering PDF ${fileIndex + 1}/${files.length}...`);
+          const renderedPdf = await renderPdfPages(file);
+          renderedFiles.push({ file, isPdf: true, pages: renderedPdf.pages, text: renderedPdf.text || '' });
+        } else {
+          renderedFiles.push({ file, isPdf: false, pages: [{ canvas: file, pageNo: 1, fileName: file.name }], text: '' });
+        }
+      }
+
+      const directPdfText = renderedFiles.map((item) => item.text).filter(Boolean).join('\n');
+      if (directPdfText.trim()) {
         setOcrProgress('Reading PDF text...');
         const directRows = parseInvoiceRows(directPdfText);
         if (directRows.length) {
@@ -2260,9 +2460,14 @@ export default function InwardEntryView() {
         setOcrProgress('PDF text found, item rows not matched. Trying OCR...');
       }
 
-      const ocrTargets = isPdf
-        ? renderedPdf.pages
-        : [{ canvas: file, pageNo: 1 }];
+      const ocrTargets = renderedFiles.flatMap((item, fileIndex) => (
+        item.pages.map((page) => ({
+          ...page,
+          fileIndex,
+          fileName: item.file.name,
+          isPdf: item.isPdf
+        }))
+      ));
 
       const worker = await createWorker('eng', 1, {
         logger: (message) => {
@@ -2278,7 +2483,8 @@ export default function InwardEntryView() {
       });
       const pageTexts = [];
       for (const target of ocrTargets) {
-        setOcrProgress(`${isPdf ? `Reading PDF page ${target.pageNo}` : 'Reading image'}...`);
+        const fileLabel = files.length > 1 ? ` file ${target.fileIndex + 1}/${files.length}` : '';
+        setOcrProgress(`${target.isPdf ? `Reading PDF${fileLabel} page ${target.pageNo}` : `Reading image${fileLabel}`}...`);
         const { data } = await worker.recognize(target.canvas);
         pageTexts.push(data?.text || '');
       }
@@ -2293,7 +2499,7 @@ export default function InwardEntryView() {
         const nextTaxType = detectInvoiceTaxType(text);
         setTaxType(nextTaxType);
         setLines(hydratedRows);
-        setStatusMessage(`${rows.length} rows read from invoice ${isPdf ? 'PDF' : 'image'}. ${matchedCount} matched with product table. ${buildInvoiceImportCheckMessage(hydratedRows, nextTaxType, text)} Review all fields before Save Inward.`);
+        setStatusMessage(`${rows.length} rows read from ${files.length} invoice file${files.length === 1 ? '' : 's'}. ${matchedCount} matched with product table. ${buildInvoiceImportCheckMessage(hydratedRows, nextTaxType, text)} Review all fields before Save Inward.`);
       } else {
         setErrorMessage('OCR completed, but rows could not be detected. Check the extracted text and adjust/paste CSV-style rows if needed.');
       }
@@ -2386,7 +2592,7 @@ export default function InwardEntryView() {
             <div className="bulk-edit-toolbar">
               <label className="secondary-button file-button">
                 Scan Invoice PDF/Image
-                <input type="file" accept="application/pdf,image/*" onChange={handleInvoiceUpload} />
+                <input type="file" accept="application/pdf,image/*" multiple onChange={handleInvoiceUpload} />
               </label>
             </div>
             {isOcrRunning && <div className="change-box">Reading invoice image... {ocrProgress}</div>}
@@ -2507,7 +2713,7 @@ export default function InwardEntryView() {
               {isSaving ? 'Saving...' : 'Save Draft Bill'}
             </button>
             <button className="primary-button compact-primary" onClick={() => handleSave('POSTED')} disabled={isSaving}>
-              {isSaving ? 'Saving...' : editingInward ? 'Update Inward' : 'Post Inward'}
+              {isSaving ? 'Saving...' : editingInward ? 'Update Inward' : hasUnmappedProductLines() && !sourceDraftId ? 'Move to Pending' : 'Post Inward'}
             </button>
           </div>
         </div>
