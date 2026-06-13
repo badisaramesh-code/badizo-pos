@@ -5190,3 +5190,103 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+.status-chip.success {
+  background: #e8f7ef;
+  border-color: #b7e2c7;
+  color: #176b3a;
+}
+
+.status-chip.warning {
+  background: #fff7e6;
+  border-color: #ffd38a;
+  color: #8a4d00;
+}
+
+.status-chip.danger {
+  background: #fdecec;
+  border-color: #f4b4b4;
+  color: #9b1c1c;
+}
+
+.status-chip.muted {
+  background: #f1f3f5;
+  border-color: #d8dee4;
+  color: #57606a;
+}
+
+.import-history-page {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+}
+
+.import-history-page .panel {
+  width: 100%;
+  max-width: none;
+}
+
+.import-history-page .panel-body {
+  width: 100%;
+}
+
+.import-history-table-wrap {
+  max-width: 100%;
+  width: 100%;
+  overflow-x: auto;
+}
+
+.import-history-table {
+  min-width: 1400px;
+  width: 100%;
+}
+
+.import-history-detail-table {
+  min-width: 1300px;
+  width: 100%;
+}
+
+.import-history-detail-table td:last-child {
+  min-width: 360px;
+  white-space: normal;
+}
+
+.growl-message {
+  position: fixed;
+  top: 86px;
+  right: 22px;
+  z-index: 100;
+  width: min(560px, calc(100vw - 44px));
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: start;
+  padding: 14px;
+  border: 1px solid #d8dee4;
+  background: #ffffff;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.18);
+}
+
+.growl-message p {
+  margin: 5px 0 0;
+  color: #42526e;
+  line-height: 1.4;
+}
+
+.growl-message.success {
+  border-left: 5px solid #2da44e;
+}
+
+.growl-message.warning {
+  border-left: 5px solid #bf8700;
+}
+
+.growl-message.danger {
+  border-left: 5px solid #cf222e;
+}
+
+.growl-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}

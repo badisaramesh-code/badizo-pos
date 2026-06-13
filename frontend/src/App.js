@@ -7,6 +7,7 @@ import DashboardView from './components/DashboardView';
 import InwardEntryView from './components/InwardEntryView';
 import InventoryDashboardView from './components/InventoryDashboardView';
 import LoginView from './components/LoginView';
+import ProductImportHistoryView from './components/ProductImportHistoryView';
 import ReportsView from './components/ReportsView';
 import SystemView from './components/SystemView';
 import { clearAuthSession, getStoredUser } from './api/client';
@@ -32,12 +33,14 @@ export default function App() {
   }
 
   const allowedTabs = APP_TABS.filter((tab) => canAccessTab(tab, currentUser));
+  const visibleTabs = allowedTabs.filter((tab) => !tab.hidden);
 
   const views = {
     dashboard: <DashboardView setActiveWorkspace={setActiveWorkspace} />,
     billing: <BillingTerminalView isActive={activeWorkspace === 'billing'} />,
     closing: <CounterClosingView />,
-    inventory: <InventoryDashboardView />,
+    inventory: <InventoryDashboardView setActiveWorkspace={setActiveWorkspace} />,
+    importHistory: <ProductImportHistoryView />,
     barcode: <BarcodeStickersView />,
     inward: <InwardEntryView />,
     reports: <ReportsView isActive={activeWorkspace === 'reports'} onClose={() => setActiveWorkspace('billing')} />,
@@ -53,7 +56,7 @@ export default function App() {
         </div>
 
         <nav className="nav-tabs" aria-label="Workspace">
-          {allowedTabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.key}
               className={`tab-button ${activeWorkspace === tab.key ? 'active' : ''}`}

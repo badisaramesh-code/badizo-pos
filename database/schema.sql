@@ -25,7 +25,10 @@ CREATE TABLE products (
     product_name VARCHAR(255) NOT NULL,
     hsn_code VARCHAR(20) DEFAULT NULL,
     gst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
-    unit_type VARCHAR(20) NOT NULL DEFAULT 'Nos',
+    sales_sgst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    sales_cgst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    sales_igst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    unit_type VARCHAR(40) NOT NULL DEFAULT 'Nos',
     mrp DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     purchase_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,  -- Cost to Store
     sale_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,      -- Retail Selling Price
@@ -65,9 +68,49 @@ CREATE TABLE invoices (
 
     INDEX idx_invoice_no (invoice_no),
     INDEX idx_created_at (created_at)
-) ENGINE=InnoDB;
+  ) ENGINE=InnoDB;
 
--- 4. Invoice Items (Billing Line Details Table Tracking Segmented Taxes)
+  CREATE TABLE product_import_jobs (
+      id CHAR(36) PRIMARY KEY,
+      file_name VARCHAR(255) DEFAULT '',
+      status ENUM('SUCCESS', 'FAILED', 'PARTIAL SUCCESS', 'ROLLED BACK') NOT NULL DEFAULT 'FAILED',
+      total_rows INT NOT NULL DEFAULT 0,
+      valid_rows INT NOT NULL DEFAULT 0,
+      inserted_count INT NOT NULL DEFAULT 0,
+      updated_count INT NOT NULL DEFAULT 0,
+      error_rows INT NOT NULL DEFAULT 0,
+      skipped_count INT NOT NULL DEFAULT 0,
+      batch_count INT NOT NULL DEFAULT 0,
+      failure_message TEXT DEFAULT NULL,
+      rollback_status ENUM('ACTIVE', 'ROLLED_BACK') NOT NULL DEFAULT 'ACTIVE',
+      rollback_at TIMESTAMP NULL DEFAULT NULL,
+      rollback_by VARCHAR(100) DEFAULT NULL,
+      created_by VARCHAR(100) DEFAULT '',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_product_import_jobs_created (created_at),
+      INDEX idx_product_import_jobs_status (status)
+  ) ENGINE=InnoDB;
+
+  CREATE TABLE product_import_lines (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      import_id CHAR(36) NOT NULL,
+      row_no INT NOT NULL,
+      product_code VARCHAR(60) DEFAULT '',
+      barcode VARCHAR(120) DEFAULT '',
+      product_name VARCHAR(255) DEFAULT '',
+      action_status ENUM('INSERTED', 'UPDATED', 'ERROR', 'SKIPPED', 'ROLLED_BACK') NOT NULL DEFAULT 'ERROR',
+      error_message TEXT DEFAULT NULL,
+      previous_product_json JSON DEFAULT NULL,
+      imported_product_json JSON DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_product_import_lines_import (import_id),
+      INDEX idx_product_import_lines_status (action_status),
+      INDEX idx_product_import_lines_barcode (barcode),
+      CONSTRAINT fk_product_import_lines_job FOREIGN KEY (import_id) REFERENCES product_import_jobs(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB;
+  
+  -- 4. Invoice Items (Billing Line Details Table Tracking Segmented Taxes)
 CREATE TABLE invoice_items (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     invoice_no VARCHAR(50) NOT NULL,

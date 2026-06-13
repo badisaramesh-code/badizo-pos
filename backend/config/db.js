@@ -61,7 +61,10 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         alias_names TEXT DEFAULT NULL,
         hsn_code VARCHAR(20) DEFAULT NULL,
         gst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
-        unit_type VARCHAR(20) NOT NULL DEFAULT 'Nos',
+        sales_sgst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+        sales_cgst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+        sales_igst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+        unit_type VARCHAR(40) NOT NULL DEFAULT 'Nos',
         purchase_unit_type VARCHAR(30) NOT NULL DEFAULT 'Loose',
         purchase_unit_size DECIMAL(12,3) NOT NULL DEFAULT 1.000,
         mrp DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -84,6 +87,50 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         INDEX idx_product_code (product_code),
         INDEX idx_barcode (barcode),
         INDEX idx_product_name (product_name)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS product_import_jobs (
+        id CHAR(36) PRIMARY KEY,
+        file_name VARCHAR(255) DEFAULT '',
+        status ENUM('SUCCESS', 'FAILED', 'PARTIAL SUCCESS', 'ROLLED BACK') NOT NULL DEFAULT 'FAILED',
+        total_rows INT NOT NULL DEFAULT 0,
+        valid_rows INT NOT NULL DEFAULT 0,
+        inserted_count INT NOT NULL DEFAULT 0,
+        updated_count INT NOT NULL DEFAULT 0,
+        error_rows INT NOT NULL DEFAULT 0,
+        skipped_count INT NOT NULL DEFAULT 0,
+        batch_count INT NOT NULL DEFAULT 0,
+        failure_message TEXT DEFAULT NULL,
+        rollback_status ENUM('ACTIVE', 'ROLLED_BACK') NOT NULL DEFAULT 'ACTIVE',
+        rollback_at TIMESTAMP NULL DEFAULT NULL,
+        rollback_by VARCHAR(100) DEFAULT NULL,
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_product_import_jobs_created (created_at),
+        INDEX idx_product_import_jobs_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS product_import_lines (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        import_id CHAR(36) NOT NULL,
+        row_no INT NOT NULL,
+        product_code VARCHAR(60) DEFAULT '',
+        barcode VARCHAR(120) DEFAULT '',
+        product_name VARCHAR(255) DEFAULT '',
+        action_status ENUM('INSERTED', 'UPDATED', 'ERROR', 'SKIPPED', 'ROLLED_BACK') NOT NULL DEFAULT 'ERROR',
+        error_message TEXT DEFAULT NULL,
+        previous_product_json JSON DEFAULT NULL,
+        imported_product_json JSON DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_product_import_lines_import (import_id),
+        INDEX idx_product_import_lines_status (action_status),
+        INDEX idx_product_import_lines_barcode (barcode),
+        CONSTRAINT fk_product_import_lines_job FOREIGN KEY (import_id) REFERENCES product_import_jobs(id) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
@@ -584,7 +631,11 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'products', 'wholesale_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER sale_price');
     await ensureColumn(connection, 'products', 'product_code', 'VARCHAR(60) DEFAULT NULL UNIQUE AFTER id');
     await ensureColumn(connection, 'products', 'alias_names', 'TEXT DEFAULT NULL AFTER product_name');
-    await ensureColumn(connection, 'products', 'unit_type', "VARCHAR(20) NOT NULL DEFAULT 'Nos' AFTER gst_percent");
+    await ensureColumn(connection, 'products', 'sales_sgst_percent', 'DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER gst_percent');
+    await ensureColumn(connection, 'products', 'sales_cgst_percent', 'DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER sales_sgst_percent');
+    await ensureColumn(connection, 'products', 'sales_igst_percent', 'DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER sales_cgst_percent');
+    await ensureColumn(connection, 'products', 'unit_type', "VARCHAR(40) NOT NULL DEFAULT 'Nos' AFTER sales_igst_percent");
+    await connection.query("ALTER TABLE products MODIFY unit_type VARCHAR(40) NOT NULL DEFAULT 'Nos'");
     await ensureColumn(connection, 'products', 'purchase_unit_type', "VARCHAR(30) NOT NULL DEFAULT 'Loose' AFTER unit_type");
     await ensureColumn(connection, 'products', 'purchase_unit_size', 'DECIMAL(12,3) NOT NULL DEFAULT 1.000 AFTER purchase_unit_type');
     await ensureColumn(connection, 'products', 'discount_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER wholesale_price");

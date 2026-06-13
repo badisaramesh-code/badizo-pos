@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import {
+  bulkDeleteDuplicateProductCodes,
   bulkDeleteProductDropbox,
   bulkUpdateProducts,
   fetchBulkEditableProducts,
+  fetchDuplicateProductCodes,
   fetchProductDropbox,
   exportProducts,
   fetchProducts,
@@ -51,25 +53,23 @@ const PRODUCT_EXCEL_HEADERS = [
   'Product Code',
   'Description',
   'Alias Names',
-  'HSN',
+  'Free Product Name',
+  'HSN Code',
   'MRP',
-  'Sale GST %',
+  'Purchase Rate',
+  'Sales GST %',
+  'Sales SGST %',
+  'Sales CGST %',
+  'Sales IGST %',
   'Unit',
-  'Purchase Unit',
-  'Stock Per Purchase Unit',
-  'Purchase Price',
-  'Discount',
-  'Sale Net Price',
-  'Wholesale Price',
-  'Opening Stock',
-  'Low Stock Alert'
+  'Sales Rate'
 ];
 
 const PRODUCT_EXCEL_SAMPLE_ROWS = [
-  ['1', '89100100', 'KCP SUGAR', 'KCP SUGAR 1KG, SUGAR KCP', '123456', '80.00', '5', 'Kg', 'Bag', '50', '60.00', '10.00', '70.00', '68.00', '100', '10'],
-  ['2', '89102256', 'NAYASA BUCKET', 'NAYASA PLASTCK BUCKET BIG', '2515', '500.00', '18', 'Nos', 'Carton', '12', '400.00', '100.00', '300.00', '285.00', '25', '5'],
-  ['3', '8100123', 'ONION', 'ONIONS, PYAJ', '44155', '', '0', 'Kg', 'Bag', '40', '25.00', '', '30.00', '28.00', '50', '10'],
-  ['4', '892456', 'THUMS UP 2.LT BOTTLE', 'THUMS UP 2L, THUMSUP 2LT', '51456', '100.00', '40', 'Nos', 'Case', '6', '80.00', '10.00', '90.00', '87.00', '20', '5']
+  ['73137', '89300296', '(180) JUMBO ROUND KAJU', '', '', '080211', '62.00', '62.00', '0', '2.5', '2.5', '5', '50 Gms', '62.00'],
+  ['73138', '89300297', '(180) JUMBO ROUND KAJU', '', '', '080211', '120.00', '120.00', '0', '2.5', '2.5', '5', '100 Gms', '120.00'],
+  ['73139', '89300298', '(180) JUMBO ROUND KAJU', '', '', '080211', '235.00', '235.00', '0', '2.5', '2.5', '5', '200 Gms', '235.00'],
+  ['73140', '89300299', '(180) JUMBO ROUND KAJU', '', '', '080211', '580.00', '580.00', '0', '2.5', '2.5', '5', '500 Gms', '580.00']
 ];
 
 const PRODUCT_API_IMPORT_HEADERS = [
@@ -77,8 +77,12 @@ const PRODUCT_API_IMPORT_HEADERS = [
   'barcode',
   'product_name',
   'alias_names',
+  'free_promo_name',
   'hsn_code',
   'gst_percent',
+  'sales_sgst_percent',
+  'sales_cgst_percent',
+  'sales_igst_percent',
   'unit_type',
   'purchase_unit_type',
   'purchase_unit_size',
@@ -187,16 +191,20 @@ function rowsToApiImportCsv(rows) {
     barcode: columnIndex(['Barcode', 'bar code', 'ean']),
     productName: columnIndex(['Description', 'Product Name', 'product_name', 'item name', 'product']),
     aliasNames: columnIndex(['Alias Names', 'alias_names', 'aliases', 'invoice names', 'supplier names']),
+    freeProductName: columnIndex(['Free Product Name', 'free product name', 'free_promo_name', 'free item name']),
     hsn: columnIndex(['HSN', 'HSN Code', 'hsn_code', 'HSN/SAC']),
     mrp: columnIndex(['MRP']),
-    gst: columnIndex(['Sale GST %', 'GST %', 'gst_percent', 'GST']),
+    gst: columnIndex(['Sales GST %', 'Sale GST %', 'GST %', 'gst_percent', 'GST']),
+    sgst: columnIndex(['Sales SGST %', 'Sale SGST %', 'SGST %', 'sales_sgst_percent']),
+    cgst: columnIndex(['Sales CGST %', 'Sale CGST %', 'CGST %', 'sales_cgst_percent']),
+    igst: columnIndex(['Sales IGST %', 'Sale IGST %', 'IGST %', 'sales_igst_percent']),
     unit: columnIndex(['Unit', 'Unit Type', 'unit_type', 'UOM']),
     purchaseUnit: columnIndex(['Purchase Unit', 'purchase_unit_type', 'purchase pack', 'pack type']),
     purchaseUnitSize: columnIndex(['Stock Per Purchase Unit', 'purchase_unit_size', 'units per pack', 'qty per pack', 'pcs per carton', 'kg per bag', 'conversion']),
     purchasePrice: columnIndex(['Purchase Price', 'purchase_price', 'purchase rate', 'cost price', 'cost']),
     wholesalePrice: columnIndex(['Wholesale Price', 'wholesale_price', 'wholesale rate']),
     discount: columnIndex(['Discount', 'discount_value', 'disc']),
-    salePrice: columnIndex(['Sale Net Price', 'sale_price', 'sale price', 'retail price']),
+    salePrice: columnIndex(['Sales Rate', 'Sale Rate', 'Sale Net Price', 'sale_price', 'sale price', 'retail price']),
     stock: columnIndex(['Opening Stock', 'stock_qty', 'stock']),
     lowStock: columnIndex(['Low Stock Alert', 'min_stock_alert', 'minimum stock'])
   };
@@ -218,8 +226,12 @@ function rowsToApiImportCsv(rows) {
         barcode,
         product_name: uppercaseProductName(valueAt(row, indexes.productName)),
         alias_names: uppercaseProductName(valueAt(row, indexes.aliasNames)),
+        free_promo_name: uppercaseProductName(valueAt(row, indexes.freeProductName)),
         hsn_code: valueAt(row, indexes.hsn),
         gst_percent: valueAt(row, indexes.gst) || '0',
+        sales_sgst_percent: valueAt(row, indexes.sgst) || '0',
+        sales_cgst_percent: valueAt(row, indexes.cgst) || '0',
+        sales_igst_percent: valueAt(row, indexes.igst) || '0',
         unit_type: valueAt(row, indexes.unit) || 'Nos',
         purchase_unit_type: valueAt(row, indexes.purchaseUnit) || 'Loose',
         purchase_unit_size: valueAt(row, indexes.purchaseUnitSize) || '1',
@@ -288,7 +300,7 @@ async function readProductImportFile(file) {
   return rows.length ? rowsToApiImportCsv(rows) : normalizedText;
 }
 
-export default function InventoryDashboardView() {
+export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
   const [products, setProducts] = useState([]);
   const [form, setForm] = useState({ ...emptyForm, created_at: todayIso() });
   const [filter, setFilter] = useState('');
@@ -298,7 +310,9 @@ export default function InventoryDashboardView() {
   const [pagination, setPagination] = useState({ total: 0, totalPages: 1 });
   const [summary, setSummary] = useState({ totalSku: 0, lowStock: 0, inventoryValue: 0 });
   const [isLoading, setIsLoading] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [importSummary, setImportSummary] = useState(null);
+  const [importGrowl, setImportGrowl] = useState(null);
   const [bulkSearch, setBulkSearch] = useState('');
   const [bulkRows, setBulkRows] = useState([]);
   const [bulkPatch, setBulkPatch] = useState({ hsn_code: '', gst_percent: '', unit_type: '' });
@@ -312,6 +326,14 @@ export default function InventoryDashboardView() {
   const [dropboxApproval, setDropboxApproval] = useState({ username: '', password: '' });
   const [isDropboxLoading, setIsDropboxLoading] = useState(false);
   const [isDropboxDeleting, setIsDropboxDeleting] = useState(false);
+  const [isDuplicateOpen, setIsDuplicateOpen] = useState(false);
+  const [duplicateSearch, setDuplicateSearch] = useState('');
+  const [duplicateGroups, setDuplicateGroups] = useState([]);
+  const [duplicateSummary, setDuplicateSummary] = useState({ duplicateCodes: 0, duplicateProducts: 0 });
+  const [selectedDuplicateBarcodes, setSelectedDuplicateBarcodes] = useState([]);
+  const [duplicateApproval, setDuplicateApproval] = useState({ username: '', password: '' });
+  const [isDuplicateLoading, setIsDuplicateLoading] = useState(false);
+  const [isDuplicateDeleting, setIsDuplicateDeleting] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const currentUser = getStoredUser();
@@ -561,22 +583,41 @@ export default function InventoryDashboardView() {
     if (!file) return;
 
     setStatusMessage('');
-    setErrorMessage('');
     setImportSummary(null);
+    setImportGrowl(null);
+    setIsImporting(true);
 
     try {
       const csv = await readProductImportFile(file);
-      const result = await importProducts(csv);
+      const result = await importProducts(csv, file.name);
       setImportSummary(result.summary);
       const syncedText = result.summary.taxSynced ? ` HSN/GST synced for ${result.summary.taxSynced} matching products.` : '';
-      setStatusMessage(`Import complete: ${result.summary.inserted} inserted, ${result.summary.updated} updated.${syncedText}`);
+      const batchText = result.summary.batches ? ` Imported in ${result.summary.batches} batch(es).` : '';
+      const skippedText = result.summary.errorRows ? ` ${result.summary.errorRows} row(s) skipped with errors.` : '';
+      const isPartial = Number(result.summary.errorRows || 0) > 0;
+      const title = isPartial ? 'Product import partially completed' : 'Product import completed';
+      const status = isPartial ? 'PARTIAL SUCCESS' : 'SUCCESS';
+      const message = `${status}: ${result.summary.inserted} inserted, ${result.summary.updated} updated.${batchText}${skippedText}${syncedText}`;
+      setStatusMessage(`Import complete: ${result.summary.inserted} inserted, ${result.summary.updated} updated.${batchText}${skippedText}${syncedText}`);
+      setImportGrowl({ type: isPartial ? 'warning' : 'success', title, message });
       await loadProducts(1);
       setPage(1);
     } catch (err) {
       const response = err.response?.data;
       setImportSummary(response?.summary ? { ...response.summary, errors: response.errors } : null);
-      setErrorMessage(response?.error || 'Unable to import products.');
+      const failedRows = Number(response?.summary?.errorRows || 0);
+      const validRows = Number(response?.summary?.validRows || 0);
+      const status = validRows > 0 ? 'PARTIAL SUCCESS' : 'FAILED';
+      const message = response?.summary
+        ? `${status}: ${validRows} valid rows, ${failedRows} failed rows. Open Import History for exact row-level reason.`
+        : `${status}: ${response?.error || 'Import could not be completed.'} Open Import History for details.`;
+      setImportGrowl({
+        type: validRows > 0 ? 'warning' : 'danger',
+        title: validRows > 0 ? 'Product import partially completed' : 'Product import failed',
+        message
+      });
     } finally {
+      setIsImporting(false);
       event.target.value = '';
     }
   }
@@ -724,12 +765,100 @@ export default function InventoryDashboardView() {
     }
   }
 
+  async function loadDuplicateCodes() {
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsDuplicateOpen(true);
+    setIsDuplicateLoading(true);
+
+    try {
+      const result = await fetchDuplicateProductCodes({
+        search: duplicateSearch,
+        limit: 100
+      });
+      const groups = Array.isArray(result.groups) ? result.groups : [];
+      setDuplicateGroups(groups);
+      setDuplicateSummary(result.summary || { duplicateCodes: groups.length, duplicateProducts: 0 });
+      const validBarcodes = new Set(groups.flatMap((group) => group.products.map((product) => product.barcode)));
+      setSelectedDuplicateBarcodes((current) => current.filter((barcode) => validBarcodes.has(barcode)));
+      setStatusMessage(`${groups.length} duplicate product-code group(s) loaded.`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load duplicate product codes.');
+    } finally {
+      setIsDuplicateLoading(false);
+    }
+  }
+
+  function toggleDuplicateRow(barcode) {
+    setSelectedDuplicateBarcodes((current) => (
+      current.includes(barcode)
+        ? current.filter((item) => item !== barcode)
+        : [...current, barcode]
+    ));
+  }
+
+  function selectDuplicateExtras() {
+    const extras = duplicateGroups.flatMap((group) => (
+      group.products.slice(1).map((product) => product.barcode)
+    ));
+    setSelectedDuplicateBarcodes(extras);
+  }
+
+  async function deleteSelectedDuplicateProducts() {
+    setStatusMessage('');
+    setErrorMessage('');
+
+    if (!selectedDuplicateBarcodes.length) {
+      setErrorMessage('Select duplicate products to delete.');
+      return;
+    }
+
+    if (!duplicateApproval.username.trim() || !duplicateApproval.password) {
+      setErrorMessage('Enter supervisor username and password for duplicate delete.');
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete ${selectedDuplicateBarcodes.length} duplicate products permanently? Keep one product for every code.`);
+    if (!confirmed) return;
+
+    setIsDuplicateDeleting(true);
+    try {
+      const result = await bulkDeleteDuplicateProductCodes({
+        barcodes: selectedDuplicateBarcodes,
+        username: duplicateApproval.username,
+        password: duplicateApproval.password
+      });
+      setStatusMessage(`${result.deleted} duplicate product-code item(s) deleted. ${result.skipped || 0} skipped.`);
+      setDuplicateApproval((current) => ({ ...current, password: '' }));
+      setSelectedDuplicateBarcodes([]);
+      await loadDuplicateCodes();
+      await loadProducts(1);
+      setPage(1);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to delete duplicate product-code items.');
+    } finally {
+      setIsDuplicateDeleting(false);
+    }
+  }
+
   const showProductCodeColumn = filter.trim().length > 0;
   const inventoryColSpan = showProductCodeColumn ? 15 : 14;
   const selectedDropboxRows = dropboxRows.filter((row) => selectedDropboxBarcodes.includes(row.barcode));
 
   return (
     <div className="inventory-layout">
+      {importGrowl && (
+        <div className={`growl-message ${importGrowl.type}`} role="status" aria-live="polite">
+          <div>
+            <strong>{importGrowl.title}</strong>
+            <p>{importGrowl.message}</p>
+          </div>
+          <div className="growl-actions">
+            <button className="secondary-button" type="button" onClick={() => setActiveWorkspace?.('importHistory')}>Import History</button>
+            <button className="secondary-button" type="button" onClick={() => setImportGrowl(null)}>Close</button>
+          </div>
+        </div>
+      )}
       <section className="panel">
         <div className="panel-header">
           <h2 className="panel-title">Product Setup</h2>
@@ -910,12 +1039,16 @@ export default function InventoryDashboardView() {
           <div>
             <h2 className="panel-title">Inventory</h2>
             <div className="inventory-stats">
+              <span className="status-chip">Total SKUs {summary.totalSku}</span>
               <span className="status-chip">{summary.lowStock} low stock</span>
               <span className="status-chip">{formatMoney(summary.inventoryValue)} value</span>
               <span className="status-chip">Showing {products.length} of {pagination.total}</span>
             </div>
           </div>
-          <button className="secondary-button" onClick={() => loadProducts()}>Refresh</button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="secondary-button" type="button" onClick={() => setActiveWorkspace?.('importHistory')}>Import History</button>
+            <button className="secondary-button" onClick={() => loadProducts()}>Refresh</button>
+          </div>
         </div>
         <div className="panel-body">
           {canManageProducts && (
@@ -924,13 +1057,22 @@ export default function InventoryDashboardView() {
                 <button className="secondary-button" onClick={downloadProductExcelTemplate}>Download Sample Excel</button>
                 <button className="secondary-button" onClick={exportProducts}>Export CSV</button>
                 <label className="secondary-button file-button">
-                  Upload Filled Excel/CSV
-                  <input type="file" accept=".xlsx,.xls,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values,text/plain" onChange={handleImportFile} />
+                  {isImporting ? 'Uploading...' : 'Upload Filled Excel/CSV'}
+                  <input type="file" accept=".xlsx,.xls,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values,text/plain" onChange={handleImportFile} disabled={isImporting} />
                 </label>
               </div>
               <div className="change-box" style={{ marginBottom: 12 }}>
                 Download the sample Excel file, fill product rows, then upload the same .xlsx file. CSV/TSV also works.
               </div>
+              {importSummary && (
+                <div className="inventory-stats" style={{ marginBottom: 12 }}>
+                  <span className="status-chip">Uploaded rows {importSummary.totalRows || 0}</span>
+                  <span className="status-chip">Inserted {importSummary.inserted || 0}</span>
+                  <span className="status-chip">Updated {importSummary.updated || 0}</span>
+                  <span className="status-chip">Batches {importSummary.batches || 0}</span>
+                  {importSummary.errorRows ? <span className="status-chip">Errors {importSummary.errorRows}</span> : null}
+                </div>
+              )}
 
               <section className="product-dropbox-box">
                 <div className="product-dropbox-header">
@@ -1016,6 +1158,99 @@ export default function InventoryDashboardView() {
                                 <td>{formatMoney(product.mrp)}</td>
                               </tr>
                             ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              <section className="product-dropbox-box">
+                <div className="product-dropbox-header">
+                  <div>
+                    <h3>Duplicate Product Codes</h3>
+                    <p>Same product code attached to multiple SKUs. Keep the correct row and delete unwanted duplicates.</p>
+                  </div>
+                  <button className="secondary-button" type="button" onClick={() => (isDuplicateOpen ? setIsDuplicateOpen(false) : loadDuplicateCodes())}>
+                    {isDuplicateOpen ? 'Close Duplicates' : 'Open Duplicates'}
+                  </button>
+                </div>
+
+                {isDuplicateOpen && (
+                  <div className="product-dropbox-body">
+                    <div className="product-dropbox-toolbar">
+                      <input
+                        className="field"
+                        value={duplicateSearch}
+                        onChange={(event) => setDuplicateSearch(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') loadDuplicateCodes();
+                        }}
+                        placeholder="Search duplicate code, product, barcode"
+                      />
+                      <button className="secondary-button" type="button" onClick={loadDuplicateCodes} disabled={isDuplicateLoading}>
+                        {isDuplicateLoading ? 'Loading...' : 'Load'}
+                      </button>
+                      <button className="secondary-button" type="button" onClick={selectDuplicateExtras} disabled={!duplicateGroups.length}>
+                        Select Extras
+                      </button>
+                    </div>
+
+                    <div className="inventory-stats">
+                      <span className="status-chip">{duplicateSummary.duplicateCodes || 0} duplicate codes</span>
+                      <span className="status-chip">{duplicateSummary.duplicateProducts || 0} products</span>
+                      <span className="status-chip">{selectedDuplicateBarcodes.length} selected</span>
+                    </div>
+
+                    <div className="product-dropbox-approval">
+                      <input
+                        className="field"
+                        value={duplicateApproval.username}
+                        onChange={(event) => setDuplicateApproval((current) => ({ ...current, username: event.target.value }))}
+                        placeholder="Supervisor username"
+                      />
+                      <input
+                        className="field"
+                        type="password"
+                        value={duplicateApproval.password}
+                        onChange={(event) => setDuplicateApproval((current) => ({ ...current, password: event.target.value }))}
+                        placeholder="Supervisor password"
+                      />
+                      <button className="danger-button" type="button" onClick={deleteSelectedDuplicateProducts} disabled={isDuplicateDeleting || !selectedDuplicateBarcodes.length}>
+                        {isDuplicateDeleting ? 'Deleting...' : 'Delete Selected'}
+                      </button>
+                    </div>
+
+                    <div className="bulk-table-wrap">
+                      <table className="history-table">
+                        <thead>
+                          <tr><th></th><th>Code</th><th>Barcode</th><th>Product</th><th>Stock</th><th>MRP</th><th>Updated</th></tr>
+                        </thead>
+                        <tbody>
+                          {duplicateGroups.length === 0 ? (
+                            <tr><td colSpan="7">No duplicate product codes found.</td></tr>
+                          ) : (
+                            duplicateGroups.flatMap((group) => group.products.map((product, index) => (
+                              <tr key={product.barcode}>
+                                <td>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedDuplicateBarcodes.includes(product.barcode)}
+                                    onChange={() => toggleDuplicateRow(product.barcode)}
+                                  />
+                                </td>
+                                <td className="mono muted">{index === 0 ? group.product_code : ''}</td>
+                                <td className="mono muted">{product.barcode}</td>
+                                <td>
+                                  <strong>{product.product_name}</strong>
+                                  {index === 0 && <div className="muted compact-cell-text">Keep one row unselected for this code</div>}
+                                </td>
+                                <td>{product.stock_qty}</td>
+                                <td>{formatMoney(product.mrp)}</td>
+                                <td>{formatProductDate(product.updated_at || product.created_at)}</td>
+                              </tr>
+                            )))
                           )}
                         </tbody>
                       </table>
@@ -1114,7 +1349,11 @@ export default function InventoryDashboardView() {
               {Array.isArray(importSummary.errors) && importSummary.errors.length > 0 && (
                 <div style={{ marginTop: 8 }}>
                   {importSummary.errors.slice(0, 5).map((rowError) => (
-                    <div key={`${rowError.row}-${rowError.barcode}`}>Row {rowError.row}: {rowError.errors.join(', ')}</div>
+                    <div key={`${rowError.row}-${rowError.barcode}`}>
+                      Row {rowError.row}
+                      {rowError.product_name ? ` - ${rowError.product_name}` : ''}
+                      {rowError.product_code ? ` (${rowError.product_code})` : ''}: {rowError.message || rowError.errors.join(', ')}
+                    </div>
                   ))}
                 </div>
               )}

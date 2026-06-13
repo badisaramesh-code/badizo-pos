@@ -7,6 +7,8 @@ const { writeAuditLog } = require('../services/auditService');
 const crypto = require('crypto');
 
 const PRODUCT_DROPBOX_DAYS = 1470;
+const PRODUCT_IMPORT_BATCH_SIZE = 1000;
+const PRODUCT_IMPORT_LINE_LIMIT = 5000;
 
 function verifyPassword(password, storedValue) {
   const [salt, storedHash] = String(storedValue || '').split(':');
@@ -27,6 +29,9 @@ function toProduct(row) {
     alias_names: row.alias_names || '',
     hsn_code: row.hsn_code || '',
     gst_percent: Number(row.gst_percent || 0),
+    sales_sgst_percent: Number(row.sales_sgst_percent || 0),
+    sales_cgst_percent: Number(row.sales_cgst_percent || 0),
+    sales_igst_percent: Number(row.sales_igst_percent || 0),
     unit_type: row.unit_type || 'Nos',
     purchase_unit_type: row.purchase_unit_type || 'Loose',
     purchase_unit_size: Number(row.purchase_unit_size || 1),
@@ -50,6 +55,101 @@ function toProduct(row) {
   };
 }
 
+function productSnapshot(row) {
+  if (!row) return null;
+  return {
+    product_code: row.product_code || null,
+    barcode: row.barcode,
+    product_name: row.product_name,
+    alias_names: row.alias_names || '',
+    hsn_code: row.hsn_code || '',
+    gst_percent: Number(row.gst_percent || 0),
+    sales_sgst_percent: Number(row.sales_sgst_percent || 0),
+    sales_cgst_percent: Number(row.sales_cgst_percent || 0),
+    sales_igst_percent: Number(row.sales_igst_percent || 0),
+    unit_type: row.unit_type || 'Nos',
+    purchase_unit_type: row.purchase_unit_type || 'Loose',
+    purchase_unit_size: Number(row.purchase_unit_size || 1),
+    mrp: Number(row.mrp || 0),
+    purchase_price: Number(row.purchase_price || 0),
+    sale_price: Number(row.sale_price || 0),
+    wholesale_price: Number(row.wholesale_price || row.sale_price || 0),
+    discount_type: row.discount_type || 'PERCENT',
+    discount_value: Number(row.discount_value || 0),
+    bulk_discount_value: Number(row.bulk_discount_value || 0),
+    is_free_item: row.is_free_item ? 1 : 0,
+    free_promo_enabled: row.free_promo_enabled ? 1 : 0,
+    free_promo_name: row.free_promo_name || '',
+    free_promo_qty_per_sale: Number(row.free_promo_qty_per_sale || 1),
+    free_promo_total_qty: Number(row.free_promo_total_qty || 0),
+    free_promo_remaining_qty: Number(row.free_promo_remaining_qty || 0),
+    stock_qty: Number(row.stock_qty || 0),
+    min_stock_alert: Number(row.min_stock_alert || 10)
+  };
+}
+
+async function createProductImportJob({ fileName = '', user, totalRows = 0 } = {}) {
+  const importId = crypto.randomUUID();
+  await db.query(
+    `INSERT INTO product_import_jobs
+     (id, file_name, status, total_rows, created_by)
+     VALUES (?, ?, 'FAILED', ?, ?)`,
+    [importId, String(fileName || '').slice(0, 255), totalRows, user?.username || '']
+  );
+  return importId;
+}
+
+async function updateProductImportJob(connection, importId, summary, failureMessage = '') {
+  const status = summary.errorRows > 0 && summary.validRows > 0
+    ? 'PARTIAL SUCCESS'
+    : (summary.validRows > 0 ? 'SUCCESS' : 'FAILED');
+  await connection.query(
+    `UPDATE product_import_jobs
+     SET status = ?,
+         total_rows = ?,
+         valid_rows = ?,
+         inserted_count = ?,
+         updated_count = ?,
+         error_rows = ?,
+         skipped_count = ?,
+         batch_count = ?,
+         failure_message = ?
+     WHERE id = ?`,
+    [
+      status,
+      summary.totalRows || 0,
+      summary.validRows || 0,
+      summary.inserted || 0,
+      summary.updated || 0,
+      summary.errorRows || 0,
+      summary.skipped || 0,
+      summary.batches || 0,
+      failureMessage || null,
+      importId
+    ]
+  );
+  return status;
+}
+
+async function insertProductImportLine(connection, importId, line) {
+  await connection.query(
+    `INSERT INTO product_import_lines
+     (import_id, row_no, product_code, barcode, product_name, action_status, error_message, previous_product_json, imported_product_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      importId,
+      Number(line.row_no || 0),
+      String(line.product_code || '').slice(0, 60),
+      String(line.barcode || '').slice(0, 120),
+      String(line.product_name || '').slice(0, 255),
+      line.action_status,
+      line.error_message || null,
+      line.previous_product_json ? JSON.stringify(line.previous_product_json) : null,
+      line.imported_product_json ? JSON.stringify(line.imported_product_json) : null
+    ]
+  );
+}
+
 function normalizeProductName(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
 }
@@ -63,23 +163,59 @@ function normalizeAliasNames(value) {
     .join(', ');
 }
 
+function parseImportNumber(value, fallback = 0) {
+  if (value === null || value === undefined) return fallback;
+  const raw = String(value).replace(/\u00a0/g, ' ').trim();
+  if (!raw) return fallback;
+  const normalized = raw.replace(/\u20b9/g, '')
+    .replace(/[₹,\s]/g, '')
+    .replace(/%$/g, '')
+    .replace(/^rs\.?/i, '');
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : Number.NaN;
+}
+
+function compactImportValue(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
+function importErrorMessage(errors, rawValues = {}) {
+  const values = Object.entries(rawValues)
+    .filter(([, value]) => compactImportValue(value) !== '')
+    .map(([key, value]) => `${key}="${compactImportValue(value)}"`)
+    .join(', ');
+  return values ? `${errors.join(', ')}. Values: ${values}` : errors.join(', ');
+}
+
+function formatProductImportDbError(product, err) {
+  const message = String(err?.message || '');
+  if (err?.code === 'ER_DUP_ENTRY' || /Duplicate entry/i.test(message)) {
+    if (/product_code/i.test(message)) {
+      return `Duplicate product code already exists in products: ${product.product_code}. This row was not imported.`;
+    }
+    if (/barcode/i.test(message)) {
+      return `Duplicate product already imported with barcode ${product.barcode}. This row was not imported.`;
+    }
+    return `Duplicate product already exists. Product code: ${product.product_code || '-'}, barcode: ${product.barcode || '-'}.`;
+  }
+  return `Database row import failed: ${message}`;
+}
+
 const PRODUCT_CSV_HEADERS = [
   'Sno',
   'Product Code',
   'Description',
   'Alias Names',
-  'HSN',
+  'Free Product Name',
+  'HSN Code',
   'MRP',
-  'Sale GST %',
+  'Purchase Rate',
+  'Sales GST %',
+  'Sales SGST %',
+  'Sales CGST %',
+  'Sales IGST %',
   'Unit',
-  'Purchase Unit',
-  'Stock Per Purchase Unit',
-  'Purchase Price',
-  'Discount',
-  'Sale Net Price',
-  'Wholesale Price',
-  'Opening Stock',
-  'Low Stock Alert'
+  'Sales Rate'
 ];
 
 const PRODUCT_EXPORT_HEADERS = [
@@ -89,6 +225,9 @@ const PRODUCT_EXPORT_HEADERS = [
   'alias_names',
   'hsn_code',
   'gst_percent',
+  'sales_sgst_percent',
+  'sales_cgst_percent',
+  'sales_igst_percent',
   'unit_type',
   'purchase_unit_type',
   'purchase_unit_size',
@@ -115,15 +254,19 @@ const PRODUCT_IMPORT_ALIASES = {
   barcode: ['barcode', 'bar code', 'ean', 'ean code'],
   product_name: ['description', 'product name', 'product', 'item name', 'item', 'name'],
   alias_names: ['alias names', 'aliases', 'alias', 'invoice names', 'invoice name', 'supplier names', 'supplier product names'],
+  free_promo_name: ['free product name', 'free product', 'free item name', 'free promo name', 'free_promo_name'],
   hsn_code: ['hsn', 'hsn code', 'hsn/sac', 'hsn sac'],
-  gst_percent: ['sale gst %', 'sale gst', 'gst %', 'gst', 'tax %', 'tax'],
+  gst_percent: ['sales gst %', 'sale gst %', 'sale gst', 'gst %', 'gst', 'tax %', 'tax'],
+  sales_sgst_percent: ['sales sgst %', 'sale sgst %', 'sgst %', 'sgst', 'sales_sgst_percent'],
+  sales_cgst_percent: ['sales cgst %', 'sale cgst %', 'cgst %', 'cgst', 'sales_cgst_percent'],
+  sales_igst_percent: ['sales igst %', 'sale igst %', 'igst %', 'igst', 'sales_igst_percent'],
   unit_type: ['unit', 'units', 'unit type', 'uom'],
   purchase_unit_type: ['purchase unit', 'purchase_unit_type', 'purchase pack', 'purchase pack unit', 'pack type'],
   purchase_unit_size: ['stock per purchase unit', 'purchase_unit_size', 'units per pack', 'qty per pack', 'pcs per carton', 'kg per bag', 'conversion'],
   mrp: ['mrp', 'm r p'],
   purchase_price: ['purchase price', 'purchase rate', 'cost price', 'cost'],
   discount_value: ['discount', 'disc', 'disc %', 'discount %'],
-  sale_price: ['sale net price', 'sale price', 'selling price', 'retail price', 'net price'],
+  sale_price: ['sales rate', 'sale rate', 'sale net price', 'sale price', 'selling price', 'retail price', 'net price'],
   wholesale_price: ['wholesale price', 'wholesale rate'],
   stock_qty: ['opening stock', 'stock', 'stock qty', 'current stock'],
   min_stock_alert: ['low stock alert', 'min stock alert', 'minimum stock']
@@ -168,18 +311,24 @@ function normalizeCsvRow(rawRow, rowNumber) {
   const barcode = String(rawRow.barcode || productCode || '').trim().toUpperCase();
   const productName = normalizeProductName(rawRow.product_name);
   const aliasNames = normalizeAliasNames(rawRow.alias_names);
-  const gstPercent = Number(rawRow.gst_percent || 0);
-  const mrp = Number(rawRow.mrp || 0);
-  const purchasePrice = Number(rawRow.purchase_price || 0);
-  const purchaseUnitSize = Number(rawRow.purchase_unit_size || 1) || 1;
-  const salePrice = Number(rawRow.sale_price || rawRow.mrp || 0);
-  const wholesalePrice = Number(rawRow.wholesale_price || rawRow.sale_price || rawRow.mrp || 0);
-  const discountValue = Number(rawRow.discount_value || 0) || 0;
+  const salesGstPercent = parseImportNumber(rawRow.gst_percent, 0);
+  const salesSgstPercent = parseImportNumber(rawRow.sales_sgst_percent, 0);
+  const salesCgstPercent = parseImportNumber(rawRow.sales_cgst_percent, 0);
+  const salesIgstPercent = parseImportNumber(rawRow.sales_igst_percent, 0);
+  const splitGstPercent = salesCgstPercent + salesSgstPercent;
+  const gstPercent = salesIgstPercent > 0 ? salesIgstPercent : (splitGstPercent > 0 ? splitGstPercent : salesGstPercent);
+  const mrp = parseImportNumber(rawRow.mrp, 0);
+  const purchasePrice = parseImportNumber(rawRow.purchase_price, 0);
+  const purchaseUnitSize = parseImportNumber(rawRow.purchase_unit_size, 1) || 1;
+  const salePrice = parseImportNumber(rawRow.sale_price || rawRow.mrp, 0);
+  const wholesalePrice = parseImportNumber(rawRow.wholesale_price || rawRow.sale_price || rawRow.mrp, 0);
+  const discountValue = parseImportNumber(rawRow.discount_value, 0) || 0;
 
   const errors = [];
   if (!barcode) errors.push('Product Code or barcode is required');
   if (!productName) errors.push('product_name is required');
   if (!Number.isFinite(gstPercent) || ![0, 3, 5, 12, 18, 28, 40].includes(gstPercent)) errors.push('gst_percent must be 0, 3, 5, 12, 18, 28, or 40');
+  if (![salesSgstPercent, salesCgstPercent, salesIgstPercent].every((tax) => Number.isFinite(tax) && tax >= 0 && tax <= 100)) errors.push('sales tax split percentages must be valid numbers');
   if (!Number.isFinite(mrp) || mrp < 0) errors.push('mrp must be a valid number');
   if (!Number.isFinite(purchaseUnitSize) || purchaseUnitSize <= 0) errors.push('purchase_unit_size must be greater than zero');
   if (!Number.isFinite(purchasePrice) || purchasePrice < 0) errors.push('purchase_price must be a valid number');
@@ -188,14 +337,31 @@ function normalizeCsvRow(rawRow, rowNumber) {
 
   return {
     rowNumber,
+    rawValues: {
+      product_code: rawRow.product_code,
+      barcode: rawRow.barcode,
+      description: rawRow.product_name,
+      mrp: rawRow.mrp,
+      purchase_rate: rawRow.purchase_price,
+      sales_gst: rawRow.gst_percent,
+      sales_sgst: rawRow.sales_sgst_percent,
+      sales_cgst: rawRow.sales_cgst_percent,
+      sales_igst: rawRow.sales_igst_percent,
+      unit: rawRow.unit_type,
+      sales_rate: rawRow.sale_price
+    },
     errors,
     product: {
       product_code: productCode || null,
+      source_row: rowNumber,
       barcode,
       product_name: productName,
       alias_names: aliasNames,
       hsn_code: String(rawRow.hsn_code || '').trim(),
       gst_percent: gstPercent,
+      sales_sgst_percent: salesSgstPercent,
+      sales_cgst_percent: salesCgstPercent,
+      sales_igst_percent: salesIgstPercent,
       unit_type: normalizeUnitType(rawRow.unit_type),
       purchase_unit_type: normalizePurchaseUnitType(rawRow.purchase_unit_type),
       purchase_unit_size: purchaseUnitSize > 0 ? purchaseUnitSize : 1,
@@ -205,10 +371,15 @@ function normalizeCsvRow(rawRow, rowNumber) {
       wholesale_price: Number.isFinite(wholesalePrice) ? wholesalePrice : salePrice,
       discount_type: String(rawRow.discount_type || (discountValue ? 'VALUE' : 'PERCENT')).trim().toUpperCase() === 'VALUE' ? 'VALUE' : 'PERCENT',
       discount_value: discountValue,
-      bulk_discount_value: Number(rawRow.bulk_discount_value || 0) || 0,
+      bulk_discount_value: parseImportNumber(rawRow.bulk_discount_value, 0) || 0,
       is_free_item: ['1', 'TRUE', 'YES', 'Y'].includes(String(rawRow.is_free_item || '').trim().toUpperCase()) ? 1 : 0,
-      stock_qty: Number(rawRow.stock_qty || 0) || 0,
-      min_stock_alert: Number(rawRow.min_stock_alert || 10) || 10
+      free_promo_enabled: normalizeProductName(rawRow.free_promo_name) ? 1 : 0,
+      free_promo_name: normalizeProductName(rawRow.free_promo_name),
+      free_promo_qty_per_sale: 1,
+      free_promo_total_qty: 0,
+      free_promo_remaining_qty: 0,
+      stock_qty: parseImportNumber(rawRow.stock_qty, 0) || 0,
+      min_stock_alert: parseImportNumber(rawRow.min_stock_alert, 10) || 10
     }
   };
 }
@@ -475,6 +646,171 @@ router.delete('/dropbox/bulk-delete', authenticate, authorize('SERVER', 'ADMIN')
   }
 });
 
+router.get('/duplicate-codes', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const search = String(req.query.search || '').trim();
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 100, 10), 500);
+    const values = [];
+    const duplicateWhere = [`product_code IS NOT NULL`, `TRIM(product_code) <> ''`];
+
+    if (search) {
+      duplicateWhere.push('(product_code LIKE ? OR product_name LIKE ? OR alias_names LIKE ? OR barcode LIKE ?)');
+      values.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    const [codeRows] = await db.query(
+      `SELECT product_code, COUNT(*) AS item_count
+       FROM products
+       WHERE ${duplicateWhere.join(' AND ')}
+       GROUP BY product_code
+       HAVING COUNT(*) > 1
+       ORDER BY item_count DESC, product_code ASC
+       LIMIT ?`,
+      [...values, limit]
+    );
+
+    const codes = codeRows.map((row) => row.product_code);
+    if (!codes.length) {
+      return res.json({ summary: { duplicateCodes: 0, duplicateProducts: 0 }, groups: [] });
+    }
+
+    const placeholders = codes.map(() => '?').join(',');
+    const [rows] = await db.query(
+      `SELECT *
+       FROM products
+       WHERE product_code IN (${placeholders})
+       ORDER BY product_code ASC, updated_at DESC, id DESC`,
+      codes
+    );
+
+    const groups = codes.map((code) => {
+      const products = rows.filter((row) => row.product_code === code).map(toProduct);
+      return {
+        product_code: code,
+        item_count: products.length,
+        products
+      };
+    });
+
+    res.json({
+      summary: {
+        duplicateCodes: groups.length,
+        duplicateProducts: groups.reduce((total, group) => total + group.products.length, 0)
+      },
+      groups
+    });
+  } catch (err) {
+    console.error('Duplicate product-code load failed:', err.message);
+    res.status(500).json({ error: 'Unable to load duplicate product codes.' });
+  }
+});
+
+router.delete('/duplicate-codes/bulk-delete', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  const barcodes = Array.isArray(req.body?.barcodes)
+    ? req.body.barcodes.map((barcode) => String(barcode || '').trim().toUpperCase()).filter(Boolean)
+    : [];
+  const username = String(req.body?.username || '').trim();
+  const password = String(req.body?.password || '');
+
+  if (!barcodes.length) {
+    return res.status(400).json({ error: 'Select duplicate products to delete.' });
+  }
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Supervisor username and password are required.' });
+  }
+
+  const connection = await db.getConnection();
+  try {
+    const [userRows] = await connection.query(
+      `SELECT id, username, password_hash, role, is_active
+       FROM users
+       WHERE username = ?
+       LIMIT 1`,
+      [username]
+    );
+    const supervisor = userRows[0];
+    const allowedRole = ['SERVER', 'ADMIN'].includes(supervisor?.role);
+    if (!supervisor || !supervisor.is_active || !allowedRole || !verifyPassword(password, supervisor.password_hash)) {
+      return res.status(401).json({ error: 'Supervisor password approval failed.' });
+    }
+
+    const placeholders = barcodes.map(() => '?').join(',');
+    const [candidateRows] = await connection.query(
+      `SELECT barcode, product_code, product_name
+       FROM products
+       WHERE barcode IN (${placeholders})
+         AND product_code IS NOT NULL
+         AND TRIM(product_code) <> ''`,
+      barcodes
+    );
+
+    if (!candidateRows.length) {
+      return res.status(400).json({ error: 'Selected duplicate products were not found.' });
+    }
+
+    const codes = [...new Set(candidateRows.map((row) => row.product_code))];
+    const codePlaceholders = codes.map(() => '?').join(',');
+    const [countRows] = await connection.query(
+      `SELECT product_code, COUNT(*) AS item_count
+       FROM products
+       WHERE product_code IN (${codePlaceholders})
+       GROUP BY product_code`,
+      codes
+    );
+
+    const selectedByCode = candidateRows.reduce((acc, row) => {
+      acc[row.product_code] = (acc[row.product_code] || 0) + 1;
+      return acc;
+    }, {});
+    const unsafeCode = countRows.find((row) => Number(row.item_count || 0) - Number(selectedByCode[row.product_code] || 0) < 1);
+
+    if (unsafeCode) {
+      return res.status(400).json({ error: `Keep at least one product for code ${unsafeCode.product_code}.` });
+    }
+
+    const deleteBarcodes = candidateRows.map((row) => row.barcode);
+    const deletePlaceholders = deleteBarcodes.map(() => '?').join(',');
+
+    await connection.beginTransaction();
+    await connection.query(`DELETE FROM product_batches WHERE barcode IN (${deletePlaceholders})`, deleteBarcodes);
+    await connection.query(`DELETE FROM batch_free_offers WHERE trigger_barcode IN (${deletePlaceholders}) OR free_barcode IN (${deletePlaceholders})`, [...deleteBarcodes, ...deleteBarcodes]);
+    const [deleteResult] = await connection.query(`DELETE FROM products WHERE barcode IN (${deletePlaceholders})`, deleteBarcodes);
+
+    await writeAuditLog({
+      user: req.user,
+      action: 'PRODUCT_DUPLICATE_CODE_BULK_DELETED',
+      entityType: 'PRODUCT',
+      entityId: `${Number(deleteResult?.affectedRows || 0)} products`,
+      details: {
+        approved_by: supervisor.username,
+        requested_count: barcodes.length,
+        deleted_count: Number(deleteResult?.affectedRows || 0),
+        product_codes: codes,
+        barcodes: deleteBarcodes
+      },
+      connection
+    });
+
+    await connection.commit();
+    res.json({
+      success: true,
+      deleted: Number(deleteResult?.affectedRows || 0),
+      skipped: barcodes.length - deleteBarcodes.length
+    });
+  } catch (err) {
+    try {
+      await connection.rollback();
+    } catch (_rollbackErr) {
+      // Ignore rollback failure; original error is more useful.
+    }
+    console.error('Duplicate product-code delete failed:', err.message);
+    res.status(500).json({ error: 'Unable to delete duplicate product-code items.' });
+  } finally {
+    connection.release();
+  }
+});
+
 router.get('/', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
@@ -536,10 +872,10 @@ router.get('/', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (re
 
 router.get('/export/template', authenticate, authorize('SERVER', 'ADMIN'), (_req, res) => {
   const sampleRows = [
-    ['1', '89100100', 'KCP SUGAR', 'KCP SUGAR 1KG, SUGAR KCP', '123456', '80.00', '5', 'Kg', 'Bag', '50', '60.00', '10.00', '70.00', '68.00', '100', '10'],
-    ['2', '89102256', 'NAYASA BUCKET', 'NAYASA PLASTCK BUCKET BIG', '2515', '500.00', '18', 'Nos', 'Carton', '12', '400.00', '100.00', '300.00', '285.00', '25', '5'],
-    ['3', '8100123', 'ONION', 'ONIONS, PYAJ', '44155', '', '0', 'Kg', 'Bag', '40', '25.00', '', '30.00', '28.00', '50', '10'],
-    ['4', '892456', 'THUMS UP 2.LT BOTTLE', 'THUMS UP 2L, THUMSUP 2LT', '51456', '100.00', '40', 'Nos', 'Case', '6', '80.00', '10.00', '90.00', '87.00', '20', '5']
+    ['73137', '89300296', '(180) JUMBO ROUND KAJU', '', '', '080211', '62.00', '62.00', '0', '2.5', '2.5', '5', '50 Gms', '62.00'],
+    ['73138', '89300297', '(180) JUMBO ROUND KAJU', '', '', '080211', '120.00', '120.00', '0', '2.5', '2.5', '5', '100 Gms', '120.00'],
+    ['73139', '89300298', '(180) JUMBO ROUND KAJU', '', '', '080211', '235.00', '235.00', '0', '2.5', '2.5', '5', '200 Gms', '235.00'],
+    ['73140', '89300299', '(180) JUMBO ROUND KAJU', '', '', '080211', '580.00', '580.00', '0', '2.5', '2.5', '5', '500 Gms', '580.00']
   ];
 
   const tableRows = [
@@ -591,6 +927,7 @@ router.get('/export', authenticate, authorize('SERVER', 'ADMIN'), async (_req, r
 
 router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
   const csvText = String(req.body?.csv || '');
+  const fileName = String(req.body?.fileName || req.body?.filename || '');
 
   if (!csvText.trim()) {
     return res.status(400).json({ error: 'CSV file content is required.' });
@@ -598,21 +935,64 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
 
   const parsedRows = parseCsv(csvText);
   if (parsedRows.length < 2) {
-    return res.status(400).json({ error: 'CSV must include header and at least one product row.' });
+    const importId = await createProductImportJob({ fileName, user: req.user, totalRows: Math.max(parsedRows.length - 1, 0) });
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      await updateProductImportJob(connection, importId, {
+        totalRows: Math.max(parsedRows.length - 1, 0),
+        validRows: 0,
+        inserted: 0,
+        updated: 0,
+        errorRows: 1,
+        skipped: 1,
+        batches: 0
+      }, 'CSV must include header and at least one product row.');
+      await connection.commit();
+    } catch (err) {
+      await connection.rollback();
+    } finally {
+      connection.release();
+    }
+    return res.status(400).json({ error: 'CSV must include header and at least one product row.', importId });
   }
 
   const headers = mapImportHeaders(parsedRows[0]);
+  const totalInputRows = parsedRows.length - 1;
+  const importId = await createProductImportJob({ fileName, user: req.user, totalRows: totalInputRows });
   const hasProductCode = headers.includes('product_code') || headers.includes('barcode');
   const missingHeaders = [
     ...(!hasProductCode ? ['Product Code'] : []),
     ...(['product_name', 'gst_percent', 'mrp', 'sale_price'].filter((header) => !headers.includes(header)))
   ];
   if (missingHeaders.length) {
-    return res.status(400).json({ error: `Missing required columns: ${missingHeaders.join(', ')}` });
+    const connection = await db.getConnection();
+    const error = `Missing required columns: ${missingHeaders.join(', ')}`;
+    try {
+      await connection.beginTransaction();
+      await insertProductImportLine(connection, importId, {
+        row_no: 1,
+        action_status: 'ERROR',
+        error_message: error
+      });
+      await updateProductImportJob(connection, importId, {
+        totalRows: totalInputRows,
+        validRows: 0,
+        inserted: 0,
+        updated: 0,
+        errorRows: 1,
+        skipped: totalInputRows,
+        batches: 0
+      }, error);
+      await connection.commit();
+    } catch (err) {
+      await connection.rollback();
+    } finally {
+      connection.release();
+    }
+    return res.status(400).json({ error, importId });
   }
 
-  const seenBarcodes = new Set();
-  const seenProductCodes = new Map();
   const errors = [];
   const products = [];
 
@@ -627,94 +1007,150 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
 
     const normalized = normalizeCsvRow(rawRow, index + 2);
 
-    if (seenBarcodes.has(normalized.product.barcode)) {
-      normalized.errors.push('duplicate barcode in CSV');
-    }
-    seenBarcodes.add(normalized.product.barcode);
-
-    if (normalized.product.product_code) {
-      const existingBarcodeForCode = seenProductCodes.get(normalized.product.product_code);
-      if (existingBarcodeForCode && existingBarcodeForCode !== normalized.product.barcode) {
-        normalized.errors.push('duplicate product_code in CSV');
-      }
-      seenProductCodes.set(normalized.product.product_code, normalized.product.barcode);
-    }
-
     if (normalized.errors.length) {
-      errors.push({ row: normalized.rowNumber, barcode: normalized.product.barcode, errors: normalized.errors });
+      errors.push({
+        row: normalized.rowNumber,
+        product_code: normalized.product.product_code || '',
+        barcode: normalized.product.barcode,
+        product_name: normalized.product.product_name || normalizeProductName(rawRow.product_name),
+        errors: normalized.errors,
+        rawValues: normalized.rawValues,
+        message: importErrorMessage(normalized.errors, normalized.rawValues)
+      });
     } else {
       products.push(normalized.product);
     }
   });
 
-  if (errors.length) {
-    return res.status(400).json({
-      error: 'CSV validation failed.',
-      summary: {
-        totalRows: parsedRows.length - 1,
-        validRows: products.length,
-        errorRows: errors.length
-      },
-      errors: errors.slice(0, 100)
-    });
-  }
-
-  const productCodes = products.map((product) => product.product_code).filter(Boolean);
+  const productCodes = [...new Set(products.map((product) => product.product_code).filter(Boolean))];
   if (productCodes.length) {
-    const placeholders = productCodes.map(() => '?').join(',');
-    const [conflictingRows] = await db.query(
-      `SELECT product_code, barcode FROM products WHERE product_code IN (${placeholders})`,
-      productCodes
-    );
+    const conflictingRows = [];
+    for (let index = 0; index < productCodes.length; index += PRODUCT_IMPORT_BATCH_SIZE) {
+      const batchCodes = productCodes.slice(index, index + PRODUCT_IMPORT_BATCH_SIZE);
+      const placeholders = batchCodes.map(() => '?').join(',');
+      const [rows] = await db.query(
+        `SELECT product_code, barcode FROM products WHERE product_code IN (${placeholders})`,
+        batchCodes
+      );
+      conflictingRows.push(...rows);
+    }
 
-    const incomingByCode = new Map(products.map((product) => [product.product_code, product.barcode]));
-    const conflicts = conflictingRows
-      .filter((row) => incomingByCode.get(row.product_code) !== row.barcode)
-      .map((row) => ({
-        row: '-',
-        barcode: row.barcode,
-        errors: [`product_code ${row.product_code} already belongs to barcode ${row.barcode}`]
-      }));
+    const existingByCode = new Map(conflictingRows.map((row) => [row.product_code, row.barcode]));
+    const conflicts = products
+      .filter((product) => existingByCode.has(product.product_code) && existingByCode.get(product.product_code) !== product.barcode)
+      .map((product) => {
+        const existingBarcode = existingByCode.get(product.product_code);
+        return {
+          row: product.source_row || '-',
+          product_code: product.product_code,
+          barcode: product.barcode || '',
+          product_name: product.product_name || '',
+          errors: [`Product code ${product.product_code} already belongs to barcode ${existingBarcode}`],
+          message: `Skipped: Product code ${product.product_code} already belongs to barcode ${existingBarcode}. This row has barcode ${product.barcode || '-'} and was not imported.`
+        };
+      });
 
     if (conflicts.length) {
-      return res.status(400).json({
-        error: 'CSV validation failed.',
-        summary: {
-          totalRows: parsedRows.length - 1,
-          validRows: products.length - conflicts.length,
-          errorRows: conflicts.length
-        },
-        errors: conflicts.slice(0, 100)
-      });
+      const conflictRows = new Set(conflicts.map((row) => `${row.row}:${row.product_code}:${row.barcode}`));
+      errors.push(...conflicts);
+      for (let index = products.length - 1; index >= 0; index -= 1) {
+        const key = `${products[index].source_row}:${products[index].product_code}:${products[index].barcode}`;
+        if (conflictRows.has(key)) products.splice(index, 1);
+      }
     }
   }
 
-  const connection = await db.getConnection();
+  if (!products.length) {
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      for (const rowError of errors) {
+        await insertProductImportLine(connection, importId, {
+          row_no: rowError.row,
+          product_code: rowError.product_code,
+          barcode: rowError.barcode,
+          product_name: rowError.product_name,
+          action_status: 'ERROR',
+          error_message: rowError.message || rowError.errors.join(', ')
+        });
+      }
+      await updateProductImportJob(connection, importId, {
+        totalRows: totalInputRows,
+        validRows: 0,
+        inserted: 0,
+        updated: 0,
+        errorRows: errors.length,
+        skipped: errors.length,
+        batches: 0
+      }, 'CSV validation failed. No valid rows to import.');
+      await connection.commit();
+    } catch (err) {
+      await connection.rollback();
+    } finally {
+      connection.release();
+    }
+    return res.status(400).json({
+      error: 'CSV validation failed. No valid rows to import.',
+      importId,
+      summary: {
+        totalRows: totalInputRows,
+        validRows: 0,
+        errorRows: errors.length,
+        inserted: 0,
+        updated: 0,
+        skipped: errors.length
+      },
+      errors: errors.slice(0, 100),
+      warnings: errors.slice(0, 100)
+    });
+  }
+
+  let inserted = 0;
+  let updated = 0;
+  let taxSynced = 0;
+  let batches = 0;
+
   try {
-    await connection.beginTransaction();
+    for (let index = 0; index < products.length; index += PRODUCT_IMPORT_BATCH_SIZE) {
+      const batch = products.slice(index, index + PRODUCT_IMPORT_BATCH_SIZE);
+      const connection = await db.getConnection();
+      batches += 1;
 
-    let inserted = 0;
-    let updated = 0;
-    let taxSynced = 0;
+      try {
+        await connection.beginTransaction();
 
-    for (const product of products) {
+        for (const product of batch) {
+          await connection.query('SAVEPOINT product_import_row');
+          let productForWrite = product;
+          try {
       const [existingRows] = await connection.query(
-        `SELECT id FROM products WHERE barcode = ? LIMIT 1`,
-        [product.barcode]
+        `SELECT *
+         FROM products
+         WHERE barcode = ? OR (product_code IS NOT NULL AND product_code = ?)
+         ORDER BY CASE WHEN barcode = ? THEN 0 ELSE 1 END
+         LIMIT 1`,
+        [product.barcode, product.product_code, product.barcode]
       );
       const existed = existingRows.length > 0;
+      const previousProduct = existed ? productSnapshot(existingRows[0]) : null;
+      productForWrite = existed ? { ...product, barcode: existingRows[0].barcode } : product;
 
       await connection.query(
         `INSERT INTO products
-         (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price,
-          discount_type, discount_value, bulk_discount_value, is_free_item, stock_qty, min_stock_alert)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, sales_sgst_percent, sales_cgst_percent, sales_igst_percent,
+          unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price,
+          discount_type, discount_value, bulk_discount_value, is_free_item, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
+          free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            product_code = VALUES(product_code),
            product_name = VALUES(product_name),
            alias_names = VALUES(alias_names),
            hsn_code = VALUES(hsn_code),
            gst_percent = VALUES(gst_percent),
+           sales_sgst_percent = VALUES(sales_sgst_percent),
+           sales_cgst_percent = VALUES(sales_cgst_percent),
+           sales_igst_percent = VALUES(sales_igst_percent),
            unit_type = VALUES(unit_type),
            purchase_unit_type = VALUES(purchase_unit_type),
            purchase_unit_size = VALUES(purchase_unit_size),
@@ -726,33 +1162,56 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
            discount_value = VALUES(discount_value),
            bulk_discount_value = VALUES(bulk_discount_value),
            is_free_item = VALUES(is_free_item),
+           free_promo_enabled = VALUES(free_promo_enabled),
+           free_promo_name = VALUES(free_promo_name),
+           free_promo_qty_per_sale = VALUES(free_promo_qty_per_sale),
+           free_promo_total_qty = VALUES(free_promo_total_qty),
+           free_promo_remaining_qty = VALUES(free_promo_remaining_qty),
            stock_qty = VALUES(stock_qty),
            min_stock_alert = VALUES(min_stock_alert)`,
         [
-          product.product_code,
-          product.barcode,
-          product.product_name,
-          product.alias_names,
-          product.hsn_code,
-          product.gst_percent,
-          product.unit_type,
-          product.purchase_unit_type,
-          product.purchase_unit_size,
-          product.mrp,
-          product.purchase_price,
-          product.sale_price,
-          product.wholesale_price,
-          product.discount_type,
-          product.discount_value,
-          product.bulk_discount_value,
-          product.is_free_item,
-          product.stock_qty,
-          product.min_stock_alert
+          productForWrite.product_code,
+          productForWrite.barcode,
+          productForWrite.product_name,
+          productForWrite.alias_names,
+          productForWrite.hsn_code,
+          productForWrite.gst_percent,
+          productForWrite.sales_sgst_percent,
+          productForWrite.sales_cgst_percent,
+          productForWrite.sales_igst_percent,
+          productForWrite.unit_type,
+          productForWrite.purchase_unit_type,
+          productForWrite.purchase_unit_size,
+          productForWrite.mrp,
+          productForWrite.purchase_price,
+          productForWrite.sale_price,
+          productForWrite.wholesale_price,
+          productForWrite.discount_type,
+          productForWrite.discount_value,
+          productForWrite.bulk_discount_value,
+          productForWrite.is_free_item,
+          productForWrite.free_promo_enabled,
+          productForWrite.free_promo_name,
+          productForWrite.free_promo_qty_per_sale,
+          productForWrite.free_promo_total_qty,
+          productForWrite.free_promo_remaining_qty,
+          productForWrite.stock_qty,
+          productForWrite.min_stock_alert
         ]
       );
 
       if (existed) updated += 1;
       else inserted += 1;
+
+      await insertProductImportLine(connection, importId, {
+        row_no: product.source_row,
+        product_code: productForWrite.product_code,
+        barcode: productForWrite.barcode,
+        product_name: productForWrite.product_name,
+        action_status: existed ? 'UPDATED' : 'INSERTED',
+        previous_product_json: previousProduct,
+        imported_product_json: productSnapshot(productForWrite)
+      });
 
       taxSynced += await syncProductTaxByName(connection, {
         productName: product.product_name,
@@ -760,23 +1219,330 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
         hsnCode: product.hsn_code,
         gstPercent: product.gst_percent
       });
+      await connection.query('RELEASE SAVEPOINT product_import_row');
+          } catch (rowErr) {
+            await connection.query('ROLLBACK TO SAVEPOINT product_import_row');
+            const rowMessage = formatProductImportDbError(product, rowErr);
+            errors.push({
+              row: product.source_row,
+              product_code: product.product_code || '',
+              barcode: productForWrite?.barcode || product.barcode,
+              product_name: product.product_name,
+              errors: [rowMessage],
+              message: rowMessage,
+              logged: true
+            });
+            await insertProductImportLine(connection, importId, {
+              row_no: product.source_row,
+              product_code: product.product_code,
+              barcode: product.barcode,
+              product_name: product.product_name,
+              action_status: 'ERROR',
+              error_message: rowMessage,
+              imported_product_json: productSnapshot(product)
+            });
+          }
     }
 
-    await connection.commit();
+        await connection.commit();
+      } catch (err) {
+        await connection.rollback();
+        throw err;
+      } finally {
+        connection.release();
+      }
+    }
+
+    const summary = {
+      totalRows: totalInputRows,
+      validRows: inserted + updated,
+      inserted,
+      updated,
+      taxSynced,
+      batches,
+      batchSize: PRODUCT_IMPORT_BATCH_SIZE,
+      skipped: errors.length,
+      errorRows: errors.length,
+      errors: errors.slice(0, 100)
+    };
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      for (const rowError of errors) {
+        if (rowError.logged) continue;
+        await insertProductImportLine(connection, importId, {
+          row_no: rowError.row,
+          product_code: rowError.product_code,
+          barcode: rowError.barcode,
+          product_name: rowError.product_name,
+          action_status: 'ERROR',
+          error_message: rowError.message || rowError.errors.join(', ')
+        });
+      }
+      await updateProductImportJob(connection, importId, summary);
+      await connection.commit();
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
+
     res.json({
       success: true,
-      summary: {
-        totalRows: products.length,
-        inserted,
-        updated,
-        taxSynced,
-        skipped: 0
-      }
+      importId,
+      summary,
+      warnings: errors.slice(0, 100)
     });
   } catch (err) {
-    await connection.rollback();
     console.error('Product import failed:', err.message);
+    try {
+      const connection = await db.getConnection();
+      try {
+        await connection.beginTransaction();
+        await updateProductImportJob(connection, importId, {
+          totalRows: totalInputRows,
+          validRows: products.length,
+          inserted,
+          updated,
+          errorRows: Math.max(errors.length, 1),
+          skipped: errors.length,
+          batches
+        }, err.message);
+        await insertProductImportLine(connection, importId, {
+          row_no: 0,
+          action_status: 'ERROR',
+          error_message: `Import failed before completion: ${err.message}`
+        });
+        await connection.commit();
+      } catch (historyErr) {
+        await connection.rollback();
+      } finally {
+        connection.release();
+      }
+    } catch (_historyErr) {
+      // Import failure response is more important than history update failure.
+    }
     res.status(500).json({ error: 'Unable to import products.' });
+  }
+});
+
+function parseJsonValue(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch (_err) {
+    return null;
+  }
+}
+
+async function restoreProductSnapshot(connection, snapshot) {
+  await connection.query(
+    `INSERT INTO products
+     (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, sales_sgst_percent, sales_cgst_percent, sales_igst_percent,
+      unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price,
+      discount_type, discount_value, bulk_discount_value, is_free_item, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
+      free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       product_code = VALUES(product_code),
+       product_name = VALUES(product_name),
+       alias_names = VALUES(alias_names),
+       hsn_code = VALUES(hsn_code),
+       gst_percent = VALUES(gst_percent),
+       sales_sgst_percent = VALUES(sales_sgst_percent),
+       sales_cgst_percent = VALUES(sales_cgst_percent),
+       sales_igst_percent = VALUES(sales_igst_percent),
+       unit_type = VALUES(unit_type),
+       purchase_unit_type = VALUES(purchase_unit_type),
+       purchase_unit_size = VALUES(purchase_unit_size),
+       mrp = VALUES(mrp),
+       purchase_price = VALUES(purchase_price),
+       sale_price = VALUES(sale_price),
+       wholesale_price = VALUES(wholesale_price),
+       discount_type = VALUES(discount_type),
+       discount_value = VALUES(discount_value),
+       bulk_discount_value = VALUES(bulk_discount_value),
+       is_free_item = VALUES(is_free_item),
+       free_promo_enabled = VALUES(free_promo_enabled),
+       free_promo_name = VALUES(free_promo_name),
+       free_promo_qty_per_sale = VALUES(free_promo_qty_per_sale),
+       free_promo_total_qty = VALUES(free_promo_total_qty),
+       free_promo_remaining_qty = VALUES(free_promo_remaining_qty),
+       stock_qty = VALUES(stock_qty),
+       min_stock_alert = VALUES(min_stock_alert)`,
+    [
+      snapshot.product_code,
+      snapshot.barcode,
+      snapshot.product_name,
+      snapshot.alias_names,
+      snapshot.hsn_code,
+      snapshot.gst_percent,
+      snapshot.sales_sgst_percent,
+      snapshot.sales_cgst_percent,
+      snapshot.sales_igst_percent,
+      snapshot.unit_type,
+      snapshot.purchase_unit_type,
+      snapshot.purchase_unit_size,
+      snapshot.mrp,
+      snapshot.purchase_price,
+      snapshot.sale_price,
+      snapshot.wholesale_price,
+      snapshot.discount_type,
+      snapshot.discount_value,
+      snapshot.bulk_discount_value,
+      snapshot.is_free_item,
+      snapshot.free_promo_enabled,
+      snapshot.free_promo_name,
+      snapshot.free_promo_qty_per_sale,
+      snapshot.free_promo_total_qty,
+      snapshot.free_promo_remaining_qty,
+      snapshot.stock_qty,
+      snapshot.min_stock_alert
+    ]
+  );
+}
+
+router.get('/import-history', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 100, 10), 500);
+    const [rows] = await db.query(
+      `SELECT *
+       FROM product_import_jobs
+       ORDER BY created_at DESC
+       LIMIT ?`,
+      [limit]
+    );
+    res.json((rows || []).map((row) => ({
+      id: row.id,
+      file_name: row.file_name || '',
+      status: row.status,
+      total_rows: Number(row.total_rows || 0),
+      valid_rows: Number(row.valid_rows || 0),
+      inserted_count: Number(row.inserted_count || 0),
+      updated_count: Number(row.updated_count || 0),
+      error_rows: Number(row.error_rows || 0),
+      skipped_count: Number(row.skipped_count || 0),
+      batch_count: Number(row.batch_count || 0),
+      failure_message: row.failure_message || '',
+      rollback_status: row.rollback_status || 'ACTIVE',
+      rollback_at: row.rollback_at,
+      rollback_by: row.rollback_by || '',
+      created_by: row.created_by || '',
+      created_at: row.created_at
+    })));
+  } catch (err) {
+    console.error('Product import history load failed:', err.message);
+    res.status(500).json({ error: 'Unable to load product import history.' });
+  }
+});
+
+router.get('/import-history/:id', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const importId = String(req.params.id || '').trim();
+    const [jobRows] = await db.query(`SELECT * FROM product_import_jobs WHERE id = ? LIMIT 1`, [importId]);
+    if (!jobRows.length) return res.status(404).json({ error: 'Import history item not found.' });
+
+    const [lineRows] = await db.query(
+      `SELECT id, row_no, product_code, barcode, product_name, action_status, error_message, created_at
+       FROM product_import_lines
+       WHERE import_id = ?
+       ORDER BY row_no ASC, id ASC
+       LIMIT ?`,
+      [importId, PRODUCT_IMPORT_LINE_LIMIT]
+    );
+
+    res.json({
+      job: jobRows[0],
+      lines: lineRows || []
+    });
+  } catch (err) {
+    console.error('Product import history detail failed:', err.message);
+    res.status(500).json({ error: 'Unable to load product import details.' });
+  }
+});
+
+router.delete('/import-history/:id', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  const importId = String(req.params.id || '').trim();
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [jobRows] = await connection.query(`SELECT * FROM product_import_jobs WHERE id = ? LIMIT 1 FOR UPDATE`, [importId]);
+    const job = jobRows[0];
+    if (!job) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Import history item not found.' });
+    }
+    if (job.rollback_status === 'ROLLED_BACK') {
+      await connection.rollback();
+      return res.status(400).json({ error: 'This import was already deleted/rolled back.' });
+    }
+
+    const [lineRows] = await connection.query(
+      `SELECT *
+       FROM product_import_lines
+       WHERE import_id = ? AND action_status IN ('INSERTED', 'UPDATED')
+       ORDER BY id DESC`,
+      [importId]
+    );
+
+    let deletedProducts = 0;
+    let restoredProducts = 0;
+    for (const line of lineRows) {
+      if (line.action_status === 'INSERTED') {
+        await connection.query(`DELETE FROM product_batches WHERE barcode = ?`, [line.barcode]);
+        await connection.query(`DELETE FROM batch_free_offers WHERE trigger_barcode = ? OR free_barcode = ?`, [line.barcode, line.barcode]);
+        const [deleteResult] = await connection.query(`DELETE FROM products WHERE barcode = ?`, [line.barcode]);
+        deletedProducts += Number(deleteResult?.affectedRows || 0);
+      } else if (line.action_status === 'UPDATED') {
+        const previous = parseJsonValue(line.previous_product_json);
+        if (previous?.barcode) {
+          await restoreProductSnapshot(connection, previous);
+          restoredProducts += 1;
+        }
+      }
+    }
+
+    await connection.query(
+      `UPDATE product_import_lines
+       SET action_status = 'ROLLED_BACK'
+       WHERE import_id = ? AND action_status IN ('INSERTED', 'UPDATED')`,
+      [importId]
+    );
+    await connection.query(
+      `UPDATE product_import_jobs
+       SET status = 'ROLLED BACK',
+           rollback_status = 'ROLLED_BACK',
+           rollback_at = CURRENT_TIMESTAMP,
+           rollback_by = ?
+       WHERE id = ?`,
+      [req.user?.username || '', importId]
+    );
+
+    await writeAuditLog({
+      user: req.user,
+      action: 'PRODUCT_IMPORT_ROLLED_BACK',
+      entityType: 'PRODUCT_IMPORT',
+      entityId: importId,
+      details: {
+        deleted_products: deletedProducts,
+        restored_products: restoredProducts
+      },
+      connection
+    });
+
+    await connection.commit();
+    res.json({ success: true, deletedProducts, restoredProducts });
+  } catch (err) {
+    try {
+      await connection.rollback();
+    } catch (_rollbackErr) {
+      // Ignore rollback failure.
+    }
+    console.error('Product import rollback failed:', err.message);
+    res.status(500).json({ error: 'Unable to delete/rollback product import.' });
   } finally {
     connection.release();
   }

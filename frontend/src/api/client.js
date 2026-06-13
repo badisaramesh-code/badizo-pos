@@ -74,6 +74,13 @@ export async function fetchProductDropbox({ search = '', ageDays = 1470, limit =
   return data;
 }
 
+export async function fetchDuplicateProductCodes({ search = '', limit = 100 } = {}) {
+  const { data } = await api.get('/products/duplicate-codes', {
+    params: { search, limit }
+  });
+  return data;
+}
+
 export async function saveProduct(product) {
   const { data } = await api.post('/products/save', product);
   return data;
@@ -87,6 +94,13 @@ export async function bulkUpdateProducts(rows) {
 export async function bulkDeleteProductDropbox({ barcodes, username, password, ageDays = 1470 }) {
   const { data } = await api.delete('/products/dropbox/bulk-delete', {
     data: { barcodes, username, password, ageDays }
+  });
+  return data;
+}
+
+export async function bulkDeleteDuplicateProductCodes({ barcodes, username, password }) {
+  const { data } = await api.delete('/products/duplicate-codes/bulk-delete', {
+    data: { barcodes, username, password }
   });
   return data;
 }
@@ -107,8 +121,23 @@ export async function exportProducts() {
   downloadBlob(data, 'badizo_products_export.csv');
 }
 
-export async function importProducts(csv) {
-  const { data } = await api.post('/products/import', { csv });
+export async function importProducts(csv, fileName = '') {
+  const { data } = await api.post('/products/import', { csv, fileName });
+  return data;
+}
+
+export async function fetchProductImportHistory() {
+  const { data } = await api.get('/products/import-history');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchProductImportHistoryDetail(importId) {
+  const { data } = await api.get(`/products/import-history/${encodeURIComponent(importId)}`);
+  return data;
+}
+
+export async function deleteProductImport(importId) {
+  const { data } = await api.delete(`/products/import-history/${encodeURIComponent(importId)}`);
   return data;
 }
 
