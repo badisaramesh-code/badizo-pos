@@ -247,6 +247,10 @@ export default function BillingTerminalView({ isActive = true }) {
   const [refundMode, setRefundMode] = useState('Cash');
   const scannerRef = useRef(null);
   const exactProductCacheRef = useRef(new Map());
+  const scannerKeyTimesRef = useRef([]);
+  const priceCheckKeyTimesRef = useRef([]);
+  const lastAutoScanRef = useRef('');
+  const lastPriceCheckScanRef = useRef('');
   const exchangeScannerRef = useRef(null);
   const billingTableRef = useRef(null);
   const priceCheckInputRef = useRef(null);
@@ -370,6 +374,7 @@ export default function BillingTerminalView({ isActive = true }) {
       if (/^[A-Z0-9._-]{6,}$/i.test(cleaned)) {
         setSuggestions([]);
         setSelectedSuggestion(0);
+        autoAddScannedBarcode(query);
         return;
       }
 
@@ -423,6 +428,14 @@ export default function BillingTerminalView({ isActive = true }) {
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
   });
+
+  useEffect(() => {
+    if (!showPriceCheck) return undefined;
+    const cleaned = String(priceCheckQuery || '').trim();
+    if (!/^[A-Z0-9._-]{6,}$/i.test(cleaned)) return undefined;
+    const timer = window.setTimeout(() => autoRunScannedPriceCheck(cleaned), 70);
+    return () => window.clearTimeout(timer);
+  }, [priceCheckQuery, showPriceCheck]);
 
   const totals = useMemo(() => {
     let taxable = 0;
@@ -804,6 +817,43 @@ export default function BillingTerminalView({ isActive = true }) {
     return product;
   }
 
+  function markRapidInputKey(event, targetRef = scannerKeyTimesRef) {
+    if (event.key.length !== 1) return;
+    const now = Date.now();
+    targetRef.current = [...targetRef.current.filter((time) => now - time < 450), now];
+  }
+
+  function isLikelyScannerInput(value, targetRef = scannerKeyTimesRef) {
+    const cleaned = String(value || '').trim();
+    if (!/^[A-Z0-9._-]{6,}$/i.test(cleaned)) return false;
+    const times = targetRef.current;
+    if (times.length < Math.min(cleaned.length, 6)) return false;
+    const first = times[0];
+    const last = times[times.length - 1];
+    return last - first <= 350;
+  }
+
+  async function autoAddScannedBarcode(rawValue) {
+    const { search: cleaned, quantity } = parseQuantitySearch(rawValue);
+    const normalized = cleaned.toUpperCase();
+    if (!isLikelyScannerInput(cleaned, scannerKeyTimesRef) || lastAutoScanRef.current === normalized) return;
+    lastAutoScanRef.current = normalized;
+
+    try {
+      const exactProduct = await findExactProductFast(cleaned);
+      if (exactProduct) {
+        addProduct(exactProduct, quantity);
+        return;
+      }
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
+    } finally {
+      window.setTimeout(() => {
+        if (lastAutoScanRef.current === normalized) lastAutoScanRef.current = '';
+      }, 250);
+    }
+  }
+
   function addProduct(product, quantityToAdd = 1) {
     const addQty = Math.max(toNumber(quantityToAdd, 1), 0.001);
     const productBarcode = String(product.barcode || '').trim().toUpperCase();
@@ -917,7 +967,30 @@ export default function BillingTerminalView({ isActive = true }) {
     }
   }
 
+  async function autoRunScannedPriceCheck(rawValue) {
+    const cleaned = String(rawValue || '').trim();
+    const normalized = cleaned.toUpperCase();
+    if (!isLikelyScannerInput(cleaned, priceCheckKeyTimesRef) || lastPriceCheckScanRef.current === normalized) return;
+    lastPriceCheckScanRef.current = normalized;
+
+    try {
+      const exactProduct = await findExactProductFast(cleaned);
+      if (exactProduct) {
+        setPriceCheckProduct(exactProduct);
+        setPriceCheckError('');
+        return;
+      }
+      await runPriceCheck(cleaned);
+    } finally {
+      window.setTimeout(() => {
+        if (lastPriceCheckScanRef.current === normalized) lastPriceCheckScanRef.current = '';
+      }, 250);
+    }
+  }
+
   function handlePriceCheckKeyDown(event) {
+    markRapidInputKey(event, priceCheckKeyTimesRef);
+
     if (event.key === 'Enter') {
       event.preventDefault();
       runPriceCheck();
@@ -929,6 +1002,8 @@ export default function BillingTerminalView({ isActive = true }) {
   }
 
   async function handleSearchKeyDown(event) {
+    markRapidInputKey(event, scannerKeyTimesRef);
+
     if (event.key === 'ArrowDown' && suggestions.length) {
       event.preventDefault();
       setSelectedSuggestion((current) => Math.min(current + 1, suggestions.length - 1));
