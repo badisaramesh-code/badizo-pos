@@ -52,7 +52,7 @@ export default function App() {
         setActiveWorkspace={setActiveWorkspace}
       />
     ),
-    importHistory: <ProductImportHistoryView />,
+    importHistory: <ProductImportHistoryView onClose={() => setActiveWorkspace('inventory')} />,
     orders: <OrdersView />,
     barcode: <BarcodeStickersView />,
     inward: <InwardEntryView />,

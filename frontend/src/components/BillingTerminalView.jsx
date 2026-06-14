@@ -58,6 +58,10 @@ const BILLING_MODES = {
 const RETAIL_MODE = 'RETAIL_LOCAL';
 const POS_DRAFT_KEY = 'badizo_pos_active_draft';
 const EMPTY_MIXED_PAYMENT = { cash: '', upi: '', card: '', upi_reference: '', card_reference: '' };
+const SCANNER_BARCODE_PATTERN = /^[A-Z0-9._-]+$/i;
+const SCANNER_SETTLE_MS = 650;
+const SCANNER_FAST_KEY_MS = 90;
+const TYPED_SEARCH_DEBOUNCE_MS = 160;
 
 function readActivePosDraft(username) {
   try {
@@ -199,6 +203,9 @@ export default function BillingTerminalView({ isActive = true }) {
   const [suggestions, setSuggestions] = useState([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const [cart, setCart] = useState(initialDraft?.cart || []);
+  const [selectedCartIndex, setSelectedCartIndex] = useState(
+    initialDraft?.cart?.length ? initialDraft.cart.length - 1 : -1
+  );
   const [exchangeMode, setExchangeMode] = useState(Boolean(initialDraft?.exchangeMode));
   const [exchangeQuery, setExchangeQuery] = useState('');
   const [exchangeItems, setExchangeItems] = useState(initialDraft?.exchangeItems || []);
@@ -248,8 +255,20 @@ export default function BillingTerminalView({ isActive = true }) {
   const scannerRef = useRef(null);
   const exactProductCacheRef = useRef(new Map());
   const scannerKeyTimesRef = useRef([]);
+  const scannerAutoAddTimerRef = useRef(null);
+  const scannerInputModeRef = useRef('keyboard');
+  const suppressSuggestionsUntilKeyboardInputRef = useRef(false);
+  const scannerScanTokenRef = useRef(0);
+  const scannerReadQueueRef = useRef([]);
+  const isScannerReadQueueProcessingRef = useRef(false);
+  const scannerBufferRef = useRef('');
+  const scannerBufferLastKeyAtRef = useRef(0);
+  const scannerBufferTimerRef = useRef(null);
+  const exchangeScannerBufferRef = useRef('');
+  const exchangeScannerBufferLastKeyAtRef = useRef(0);
+  const exchangeScannerBufferTimerRef = useRef(null);
+  const exchangeScannerInputModeRef = useRef('keyboard');
   const priceCheckKeyTimesRef = useRef([]);
-  const lastAutoScanRef = useRef('');
   const lastPriceCheckScanRef = useRef('');
   const exchangeScannerRef = useRef(null);
   const billingTableRef = useRef(null);
@@ -363,6 +382,14 @@ export default function BillingTerminalView({ isActive = true }) {
   }, [cart.length]);
 
   useEffect(() => {
+    setSelectedCartIndex((current) => {
+      if (cart.length === 0) return -1;
+      if (current < 0) return cart.length - 1;
+      return Math.min(current, cart.length - 1);
+    });
+  }, [cart.length]);
+
+  useEffect(() => {
     const run = async () => {
       const { search: cleaned } = parseQuantitySearch(query);
       if (cleaned.length < 3) {
@@ -371,15 +398,31 @@ export default function BillingTerminalView({ isActive = true }) {
         return;
       }
 
-      if (/^[A-Z0-9._-]{6,}$/i.test(cleaned)) {
+      if (suppressSuggestionsUntilKeyboardInputRef.current) {
         setSuggestions([]);
         setSelectedSuggestion(0);
-        autoAddScannedBarcode(query);
+        return;
+      }
+
+      if (scannerInputModeRef.current !== 'keyboard') {
+        setSuggestions([]);
+        setSelectedSuggestion(0);
+        return;
+      }
+
+      if (isLikelyScannerInput(cleaned, scannerKeyTimesRef)) {
+        setSuggestions([]);
+        setSelectedSuggestion(0);
         return;
       }
 
       try {
         const results = await searchProducts(cleaned);
+        if (suppressSuggestionsUntilKeyboardInputRef.current || scannerInputModeRef.current !== 'keyboard') {
+          setSuggestions([]);
+          setSelectedSuggestion(0);
+          return;
+        }
         setSuggestions(results.slice(0, 5));
         setSelectedSuggestion(0);
       } catch (err) {
@@ -387,12 +430,38 @@ export default function BillingTerminalView({ isActive = true }) {
       }
     };
 
-    const timer = window.setTimeout(run, 160);
+    const timer = window.setTimeout(run, TYPED_SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [query]);
 
+  useEffect(() => () => {
+    if (scannerAutoAddTimerRef.current) {
+      window.clearTimeout(scannerAutoAddTimerRef.current);
+    }
+    if (scannerBufferTimerRef.current) {
+      window.clearTimeout(scannerBufferTimerRef.current);
+    }
+    if (exchangeScannerBufferTimerRef.current) {
+      window.clearTimeout(exchangeScannerBufferTimerRef.current);
+    }
+  }, []);
+
   useEffect(() => {
     const handleShortcut = (event) => {
+      if (event.key === 'Delete') {
+        const target = event.target;
+        const isScannerInputWithText = target === scannerRef.current && String(query || '').length > 0;
+        const isEditableTarget = target?.isContentEditable
+          || ['TEXTAREA', 'SELECT'].includes(target?.tagName)
+          || (target?.tagName === 'INPUT' && target !== scannerRef.current)
+          || isScannerInputWithText;
+
+        if (!isEditableTarget && cart.length > 0) {
+          event.preventDefault();
+          removeLine(selectedCartIndex >= 0 ? selectedCartIndex : cart.length - 1);
+        }
+      }
+
       if (event.key === 'F9') {
         event.preventDefault();
         scannerRef.current?.focus();
@@ -825,7 +894,8 @@ export default function BillingTerminalView({ isActive = true }) {
 
   function isLikelyScannerInput(value, targetRef = scannerKeyTimesRef) {
     const cleaned = String(value || '').trim();
-    if (!/^[A-Z0-9._-]{6,}$/i.test(cleaned)) return false;
+    if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return false;
+    if (cleaned.length < 6) return false;
     const times = targetRef.current;
     if (times.length < Math.min(cleaned.length, 6)) return false;
     const first = times[0];
@@ -833,25 +903,170 @@ export default function BillingTerminalView({ isActive = true }) {
     return last - first <= 350;
   }
 
-  async function autoAddScannedBarcode(rawValue) {
+  function scheduleScannedBarcodeAutoAdd(rawValue, options = {}) {
+    if (scannerAutoAddTimerRef.current) {
+      window.clearTimeout(scannerAutoAddTimerRef.current);
+    }
+    const scanToken = scannerScanTokenRef.current + 1;
+    scannerScanTokenRef.current = scanToken;
+    scannerAutoAddTimerRef.current = window.setTimeout(() => {
+      scannerAutoAddTimerRef.current = null;
+      autoAddScannedBarcode(rawValue, { ...options, scanToken });
+    }, SCANNER_SETTLE_MS);
+  }
+
+  function enqueueScannerRead(rawValue) {
     const { search: cleaned, quantity } = parseQuantitySearch(rawValue);
     const normalized = cleaned.toUpperCase();
-    if (!isLikelyScannerInput(cleaned, scannerKeyTimesRef) || lastAutoScanRef.current === normalized) return;
-    lastAutoScanRef.current = normalized;
+    if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
+
+    scannerReadQueueRef.current.push({ barcode: normalized, quantity });
+    scannerInputModeRef.current = 'keyboard';
+    suppressSuggestionsUntilKeyboardInputRef.current = true;
+    scannerKeyTimesRef.current = [];
+    setQuery('');
+    setSuggestions([]);
+    setSelectedSuggestion(0);
+    processScannerReadQueue();
+  }
+
+  function resetScannerBuffer() {
+    scannerBufferRef.current = '';
+    scannerBufferLastKeyAtRef.current = 0;
+    if (scannerBufferTimerRef.current) {
+      window.clearTimeout(scannerBufferTimerRef.current);
+      scannerBufferTimerRef.current = null;
+    }
+  }
+
+  function commitScannerBuffer() {
+    const bufferedValue = scannerBufferRef.current;
+    resetScannerBuffer();
+    const { search: cleaned } = parseQuantitySearch(bufferedValue);
+    if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
+    enqueueScannerRead(bufferedValue);
+  }
+
+  function scheduleScannerBufferCommit() {
+    if (scannerBufferTimerRef.current) {
+      window.clearTimeout(scannerBufferTimerRef.current);
+    }
+    scannerBufferTimerRef.current = window.setTimeout(() => {
+      scannerBufferTimerRef.current = null;
+      if (scannerBufferRef.current.length >= 2) {
+        commitScannerBuffer();
+      }
+    }, SCANNER_SETTLE_MS);
+  }
+
+  function bufferScannerKey(event) {
+    const now = Date.now();
+
+    if (event.key === 'Enter' || event.key === 'Tab') {
+      if (scannerBufferRef.current) {
+        event.preventDefault();
+        commitScannerBuffer();
+        return true;
+      }
+      return false;
+    }
+
+    if (event.key.length !== 1 || !SCANNER_BARCODE_PATTERN.test(event.key)) return false;
+
+    const gap = now - scannerBufferLastKeyAtRef.current;
+    if (!scannerBufferRef.current || gap <= SCANNER_FAST_KEY_MS || scannerInputModeRef.current === 'scan') {
+      scannerBufferRef.current += event.key;
+    } else {
+      scannerBufferRef.current = event.key;
+    }
+    scannerBufferLastKeyAtRef.current = now;
+
+    if (scannerBufferRef.current.length >= 2 && (gap <= SCANNER_FAST_KEY_MS || scannerInputModeRef.current === 'scan')) {
+      scannerInputModeRef.current = 'scan';
+      suppressSuggestionsUntilKeyboardInputRef.current = true;
+      event.preventDefault();
+      setSuggestions([]);
+      setSelectedSuggestion(0);
+      scheduleScannerBufferCommit();
+    }
+
+    return scannerInputModeRef.current === 'scan';
+  }
+
+  async function processScannerReadQueue() {
+    if (isScannerReadQueueProcessingRef.current) return;
+    isScannerReadQueueProcessingRef.current = true;
 
     try {
-      const exactProduct = await findExactProductFast(cleaned);
-      if (exactProduct) {
-        addProduct(exactProduct, quantity);
-        return;
+      while (scannerReadQueueRef.current.length > 0) {
+        const scanRead = scannerReadQueueRef.current.shift();
+        try {
+          const exactProduct = await findExactProductFast(scanRead.barcode);
+          if (exactProduct) {
+            addProduct(exactProduct, scanRead.quantity);
+          } else {
+            setErrorMessage(`Scanned barcode ${scanRead.barcode} was not found.`);
+          }
+        } catch (err) {
+          setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
+        }
       }
-    } catch (err) {
-      setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
     } finally {
-      window.setTimeout(() => {
-        if (lastAutoScanRef.current === normalized) lastAutoScanRef.current = '';
-      }, 250);
+      isScannerReadQueueProcessingRef.current = false;
     }
+  }
+
+  async function autoAddScannedBarcode(rawValue, { forceExact = false, scanToken = null } = {}) {
+    const { search: cleaned } = parseQuantitySearch(rawValue);
+    if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
+    if (!forceExact && !isLikelyScannerInput(cleaned, scannerKeyTimesRef)) return;
+    if (scanToken !== null && scanToken !== scannerScanTokenRef.current) return;
+    enqueueScannerRead(rawValue);
+  }
+
+  function handleSearchChange(event) {
+    const nextQuery = event.target.value;
+    const nativeEvent = event.nativeEvent || {};
+    const insertedText = String(nativeEvent.data || '');
+    const isPasteLikeInput = nativeEvent.inputType === 'insertFromPaste'
+      || insertedText.length > 1
+      || Math.abs(nextQuery.length - query.length) > 1;
+    const { search: cleaned } = parseQuantitySearch(nextQuery);
+
+    if (isPasteLikeInput && SCANNER_BARCODE_PATTERN.test(cleaned)) {
+      scannerInputModeRef.current = 'scan';
+      suppressSuggestionsUntilKeyboardInputRef.current = true;
+      setQuery(nextQuery);
+      setSuggestions([]);
+      setSelectedSuggestion(0);
+      scheduleScannedBarcodeAutoAdd(nextQuery, { forceExact: true });
+      return;
+    }
+
+    scannerInputModeRef.current = 'keyboard';
+    suppressSuggestionsUntilKeyboardInputRef.current = false;
+    setQuery(nextQuery);
+
+    if (isLikelyScannerInput(cleaned, scannerKeyTimesRef)) {
+      scannerInputModeRef.current = 'scan';
+      suppressSuggestionsUntilKeyboardInputRef.current = true;
+      setSuggestions([]);
+      setSelectedSuggestion(0);
+    }
+  }
+
+  function handleSearchPaste(event) {
+    const pastedValue = event.clipboardData?.getData('text') || '';
+    const { search: cleaned } = parseQuantitySearch(pastedValue);
+    if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
+
+    event.preventDefault();
+    scannerInputModeRef.current = 'scan';
+    suppressSuggestionsUntilKeyboardInputRef.current = true;
+    setQuery(pastedValue);
+    setSuggestions([]);
+    setSelectedSuggestion(0);
+    scheduleScannedBarcodeAutoAdd(pastedValue, { forceExact: true });
   }
 
   function addProduct(product, quantityToAdd = 1) {
@@ -865,11 +1080,13 @@ export default function BillingTerminalView({ isActive = true }) {
         return itemBarcode === productBarcode || Boolean(productCode && itemCode === productCode);
       });
       if (existingIndex >= 0) {
+        setSelectedCartIndex(existingIndex);
         return current.map((item, index) => (
           index === existingIndex ? { ...item, quantity: toNumber(item.quantity, 1) + addQty } : item
         ));
       }
 
+      setSelectedCartIndex(current.length);
       return [
         ...current,
         {
@@ -1003,6 +1220,8 @@ export default function BillingTerminalView({ isActive = true }) {
 
   async function handleSearchKeyDown(event) {
     markRapidInputKey(event, scannerKeyTimesRef);
+    const handledScannerKey = bufferScannerKey(event);
+    if (handledScannerKey && (event.key === 'Enter' || event.key === 'Tab')) return;
 
     if (event.key === 'ArrowDown' && suggestions.length) {
       event.preventDefault();
@@ -1018,8 +1237,34 @@ export default function BillingTerminalView({ isActive = true }) {
       event.preventDefault();
       const { search: cleaned, quantity } = parseQuantitySearch(query);
 
+      if (!cleaned) {
+        setErrorMessage('Enter barcode digits or product name.');
+        return;
+      }
+
       if (cleaned.length < 3) {
-        setErrorMessage('Enter at least 3 letters or barcode digits.');
+        try {
+          const exactShortProduct = SCANNER_BARCODE_PATTERN.test(cleaned)
+            ? await findExactProductFast(cleaned)
+            : null;
+          if (exactShortProduct) {
+            addProduct(exactShortProduct, quantity);
+            return;
+          }
+          setErrorMessage('Enter at least 3 letters for product search, or scan/enter an exact barcode.');
+        } catch (err) {
+          setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
+        }
+        return;
+      }
+
+      if (isLikelyScannerInput(cleaned, scannerKeyTimesRef)) {
+        if (scannerAutoAddTimerRef.current) {
+          window.clearTimeout(scannerAutoAddTimerRef.current);
+          scannerAutoAddTimerRef.current = null;
+        }
+        scannerInputModeRef.current = 'scan';
+        autoAddScannedBarcode(query, { forceExact: true });
         return;
       }
 
@@ -1078,7 +1323,11 @@ export default function BillingTerminalView({ isActive = true }) {
 
   function removeLine(index) {
     setErrorMessage('');
-    setCart((current) => current.filter((_, itemIndex) => itemIndex !== index));
+    setCart((current) => {
+      const next = current.filter((_, itemIndex) => itemIndex !== index);
+      setSelectedCartIndex(next.length ? Math.min(index, next.length - 1) : -1);
+      return next;
+    });
     window.setTimeout(() => {
       scannerRef.current?.focus();
       scannerRef.current?.select?.();
@@ -1118,16 +1367,107 @@ export default function BillingTerminalView({ isActive = true }) {
     }, 60);
   }
 
+  async function addExchangeProductByExactScan(rawValue) {
+    const { search: cleaned } = parseQuantitySearch(rawValue);
+    if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
+    exchangeScannerInputModeRef.current = 'keyboard';
+    setExchangeQuery('');
+
+    try {
+      const exactProduct = await findExactProductFast(cleaned);
+      if (exactProduct) {
+        addExchangeProduct(exactProduct);
+        return;
+      }
+      setErrorMessage(`Exchange barcode ${cleaned.toUpperCase()} not found.`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Exchange product lookup failed.');
+    }
+  }
+
+  function resetExchangeScannerBuffer() {
+    exchangeScannerBufferRef.current = '';
+    exchangeScannerBufferLastKeyAtRef.current = 0;
+    if (exchangeScannerBufferTimerRef.current) {
+      window.clearTimeout(exchangeScannerBufferTimerRef.current);
+      exchangeScannerBufferTimerRef.current = null;
+    }
+  }
+
+  function commitExchangeScannerBuffer() {
+    const bufferedValue = exchangeScannerBufferRef.current;
+    resetExchangeScannerBuffer();
+    const { search: cleaned } = parseQuantitySearch(bufferedValue);
+    if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
+    addExchangeProductByExactScan(bufferedValue);
+  }
+
+  function scheduleExchangeScannerBufferCommit() {
+    if (exchangeScannerBufferTimerRef.current) {
+      window.clearTimeout(exchangeScannerBufferTimerRef.current);
+    }
+    exchangeScannerBufferTimerRef.current = window.setTimeout(() => {
+      exchangeScannerBufferTimerRef.current = null;
+      if (exchangeScannerBufferRef.current.length >= 2) {
+        commitExchangeScannerBuffer();
+      }
+    }, SCANNER_SETTLE_MS);
+  }
+
+  function bufferExchangeScannerKey(event) {
+    const now = Date.now();
+
+    if (event.key === 'Enter' || event.key === 'Tab') {
+      if (exchangeScannerBufferRef.current) {
+        event.preventDefault();
+        commitExchangeScannerBuffer();
+        return true;
+      }
+      return false;
+    }
+
+    if (event.key.length !== 1 || !SCANNER_BARCODE_PATTERN.test(event.key)) return false;
+
+    const gap = now - exchangeScannerBufferLastKeyAtRef.current;
+    if (!exchangeScannerBufferRef.current || gap <= SCANNER_FAST_KEY_MS || exchangeScannerInputModeRef.current === 'scan') {
+      exchangeScannerBufferRef.current += event.key;
+    } else {
+      exchangeScannerBufferRef.current = event.key;
+    }
+    exchangeScannerBufferLastKeyAtRef.current = now;
+
+    if (exchangeScannerBufferRef.current.length >= 2 && (gap <= SCANNER_FAST_KEY_MS || exchangeScannerInputModeRef.current === 'scan')) {
+      exchangeScannerInputModeRef.current = 'scan';
+      event.preventDefault();
+      scheduleExchangeScannerBufferCommit();
+    }
+
+    return exchangeScannerInputModeRef.current === 'scan';
+  }
+
   async function handleExchangeSearchKeyDown(event) {
+    const handledScannerKey = bufferExchangeScannerKey(event);
+    if (handledScannerKey && (event.key === 'Enter' || event.key === 'Tab')) return;
     if (event.key !== 'Enter') return;
     event.preventDefault();
     const cleaned = exchangeQuery.trim();
-    if (cleaned.length < 3) {
-      setErrorMessage('Enter exchange product barcode or at least 3 letters.');
+    if (!cleaned) {
+      setErrorMessage('Enter exchange product barcode or product name.');
       return;
     }
 
     try {
+      if (SCANNER_BARCODE_PATTERN.test(cleaned)) {
+        const exactProduct = await findExactProductFast(cleaned);
+        if (exactProduct) {
+          addExchangeProduct(exactProduct);
+          return;
+        }
+      }
+      if (cleaned.length < 3) {
+        setErrorMessage('Enter exchange product barcode or at least 3 letters.');
+        return;
+      }
       const results = await searchProducts(cleaned);
       if (results.length === 0) {
         setErrorMessage('Exchange product not found.');
@@ -1137,6 +1477,37 @@ export default function BillingTerminalView({ isActive = true }) {
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Exchange product lookup failed.');
     }
+  }
+
+  function handleExchangeSearchChange(event) {
+    const nextQuery = event.target.value;
+    const nativeEvent = event.nativeEvent || {};
+    const insertedText = String(nativeEvent.data || '');
+    const isPasteLikeInput = nativeEvent.inputType === 'insertFromPaste'
+      || insertedText.length > 1
+      || Math.abs(nextQuery.length - exchangeQuery.length) > 1;
+    const { search: cleaned } = parseQuantitySearch(nextQuery);
+
+    if (isPasteLikeInput && SCANNER_BARCODE_PATTERN.test(cleaned)) {
+      exchangeScannerInputModeRef.current = 'scan';
+      setExchangeQuery(nextQuery);
+      window.setTimeout(() => addExchangeProductByExactScan(nextQuery), 0);
+      return;
+    }
+
+    exchangeScannerInputModeRef.current = 'keyboard';
+    setExchangeQuery(nextQuery);
+  }
+
+  function handleExchangeSearchPaste(event) {
+    const pastedValue = event.clipboardData?.getData('text') || '';
+    const { search: cleaned } = parseQuantitySearch(pastedValue);
+    if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
+
+    event.preventDefault();
+    exchangeScannerInputModeRef.current = 'scan';
+    setExchangeQuery(pastedValue);
+    window.setTimeout(() => addExchangeProductByExactScan(pastedValue), 0);
   }
 
   function updateExchangeQuantity(index, quantity) {
@@ -2350,8 +2721,9 @@ export default function BillingTerminalView({ isActive = true }) {
                 ref={scannerRef}
                 className="field search-input"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={handleSearchChange}
                 onKeyDown={handleSearchKeyDown}
+                onPaste={handleSearchPaste}
                 placeholder="Type at least 3 letters or barcode digits"
               />
               {suggestions.length > 0 && (
@@ -2385,8 +2757,9 @@ export default function BillingTerminalView({ isActive = true }) {
                   ref={exchangeScannerRef}
                   className="field search-input"
                   value={exchangeQuery}
-                  onChange={(event) => setExchangeQuery(event.target.value)}
+                  onChange={handleExchangeSearchChange}
                   onKeyDown={handleExchangeSearchKeyDown}
+                  onPaste={handleExchangeSearchPaste}
                   placeholder="Scan/type exchange product barcode or name"
                 />
                 <strong className="exchange-total-chip">Less {formatMoney(totals.exchangeTotal)}</strong>
@@ -2519,7 +2892,11 @@ export default function BillingTerminalView({ isActive = true }) {
                   cart.map((item, index) => {
                     const unitPrice = getUnitPrice(item, billingMode);
                     return (
-                      <tr key={`${item.barcode}-${index}`} className={item.isUnknown ? 'unknown-row' : ''}>
+                      <tr
+                        key={`${item.barcode}-${index}`}
+                        className={`${item.isUnknown ? 'unknown-row' : ''} ${selectedCartIndex === index ? 'selected-cart-row' : ''}`}
+                        onClick={() => setSelectedCartIndex(index)}
+                      >
                         <td className="mono muted">{item.barcode}</td>
                         <td><strong className="billing-product-name" title={item.product_name}>{item.product_name}</strong></td>
                         <td>{item.hsn_code || '-'}</td>

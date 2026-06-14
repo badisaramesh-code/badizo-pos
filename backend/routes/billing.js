@@ -503,12 +503,12 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       const [stockResult] = await connection.query(
         `UPDATE products
          SET stock_qty = stock_qty - ?
-         WHERE barcode = ? AND stock_qty >= ?`,
-        [quantity, item.barcode, quantity]
+         WHERE barcode = ?`,
+        [quantity, item.barcode]
       );
 
       if (stockResult.affectedRows !== 1) {
-        throw new Error(`Insufficient stock or missing product for barcode ${item.barcode}.`);
+        throw new Error(`Missing product for barcode ${item.barcode}.`);
       }
 
       const [invoiceItemResult] = await connection.query(

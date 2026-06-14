@@ -1303,6 +1303,12 @@ button:disabled {
   background: #e6f5ea;
 }
 
+.billing-product-table tbody tr.selected-cart-row {
+  background: #dff1ff !important;
+  outline: 2px solid #2374ab;
+  outline-offset: -2px;
+}
+
 .qty-input {
   width: 70px;
   text-align: center;

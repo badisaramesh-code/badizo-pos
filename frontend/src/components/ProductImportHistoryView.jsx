@@ -42,7 +42,7 @@ function processedRows(row) {
   return Number(row.inserted_count || 0) + Number(row.updated_count || 0) + Number(row.error_rows || 0);
 }
 
-export default function ProductImportHistoryView() {
+export default function ProductImportHistoryView({ onClose }) {
   const [rows, setRows] = useState([]);
   const [expandedId, setExpandedId] = useState('');
   const [detailsById, setDetailsById] = useState({});
@@ -134,9 +134,14 @@ export default function ProductImportHistoryView() {
               {hasActiveImports && <span className="status-chip info">Auto-refreshing</span>}
             </div>
           </div>
-          <button className="secondary-button" type="button" onClick={loadHistory} disabled={isLoading}>
-            {isLoading ? 'Loading...' : 'Refresh'}
-          </button>
+          <div className="action-row">
+            <button className="secondary-button" type="button" onClick={loadHistory} disabled={isLoading}>
+              {isLoading ? 'Loading...' : 'Refresh'}
+            </button>
+            <button className="secondary-button" type="button" onClick={onClose}>
+              Close
+            </button>
+          </div>
         </div>
 
         <div className="panel-body">
