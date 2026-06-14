@@ -92,6 +92,7 @@ export default function SystemView() {
   const [errorMessage, setErrorMessage] = useState('');
   const [backupInfo, setBackupInfo] = useState({ backupDir: '', backups: [] });
   const [systemHealth, setSystemHealth] = useState(null);
+  const [healthLoadError, setHealthLoadError] = useState('');
   const [isHealthLoading, setIsHealthLoading] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
   const [users, setUsers] = useState([]);
@@ -164,19 +165,12 @@ export default function SystemView() {
 
   async function loadSystemHealth() {
     setIsHealthLoading(true);
+    setHealthLoadError('');
     try {
       setSystemHealth(await fetchSystemHealth());
     } catch (err) {
-      setSystemHealth({
-        checkedAt: new Date().toISOString(),
-        backend: { ok: false, error: err.response?.data?.error || 'Unable to load system health.' },
-        mysql: { ok: false },
-        backup: { ok: false },
-        disk: { ok: false },
-        network: { serverIps: [], port: 5000, portReachable: false },
-        printers: { ok: false, printers: [] },
-        logs: []
-      });
+      setSystemHealth(null);
+      setHealthLoadError(err.response?.data?.error || 'Backend is not reachable on port 5000. Start the backend and press Refresh.');
     } finally {
       setIsHealthLoading(false);
     }
@@ -370,8 +364,11 @@ export default function SystemView() {
     return value ? new Date(value).toLocaleString() : '-';
   }
 
-  function healthChip(ok, goodText = 'OK', badText = 'Needs Check') {
-    return <span className={`status-chip ${ok ? 'success' : 'danger'}`}>{ok ? goodText : badText}</span>;
+  function healthChip(ok, goodText = 'OK', badText = 'Needs Check', pendingText = 'Waiting', badClass = 'danger') {
+    if (ok === undefined || ok === null) {
+      return <span className="status-chip muted">{pendingText}</span>;
+    }
+    return <span className={`status-chip ${ok ? 'success' : badClass}`}>{ok ? goodText : badText}</span>;
   }
 
   return (
@@ -401,12 +398,13 @@ export default function SystemView() {
           </button>
         </div>
         <div className="panel-body form-stack">
+          {healthLoadError && <div className="alert-box">{healthLoadError}</div>}
           <div className="health-summary-grid">
             <div className="health-card">
               <span className="field-label">Backend</span>
               {healthChip(systemHealth?.backend?.ok, 'Running', 'Offline')}
               <strong>Port {systemHealth?.backend?.port || 5000}</strong>
-              <span className="muted">Uptime: {systemHealth?.backend?.uptimeSeconds ? `${Math.floor(systemHealth.backend.uptimeSeconds / 60)} min` : '-'}</span>
+              <span className="muted">{systemHealth?.backend?.error || `Uptime: ${systemHealth?.backend?.uptimeSeconds ? `${Math.floor(systemHealth.backend.uptimeSeconds / 60)} min` : '-'}`}</span>
             </div>
             <div className="health-card">
               <span className="field-label">MySQL</span>
@@ -422,19 +420,19 @@ export default function SystemView() {
             </div>
             <div className="health-card">
               <span className="field-label">Disk Space</span>
-              {healthChip(systemHealth?.disk?.ok && Number(systemHealth?.disk?.usedPercent || 0) < 90, 'Healthy', 'Check')}
+              {healthChip(systemHealth?.disk?.ok === undefined ? null : systemHealth?.disk?.ok && Number(systemHealth?.disk?.usedPercent || 0) < 90, 'Healthy', 'Check')}
               <strong>{systemHealth?.disk?.freeBytes ? `${formatBytes(systemHealth.disk.freeBytes)} free` : '-'}</strong>
               <span className="muted">{systemHealth?.disk?.usedPercent ?? '-'}% used on {systemHealth?.disk?.path || '-'}</span>
             </div>
             <div className="health-card">
               <span className="field-label">Server IP</span>
-              {healthChip(Boolean(systemHealth?.network?.serverIps?.length), 'Found', 'Missing')}
+              {healthChip(systemHealth?.network ? Boolean(systemHealth.network.serverIps?.length) : null, 'Found', 'Missing')}
               <strong className="mono">{systemHealth?.network?.serverIps?.[0] || 'localhost'}</strong>
               <span className="muted">API port {systemHealth?.network?.port || 5000}: {systemHealth?.network?.portReachable ? 'reachable' : 'not reachable'}</span>
             </div>
             <div className="health-card">
               <span className="field-label">Printers</span>
-              {healthChip(systemHealth?.printers?.ok, 'Detected', 'Check Setup')}
+              {healthChip(systemHealth?.printers?.ok, 'Detected', 'Permission Note', 'Waiting', 'warning')}
               <strong>{systemHealth?.printers?.printers?.length || 0} Windows printers</strong>
               <span className="muted">{systemHealth?.printers?.error || systemHealth?.printers?.note || 'Default/status depends on Windows printer setup.'}</span>
             </div>
