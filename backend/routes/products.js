@@ -1120,9 +1120,11 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
         await connection.beginTransaction();
 
         for (const product of batch) {
-          await connection.query('SAVEPOINT product_import_row');
           let productForWrite = product;
+          let savepointCreated = false;
           try {
+      await connection.query('SAVEPOINT product_import_row');
+      savepointCreated = true;
       const [existingRows] = await connection.query(
         `SELECT *
          FROM products
@@ -1220,8 +1222,21 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
         gstPercent: product.gst_percent
       });
       await connection.query('RELEASE SAVEPOINT product_import_row');
+      savepointCreated = false;
           } catch (rowErr) {
-            await connection.query('ROLLBACK TO SAVEPOINT product_import_row');
+            if (savepointCreated) {
+              try {
+                await connection.query('ROLLBACK TO SAVEPOINT product_import_row');
+              } catch (rollbackErr) {
+                console.error('Product import row rollback failed:', rollbackErr.message);
+              }
+
+              try {
+                await connection.query('RELEASE SAVEPOINT product_import_row');
+              } catch (_releaseErr) {
+                // The savepoint may already be gone after a rollback or connection-level error.
+              }
+            }
             const rowMessage = formatProductImportDbError(product, rowErr);
             errors.push({
               row: product.source_row,
