@@ -21,6 +21,12 @@ function formatQuantityWithUnit(itemOrQuantity, maybeUnit = '') {
   return `${formatPlainMoney(quantity)} ${unit}`;
 }
 
+function formatQuantityDetail(item) {
+  const unit = String(item?.unit_type || item?.unit || '').trim();
+  if (!unit) return '';
+  return unit;
+}
+
 function SectionLine() {
   return <div className="print-rule" />;
 }
@@ -235,21 +241,25 @@ function ThermalItemTable({ invoice, template }) {
       <tbody>
         {saleItems.map((item, index) => {
           const discount = Math.max(toNumber(item.mrp) - toNumber(item.unitPrice), 0);
+          const quantityDetail = formatQuantityDetail(item);
           return (
             <React.Fragment key={`${item.barcode}-${index}`}>
-              <tr>
-                <td>{item.barcode || '-'}</td>
-                <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.mrp)}</td>
-                <td style={{ textAlign: 'right' }}>{formatPlainMoney(discount)}</td>
-                <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.gst_percent)}</td>
-                <td style={{ textAlign: 'right' }}>{formatQuantityWithUnit(item)}</td>
-                <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.lineTotal)}</td>
-              </tr>
               <tr className="thermal-product-row">
                 <td colSpan="6"><strong className="thermal-product-name">{index + 1}. {item.product_name}</strong></td>
               </tr>
               <tr className="thermal-hsn-row">
-                <td colSpan="6">HSN Code: {item.hsn_code || '-'}</td>
+                <td colSpan="6">
+                  <span>HSN Code: {item.hsn_code || '-'}</span>
+                  {quantityDetail && <span className="thermal-product-detail-gap">{quantityDetail}</span>}
+                </td>
+              </tr>
+              <tr className="thermal-detail-row">
+                <td>{item.barcode || '-'}</td>
+                <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.mrp)}</td>
+                <td style={{ textAlign: 'right' }}>{formatPlainMoney(discount)}</td>
+                <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.gst_percent)}</td>
+                <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.quantity)}</td>
+                <td className="thermal-line-total" style={{ textAlign: 'right' }}>{formatPlainMoney(item.lineTotal)}</td>
               </tr>
             </React.Fragment>
           );

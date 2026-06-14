@@ -1063,7 +1063,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       <section className="panel product-form-panel">
         <div className="panel-header">
           <h2 className="panel-title">Add / Edit Product</h2>
-          <button className="secondary-button" type="button" onClick={() => setActiveProductSection(PRODUCT_SECTIONS.LIST)}>Back to Products</button>
+          <button className="close-action-button" type="button" onClick={() => setActiveProductSection(PRODUCT_SECTIONS.LIST)}>Back to Products</button>
         </div>
         <form className="panel-body form-stack" onSubmit={handleSubmit}>
           {errorMessage && <div className="alert-box">{errorMessage}</div>}
@@ -1250,7 +1250,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="primary-button compact-primary" type="button" onClick={openNewProductForm} disabled={!canManageProducts}>Add Product</button>
+            <button className="primary-button compact-primary" type="button" onClick={openNewProductForm} disabled={!canManageProducts}>Add/Edit Product</button>
             <button className="secondary-button" type="button" onClick={() => setActiveProductSection(PRODUCT_SECTIONS.IMPORT)} disabled={!canManageProducts}>Import</button>
             <button className="secondary-button" type="button" onClick={exportProducts} disabled={!canManageProducts}>Export</button>
             <button className="secondary-button" type="button" onClick={() => { setActiveProductSection(PRODUCT_SECTIONS.EXPIRY); loadExpiryDashboard(); }} disabled={!canManageProducts}>Expiry</button>

@@ -3726,13 +3726,32 @@ button:disabled {
 
 .thermal-product-row td {
   border-bottom: 1px dotted #111;
-  padding-top: 1px;
-  padding-bottom: 1px;
+  padding-top: 3px;
+  padding-bottom: 2px;
 }
 
 .thermal-hsn-row td {
+  border-bottom: 1px dotted #111;
   padding-top: 1px;
+  padding-bottom: 1px;
   font-size: 9px;
+}
+
+.thermal-product-detail-gap {
+  display: inline-block;
+  margin-left: 14px;
+}
+
+.thermal-detail-row td {
+  border-bottom: 2px solid #111;
+  padding-top: 2px;
+  padding-bottom: 3px;
+}
+
+.thermal-detail-row .thermal-line-total {
+  font-size: 10.8px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .thermal-free-products-box {
