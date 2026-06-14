@@ -11,6 +11,7 @@ const routes = [
   ['/api/customers', require('./customers')],
   ['/api/inward', require('./inward')],
   ['/api/settings', require('./settings')],
+  ['/api/system-health', require('./health')],
   ['/api/reports', require('./reports')],
   ['/api/special-orders', require('./specialOrders')],
   ['/api/users', require('./users')]

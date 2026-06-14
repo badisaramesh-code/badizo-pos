@@ -1,5 +1,6 @@
 const mysql = require('mysql2/promise');
 const crypto = require('crypto');
+const { logError, logInfo } = require('../services/logger');
 require('dotenv').config();
 
 const pool = mysql.createPool({
@@ -968,8 +969,10 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     }
 
     console.log('Database schema is ready.');
+    logInfo('Database schema is ready');
   } catch (err) {
     console.error('Database initialization failed:', err.message);
+    logError('Database initialization failed', err);
   } finally {
     if (connection) connection.release();
   }

@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 require('dotenv').config();
+const { logError, logInfo } = require('./logger');
 
 const backupDir = process.env.BACKUP_DIR || path.join(__dirname, '..', 'backups');
 
@@ -172,8 +173,10 @@ function scheduleDailyBackup() {
       try {
         const result = await runDatabaseBackup();
         console.log(`Daily backup created: ${result.file}`);
+        logInfo('Daily backup created', { file: result.file, sizeBytes: result.sizeBytes });
       } catch (err) {
         console.error('Daily backup failed:', err.message);
+        logError('Daily backup failed', err);
       } finally {
         scheduleNext();
       }
@@ -182,6 +185,7 @@ function scheduleDailyBackup() {
 
   scheduleNext();
   console.log(`Daily database backup scheduled at ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}.`);
+  logInfo('Daily database backup scheduled', { time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` });
 }
 
 module.exports = {

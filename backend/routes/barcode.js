@@ -5,6 +5,7 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { authenticate, authorize } = require('../middleware/auth');
 const db = require('../config/db');
+const { logError } = require('../services/logger');
 
 const router = express.Router();
 const execFileAsync = promisify(execFile);
@@ -195,6 +196,7 @@ router.get('/template', authorize('SERVER', 'ADMIN'), async (req, res) => {
     res.json({ template, template_name: templateName, template_path: templatePath });
   } catch (err) {
     console.error('Barcode template read failed:', err.message);
+    logError('Barcode template read failed', err, { template: req.query?.template });
     res.status(500).json({ error: 'Unable to read barcode PRN template.' });
   }
 });
@@ -236,6 +238,7 @@ router.get('/print-logs', authorize('SERVER', 'ADMIN'), async (req, res) => {
     res.json({ rows, totals });
   } catch (err) {
     console.error('Barcode print log report failed:', err.message);
+    logError('Barcode print log report failed', err, { query: req.query });
     res.status(500).json({ error: 'Unable to load barcode sticker print report.' });
   }
 });
@@ -290,6 +293,13 @@ router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) =>
     });
   } catch (err) {
     console.error('Barcode PRN render failed:', err.message);
+    logError('Barcode PRN render failed', err, {
+      barcode: req.body?.barcode,
+      product_name: req.body?.product_name,
+      template_name: req.body?.template_name,
+      stickerCount: req.body?.stickerCount,
+      user: req.user?.username || ''
+    });
     res.status(500).json({ error: 'Unable to generate barcode PRN.' });
   }
 });
@@ -316,6 +326,11 @@ router.post('/print', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) 
     });
   } catch (err) {
     console.error('Barcode PRN print failed:', err.message);
+    logError('Barcode PRN print failed', err, {
+      output_name: req.body?.output_name,
+      template_name: req.body?.template_name,
+      user: req.user?.username || ''
+    });
     res.status(500).json({ error: err.message || 'Unable to print barcode sticker.' });
   }
 });

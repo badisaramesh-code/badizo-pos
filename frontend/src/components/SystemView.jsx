@@ -6,6 +6,7 @@ import {
   fetchBackups,
   fetchPasswordVault,
   fetchSettings,
+  fetchSystemHealth,
   fetchUsers,
   restoreBackup,
   revealPasswordVaultSlot,
@@ -90,6 +91,8 @@ export default function SystemView() {
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [backupInfo, setBackupInfo] = useState({ backupDir: '', backups: [] });
+  const [systemHealth, setSystemHealth] = useState(null);
+  const [isHealthLoading, setIsHealthLoading] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
   const [users, setUsers] = useState([]);
   const [userForm, setUserForm] = useState(emptyUserForm);
@@ -102,6 +105,7 @@ export default function SystemView() {
 
   useEffect(() => {
     loadSettings();
+    loadSystemHealth();
     loadBackups();
     loadAuditLogs();
     loadUsers();
@@ -156,6 +160,26 @@ export default function SystemView() {
 
   function updateSetting(field, value) {
     setSettings((current) => ({ ...current, [field]: value }));
+  }
+
+  async function loadSystemHealth() {
+    setIsHealthLoading(true);
+    try {
+      setSystemHealth(await fetchSystemHealth());
+    } catch (err) {
+      setSystemHealth({
+        checkedAt: new Date().toISOString(),
+        backend: { ok: false, error: err.response?.data?.error || 'Unable to load system health.' },
+        mysql: { ok: false },
+        backup: { ok: false },
+        disk: { ok: false },
+        network: { serverIps: [], port: 5000, portReachable: false },
+        printers: { ok: false, printers: [] },
+        logs: []
+      });
+    } finally {
+      setIsHealthLoading(false);
+    }
   }
 
   function updateBarcodePrinterTemplate(templateName, field, value) {
@@ -338,7 +362,16 @@ export default function SystemView() {
     const value = Number(bytes || 0);
     if (value < 1024) return `${value} B`;
     if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  }
+
+  function formatHealthDate(value) {
+    return value ? new Date(value).toLocaleString() : '-';
+  }
+
+  function healthChip(ok, goodText = 'OK', badText = 'Needs Check') {
+    return <span className={`status-chip ${ok ? 'success' : 'danger'}`}>{ok ? goodText : badText}</span>;
   }
 
   return (
@@ -354,6 +387,89 @@ export default function SystemView() {
               <span className="muted">{note}</span>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header green">
+          <div>
+            <h2 className="panel-title">System Health</h2>
+            <span className="panel-subtitle">Server, database, backup, disk, printer, IP and log check</span>
+          </div>
+          <button className="secondary-button" type="button" onClick={loadSystemHealth} disabled={isHealthLoading}>
+            {isHealthLoading ? 'Checking...' : 'Refresh'}
+          </button>
+        </div>
+        <div className="panel-body form-stack">
+          <div className="health-summary-grid">
+            <div className="health-card">
+              <span className="field-label">Backend</span>
+              {healthChip(systemHealth?.backend?.ok, 'Running', 'Offline')}
+              <strong>Port {systemHealth?.backend?.port || 5000}</strong>
+              <span className="muted">Uptime: {systemHealth?.backend?.uptimeSeconds ? `${Math.floor(systemHealth.backend.uptimeSeconds / 60)} min` : '-'}</span>
+            </div>
+            <div className="health-card">
+              <span className="field-label">MySQL</span>
+              {healthChip(systemHealth?.mysql?.ok, 'Connected', 'Error')}
+              <strong>{systemHealth?.mysql?.database || 'badizo_pos'}</strong>
+              <span className="muted">{systemHealth?.mysql?.version || systemHealth?.mysql?.error || '-'}</span>
+            </div>
+            <div className="health-card">
+              <span className="field-label">Last Backup</span>
+              {healthChip(systemHealth?.backup?.ok, 'Available', 'Missing')}
+              <strong>{systemHealth?.backup?.lastBackup?.file || 'No backup yet'}</strong>
+              <span className="muted">{formatHealthDate(systemHealth?.backup?.lastBackup?.modifiedAt)}</span>
+            </div>
+            <div className="health-card">
+              <span className="field-label">Disk Space</span>
+              {healthChip(systemHealth?.disk?.ok && Number(systemHealth?.disk?.usedPercent || 0) < 90, 'Healthy', 'Check')}
+              <strong>{systemHealth?.disk?.freeBytes ? `${formatBytes(systemHealth.disk.freeBytes)} free` : '-'}</strong>
+              <span className="muted">{systemHealth?.disk?.usedPercent ?? '-'}% used on {systemHealth?.disk?.path || '-'}</span>
+            </div>
+            <div className="health-card">
+              <span className="field-label">Server IP</span>
+              {healthChip(Boolean(systemHealth?.network?.serverIps?.length), 'Found', 'Missing')}
+              <strong className="mono">{systemHealth?.network?.serverIps?.[0] || 'localhost'}</strong>
+              <span className="muted">API port {systemHealth?.network?.port || 5000}: {systemHealth?.network?.portReachable ? 'reachable' : 'not reachable'}</span>
+            </div>
+            <div className="health-card">
+              <span className="field-label">Printers</span>
+              {healthChip(systemHealth?.printers?.ok, 'Detected', 'Check Setup')}
+              <strong>{systemHealth?.printers?.printers?.length || 0} Windows printers</strong>
+              <span className="muted">{systemHealth?.printers?.error || systemHealth?.printers?.note || 'Default/status depends on Windows printer setup.'}</span>
+            </div>
+          </div>
+
+          <div className="change-box health-network-box">
+            <span>Checked: <strong>{formatHealthDate(systemHealth?.checkedAt)}</strong></span>
+            <span>Browser URL from slave machines: <strong className="mono">{systemHealth?.network?.serverIps?.[0] ? `http://${systemHealth.network.serverIps[0]}:3000` : 'http://SERVER-IP:3000'}</strong></span>
+            <span>API URL: <strong className="mono">{systemHealth?.network?.serverIps?.[0] ? `http://${systemHealth.network.serverIps[0]}:5000/api` : 'http://SERVER-IP:5000/api'}</strong></span>
+          </div>
+
+          <div className="table-scroll">
+            <table className="history-table health-detail-table">
+              <thead><tr><th>Area</th><th>Status / Detail</th><th>Path / Note</th></tr></thead>
+              <tbody>
+                {(systemHealth?.logs || []).map((log) => (
+                  <tr key={log.path}>
+                    <td>{log.label}</td>
+                    <td>{log.exists ? `${formatBytes(log.sizeBytes)} | ${formatHealthDate(log.modifiedAt)}` : 'Not created yet'}</td>
+                    <td className="mono">{log.path}</td>
+                  </tr>
+                ))}
+                {(systemHealth?.printers?.printers || []).slice(0, 8).map((printer) => (
+                  <tr key={`${printer.Name}-${printer.PortName}`}>
+                    <td>{printer.Name}</td>
+                    <td>{printer.PrinterStatus || '-'}{printer.Default ? ' | Default' : ''}{printer.Shared ? ' | Shared' : ''}</td>
+                    <td className="mono">{printer.ShareName ? `\\\\localhost\\${printer.ShareName}` : (printer.PortName || printer.DriverName || '-')}</td>
+                  </tr>
+                ))}
+                {!systemHealth && (
+                  <tr><td colSpan="3">Press Refresh to load system health.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 

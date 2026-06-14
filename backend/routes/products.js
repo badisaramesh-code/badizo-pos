@@ -4,6 +4,7 @@ const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { csvEscape, csvLine } = require('../utils/formatters');
 const { writeAuditLog } = require('../services/auditService');
+const { logError } = require('../services/logger');
 const crypto = require('crypto');
 
 const PRODUCT_DROPBOX_DAYS = 365;
@@ -1579,6 +1580,14 @@ async function processProductImportJob({ importId, totalInputRows, products, err
     }
   } catch (err) {
     console.error('Product import failed:', err.message);
+    logError('Product import failed', err, {
+      importId,
+      totalInputRows,
+      inserted,
+      updated,
+      batches,
+      errors: errors.length
+    });
     try {
       const connection = await db.getConnection();
       try {
@@ -1794,6 +1803,12 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
   setImmediate(() => {
     processProductImportJob({ importId, totalInputRows, products, errors }).catch((err) => {
       console.error('Product import background job failed:', err.message);
+      logError('Product import background job failed', err, {
+        importId,
+        fileName,
+        totalRows: totalInputRows,
+        user: req.user?.username || ''
+      });
     });
   });
 

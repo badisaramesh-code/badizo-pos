@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { mountRoutes } = require('./routes');
 const { scheduleDailyBackup } = require('./services/backupService');
+const { logError, logInfo } = require('./services/logger');
 
 const app = express();
 
@@ -20,6 +21,7 @@ function startServer(port = PORT) {
   return new Promise((resolve, reject) => {
     const server = app.listen(port, () => {
       console.log(`BADIZO POS API running on port ${port}`);
+      logInfo('Backend started', { port });
       scheduleDailyBackup();
       resolve(server);
     });
@@ -31,6 +33,7 @@ function startServer(port = PORT) {
 if (require.main === module) {
   startServer().catch((err) => {
     console.error(err);
+    logError('Backend startup failed', err);
     process.exit(1);
   });
 }

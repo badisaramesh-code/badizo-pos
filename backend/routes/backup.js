@@ -10,6 +10,7 @@ const {
   runDatabaseBackup
 } = require('../services/backupService');
 const { writeAuditLog } = require('../services/auditService');
+const { logError, logInfo } = require('../services/logger');
 
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
@@ -21,13 +22,15 @@ router.get('/', async (_req, res) => {
     });
   } catch (err) {
     console.error('Backup list failed:', err.message);
+    logError('Backup list failed', err);
     res.status(500).json({ error: 'Unable to list backups.' });
   }
 });
 
-router.post('/run', async (_req, res) => {
+router.post('/run', async (req, res) => {
   try {
     const backup = await runDatabaseBackup();
+    logInfo('Manual backup created', { file: backup.file, sizeBytes: backup.sizeBytes, user: req.user?.username || '' });
     await writeAuditLog({
       user: req.user,
       action: 'BACKUP_CREATED',
@@ -41,6 +44,7 @@ router.post('/run', async (_req, res) => {
     });
   } catch (err) {
     console.error('Backup failed:', err.message);
+    logError('Backup failed', err, { user: req.user?.username || '' });
     res.status(500).json({ error: err.message || 'Unable to create backup.' });
   }
 });
@@ -55,6 +59,7 @@ router.get('/download/:file', async (req, res) => {
     res.download(filePath);
   } catch (err) {
     console.error('Backup download failed:', err.message);
+    logError('Backup download failed', err, { file: req.params?.file, user: req.user?.username || '' });
     res.status(500).json({ error: 'Unable to download backup.' });
   }
 });
@@ -79,6 +84,7 @@ router.post('/restore', async (req, res) => {
     res.json({ success: true, restore: result });
   } catch (err) {
     console.error('Backup restore failed:', err.message);
+    logError('Backup restore failed', err, { file, user: req.user?.username || '' });
     res.status(500).json({ error: err.message || 'Unable to restore backup.' });
   }
 });

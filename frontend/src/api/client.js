@@ -294,6 +294,11 @@ export async function fetchSettings() {
   return data;
 }
 
+export async function fetchSystemHealth() {
+  const { data } = await api.get('/system-health');
+  return data;
+}
+
 export async function saveSettings(settings) {
   const { data } = await api.post('/settings', settings);
   return data;
