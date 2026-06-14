@@ -12,6 +12,7 @@ const routes = [
   ['/api/inward', require('./inward')],
   ['/api/settings', require('./settings')],
   ['/api/reports', require('./reports')],
+  ['/api/special-orders', require('./specialOrders')],
   ['/api/users', require('./users')]
 ];
 

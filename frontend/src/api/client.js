@@ -53,6 +53,19 @@ export async function searchProducts(query) {
   return Array.isArray(data) ? data : [];
 }
 
+export async function lookupExactProduct(query) {
+  const trimmed = String(query || '').trim();
+  if (!trimmed) return null;
+
+  try {
+    const { data } = await api.get(`/products/exact/${encodeURIComponent(trimmed)}`);
+    return data || null;
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+    throw err;
+  }
+}
+
 export async function fetchProducts({ page = 1, limit = 50, search = '', gst = 'ALL' } = {}) {
   const { data } = await api.get('/products', {
     params: { page, limit, search, gst }
@@ -409,6 +422,25 @@ export async function saveSupplier(payload) {
   return data;
 }
 
+export async function fetchSupplierDues({ supplier = '', status = 'OPEN' } = {}) {
+  const { data } = await api.get('/inward/supplier-dues', {
+    params: { supplier, status }
+  });
+  return data;
+}
+
+export async function recordSupplierPayment(payload) {
+  const { data } = await api.post('/inward/supplier-payments', payload);
+  return data;
+}
+
+export async function fetchSupplierLedger({ supplier = '' } = {}) {
+  const { data } = await api.get('/inward/supplier-ledger', {
+    params: { supplier }
+  });
+  return data;
+}
+
 export async function fetchInwardHistory({ from = '', to = '', supplier = '', invoice = '' } = {}) {
   const { data } = await api.get('/inward/history', {
     params: { from, to, supplier, invoice }
@@ -459,6 +491,41 @@ export async function saveCustomer(customer) {
 export async function fetchCustomers(search = '') {
   const { data } = await api.get('/customers', { params: { search } });
   return Array.isArray(data) ? data : [];
+}
+
+export async function fetchUpcomingSpecialOrders() {
+  const { data } = await api.get('/special-orders/upcoming');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchSpecialOrders({ search = '', status = 'OPEN' } = {}) {
+  const { data } = await api.get('/special-orders', { params: { search, status } });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchSpecialOrderDetails(orderNo) {
+  const { data } = await api.get(`/special-orders/${encodeURIComponent(orderNo)}`);
+  return data;
+}
+
+export async function saveSpecialOrder(payload) {
+  const { data } = await api.post('/special-orders', payload);
+  return data;
+}
+
+export async function updateSpecialOrderStatus(orderNo, status) {
+  const { data } = await api.post(`/special-orders/${encodeURIComponent(orderNo)}/status`, { status });
+  return data;
+}
+
+export async function recordSpecialOrderPayment(orderNo, payload) {
+  const { data } = await api.post(`/special-orders/${encodeURIComponent(orderNo)}/payments`, payload);
+  return data;
+}
+
+export async function fetchSpecialOrderReceivables({ search = '' } = {}) {
+  const { data } = await api.get('/special-orders/receivables', { params: { search } });
+  return data;
 }
 
 export async function fetchBooksSummary(dateOrRange) {

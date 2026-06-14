@@ -100,6 +100,46 @@ function normalizePaymentMode(value) {
   return String(value || '').toUpperCase() === 'CASH' ? 'Cash' : 'Credit';
 }
 
+function normalizeSupplierPaymentMode(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (raw === 'CASH') return 'Cash';
+  if (raw === 'UPI') return 'UPI';
+  if (raw === 'CHEQUE' || raw === 'CHECK') return 'Cheque';
+  if (raw === 'OTHER') return 'Other';
+  return 'Bank Transfer';
+}
+
+function paymentStatusFor(dueAmount, dueDate) {
+  if (dueAmount <= 0.01) return 'PAID';
+  if (dueDate) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(dueDate);
+    due.setHours(0, 0, 0, 0);
+    if (!Number.isNaN(due.getTime()) && due < today) return 'OVERDUE';
+  }
+  return 'DUE';
+}
+
+function normalizePaymentTerms(value) {
+  const raw = String(value || '').trim();
+  return raw || '30 days';
+}
+
+function paymentTermDays(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw || raw === 'CASH' || raw === 'IMMEDIATE') return 0;
+  const match = raw.match(/(\d+)/);
+  return match ? Number(match[1]) : 30;
+}
+
+function dueDateFrom(invoiceDate, terms) {
+  const base = invoiceDate ? new Date(invoiceDate) : new Date();
+  if (Number.isNaN(base.getTime())) return null;
+  base.setDate(base.getDate() + paymentTermDays(terms));
+  return base.toISOString().slice(0, 10);
+}
+
 function normalizeExpiryDate(value) {
   const raw = String(value || '').trim();
   if (!raw) return null;
@@ -360,7 +400,8 @@ router.get('/suppliers', async (req, res) => {
   try {
     const [masterRows] = await db.query(
       `SELECT id, supplier_name, supplier_address, supplier_gstin, supplier_phone,
-              contact_person, payment_terms, is_active, created_at, updated_at
+              contact_person, payment_terms, account_holder_name, bank_name, bank_branch,
+              bank_account_no, bank_ifsc, upi_id, is_active, created_at, updated_at
        FROM suppliers
        ${search ? 'WHERE supplier_name LIKE ? OR supplier_gstin LIKE ? OR supplier_phone LIKE ?' : ''}
        ORDER BY updated_at DESC, supplier_name ASC
@@ -395,6 +436,12 @@ router.get('/suppliers', async (req, res) => {
         phone: row.supplier_phone || '',
         contact_person: row.contact_person || '',
         payment_terms: row.payment_terms || '',
+        account_holder_name: row.account_holder_name || '',
+        bank_name: row.bank_name || '',
+        bank_branch: row.bank_branch || '',
+        bank_account_no: row.bank_account_no || '',
+        bank_ifsc: row.bank_ifsc || '',
+        upi_id: row.upi_id || '',
         is_active: Boolean(row.is_active),
         source: 'MASTER',
         last_invoice_no: '',
@@ -423,6 +470,12 @@ router.get('/suppliers', async (req, res) => {
         phone: row.supplier_phone || '',
         contact_person: '',
         payment_terms: '',
+        account_holder_name: '',
+        bank_name: '',
+        bank_branch: '',
+        bank_account_no: '',
+        bank_ifsc: '',
+        upi_id: '',
         is_active: true,
         source: 'HISTORY',
         last_invoice_no: row.supplier_invoice_no || '',
@@ -451,22 +504,49 @@ router.post('/suppliers', async (req, res) => {
     address: String(supplier.address || supplier.supplier_address || '').trim(),
     phone: String(supplier.phone || supplier.supplier_phone || '').trim(),
     contact_person: String(supplier.contact_person || '').trim(),
-    payment_terms: String(supplier.payment_terms || '').trim()
+    payment_terms: String(supplier.payment_terms || '').trim(),
+    account_holder_name: String(supplier.account_holder_name || '').trim(),
+    bank_name: String(supplier.bank_name || '').trim(),
+    bank_branch: String(supplier.bank_branch || '').trim(),
+    bank_account_no: String(supplier.bank_account_no || '').trim(),
+    bank_ifsc: String(supplier.bank_ifsc || '').trim().toUpperCase(),
+    upi_id: String(supplier.upi_id || '').trim()
   };
 
   try {
     const [result] = await db.query(
       `INSERT INTO suppliers
-       (supplier_name, supplier_address, supplier_gstin, supplier_phone, contact_person, payment_terms, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+       (supplier_name, supplier_address, supplier_gstin, supplier_phone, contact_person, payment_terms,
+        account_holder_name, bank_name, bank_branch, bank_account_no, bank_ifsc, upi_id, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          supplier_address = VALUES(supplier_address),
          supplier_phone = VALUES(supplier_phone),
          contact_person = VALUES(contact_person),
          payment_terms = VALUES(payment_terms),
+         account_holder_name = VALUES(account_holder_name),
+         bank_name = VALUES(bank_name),
+         bank_branch = VALUES(bank_branch),
+         bank_account_no = VALUES(bank_account_no),
+         bank_ifsc = VALUES(bank_ifsc),
+         upi_id = VALUES(upi_id),
          is_active = 1,
          updated_at = CURRENT_TIMESTAMP`,
-      [name, values.address, gstin, values.phone, values.contact_person, values.payment_terms, req.user?.username || '']
+      [
+        name,
+        values.address,
+        gstin,
+        values.phone,
+        values.contact_person,
+        values.payment_terms,
+        values.account_holder_name,
+        values.bank_name,
+        values.bank_branch,
+        values.bank_account_no,
+        values.bank_ifsc,
+        values.upi_id,
+        req.user?.username || ''
+      ]
     );
 
     await writeAuditLog({
@@ -481,6 +561,199 @@ router.post('/suppliers', async (req, res) => {
   } catch (err) {
     console.error('Supplier save failed:', err.message);
     res.status(500).json({ error: 'Unable to save supplier.' });
+  }
+});
+
+router.get('/supplier-dues', async (req, res) => {
+  const supplier = String(req.query.supplier || '').trim();
+  const status = String(req.query.status || 'OPEN').trim().toUpperCase();
+  const clauses = ["posting_status = 'POSTED'"];
+  const params = [];
+
+  if (supplier) {
+    clauses.push('supplier_name LIKE ?');
+    params.push(`%${supplier}%`);
+  }
+  if (status === 'OPEN') {
+    clauses.push('due_amount > 0.01');
+  } else if (['PAID', 'PARTIAL', 'DUE', 'OVERDUE'].includes(status)) {
+    clauses.push('payment_status = ?');
+    params.push(status);
+  }
+
+  try {
+    await db.query(
+      `UPDATE inward_entries
+       SET payment_status = 'OVERDUE'
+       WHERE posting_status = 'POSTED'
+         AND due_amount > 0.01
+         AND due_date IS NOT NULL
+         AND due_date < CURDATE()
+         AND payment_status <> 'OVERDUE'`
+    );
+
+    const [rows] = await db.query(
+      `SELECT id, inward_no, supplier_name, supplier_gstin, supplier_phone,
+              supplier_invoice_no, supplier_invoice_date, payment_mode, payment_terms,
+              due_date, grand_total, paid_amount, due_amount, payment_status, created_at
+       FROM inward_entries
+       WHERE ${clauses.join(' AND ')}
+       ORDER BY due_date IS NULL ASC, due_date ASC, id DESC
+       LIMIT 300`,
+      params
+    );
+
+    const summary = rows.reduce((acc, row) => {
+      acc.total_due += Number(row.due_amount || 0);
+      acc.total_purchase += Number(row.grand_total || 0);
+      acc.overdue_count += row.payment_status === 'OVERDUE' ? 1 : 0;
+      return acc;
+    }, { total_due: 0, total_purchase: 0, overdue_count: 0, bill_count: rows.length });
+
+    res.json({ rows, summary });
+  } catch (err) {
+    console.error('Supplier dues fetch failed:', err.message);
+    res.status(500).json({ error: 'Unable to load supplier dues.' });
+  }
+});
+
+router.post('/supplier-payments', async (req, res) => {
+  const inwardNo = String(req.body?.inward_no || '').trim();
+  const amount = parseMoney(req.body?.amount);
+  const paymentDate = req.body?.payment_date || new Date().toISOString().slice(0, 10);
+  const paymentMode = normalizeSupplierPaymentMode(req.body?.payment_mode);
+  const referenceNo = String(req.body?.reference_no || '').trim();
+  const notes = String(req.body?.notes || '').trim();
+
+  if (!inwardNo) return res.status(400).json({ error: 'Inward bill is required.' });
+  if (amount <= 0) return res.status(400).json({ error: 'Payment amount must be greater than zero.' });
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [entryRows] = await connection.query(
+      `SELECT inward_no, supplier_name, supplier_gstin, grand_total, paid_amount, due_amount, due_date
+       FROM inward_entries
+       WHERE inward_no = ? AND posting_status = 'POSTED'
+       FOR UPDATE`,
+      [inwardNo]
+    );
+    const entry = entryRows[0];
+    if (!entry) throw new Error('Posted inward bill not found.');
+    const currentDue = Number(entry.due_amount || 0);
+    if (amount > currentDue + 0.01) {
+      throw new Error(`Payment cannot be more than due amount ${currentDue.toFixed(2)}.`);
+    }
+
+    const paidAmount = Number(entry.paid_amount || 0) + amount;
+    const dueAmount = Math.max(Number(entry.grand_total || 0) - paidAmount, 0);
+    const paymentStatus = dueAmount <= 0.01
+      ? 'PAID'
+      : paidAmount > 0
+        ? 'PARTIAL'
+        : paymentStatusFor(dueAmount, entry.due_date);
+
+    const [paymentResult] = await connection.query(
+      `INSERT INTO supplier_payments
+       (inward_no, supplier_name, supplier_gstin, payment_date, amount, payment_mode, reference_no, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [inwardNo, entry.supplier_name, entry.supplier_gstin || '', paymentDate, amount, paymentMode, referenceNo, notes.slice(0, 255), req.user?.username || '']
+    );
+
+    await connection.query(
+      `UPDATE inward_entries
+       SET paid_amount = ?, due_amount = ?, payment_status = ?
+       WHERE inward_no = ?`,
+      [paidAmount, dueAmount, paymentStatus, inwardNo]
+    );
+
+    await writeAuditLog({
+      user: req.user,
+      action: 'SUPPLIER_PAYMENT_RECORDED',
+      entityType: 'SUPPLIER_PAYMENT',
+      entityId: String(paymentResult.insertId),
+      details: { inward_no: inwardNo, supplier: entry.supplier_name, amount, paymentMode, referenceNo },
+      connection
+    });
+
+    await connection.commit();
+    res.json({ success: true, id: paymentResult.insertId, inward_no: inwardNo, paid_amount: paidAmount, due_amount: dueAmount, payment_status: paymentStatus });
+  } catch (err) {
+    await connection.rollback();
+    console.error('Supplier payment save failed:', err.message);
+    res.status(400).json({ error: err.message || 'Unable to record supplier payment.' });
+  } finally {
+    connection.release();
+  }
+});
+
+router.get('/supplier-ledger', async (req, res) => {
+  const supplier = String(req.query.supplier || '').trim();
+  if (supplier.length < 2) return res.status(400).json({ error: 'Supplier search is required.' });
+  const like = `%${supplier}%`;
+
+  try {
+    const [billRows] = await db.query(
+      `SELECT inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date, created_at,
+              grand_total, paid_amount, due_amount, payment_status, due_date
+       FROM inward_entries
+       WHERE posting_status = 'POSTED' AND supplier_name LIKE ?
+       ORDER BY COALESCE(supplier_invoice_date, DATE(created_at)) ASC, id ASC
+       LIMIT 300`,
+      [like]
+    );
+    const [paymentRows] = await db.query(
+      `SELECT id, inward_no, supplier_name, payment_date, amount, payment_mode, reference_no, notes, created_at
+       FROM supplier_payments
+       WHERE supplier_name LIKE ?
+       ORDER BY payment_date ASC, id ASC
+       LIMIT 500`,
+      [like]
+    );
+
+    const entries = [
+      ...billRows.map((row) => ({
+        type: 'BILL',
+        date: row.supplier_invoice_date || row.created_at,
+        inward_no: row.inward_no,
+        reference_no: row.supplier_invoice_no || '',
+        description: `Purchase bill ${row.supplier_invoice_no || row.inward_no}`,
+        debit: Number(row.grand_total || 0),
+        credit: 0,
+        status: row.payment_status,
+        due_date: row.due_date
+      })),
+      ...paymentRows.map((row) => ({
+        type: 'PAYMENT',
+        date: row.payment_date || row.created_at,
+        inward_no: row.inward_no,
+        reference_no: row.reference_no || '',
+        description: `${row.payment_mode} payment${row.notes ? ` - ${row.notes}` : ''}`,
+        debit: 0,
+        credit: Number(row.amount || 0),
+        status: '',
+        due_date: ''
+      }))
+    ].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    let balance = 0;
+    const ledger = entries.map((entry) => {
+      balance += entry.debit - entry.credit;
+      return { ...entry, balance };
+    });
+
+    res.json({
+      supplier,
+      summary: {
+        total_purchase: billRows.reduce((sum, row) => sum + Number(row.grand_total || 0), 0),
+        total_paid: paymentRows.reduce((sum, row) => sum + Number(row.amount || 0), 0),
+        balance
+      },
+      rows: ledger
+    });
+  } catch (err) {
+    console.error('Supplier ledger fetch failed:', err.message);
+    res.status(500).json({ error: 'Unable to load supplier ledger.' });
   }
 });
 
@@ -657,6 +930,7 @@ router.get('/recent', async (_req, res) => {
   try {
     const [rows] = await db.query(
       `SELECT id, inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date, payment_mode,
+              payment_terms, due_date, paid_amount, due_amount, payment_status,
               item_count, total_qty, taxable_total, gst_total, total_cgst, total_sgst, total_igst,
               grand_total, tax_type, posting_status, created_by, created_at
        FROM inward_entries
@@ -695,6 +969,7 @@ router.get('/history', async (req, res) => {
   try {
     const [rows] = await db.query(
       `SELECT id, inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date, payment_mode,
+              payment_terms, due_date, paid_amount, due_amount, payment_status,
               item_count, total_qty, taxable_total, gst_total, total_cgst, total_sgst, total_igst,
               grand_total, tax_type, posting_status, created_by, created_at
        FROM inward_entries
@@ -799,7 +1074,8 @@ router.get('/by-number/:inwardNo/details', async (req, res) => {
   try {
     const [entryRows] = await db.query(
       `SELECT id, inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
-              supplier_invoice_no, supplier_invoice_date, payment_mode, item_count, total_qty, taxable_total,
+              supplier_invoice_no, supplier_invoice_date, payment_mode, payment_terms, due_date,
+              paid_amount, due_amount, payment_status, item_count, total_qty, taxable_total,
               gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, posting_status, created_by, created_at
        FROM inward_entries
        WHERE inward_no = ?
@@ -839,7 +1115,8 @@ router.get('/:id/details', async (req, res) => {
   try {
     const [entryRows] = await db.query(
       `SELECT id, inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
-              supplier_invoice_no, supplier_invoice_date, payment_mode, item_count, total_qty, taxable_total,
+              supplier_invoice_no, supplier_invoice_date, payment_mode, payment_terms, due_date,
+              paid_amount, due_amount, payment_status, item_count, total_qty, taxable_total,
               gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, posting_status, created_by, created_at
        FROM inward_entries
        WHERE id = ?
@@ -1192,12 +1469,46 @@ router.post('/', async (req, res) => {
       }
     }
 
+    const paymentTerms = normalizePaymentTerms(req.body?.payment_terms || supplier.payment_terms);
+    const invoiceDate = supplier.invoice_date || null;
+    const dueDate = isDraft
+      ? null
+      : (req.body?.due_date || supplier.due_date || dueDateFrom(invoiceDate, paymentTerms));
+    const requestedPaidAmount = parseMoney(req.body?.paid_amount ?? supplier.paid_amount);
+    const paidAmount = isDraft
+      ? 0
+      : paymentMode === 'Cash'
+        ? grandTotal
+        : Math.min(Math.max(requestedPaidAmount, 0), grandTotal);
+    const dueAmount = isDraft ? 0 : Math.max(grandTotal - paidAmount, 0);
+    const paymentStatus = isDraft
+      ? 'DUE'
+      : paidAmount > 0 && dueAmount > 0
+        ? 'PARTIAL'
+        : paymentStatusFor(dueAmount, dueDate);
+
     await connection.query(
       `UPDATE inward_entries
        SET item_count = ?, total_qty = ?, taxable_total = ?, gst_total = ?,
-           total_cgst = ?, total_sgst = ?, total_igst = ?, grand_total = ?
+           total_cgst = ?, total_sgst = ?, total_igst = ?, grand_total = ?,
+           payment_terms = ?, due_date = ?, paid_amount = ?, due_amount = ?, payment_status = ?
        WHERE inward_no = ?`,
-      [validLines.length, totalQty, taxableTotal, gstTotal, cgstTotal, sgstTotal, igstTotal, grandTotal, finalInwardNo]
+      [
+        validLines.length,
+        totalQty,
+        taxableTotal,
+        gstTotal,
+        cgstTotal,
+        sgstTotal,
+        igstTotal,
+        grandTotal,
+        paymentTerms,
+        dueDate,
+        paidAmount,
+        dueAmount,
+        paymentStatus,
+        finalInwardNo
+      ]
     );
 
     await writeAuditLog({
@@ -1347,6 +1658,11 @@ router.post('/', async (req, res) => {
       pending_item_count: pendingLines.length,
       total_qty: totalQty,
       payment_mode: paymentMode,
+      payment_terms: paymentTerms,
+      due_date: dueDate,
+      paid_amount: paidAmount,
+      due_amount: dueAmount,
+      payment_status: paymentStatus,
       posting_status: isDraft ? 'DRAFT' : 'POSTED',
       grand_total: grandTotal
     });

@@ -2125,6 +2125,30 @@ router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER
   }
 });
 
+router.get('/exact/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
+  try {
+    const q = decodeURIComponent(req.params.query || '').trim().toUpperCase();
+    if (!q) return res.status(400).json({ error: 'Barcode or product code is required.' });
+
+    const [barcodeRows] = await db.query(
+      `SELECT * FROM products WHERE barcode = ? LIMIT 1`,
+      [q]
+    );
+    if (barcodeRows.length) return res.json(toProduct(barcodeRows[0]));
+
+    const [codeRows] = await db.query(
+      `SELECT * FROM products WHERE product_code = ? LIMIT 1`,
+      [q]
+    );
+    if (codeRows.length) return res.json(toProduct(codeRows[0]));
+
+    return res.status(404).json({ error: 'Product not found.' });
+  } catch (err) {
+    console.error('Exact product lookup failed:', err.message);
+    res.status(500).json({ error: 'Unable to lookup product barcode.' });
+  }
+});
+
 router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
   const {
     barcode,

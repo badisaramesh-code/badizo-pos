@@ -352,6 +352,11 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         supplier_invoice_no VARCHAR(100) DEFAULT '',
         supplier_invoice_date DATE DEFAULT NULL,
         payment_mode ENUM('Credit', 'Cash') NOT NULL DEFAULT 'Credit',
+        payment_terms VARCHAR(120) DEFAULT '',
+        due_date DATE DEFAULT NULL,
+        paid_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        due_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        payment_status ENUM('PAID', 'PARTIAL', 'DUE', 'OVERDUE') NOT NULL DEFAULT 'DUE',
         item_count INT NOT NULL DEFAULT 0,
         total_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         taxable_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
@@ -414,6 +419,12 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         supplier_phone VARCHAR(20) DEFAULT '',
         contact_person VARCHAR(120) DEFAULT '',
         payment_terms VARCHAR(120) DEFAULT '',
+        account_holder_name VARCHAR(150) DEFAULT '',
+        bank_name VARCHAR(150) DEFAULT '',
+        bank_branch VARCHAR(150) DEFAULT '',
+        bank_account_no VARCHAR(80) DEFAULT '',
+        bank_ifsc VARCHAR(20) DEFAULT '',
+        upi_id VARCHAR(120) DEFAULT '',
         is_active TINYINT(1) NOT NULL DEFAULT 1,
         created_by VARCHAR(100) DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -462,6 +473,26 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         FOREIGN KEY (po_no) REFERENCES purchase_orders(po_no) ON DELETE CASCADE,
         INDEX idx_purchase_order_items_po (po_no),
         INDEX idx_purchase_order_items_barcode (barcode)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS supplier_payments (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        inward_no VARCHAR(50) NOT NULL,
+        supplier_name VARCHAR(255) NOT NULL,
+        supplier_gstin VARCHAR(20) DEFAULT '',
+        payment_date DATE NOT NULL,
+        amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        payment_mode ENUM('Cash', 'UPI', 'Bank Transfer', 'Cheque', 'Other') NOT NULL DEFAULT 'Bank Transfer',
+        reference_no VARCHAR(120) DEFAULT '',
+        notes VARCHAR(255) DEFAULT '',
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_supplier_payment_inward (inward_no),
+        INDEX idx_supplier_payment_supplier (supplier_name),
+        INDEX idx_supplier_payment_date (payment_date),
+        FOREIGN KEY (inward_no) REFERENCES inward_entries(inward_no) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
@@ -549,6 +580,71 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_customer_phone (phone)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS special_orders (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        order_no VARCHAR(60) NOT NULL UNIQUE,
+        customer_name VARCHAR(150) NOT NULL,
+        customer_phone VARCHAR(20) NOT NULL,
+        event_type VARCHAR(80) DEFAULT '',
+        required_date DATE NOT NULL,
+        delivery_time VARCHAR(30) DEFAULT '',
+        order_status ENUM('DRAFT', 'CONFIRMED', 'NEED_TO_ORDER', 'ORDERED', 'READY', 'DELIVERED', 'CLOSED', 'CANCELLED') NOT NULL DEFAULT 'CONFIRMED',
+        priority ENUM('NORMAL', 'IMPORTANT', 'URGENT') NOT NULL DEFAULT 'IMPORTANT',
+        total_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        advance_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        paid_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        balance_due DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        payment_status ENUM('ADVANCE', 'PARTIAL', 'PAID', 'DUE', 'OVERDUE') NOT NULL DEFAULT 'DUE',
+        due_date DATE DEFAULT NULL,
+        notes VARCHAR(255) DEFAULT '',
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_special_order_required_date (required_date),
+        INDEX idx_special_order_status (order_status),
+        INDEX idx_special_order_customer (customer_name, customer_phone),
+        INDEX idx_special_order_payment_status (payment_status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS special_order_items (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        order_no VARCHAR(60) NOT NULL,
+        item_name VARCHAR(255) NOT NULL,
+        barcode VARCHAR(120) DEFAULT '',
+        quantity DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        unit VARCHAR(40) DEFAULT 'Nos',
+        estimated_rate DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        line_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        procurement_type ENUM('REGULAR_STOCK', 'SPECIAL_ORDER') NOT NULL DEFAULT 'SPECIAL_ORDER',
+        procurement_status ENUM('NOT_ORDERED', 'ORDERED', 'RECEIVED', 'NOT_REQUIRED') NOT NULL DEFAULT 'NOT_ORDERED',
+        supplier_name VARCHAR(255) DEFAULT '',
+        notes VARCHAR(255) DEFAULT '',
+        INDEX idx_special_order_items_order (order_no),
+        INDEX idx_special_order_items_procurement (procurement_status),
+        FOREIGN KEY (order_no) REFERENCES special_orders(order_no) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS special_order_payments (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        order_no VARCHAR(60) NOT NULL,
+        payment_date DATE NOT NULL,
+        amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        payment_mode ENUM('Cash', 'UPI', 'Card', 'Bank Transfer', 'Cheque', 'Other') NOT NULL DEFAULT 'Cash',
+        reference_no VARCHAR(120) DEFAULT '',
+        notes VARCHAR(255) DEFAULT '',
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_special_order_payments_order (order_no),
+        INDEX idx_special_order_payments_date (payment_date),
+        FOREIGN KEY (order_no) REFERENCES special_orders(order_no) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
@@ -761,7 +857,39 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'inward_entries', 'total_igst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER total_sgst');
     await ensureColumn(connection, 'inward_entries', 'tax_type', "ENUM('LOCAL', 'INTERSTATE') NOT NULL DEFAULT 'LOCAL' AFTER grand_total");
     await ensureColumn(connection, 'inward_entries', 'payment_mode', "ENUM('Credit', 'Cash') NOT NULL DEFAULT 'Credit' AFTER supplier_invoice_date");
+    await ensureColumn(connection, 'inward_entries', 'payment_terms', "VARCHAR(120) DEFAULT '' AFTER payment_mode");
+    await ensureColumn(connection, 'inward_entries', 'due_date', 'DATE DEFAULT NULL AFTER payment_terms');
+    await ensureColumn(connection, 'inward_entries', 'paid_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER due_date');
+    await ensureColumn(connection, 'inward_entries', 'due_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER paid_amount');
+    await ensureColumn(connection, 'inward_entries', 'payment_status', "ENUM('PAID', 'PARTIAL', 'DUE', 'OVERDUE') NOT NULL DEFAULT 'DUE' AFTER due_amount");
     await ensureColumn(connection, 'inward_entries', 'posting_status', "ENUM('DRAFT', 'POSTED') NOT NULL DEFAULT 'POSTED' AFTER tax_type");
+    await connection.query(`
+      UPDATE inward_entries
+      SET paid_amount = grand_total, due_amount = 0, payment_status = 'PAID'
+      WHERE posting_status = 'POSTED'
+        AND payment_mode = 'Cash'
+        AND paid_amount = 0
+        AND due_amount = 0
+        AND grand_total > 0
+    `);
+    await connection.query(`
+      UPDATE inward_entries
+      SET due_amount = grand_total, payment_status = CASE
+            WHEN due_date IS NOT NULL AND due_date < CURDATE() THEN 'OVERDUE'
+            ELSE 'DUE'
+          END
+      WHERE posting_status = 'POSTED'
+        AND payment_mode = 'Credit'
+        AND paid_amount = 0
+        AND due_amount = 0
+        AND grand_total > 0
+    `);
+    await ensureColumn(connection, 'suppliers', 'account_holder_name', "VARCHAR(150) DEFAULT '' AFTER payment_terms");
+    await ensureColumn(connection, 'suppliers', 'bank_name', "VARCHAR(150) DEFAULT '' AFTER account_holder_name");
+    await ensureColumn(connection, 'suppliers', 'bank_branch', "VARCHAR(150) DEFAULT '' AFTER bank_name");
+    await ensureColumn(connection, 'suppliers', 'bank_account_no', "VARCHAR(80) DEFAULT '' AFTER bank_branch");
+    await ensureColumn(connection, 'suppliers', 'bank_ifsc', "VARCHAR(20) DEFAULT '' AFTER bank_account_no");
+    await ensureColumn(connection, 'suppliers', 'upi_id', "VARCHAR(120) DEFAULT '' AFTER bank_ifsc");
     await ensureColumn(connection, 'inward_items', 'discount_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER discount_percent");
     await ensureColumn(connection, 'inward_items', 'discount_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER discount_type');
     await ensureColumn(connection, 'inward_items', 'scheme_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER scheme");

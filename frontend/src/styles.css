@@ -1152,6 +1152,41 @@ button:disabled {
   align-items: center;
 }
 
+.payable-entry-grid,
+.supplier-payment-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fcf9;
+}
+
+.payable-entry-grid .change-box {
+  margin: 0;
+}
+
+.supplier-payment-notes {
+  grid-column: span 2;
+}
+
+.special-order-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fcf9;
+}
+
+.special-order-notes {
+  grid-column: span 2;
+}
+
 .billing-product-table tbody tr:nth-child(odd):not(.unknown-row) {
   background: #f1fbf3;
 }
@@ -5364,11 +5399,16 @@ button:disabled {
 
 @media (max-width: 900px) {
   .supplier-master-form,
+  .payable-entry-grid,
+  .supplier-payment-form,
+  .special-order-grid,
   .stock-adjustment-grid {
     grid-template-columns: 1fr;
   }
 
   .supplier-master-address,
+  .supplier-payment-notes,
+  .special-order-notes,
   .stock-adjustment-grid label:nth-child(4) {
     grid-column: auto;
   }

@@ -4,12 +4,15 @@ import pdfWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.min.js';
 import { createWorker, PSM } from 'tesseract.js';
 import {
   deleteInwardEntry,
+  fetchSupplierDues,
   fetchInwardDetails,
   fetchInwardDetailsByNumber,
   fetchInwardHistory,
   fetchPurchaseOrders,
   fetchRecentInwards,
+  fetchSupplierLedger,
   fetchSuppliers,
+  recordSupplierPayment,
   savePurchaseOrder,
   saveInwardEntry,
   saveSupplier,
@@ -53,7 +56,10 @@ const blankSupplier = {
   gstin: '',
   phone: '',
   invoice_no: '',
-  invoice_date: ''
+  invoice_date: '',
+  payment_terms: '30 days',
+  due_date: '',
+  paid_amount: ''
 };
 
 const blankSupplierMasterForm = {
@@ -62,13 +68,21 @@ const blankSupplierMasterForm = {
   gstin: '',
   phone: '',
   contact_person: '',
-  payment_terms: ''
+  payment_terms: '30 days',
+  account_holder_name: '',
+  bank_name: '',
+  bank_branch: '',
+  bank_account_no: '',
+  bank_ifsc: '',
+  upi_id: ''
 };
 
 const INWARD_SECTIONS = {
   ENTRY: 'entry',
   SUPPLIERS: 'suppliers',
-  PURCHASE_ORDERS: 'purchaseOrders'
+  PURCHASE_ORDERS: 'purchaseOrders',
+  PAYMENTS: 'payments',
+  LEDGER: 'ledger'
 };
 
 const blankPurchaseOrderLine = {
@@ -80,6 +94,16 @@ const blankPurchaseOrderLine = {
   order_qty: '',
   purchase_price: '',
   note: ''
+};
+
+const blankSupplierPaymentForm = {
+  inward_no: '',
+  supplier_name: '',
+  amount: '',
+  payment_date: '',
+  payment_mode: 'Bank Transfer',
+  reference_no: '',
+  notes: ''
 };
 
 function todayIso() {
@@ -98,6 +122,19 @@ function formatDateTime(value) {
   if (!value) return '-';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+function dueAgeLabel(value) {
+  if (!value) return '-';
+  const due = new Date(value);
+  if (Number.isNaN(due.getTime())) return '-';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  due.setHours(0, 0, 0, 0);
+  const days = Math.round((due - today) / 86400000);
+  if (days < 0) return `${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} overdue`;
+  if (days === 0) return 'Due today';
+  return `${days} day${days === 1 ? '' : 's'} left`;
 }
 
 async function renderPdfPages(file) {
@@ -1969,6 +2006,9 @@ export default function InwardEntryView() {
   const [isSupplierMasterSaving, setIsSupplierMasterSaving] = useState(false);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [purchaseOrderSupplier, setPurchaseOrderSupplier] = useState(blankSupplier);
+  const [purchaseOrderSupplierSuggestions, setPurchaseOrderSupplierSuggestions] = useState([]);
+  const [isPurchaseOrderSupplierLookupOpen, setIsPurchaseOrderSupplierLookupOpen] = useState(false);
+  const [isPurchaseOrderSupplierLookupLoading, setIsPurchaseOrderSupplierLookupLoading] = useState(false);
   const [purchaseOrderExpectedDate, setPurchaseOrderExpectedDate] = useState('');
   const [purchaseOrderNotes, setPurchaseOrderNotes] = useState('');
   const [purchaseOrderLines, setPurchaseOrderLines] = useState([{ ...blankPurchaseOrderLine }]);
@@ -1976,6 +2016,15 @@ export default function InwardEntryView() {
   const [purchaseOrderFilter, setPurchaseOrderFilter] = useState({ status: 'ALL', supplier: '' });
   const [isPurchaseOrderLoading, setIsPurchaseOrderLoading] = useState(false);
   const [isPurchaseOrderSaving, setIsPurchaseOrderSaving] = useState(false);
+  const [supplierDueFilter, setSupplierDueFilter] = useState({ supplier: '', status: 'OPEN' });
+  const [supplierDueRows, setSupplierDueRows] = useState([]);
+  const [supplierDueSummary, setSupplierDueSummary] = useState({ total_due: 0, total_purchase: 0, overdue_count: 0, bill_count: 0 });
+  const [isSupplierDueLoading, setIsSupplierDueLoading] = useState(false);
+  const [supplierPaymentForm, setSupplierPaymentForm] = useState({ ...blankSupplierPaymentForm, payment_date: todayIso() });
+  const [isSupplierPaymentSaving, setIsSupplierPaymentSaving] = useState(false);
+  const [supplierLedgerSearch, setSupplierLedgerSearch] = useState('');
+  const [supplierLedger, setSupplierLedger] = useState({ rows: [], summary: { total_purchase: 0, total_paid: 0, balance: 0 } });
+  const [isSupplierLedgerLoading, setIsSupplierLedgerLoading] = useState(false);
 
   useEffect(() => {
     loadRecentInwards();
@@ -2022,6 +2071,40 @@ export default function InwardEntryView() {
       clearTimeout(timer);
     };
   }, [supplier.name]);
+
+  useEffect(() => {
+    const query = purchaseOrderSupplier.name.trim();
+    if (query.length < 3) {
+      setPurchaseOrderSupplierSuggestions([]);
+      setIsPurchaseOrderSupplierLookupOpen(false);
+      setIsPurchaseOrderSupplierLookupLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setIsPurchaseOrderSupplierLookupLoading(true);
+      try {
+        const results = await searchInwardSuppliers(query);
+        if (!cancelled) {
+          setPurchaseOrderSupplierSuggestions(results.slice(0, 5));
+          setIsPurchaseOrderSupplierLookupOpen(results.length > 0);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setPurchaseOrderSupplierSuggestions([]);
+          setIsPurchaseOrderSupplierLookupOpen(false);
+        }
+      } finally {
+        if (!cancelled) setIsPurchaseOrderSupplierLookupLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [purchaseOrderSupplier.name]);
 
   const totals = useMemo(() => lines.reduce((acc, line) => {
     const calculated = calculateInwardLine(line, taxType, discountType, schemeType);
@@ -2112,6 +2195,19 @@ export default function InwardEntryView() {
     setSupplierSuggestions([]);
     setIsSupplierLookupOpen(false);
     setStatusMessage(`${match.name || 'Supplier'} details filled from old inward bills. Enter current invoice number/date and review before saving.`);
+  }
+
+  function selectPurchaseOrderSupplier(match) {
+    setPurchaseOrderSupplier((current) => ({
+      ...current,
+      name: match.name || '',
+      address: match.address || '',
+      gstin: String(match.gstin || '').toUpperCase(),
+      phone: match.phone || ''
+    }));
+    setPurchaseOrderSupplierSuggestions([]);
+    setIsPurchaseOrderSupplierLookupOpen(false);
+    setStatusMessage(`${match.name || 'Supplier'} selected for purchase order.`);
   }
 
   function updateLine(index, field, value) {
@@ -2304,6 +2400,20 @@ export default function InwardEntryView() {
     setLines([{ ...blankLine }]);
   }
 
+  function updatePaymentDueFromTerms(field, value) {
+    updateSupplier(field, value);
+    if (field !== 'invoice_date' && field !== 'payment_terms') return;
+    const invoiceDate = field === 'invoice_date' ? value : supplier.invoice_date;
+    const terms = field === 'payment_terms' ? value : supplier.payment_terms;
+    const match = String(terms || '').match(/(\d+)/);
+    const days = match ? Number(match[1]) : 30;
+    if (!invoiceDate) return;
+    const date = new Date(invoiceDate);
+    if (Number.isNaN(date.getTime())) return;
+    date.setDate(date.getDate() + days);
+    setSupplier((current) => ({ ...current, due_date: date.toISOString().slice(0, 10) }));
+  }
+
   function closePendingInvoiceEdit() {
     resetInwardForm();
     setStatusMessage(editingInward ? 'Inward edit closed without changes.' : 'Pending invoice closed without changes. Draft is still available in Pending Invoices.');
@@ -2334,6 +2444,9 @@ export default function InwardEntryView() {
         supplier,
         tax_type: taxType,
         payment_mode: paymentMode,
+        payment_terms: supplier.payment_terms,
+        due_date: supplier.due_date,
+        paid_amount: supplier.paid_amount,
         posting_status: effectivePostingStatus,
         source_draft_id: postingStatus === 'POSTED' ? sourceDraftId : null,
         replace_inward_id: editingInward
@@ -2378,7 +2491,10 @@ export default function InwardEntryView() {
       gstin: entry.supplier_gstin || '',
       phone: entry.supplier_phone || '',
       invoice_no: entry.supplier_invoice_no || '',
-      invoice_date: entry.supplier_invoice_date ? String(entry.supplier_invoice_date).slice(0, 10) : ''
+      invoice_date: entry.supplier_invoice_date ? String(entry.supplier_invoice_date).slice(0, 10) : '',
+      payment_terms: entry.payment_terms || '30 days',
+      due_date: entry.due_date ? String(entry.due_date).slice(0, 10) : '',
+      paid_amount: String(entry.paid_amount ?? '')
     });
     setTaxType(entry.tax_type === 'INTERSTATE' ? 'INTERSTATE' : 'LOCAL');
     setPaymentMode(entry.payment_mode || 'Credit');
@@ -2579,7 +2695,13 @@ export default function InwardEntryView() {
       gstin: row.gstin || '',
       phone: row.phone || '',
       contact_person: row.contact_person || '',
-      payment_terms: row.payment_terms || ''
+      payment_terms: row.payment_terms || '30 days',
+      account_holder_name: row.account_holder_name || '',
+      bank_name: row.bank_name || '',
+      bank_branch: row.bank_branch || '',
+      bank_account_no: row.bank_account_no || '',
+      bank_ifsc: row.bank_ifsc || '',
+      upi_id: row.upi_id || ''
     });
     setStatusMessage(row.source === 'HISTORY' ? 'Loaded old supplier details. Save once to add it to Supplier Master.' : 'Supplier loaded for editing.');
   }
@@ -2709,6 +2831,69 @@ export default function InwardEntryView() {
     }
   }
 
+  async function loadSupplierDues() {
+    setErrorMessage('');
+    setIsSupplierDueLoading(true);
+    try {
+      const result = await fetchSupplierDues(supplierDueFilter);
+      setSupplierDueRows(Array.isArray(result.rows) ? result.rows : []);
+      setSupplierDueSummary(result.summary || { total_due: 0, total_purchase: 0, overdue_count: 0, bill_count: 0 });
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load supplier dues.');
+    } finally {
+      setIsSupplierDueLoading(false);
+    }
+  }
+
+  function startSupplierPayment(row) {
+    setSupplierPaymentForm({
+      ...blankSupplierPaymentForm,
+      inward_no: row.inward_no || '',
+      supplier_name: row.supplier_name || '',
+      amount: String(row.due_amount || ''),
+      payment_date: todayIso()
+    });
+    setStatusMessage(`Recording payment for ${row.supplier_name} / ${row.supplier_invoice_no || row.inward_no}.`);
+  }
+
+  async function submitSupplierPayment(event) {
+    event.preventDefault();
+    setErrorMessage('');
+    setStatusMessage('');
+    setIsSupplierPaymentSaving(true);
+    try {
+      const result = await recordSupplierPayment(supplierPaymentForm);
+      setStatusMessage(`Payment recorded. Due amount is now ${formatMoney(result.due_amount)}.`);
+      setSupplierPaymentForm({ ...blankSupplierPaymentForm, payment_date: todayIso() });
+      await loadSupplierDues();
+      if (supplierLedgerSearch.trim()) await loadSupplierLedger();
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to record supplier payment.');
+    } finally {
+      setIsSupplierPaymentSaving(false);
+    }
+  }
+
+  async function loadSupplierLedger() {
+    setErrorMessage('');
+    if (supplierLedgerSearch.trim().length < 2) {
+      setErrorMessage('Enter at least 2 letters of supplier name to load ledger.');
+      return;
+    }
+    setIsSupplierLedgerLoading(true);
+    try {
+      const result = await fetchSupplierLedger({ supplier: supplierLedgerSearch });
+      setSupplierLedger({
+        rows: Array.isArray(result.rows) ? result.rows : [],
+        summary: result.summary || { total_purchase: 0, total_paid: 0, balance: 0 }
+      });
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load supplier ledger.');
+    } finally {
+      setIsSupplierLedgerLoading(false);
+    }
+  }
+
   return (
     <div className="form-stack">
       <section className="panel">
@@ -2723,6 +2908,8 @@ export default function InwardEntryView() {
             <button type="button" className={activeInwardSection === INWARD_SECTIONS.ENTRY ? 'active' : ''} onClick={() => setActiveInwardSection(INWARD_SECTIONS.ENTRY)}>Purchase Entry</button>
             <button type="button" className={activeInwardSection === INWARD_SECTIONS.SUPPLIERS ? 'active' : ''} onClick={() => { setActiveInwardSection(INWARD_SECTIONS.SUPPLIERS); if (!supplierMasterRows.length) loadSupplierMaster(); }}>Supplier Master</button>
             <button type="button" className={activeInwardSection === INWARD_SECTIONS.PURCHASE_ORDERS ? 'active' : ''} onClick={() => { setActiveInwardSection(INWARD_SECTIONS.PURCHASE_ORDERS); loadPurchaseOrders(); }}>Purchase Orders</button>
+            <button type="button" className={activeInwardSection === INWARD_SECTIONS.PAYMENTS ? 'active' : ''} onClick={() => { setActiveInwardSection(INWARD_SECTIONS.PAYMENTS); loadSupplierDues(); }}>Supplier Payments</button>
+            <button type="button" className={activeInwardSection === INWARD_SECTIONS.LEDGER ? 'active' : ''} onClick={() => setActiveInwardSection(INWARD_SECTIONS.LEDGER)}>Supplier Ledger</button>
           </div>
         </div>
       </section>
@@ -2755,7 +2942,11 @@ export default function InwardEntryView() {
                   className="field"
                   type={field === 'invoice_date' ? 'date' : 'text'}
                   value={supplier[field]}
-                  onChange={(event) => updateSupplier(field, field === 'gstin' ? event.target.value.toUpperCase() : event.target.value)}
+                  onChange={(event) => (
+                    field === 'invoice_date'
+                      ? updatePaymentDueFromTerms(field, event.target.value)
+                      : updateSupplier(field, field === 'gstin' ? event.target.value.toUpperCase() : event.target.value)
+                  )}
                   onFocus={() => {
                     if (field === 'name' && supplierSuggestions.length) setIsSupplierLookupOpen(true);
                   }}
@@ -2801,6 +2992,24 @@ export default function InwardEntryView() {
             <span className="muted">
               {paymentMode === 'Credit' ? 'Credit purchase posts to supplier ledger.' : 'Cash purchase posts as cash purchase, not supplier outstanding.'}
             </span>
+          </div>
+
+          <div className="payable-entry-grid">
+            <label>
+              <span className="field-label">Payment Terms</span>
+              <input className="field" value={supplier.payment_terms} onChange={(event) => updatePaymentDueFromTerms('payment_terms', event.target.value)} placeholder="Immediate, 7 days, 15 days, 30 days" />
+            </label>
+            <label>
+              <span className="field-label">Due Date</span>
+              <input className="field" type="date" value={supplier.due_date} onChange={(event) => updateSupplier('due_date', event.target.value)} disabled={paymentMode === 'Cash'} />
+            </label>
+            <label>
+              <span className="field-label">Paid Now</span>
+              <input className="field" type="number" min="0" step="0.01" value={supplier.paid_amount} onChange={(event) => updateSupplier('paid_amount', event.target.value)} disabled={paymentMode === 'Cash'} />
+            </label>
+            <div className="change-box">
+              Due after save: <strong>{paymentMode === 'Cash' ? formatMoney(0) : formatMoney(Math.max(totals.total - toNumber(supplier.paid_amount), 0))}</strong>
+            </div>
           </div>
 
           <section className="bulk-edit-box">
@@ -3072,6 +3281,30 @@ export default function InwardEntryView() {
                 <span className="field-label">Address</span>
                 <input className="field" value={supplierMasterForm.address} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, address: event.target.value }))} />
               </label>
+              <label>
+                <span className="field-label">Account Holder</span>
+                <input className="field" value={supplierMasterForm.account_holder_name} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, account_holder_name: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">Bank Name</span>
+                <input className="field" value={supplierMasterForm.bank_name} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, bank_name: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">Branch</span>
+                <input className="field" value={supplierMasterForm.bank_branch} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, bank_branch: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">Account Number</span>
+                <input className="field" value={supplierMasterForm.bank_account_no} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, bank_account_no: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">IFSC Code</span>
+                <input className="field" value={supplierMasterForm.bank_ifsc} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, bank_ifsc: event.target.value.toUpperCase() }))} />
+              </label>
+              <label>
+                <span className="field-label">UPI ID</span>
+                <input className="field" value={supplierMasterForm.upi_id} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, upi_id: event.target.value }))} />
+              </label>
               <div className="supplier-master-actions">
                 <button className="primary-button compact-primary" type="submit" disabled={isSupplierMasterSaving}>
                   {isSupplierMasterSaving ? 'Saving...' : 'Save Supplier'}
@@ -3139,9 +3372,35 @@ export default function InwardEntryView() {
             {errorMessage && <div className="alert-box">{errorMessage}</div>}
             {statusMessage && <div className="change-box">{statusMessage}</div>}
             <div className="form-grid">
-              <label>
+              <label className="supplier-lookup-field">
                 <span className="field-label">Supplier Name</span>
-                <input className="field" value={purchaseOrderSupplier.name} onChange={(event) => setPurchaseOrderSupplier((current) => ({ ...current, name: event.target.value }))} />
+                <input
+                  className="field"
+                  value={purchaseOrderSupplier.name}
+                  onChange={(event) => setPurchaseOrderSupplier((current) => ({ ...current, name: event.target.value }))}
+                  onFocus={() => {
+                    if (purchaseOrderSupplierSuggestions.length) setIsPurchaseOrderSupplierLookupOpen(true);
+                  }}
+                  onBlur={() => setTimeout(() => setIsPurchaseOrderSupplierLookupOpen(false), 180)}
+                />
+                {isPurchaseOrderSupplierLookupOpen && (
+                  <div className="supplier-suggestions">
+                    {isPurchaseOrderSupplierLookupLoading && <div className="supplier-suggestion-empty">Searching suppliers...</div>}
+                    {!isPurchaseOrderSupplierLookupLoading && purchaseOrderSupplierSuggestions.slice(0, 5).map((match) => (
+                      <button
+                        key={`${match.name}-${match.gstin}-${match.phone}`}
+                        type="button"
+                        className="supplier-suggestion-row"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => selectPurchaseOrderSupplier(match)}
+                      >
+                        <strong>{match.name}</strong>
+                        <span>GST: {match.gstin || '-'}</span>
+                        <span>Phone: {match.phone || '-'}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </label>
               <label>
                 <span className="field-label">Supplier GSTIN</span>
@@ -3249,6 +3508,164 @@ export default function InwardEntryView() {
                       {order.status !== 'RECEIVED' && <button className="secondary-button" type="button" onClick={() => changePurchaseOrderStatus(order.po_no, 'RECEIVED')}>Received</button>}
                       {order.status !== 'CANCELLED' && <button className="danger-button" type="button" onClick={() => changePurchaseOrderStatus(order.po_no, 'CANCELLED')}>Cancel</button>}
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {activeInwardSection === INWARD_SECTIONS.PAYMENTS && (
+        <section className="panel">
+          <div className="panel-header green">
+            <div>
+              <h2 className="panel-title">Supplier Payments</h2>
+              <span className="panel-subtitle">Track due bills, due dates, overdue amounts, and record supplier payments.</span>
+            </div>
+            <button className="secondary-button" type="button" onClick={loadSupplierDues} disabled={isSupplierDueLoading}>
+              {isSupplierDueLoading ? 'Loading...' : 'Refresh Dues'}
+            </button>
+          </div>
+          <div className="panel-body form-stack">
+            {errorMessage && <div className="alert-box">{errorMessage}</div>}
+            {statusMessage && <div className="change-box">{statusMessage}</div>}
+
+            <form className="history-search-row inward-history-filters" onSubmit={(event) => { event.preventDefault(); loadSupplierDues(); }}>
+              <label>
+                <span className="field-label">Supplier</span>
+                <input className="field" value={supplierDueFilter.supplier} onChange={(event) => setSupplierDueFilter((current) => ({ ...current, supplier: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">Status</span>
+                <select className="select" value={supplierDueFilter.status} onChange={(event) => setSupplierDueFilter((current) => ({ ...current, status: event.target.value }))}>
+                  <option value="OPEN">Open Dues</option>
+                  <option value="DUE">Due</option>
+                  <option value="OVERDUE">Overdue</option>
+                  <option value="PARTIAL">Partial</option>
+                  <option value="PAID">Paid</option>
+                  <option value="ALL">All Bills</option>
+                </select>
+              </label>
+              <button className="primary-button compact-primary" type="submit">Search Dues</button>
+            </form>
+
+            <div className="summary-band">
+              <span>Bills: <strong>{supplierDueSummary.bill_count || supplierDueRows.length}</strong></span>
+              <span>Total Purchase: <strong>{formatMoney(supplierDueSummary.total_purchase)}</strong></span>
+              <span>Total Due: <strong>{formatMoney(supplierDueSummary.total_due)}</strong></span>
+              <span>Overdue Bills: <strong>{supplierDueSummary.overdue_count || 0}</strong></span>
+            </div>
+
+            <form className="supplier-payment-form" onSubmit={submitSupplierPayment}>
+              <label>
+                <span className="field-label">Inward No</span>
+                <input className="field" value={supplierPaymentForm.inward_no} onChange={(event) => setSupplierPaymentForm((current) => ({ ...current, inward_no: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">Supplier</span>
+                <input className="field" value={supplierPaymentForm.supplier_name} disabled />
+              </label>
+              <label>
+                <span className="field-label">Amount</span>
+                <input className="field" type="number" min="0" step="0.01" value={supplierPaymentForm.amount} onChange={(event) => setSupplierPaymentForm((current) => ({ ...current, amount: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">Payment Date</span>
+                <input className="field" type="date" value={supplierPaymentForm.payment_date} onChange={(event) => setSupplierPaymentForm((current) => ({ ...current, payment_date: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">Payment Mode</span>
+                <select className="select" value={supplierPaymentForm.payment_mode} onChange={(event) => setSupplierPaymentForm((current) => ({ ...current, payment_mode: event.target.value }))}>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="UPI">UPI</option>
+                  <option value="Cheque">Cheque</option>
+                  <option value="Cash">Cash</option>
+                  <option value="Other">Other</option>
+                </select>
+              </label>
+              <label>
+                <span className="field-label">Reference No</span>
+                <input className="field" value={supplierPaymentForm.reference_no} onChange={(event) => setSupplierPaymentForm((current) => ({ ...current, reference_no: event.target.value }))} />
+              </label>
+              <label className="supplier-payment-notes">
+                <span className="field-label">Notes</span>
+                <input className="field" value={supplierPaymentForm.notes} onChange={(event) => setSupplierPaymentForm((current) => ({ ...current, notes: event.target.value }))} />
+              </label>
+              <button className="primary-button compact-primary" type="submit" disabled={isSupplierPaymentSaving}>
+                {isSupplierPaymentSaving ? 'Saving...' : 'Record Payment'}
+              </button>
+            </form>
+
+            <table className="history-table">
+              <thead>
+                <tr><th>Supplier</th><th>Invoice</th><th>Due Date</th><th>Age</th><th>Total</th><th>Paid</th><th>Due</th><th>Status</th><th>Action</th></tr>
+              </thead>
+              <tbody>
+                {supplierDueRows.length === 0 ? (
+                  <tr><td colSpan="9">No supplier dues found.</td></tr>
+                ) : supplierDueRows.map((row) => (
+                  <tr key={row.inward_no}>
+                    <td><strong>{row.supplier_name}</strong><div className="muted compact-cell-text">{row.supplier_phone || '-'}</div></td>
+                    <td>{row.supplier_invoice_no || row.inward_no}<div className="muted compact-cell-text">{formatDate(row.supplier_invoice_date)}</div></td>
+                    <td>{formatDate(row.due_date)}</td>
+                    <td>{dueAgeLabel(row.due_date)}</td>
+                    <td>{formatMoney(row.grand_total)}</td>
+                    <td>{formatMoney(row.paid_amount)}</td>
+                    <td><strong>{formatMoney(row.due_amount)}</strong></td>
+                    <td><span className={`status-chip ${row.payment_status === 'OVERDUE' ? 'danger' : row.payment_status === 'PAID' ? 'success' : 'warning'}`}>{row.payment_status}</span></td>
+                    <td><button className="secondary-button" type="button" onClick={() => startSupplierPayment(row)} disabled={toNumber(row.due_amount) <= 0}>Pay</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {activeInwardSection === INWARD_SECTIONS.LEDGER && (
+        <section className="panel">
+          <div className="panel-header green">
+            <div>
+              <h2 className="panel-title">Supplier Ledger</h2>
+              <span className="panel-subtitle">Review purchases, payments, and running balance by supplier.</span>
+            </div>
+          </div>
+          <div className="panel-body form-stack">
+            {errorMessage && <div className="alert-box">{errorMessage}</div>}
+            <form className="history-search-row" onSubmit={(event) => { event.preventDefault(); loadSupplierLedger(); }}>
+              <input
+                className="field"
+                value={supplierLedgerSearch}
+                onChange={(event) => setSupplierLedgerSearch(event.target.value)}
+                placeholder="Enter supplier name"
+              />
+              <button className="primary-button compact-primary" type="submit" disabled={isSupplierLedgerLoading}>
+                {isSupplierLedgerLoading ? 'Loading...' : 'Load Ledger'}
+              </button>
+            </form>
+            <div className="summary-band">
+              <span>Total Purchase: <strong>{formatMoney(supplierLedger.summary.total_purchase)}</strong></span>
+              <span>Total Paid: <strong>{formatMoney(supplierLedger.summary.total_paid)}</strong></span>
+              <span>Balance: <strong>{formatMoney(supplierLedger.summary.balance)}</strong></span>
+            </div>
+            <table className="history-table">
+              <thead>
+                <tr><th>Date</th><th>Type</th><th>Inward</th><th>Reference</th><th>Description</th><th>Debit</th><th>Credit</th><th>Balance</th></tr>
+              </thead>
+              <tbody>
+                {supplierLedger.rows.length === 0 ? (
+                  <tr><td colSpan="8">Load a supplier ledger to review entries.</td></tr>
+                ) : supplierLedger.rows.map((row, index) => (
+                  <tr key={`${row.type}-${row.inward_no}-${index}`}>
+                    <td>{formatDate(row.date)}</td>
+                    <td><span className={`status-chip ${row.type === 'PAYMENT' ? 'success' : 'info'}`}>{row.type}</span></td>
+                    <td>{row.inward_no}</td>
+                    <td>{row.reference_no || '-'}</td>
+                    <td>{row.description}</td>
+                    <td>{row.debit ? formatMoney(row.debit) : '-'}</td>
+                    <td>{row.credit ? formatMoney(row.credit) : '-'}</td>
+                    <td><strong>{formatMoney(row.balance)}</strong></td>
                   </tr>
                 ))}
               </tbody>

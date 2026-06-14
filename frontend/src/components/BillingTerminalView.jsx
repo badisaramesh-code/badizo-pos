@@ -10,9 +10,11 @@ import {
   fetchInvoiceDetails,
   fetchInvoiceHistory,
   fetchNextInvoice,
+  fetchCustomers,
   fetchSettings,
   getStoredUser,
   holdBill,
+  lookupExactProduct,
   lookupCustomer,
   recordInvoiceReprint,
   saveCustomer,
@@ -211,6 +213,9 @@ export default function BillingTerminalView({ isActive = true }) {
   const [customerPhone, setCustomerPhone] = useState(initialDraft?.customerPhone || '');
   const [companyName, setCompanyName] = useState(initialDraft?.companyName || '');
   const [customerGstin, setCustomerGstin] = useState(initialDraft?.customerGstin || '');
+  const [customerSuggestions, setCustomerSuggestions] = useState([]);
+  const [isCustomerLookupOpen, setIsCustomerLookupOpen] = useState(false);
+  const [isCustomerSuggestionLoading, setIsCustomerSuggestionLoading] = useState(false);
   const [paymentMode, setPaymentMode] = useState(initialDraft?.paymentMode || 'Cash');
   const [mixedPayment, setMixedPayment] = useState(initialDraft?.mixedPayment || EMPTY_MIXED_PAYMENT);
   const [paymentReference, setPaymentReference] = useState(initialDraft?.paymentReference || '');
@@ -241,6 +246,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [returnReason, setReturnReason] = useState('');
   const [refundMode, setRefundMode] = useState('Cash');
   const scannerRef = useRef(null);
+  const exactProductCacheRef = useRef(new Map());
   const exchangeScannerRef = useRef(null);
   const billingTableRef = useRef(null);
   const priceCheckInputRef = useRef(null);
@@ -356,6 +362,12 @@ export default function BillingTerminalView({ isActive = true }) {
     const run = async () => {
       const { search: cleaned } = parseQuantitySearch(query);
       if (cleaned.length < 3) {
+        setSuggestions([]);
+        setSelectedSuggestion(0);
+        return;
+      }
+
+      if (/^[A-Z0-9._-]{6,}$/i.test(cleaned)) {
         setSuggestions([]);
         setSelectedSuggestion(0);
         return;
@@ -648,6 +660,40 @@ export default function BillingTerminalView({ isActive = true }) {
     return () => window.clearTimeout(timer);
   }, [cart.length, errorMessage]);
 
+  useEffect(() => {
+    const query = (isBusinessBillingMode(billingMode) ? companyName : customerName).trim();
+    if (query.length < 3) {
+      setCustomerSuggestions([]);
+      setIsCustomerLookupOpen(false);
+      setIsCustomerSuggestionLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setIsCustomerSuggestionLoading(true);
+      try {
+        const rows = await fetchCustomers(query);
+        if (!cancelled) {
+          setCustomerSuggestions(rows.slice(0, 3));
+          setIsCustomerLookupOpen(rows.length > 0);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setCustomerSuggestions([]);
+          setIsCustomerLookupOpen(false);
+        }
+      } finally {
+        if (!cancelled) setIsCustomerSuggestionLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [billingMode, companyName, customerName]);
+
   async function loadSettings() {
     try {
       const settings = await fetchSettings();
@@ -683,6 +729,22 @@ export default function BillingTerminalView({ isActive = true }) {
       setLoyaltyCustomer(null);
       setStatusMessage('New loyalty customer. Complete bill or save customer to start points.');
     }
+  }
+
+  function selectCustomerSuggestion(customer) {
+    const nextName = customer.customer_name || '';
+    if (isBusinessBillingMode(billingMode)) {
+      setCompanyName(nextName);
+    } else {
+      setCustomerName(nextName);
+    }
+    setCustomerPhone(customer.phone || '');
+    setCustomerAddress(customer.address || '');
+    setCustomerGstin(String(customer.gstin || '').toUpperCase());
+    setLoyaltyCustomer(customer);
+    setCustomerSuggestions([]);
+    setIsCustomerLookupOpen(false);
+    setStatusMessage(`${nextName || 'Customer'} loaded from customer master.`);
   }
 
   async function handleCustomerSave() {
@@ -729,10 +791,29 @@ export default function BillingTerminalView({ isActive = true }) {
     };
   }
 
+  async function findExactProductFast(searchValue) {
+    const key = String(searchValue || '').trim().toUpperCase();
+    if (!key) return null;
+    if (exactProductCacheRef.current.has(key)) {
+      return exactProductCacheRef.current.get(key);
+    }
+    const product = await lookupExactProduct(key);
+    if (product) {
+      exactProductCacheRef.current.set(key, product);
+    }
+    return product;
+  }
+
   function addProduct(product, quantityToAdd = 1) {
     const addQty = Math.max(toNumber(quantityToAdd, 1), 0.001);
+    const productBarcode = String(product.barcode || '').trim().toUpperCase();
+    const productCode = String(product.product_code || '').trim().toUpperCase();
     setCart((current) => {
-      const existingIndex = current.findIndex((item) => item.barcode === product.barcode);
+      const existingIndex = current.findIndex((item) => {
+        const itemBarcode = String(item.barcode || '').trim().toUpperCase();
+        const itemCode = String(item.product_code || '').trim().toUpperCase();
+        return itemBarcode === productBarcode || Boolean(productCode && itemCode === productCode);
+      });
       if (existingIndex >= 0) {
         return current.map((item, index) => (
           index === existingIndex ? { ...item, quantity: toNumber(item.quantity, 1) + addQty } : item
@@ -743,6 +824,7 @@ export default function BillingTerminalView({ isActive = true }) {
         ...current,
         {
           ...product,
+          barcode: productBarcode || product.barcode,
           product_name: String(product.product_name || '').toUpperCase(),
           quantity: addQty,
           sale_price: toNumber(product.sale_price || product.mrp),
@@ -867,7 +949,22 @@ export default function BillingTerminalView({ isActive = true }) {
       }
 
       try {
+        const exactProduct = await findExactProductFast(cleaned);
+        if (exactProduct) {
+          addProduct(exactProduct, quantity);
+          return;
+        }
+
         const results = await searchProducts(cleaned);
+        const exactFromSearch = results.find((product) => (
+          String(product.barcode || '').toUpperCase() === cleaned.toUpperCase()
+          || String(product.product_code || '').toUpperCase() === cleaned.toUpperCase()
+        ));
+        if (exactFromSearch) {
+          exactProductCacheRef.current.set(cleaned.toUpperCase(), exactFromSearch);
+          addProduct(exactFromSearch, quantity);
+          return;
+        }
         if (results.length === 1) addProduct(results[0], quantity);
         if (results.length > 1) {
           setSuggestions(results.slice(0, 5));
@@ -2388,16 +2485,38 @@ export default function BillingTerminalView({ isActive = true }) {
               <button className="secondary-button" onClick={handleCustomerLookup}>Lookup</button>
               <button className="secondary-button" onClick={handleCustomerSave}>Save</button>
             </div>
-            <label>
+            <label className="supplier-lookup-field">
               <span className="field-label">{isBusinessBillingMode(billingMode) ? 'Company name' : 'Customer name'}</span>
               <input
                 ref={customerNameRef}
                 className="field"
                 value={isBusinessBillingMode(billingMode) ? companyName : customerName}
                 onChange={(event) => (isBusinessBillingMode(billingMode) ? setCompanyName(event.target.value) : setCustomerName(event.target.value))}
+                onFocus={() => {
+                  if (customerSuggestions.length) setIsCustomerLookupOpen(true);
+                }}
+                onBlur={() => setTimeout(() => setIsCustomerLookupOpen(false), 180)}
                 onKeyDown={(event) => handleCustomerFieldEnter(event, customerPhoneRef)}
                 placeholder={isBusinessBillingMode(billingMode) ? 'Company name' : 'Customer name'}
               />
+              {isCustomerLookupOpen && (
+                <div className="supplier-suggestions">
+                  {isCustomerSuggestionLoading && <div className="supplier-suggestion-empty">Searching customers...</div>}
+                  {!isCustomerSuggestionLoading && customerSuggestions.slice(0, 3).map((match) => (
+                    <button
+                      key={`${match.phone}-${match.customer_name}`}
+                      type="button"
+                      className="supplier-suggestion-row"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => selectCustomerSuggestion(match)}
+                    >
+                      <strong>{match.customer_name}</strong>
+                      <span>Phone: {match.phone || '-'}</span>
+                      <span>GST: {match.gstin || '-'}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </label>
             <label>
               <span className="field-label">Phone No</span>
