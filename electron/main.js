@@ -142,12 +142,14 @@ function showStartupError(error, appUrl) {
 
 function createWindow(config) {
   logMessage(`Creating window for ${config.appUrl}`);
+  const iconPath = resolveResourcePath('assets', 'badizo.ico');
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1100,
     minHeight: 720,
     title: 'Badizo',
+    icon: iconPath,
     backgroundColor: '#f7f8fb',
     show: false,
     autoHideMenuBar: true,

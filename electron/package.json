@@ -23,6 +23,10 @@
     ],
     "extraResources": [
       {
+        "from": "assets/badizo.ico",
+        "to": "assets/badizo.ico"
+      },
+      {
         "from": "app-config.json",
         "to": "app-config.json"
       },
@@ -47,6 +51,7 @@
       "signAndEditExecutable": false
     },
     "nsis": {
+      "include": "installer.nsh",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
