@@ -7,11 +7,16 @@ import {
   fetchBulkEditableProducts,
   fetchDuplicateProductCodes,
   fetchProductDropbox,
+  fetchProductExpiryDashboard,
   exportProducts,
+  fetchProductImportHistoryDetail,
   fetchProducts,
   getStoredUser,
   importProducts,
-  saveProduct
+  fetchReorderSuggestions,
+  saveProduct,
+  saveStockAdjustment,
+  searchProducts
 } from '../api/client';
 import { formatMoney, toNumber } from '../utils/money';
 
@@ -47,7 +52,18 @@ const emptyForm = {
 const GST_OPTIONS = ['0', '3', '5', '12', '18', '28', '40'];
 const UNIT_OPTIONS = ['Nos', 'Gm', 'Kg', 'Ml', 'Ltr', 'Pack'];
 const PURCHASE_UNIT_OPTIONS = ['Loose', 'Carton', 'Bag', 'Box', 'Case', 'Bundle', 'Pack'];
-const PRODUCT_DROPBOX_DAYS = 1470;
+const PRODUCT_DROPBOX_DAYS = 365;
+const ACTIVE_IMPORT_STATUSES = new Set(['QUEUED', 'RUNNING']);
+const PRODUCT_SECTIONS = {
+  LIST: 'list',
+  FORM: 'form',
+  IMPORT: 'import',
+  BULK: 'bulk',
+  EXPIRY: 'expiry',
+  ADJUSTMENT: 'adjustment',
+  REORDER: 'reorder',
+  MAINTENANCE: 'maintenance'
+};
 const PRODUCT_EXCEL_HEADERS = [
   'Sno',
   'Product Code',
@@ -123,6 +139,36 @@ function formatProductDate(value) {
 
 function todayIso() {
   return new Date().toISOString();
+}
+
+function productImportSummaryFromJob(job = {}) {
+  return {
+    status: job.status || '',
+    totalRows: Number(job.total_rows || 0),
+    validRows: Number(job.valid_rows || 0),
+    inserted: Number(job.inserted_count || 0),
+    updated: Number(job.updated_count || 0),
+    errorRows: Number(job.error_rows || 0),
+    skipped: Number(job.skipped_count || 0),
+    batches: Number(job.batch_count || 0),
+    failureMessage: job.failure_message || ''
+  };
+}
+
+function productImportProgressPercent(summary = {}) {
+  const totalRows = Number(summary.totalRows || 0);
+  if (!totalRows) return 0;
+  if (summary.status && !ACTIVE_IMPORT_STATUSES.has(summary.status)) return 100;
+  const processedRows = Number(summary.inserted || 0) + Number(summary.updated || 0) + Number(summary.errorRows || 0);
+  return Math.max(0, Math.min(100, Math.round((processedRows / totalRows) * 100)));
+}
+
+function productImportStatusChipClass(status, errorRows = 0) {
+  if (status === 'SUCCESS') return 'status-chip success';
+  if (status === 'PARTIAL SUCCESS' || Number(errorRows || 0) > 0) return 'status-chip warning';
+  if (status === 'FAILED') return 'status-chip danger';
+  if (ACTIVE_IMPORT_STATUSES.has(status)) return 'status-chip info';
+  return 'status-chip';
 }
 
 function moneyInput(value) {
@@ -300,7 +346,7 @@ async function readProductImportFile(file) {
   return rows.length ? rowsToApiImportCsv(rows) : normalizedText;
 }
 
-export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
+export default function InventoryDashboardView({ isActive = false, navigationKey = 0, setActiveWorkspace } = {}) {
   const [products, setProducts] = useState([]);
   const [form, setForm] = useState({ ...emptyForm, created_at: todayIso() });
   const [filter, setFilter] = useState('');
@@ -313,6 +359,7 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
   const [isImporting, setIsImporting] = useState(false);
   const [importSummary, setImportSummary] = useState(null);
   const [importGrowl, setImportGrowl] = useState(null);
+  const [activeImportId, setActiveImportId] = useState('');
   const [bulkSearch, setBulkSearch] = useState('');
   const [bulkRows, setBulkRows] = useState([]);
   const [bulkPatch, setBulkPatch] = useState({ hsn_code: '', gst_percent: '', unit_type: '' });
@@ -334,6 +381,16 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
   const [duplicateApproval, setDuplicateApproval] = useState({ username: '', password: '' });
   const [isDuplicateLoading, setIsDuplicateLoading] = useState(false);
   const [isDuplicateDeleting, setIsDuplicateDeleting] = useState(false);
+  const [expiryDays, setExpiryDays] = useState(30);
+  const [expiryRows, setExpiryRows] = useState([]);
+  const [expirySummary, setExpirySummary] = useState({ expiredCount: 0, expiringCount: 0, expiredQty: 0, expiringQty: 0 });
+  const [isExpiryLoading, setIsExpiryLoading] = useState(false);
+  const [reorderRows, setReorderRows] = useState([]);
+  const [isReorderLoading, setIsReorderLoading] = useState(false);
+  const [adjustmentForm, setAdjustmentForm] = useState({ barcode: '', adjustment_qty: '', reason: 'DAMAGE', note: '' });
+  const [adjustmentSuggestions, setAdjustmentSuggestions] = useState([]);
+  const [isAdjustmentSaving, setIsAdjustmentSaving] = useState(false);
+  const [activeProductSection, setActiveProductSection] = useState(PRODUCT_SECTIONS.LIST);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const currentUser = getStoredUser();
@@ -365,6 +422,11 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
   }, [page]);
 
   useEffect(() => {
+    if (!isActive) return;
+    setActiveProductSection(PRODUCT_SECTIONS.LIST);
+  }, [isActive, navigationKey]);
+
+  useEffect(() => {
     loadProducts();
   }, [page, limit, gstFilter]);
 
@@ -384,6 +446,45 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
 
     return () => window.clearTimeout(timer);
   }, [filter]);
+
+  useEffect(() => {
+    if (!activeImportId) return undefined;
+
+    let cancelled = false;
+    async function refreshActiveImport() {
+      try {
+        const detail = await fetchProductImportHistoryDetail(activeImportId);
+        if (cancelled) return;
+
+        const nextSummary = productImportSummaryFromJob(detail.job);
+        setImportSummary((current) => ({ ...(current || {}), ...nextSummary }));
+
+        if (!ACTIVE_IMPORT_STATUSES.has(nextSummary.status)) {
+          const isFailed = nextSummary.status === 'FAILED';
+          const isPartial = nextSummary.status === 'PARTIAL SUCCESS' || Number(nextSummary.errorRows || 0) > 0;
+          const statusText = nextSummary.status || (isFailed ? 'FAILED' : 'SUCCESS');
+          const message = `${statusText}: ${nextSummary.inserted || 0} inserted, ${nextSummary.updated || 0} updated, ${nextSummary.errorRows || 0} error rows.`;
+          setImportGrowl({
+            type: isFailed ? 'danger' : (isPartial ? 'warning' : 'success'),
+            title: isFailed ? 'Product import failed' : (isPartial ? 'Product import partially completed' : 'Product import completed'),
+            message: nextSummary.failureMessage ? `${message} ${nextSummary.failureMessage}` : message
+          });
+          setActiveImportId('');
+          await loadProducts(1);
+          setPage(1);
+        }
+      } catch (err) {
+        if (!cancelled) setErrorMessage(err.response?.data?.error || 'Unable to refresh product import progress.');
+      }
+    }
+
+    refreshActiveImport();
+    const timer = window.setInterval(refreshActiveImport, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeImportId]);
 
   async function loadProducts(targetPage = page) {
     setErrorMessage('');
@@ -423,6 +524,14 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
 
   function resetProductForm() {
     setForm({ ...emptyForm, created_at: todayIso(), updated_at: '' });
+    focusProductField(productCodeRef);
+  }
+
+  function openNewProductForm() {
+    setStatusMessage('');
+    setErrorMessage('');
+    setForm({ ...emptyForm, created_at: todayIso(), updated_at: '' });
+    setActiveProductSection(PRODUCT_SECTIONS.FORM);
     focusProductField(productCodeRef);
   }
 
@@ -546,6 +655,7 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
       created_at: product.created_at || product.updated_at || todayIso(),
       updated_at: product.updated_at || ''
     });
+    setActiveProductSection(PRODUCT_SECTIONS.FORM);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -590,18 +700,14 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
     try {
       const csv = await readProductImportFile(file);
       const result = await importProducts(csv, file.name);
-      setImportSummary(result.summary);
-      const syncedText = result.summary.taxSynced ? ` HSN/GST synced for ${result.summary.taxSynced} matching products.` : '';
-      const batchText = result.summary.batches ? ` Imported in ${result.summary.batches} batch(es).` : '';
-      const skippedText = result.summary.errorRows ? ` ${result.summary.errorRows} row(s) skipped with errors.` : '';
-      const isPartial = Number(result.summary.errorRows || 0) > 0;
-      const title = isPartial ? 'Product import partially completed' : 'Product import completed';
-      const status = isPartial ? 'PARTIAL SUCCESS' : 'SUCCESS';
-      const message = `${status}: ${result.summary.inserted} inserted, ${result.summary.updated} updated.${batchText}${skippedText}${syncedText}`;
-      setStatusMessage(`Import complete: ${result.summary.inserted} inserted, ${result.summary.updated} updated.${batchText}${skippedText}${syncedText}`);
-      setImportGrowl({ type: isPartial ? 'warning' : 'success', title, message });
-      await loadProducts(1);
-      setPage(1);
+      const acceptedRows = Number(result.summary?.acceptedRows || result.summary?.totalRows || 0);
+      setImportSummary({ ...(result.summary || {}), status: result.status || 'QUEUED' });
+      setActiveImportId(result.importId || '');
+      setImportGrowl({
+        type: 'info',
+        title: 'Product import started',
+        message: `${acceptedRows} row(s) accepted. Track live progress in Import History; product count updates after completion.`
+      });
     } catch (err) {
       const response = err.response?.data;
       setImportSummary(response?.summary ? { ...response.summary, errors: response.errors } : null);
@@ -705,7 +811,7 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
       setDropboxRows(rows);
       setDropboxSummary(result.summary || { total: rows.length, stockQty: 0 });
       setSelectedDropboxBarcodes((current) => current.filter((barcode) => rows.some((row) => row.barcode === barcode)));
-      setStatusMessage(`${rows.length} old unused products loaded in Product Dropbox.`);
+      setStatusMessage(`${rows.length} products with no activity for 1 year loaded in Product Dropbox.`);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to load product dropbox.');
     } finally {
@@ -841,9 +947,103 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
     }
   }
 
+  async function loadExpiryDashboard() {
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsExpiryLoading(true);
+    try {
+      const result = await fetchProductExpiryDashboard({ days: expiryDays, limit: 500 });
+      const rows = Array.isArray(result.rows) ? result.rows : [];
+      setExpiryRows(rows);
+      setExpirySummary(result.summary || { expiredCount: 0, expiringCount: rows.length, expiredQty: 0, expiringQty: 0 });
+      setStatusMessage(`${rows.length} expiry batch(es) loaded for ${expiryDays} day review.`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load expiry dashboard.');
+    } finally {
+      setIsExpiryLoading(false);
+    }
+  }
+
+  async function loadReorderSuggestions() {
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsReorderLoading(true);
+    try {
+      const rows = await fetchReorderSuggestions({ limit: 500 });
+      setReorderRows(rows);
+      setStatusMessage(`${rows.length} low-stock product(s) loaded for reorder review.`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load reorder suggestions.');
+    } finally {
+      setIsReorderLoading(false);
+    }
+  }
+
+  async function searchAdjustmentProducts(query) {
+    const cleaned = String(query || '').trim();
+    setAdjustmentForm((current) => ({ ...current, barcode: cleaned.toUpperCase() }));
+    if (cleaned.length < 3) {
+      setAdjustmentSuggestions([]);
+      return;
+    }
+
+    try {
+      const rows = await searchProducts(cleaned);
+      setAdjustmentSuggestions(rows.slice(0, 6));
+    } catch (err) {
+      setAdjustmentSuggestions([]);
+    }
+  }
+
+  function selectAdjustmentProduct(product) {
+    setAdjustmentForm((current) => ({ ...current, barcode: product.barcode || current.barcode }));
+    setAdjustmentSuggestions([]);
+  }
+
+  async function submitStockAdjustment(event) {
+    event.preventDefault();
+    setStatusMessage('');
+    setErrorMessage('');
+
+    if (!adjustmentForm.barcode.trim()) {
+      setErrorMessage('Enter barcode or select product before stock adjustment.');
+      return;
+    }
+
+    if (!Number(adjustmentForm.adjustment_qty)) {
+      setErrorMessage('Enter adjustment quantity. Use negative quantity for damage/expiry/wastage.');
+      return;
+    }
+
+    const confirmed = window.confirm(`Apply stock adjustment ${adjustmentForm.adjustment_qty} for ${adjustmentForm.barcode}?`);
+    if (!confirmed) return;
+
+    setIsAdjustmentSaving(true);
+    try {
+      const result = await saveStockAdjustment({
+        barcode: adjustmentForm.barcode,
+        adjustment_qty: Number(adjustmentForm.adjustment_qty),
+        reason: adjustmentForm.reason,
+        note: adjustmentForm.note
+      });
+      setStatusMessage(`Stock adjusted for ${result.product_name}: ${result.old_qty} -> ${result.new_qty}.`);
+      setAdjustmentForm({ barcode: '', adjustment_qty: '', reason: 'DAMAGE', note: '' });
+      setAdjustmentSuggestions([]);
+      await loadProducts(1);
+      setPage(1);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to save stock adjustment.');
+    } finally {
+      setIsAdjustmentSaving(false);
+    }
+  }
+
   const showProductCodeColumn = filter.trim().length > 0;
-  const inventoryColSpan = showProductCodeColumn ? 15 : 14;
+  const inventoryColSpan = showProductCodeColumn ? 16 : 15;
   const selectedDropboxRows = dropboxRows.filter((row) => selectedDropboxBarcodes.includes(row.barcode));
+  const importStatus = importSummary?.status || (activeImportId ? 'QUEUED' : '');
+  const importProgress = productImportProgressPercent(importSummary || {});
+  const importProcessedRows = Number(importSummary?.inserted || 0) + Number(importSummary?.updated || 0) + Number(importSummary?.errorRows || 0);
 
   return (
     <div className="inventory-layout">
@@ -859,9 +1059,11 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
           </div>
         </div>
       )}
-      <section className="panel">
+      {activeProductSection === PRODUCT_SECTIONS.FORM && (
+      <section className="panel product-form-panel">
         <div className="panel-header">
-          <h2 className="panel-title">Product Setup</h2>
+          <h2 className="panel-title">Add / Edit Product</h2>
+          <button className="secondary-button" type="button" onClick={() => setActiveProductSection(PRODUCT_SECTIONS.LIST)}>Back to Products</button>
         </div>
         <form className="panel-body form-stack" onSubmit={handleSubmit}>
           {errorMessage && <div className="alert-box">{errorMessage}</div>}
@@ -1033,11 +1235,13 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
           <button className="secondary-button" type="button" onClick={resetProductForm}>Clear</button>
         </form>
       </section>
+      )}
 
-      <section className="panel">
+      {activeProductSection !== PRODUCT_SECTIONS.FORM && (
+      <section className="panel product-list-panel">
         <div className="panel-header">
           <div>
-            <h2 className="panel-title">Inventory</h2>
+            <h2 className="panel-title">Products</h2>
             <div className="inventory-stats">
               <span className="status-chip">Total SKUs {summary.totalSku}</span>
               <span className="status-chip">{summary.lowStock} low stock</span>
@@ -1046,6 +1250,13 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="primary-button compact-primary" type="button" onClick={openNewProductForm} disabled={!canManageProducts}>Add Product</button>
+            <button className="secondary-button" type="button" onClick={() => setActiveProductSection(PRODUCT_SECTIONS.IMPORT)} disabled={!canManageProducts}>Import</button>
+            <button className="secondary-button" type="button" onClick={exportProducts} disabled={!canManageProducts}>Export</button>
+            <button className="secondary-button" type="button" onClick={() => { setActiveProductSection(PRODUCT_SECTIONS.EXPIRY); loadExpiryDashboard(); }} disabled={!canManageProducts}>Expiry</button>
+            <button className="secondary-button" type="button" onClick={() => { setActiveProductSection(PRODUCT_SECTIONS.REORDER); loadReorderSuggestions(); }} disabled={!canManageProducts}>Reorder</button>
+            <button className="secondary-button" type="button" onClick={() => setActiveProductSection(PRODUCT_SECTIONS.BULK)} disabled={!canManageProducts}>Bulk Edit</button>
+            <button className="secondary-button" type="button" onClick={() => setActiveProductSection(PRODUCT_SECTIONS.MAINTENANCE)} disabled={!canManageProducts}>Tools</button>
             <button className="secondary-button" type="button" onClick={() => setActiveWorkspace?.('importHistory')}>Import History</button>
             <button className="secondary-button" onClick={() => loadProducts()}>Refresh</button>
           </div>
@@ -1053,32 +1264,207 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
         <div className="panel-body">
           {canManageProducts && (
             <>
+              <div className="product-section-tabs" role="tablist" aria-label="Product sections">
+                <button type="button" className={activeProductSection === PRODUCT_SECTIONS.LIST ? 'active' : ''} onClick={() => setActiveProductSection(PRODUCT_SECTIONS.LIST)}>Product List</button>
+                <button type="button" className={activeProductSection === PRODUCT_SECTIONS.IMPORT ? 'active' : ''} onClick={() => setActiveProductSection(PRODUCT_SECTIONS.IMPORT)}>Import Products</button>
+                <button type="button" className={activeProductSection === PRODUCT_SECTIONS.EXPIRY ? 'active' : ''} onClick={() => { setActiveProductSection(PRODUCT_SECTIONS.EXPIRY); loadExpiryDashboard(); }}>Expiry Dashboard</button>
+                <button type="button" className={activeProductSection === PRODUCT_SECTIONS.ADJUSTMENT ? 'active' : ''} onClick={() => setActiveProductSection(PRODUCT_SECTIONS.ADJUSTMENT)}>Stock Adjustment</button>
+                <button type="button" className={activeProductSection === PRODUCT_SECTIONS.REORDER ? 'active' : ''} onClick={() => { setActiveProductSection(PRODUCT_SECTIONS.REORDER); loadReorderSuggestions(); }}>Reorder Suggestions</button>
+                <button type="button" className={activeProductSection === PRODUCT_SECTIONS.BULK ? 'active' : ''} onClick={() => setActiveProductSection(PRODUCT_SECTIONS.BULK)}>Bulk Edit</button>
+                <button type="button" className={activeProductSection === PRODUCT_SECTIONS.MAINTENANCE ? 'active' : ''} onClick={() => setActiveProductSection(PRODUCT_SECTIONS.MAINTENANCE)}>Maintenance</button>
+              </div>
+              {activeProductSection === PRODUCT_SECTIONS.IMPORT && (
+                <section className="product-workflow-panel">
               <div className="import-toolbar">
                 <button className="secondary-button" onClick={downloadProductExcelTemplate}>Download Sample Excel</button>
-                <button className="secondary-button" onClick={exportProducts}>Export CSV</button>
                 <label className="secondary-button file-button">
-                  {isImporting ? 'Uploading...' : 'Upload Filled Excel/CSV'}
+                  {isImporting ? 'Uploading...' : 'Upload Products'}
                   <input type="file" accept=".xlsx,.xls,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values,text/plain" onChange={handleImportFile} disabled={isImporting} />
                 </label>
-              </div>
-              <div className="change-box" style={{ marginBottom: 12 }}>
-                Download the sample Excel file, fill product rows, then upload the same .xlsx file. CSV/TSV also works.
+                <button className="secondary-button" type="button" onClick={() => setActiveWorkspace?.('importHistory')}>Import History</button>
               </div>
               {importSummary && (
-                <div className="inventory-stats" style={{ marginBottom: 12 }}>
-                  <span className="status-chip">Uploaded rows {importSummary.totalRows || 0}</span>
-                  <span className="status-chip">Inserted {importSummary.inserted || 0}</span>
-                  <span className="status-chip">Updated {importSummary.updated || 0}</span>
-                  <span className="status-chip">Batches {importSummary.batches || 0}</span>
-                  {importSummary.errorRows ? <span className="status-chip">Errors {importSummary.errorRows}</span> : null}
+                <div className="import-progress-box">
+                  <div className="import-progress-header">
+                    <div>
+                      <strong>{ACTIVE_IMPORT_STATUSES.has(importStatus) ? 'Import running' : 'Last import status'}</strong>
+                      <div className="muted compact-cell-text">
+                        {importProcessedRows} of {importSummary.totalRows || 0} rows processed
+                      </div>
+                    </div>
+                    <span className={productImportStatusChipClass(importStatus, importSummary.errorRows)}>{importStatus || 'VALIDATED'}</span>
+                  </div>
+                  <div className="progress-track" aria-label="Product import progress">
+                    <div className="progress-fill" style={{ width: `${importProgress}%` }} />
+                  </div>
+                  <div className="inventory-stats">
+                    <span className="status-chip">Accepted {importSummary.acceptedRows || importSummary.totalRows || 0}</span>
+                    <span className="status-chip">Inserted {importSummary.inserted || 0}</span>
+                    <span className="status-chip">Updated {importSummary.updated || 0}</span>
+                    <span className="status-chip">Batches {importSummary.batches || 0}</span>
+                    {importSummary.errorRows ? <span className="status-chip warning">Errors {importSummary.errorRows}</span> : null}
+                  </div>
                 </div>
               )}
+                </section>
+              )}
 
+              {activeProductSection === PRODUCT_SECTIONS.EXPIRY && (
+                <section className="product-workflow-panel">
+                  <div className="product-dropbox-header">
+                    <div>
+                      <h3>Expiry Dashboard</h3>
+                      <p>Review expired and near-expiry batches before discounting, returning, or writing off stock.</p>
+                    </div>
+                    <div className="actions-row">
+                      <select className="select" value={expiryDays} onChange={(event) => setExpiryDays(Number(event.target.value))}>
+                        <option value={7}>7 days</option>
+                        <option value={30}>30 days</option>
+                        <option value={60}>60 days</option>
+                        <option value={90}>90 days</option>
+                      </select>
+                      <button className="secondary-button" type="button" onClick={loadExpiryDashboard} disabled={isExpiryLoading}>
+                        {isExpiryLoading ? 'Loading...' : 'Load Expiry'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="inventory-stats">
+                    <span className="status-chip danger">Expired {expirySummary.expiredCount || 0}</span>
+                    <span className="status-chip warning">Expiring {expirySummary.expiringCount || 0}</span>
+                    <span className="status-chip">Expired Qty {expirySummary.expiredQty || 0}</span>
+                    <span className="status-chip">Expiring Qty {expirySummary.expiringQty || 0}</span>
+                  </div>
+                  <div className="bulk-table-wrap">
+                    <table className="history-table">
+                      <thead>
+                        <tr><th>Status</th><th>Expiry</th><th>Barcode</th><th>Product</th><th>Batch</th><th>Qty</th><th>MRP</th><th>Cost</th></tr>
+                      </thead>
+                      <tbody>
+                        {expiryRows.length === 0 ? (
+                          <tr><td colSpan="8">Load expiry dashboard to review batches.</td></tr>
+                        ) : expiryRows.map((row) => (
+                          <tr key={`${row.barcode}-${row.batch_no}-${row.expiry_date}`}>
+                            <td><span className={row.expiry_status === 'EXPIRED' ? 'status-chip danger' : 'status-chip warning'}>{row.expiry_status === 'EXPIRED' ? 'Expired' : 'Near expiry'}</span></td>
+                            <td>{formatProductDate(row.expiry_date)}</td>
+                            <td className="mono muted">{row.barcode}</td>
+                            <td>{row.product_name}</td>
+                            <td>{row.batch_no || '-'}</td>
+                            <td>{row.quantity_available}</td>
+                            <td>{formatMoney(row.mrp)}</td>
+                            <td>{formatMoney(row.purchase_price)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              )}
+
+              {activeProductSection === PRODUCT_SECTIONS.ADJUSTMENT && (
+                <section className="product-workflow-panel">
+                  <div className="product-dropbox-header">
+                    <div>
+                      <h3>Stock Adjustment</h3>
+                      <p>Record damage, expiry, wastage, theft, or stock-audit corrections with audit history.</p>
+                    </div>
+                  </div>
+                  <form className="form-grid stock-adjustment-grid" onSubmit={submitStockAdjustment}>
+                    <label className="supplier-lookup-field">
+                      <span className="field-label">Barcode / Product</span>
+                      <input
+                        className="field"
+                        value={adjustmentForm.barcode}
+                        onChange={(event) => searchAdjustmentProducts(event.target.value)}
+                        placeholder="Scan barcode or search product"
+                      />
+                      {adjustmentSuggestions.length > 0 && (
+                        <div className="supplier-suggestions">
+                          {adjustmentSuggestions.map((product) => (
+                            <button key={product.barcode} type="button" className="supplier-suggestion-row" onClick={() => selectAdjustmentProduct(product)}>
+                              <strong>{product.product_name}</strong>
+                              <span>{product.barcode} | Stock {product.stock_qty}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </label>
+                    <label>
+                      <span className="field-label">Adjustment Qty</span>
+                      <input
+                        className="field"
+                        type="number"
+                        step="0.01"
+                        value={adjustmentForm.adjustment_qty}
+                        onChange={(event) => setAdjustmentForm((current) => ({ ...current, adjustment_qty: event.target.value }))}
+                        placeholder="-2 for damage"
+                      />
+                    </label>
+                    <label>
+                      <span className="field-label">Reason</span>
+                      <select className="select" value={adjustmentForm.reason} onChange={(event) => setAdjustmentForm((current) => ({ ...current, reason: event.target.value }))}>
+                        <option value="DAMAGE">Damage</option>
+                        <option value="EXPIRY">Expiry</option>
+                        <option value="WASTAGE">Wastage</option>
+                        <option value="THEFT">Theft</option>
+                        <option value="STOCK_AUDIT">Stock Audit</option>
+                        <option value="OTHER">Other</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span className="field-label">Note</span>
+                      <input className="field" value={adjustmentForm.note} onChange={(event) => setAdjustmentForm((current) => ({ ...current, note: event.target.value }))} placeholder="Optional note" />
+                    </label>
+                    <button className="primary-button compact-primary" type="submit" disabled={isAdjustmentSaving}>
+                      {isAdjustmentSaving ? 'Saving...' : 'Save Adjustment'}
+                    </button>
+                  </form>
+                </section>
+              )}
+
+              {activeProductSection === PRODUCT_SECTIONS.REORDER && (
+                <section className="product-workflow-panel">
+                  <div className="product-dropbox-header">
+                    <div>
+                      <h3>Reorder Suggestions</h3>
+                      <p>Low-stock products based on current stock, alert quantity, and last 30 days sales movement.</p>
+                    </div>
+                    <button className="secondary-button" type="button" onClick={loadReorderSuggestions} disabled={isReorderLoading}>
+                      {isReorderLoading ? 'Loading...' : 'Load Reorder'}
+                    </button>
+                  </div>
+                  <div className="bulk-table-wrap">
+                    <table className="history-table">
+                      <thead>
+                        <tr><th>Barcode</th><th>Product</th><th>Stock</th><th>Alert</th><th>Sold 30 Days</th><th>Suggested Qty</th><th>Purchase Unit</th><th>Cost</th></tr>
+                      </thead>
+                      <tbody>
+                        {reorderRows.length === 0 ? (
+                          <tr><td colSpan="8">Load reorder suggestions to review low-stock products.</td></tr>
+                        ) : reorderRows.map((row) => (
+                          <tr key={row.barcode}>
+                            <td className="mono muted">{row.barcode}</td>
+                            <td>{row.product_name}</td>
+                            <td><strong>{row.stock_qty}</strong></td>
+                            <td>{row.min_stock_alert}</td>
+                            <td>{row.sold_last_30_days}</td>
+                            <td><strong>{row.suggested_qty}</strong></td>
+                            <td>{row.purchase_unit_type || 'Loose'} x {row.purchase_unit_size || 1}</td>
+                            <td>{formatMoney(row.purchase_price)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              )}
+
+              {activeProductSection === PRODUCT_SECTIONS.MAINTENANCE && (
+                <>
               <section className="product-dropbox-box">
                 <div className="product-dropbox-header">
                   <div>
                     <h3>Product Dropbox</h3>
-                    <p>{PRODUCT_DROPBOX_DAYS} days old, unused, zero-stock SKUs for password-protected cleanup.</p>
+                    <p>No sales or inward activity for 1 year, zero stock, and ready for password-protected review.</p>
                   </div>
                   <button className="secondary-button" type="button" onClick={() => (isDropboxOpen ? setIsDropboxOpen(false) : loadProductDropbox())}>
                     {isDropboxOpen ? 'Close Dropbox' : 'Open Dropbox'}
@@ -1137,7 +1523,7 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
                         </thead>
                         <tbody>
                           {dropboxRows.length === 0 ? (
-                            <tr><td colSpan="6">No old unused products in dropbox.</td></tr>
+                            <tr><td colSpan="6">No products have reached the 1-year unused review rule.</td></tr>
                           ) : (
                             dropboxRows.map((product) => (
                               <tr key={product.barcode}>
@@ -1259,6 +1645,10 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
                 )}
               </section>
 
+                </>
+              )}
+
+              {activeProductSection === PRODUCT_SECTIONS.BULK && (
               <section className="bulk-edit-box">
                 <div className="bulk-edit-toolbar">
                   <input
@@ -1340,26 +1730,12 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
                   </>
                 )}
               </section>
+              )}
             </>
           )}
 
-          {importSummary && (
-            <div className={importSummary.errorRows ? 'alert-box' : 'change-box'} style={{ marginBottom: 12 }}>
-              Total: {importSummary.totalRows}, Valid: {importSummary.validRows ?? importSummary.totalRows}, Inserted: {importSummary.inserted ?? 0}, Updated: {importSummary.updated ?? 0}, Errors: {importSummary.errorRows ?? 0}
-              {Array.isArray(importSummary.errors) && importSummary.errors.length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  {importSummary.errors.slice(0, 5).map((rowError) => (
-                    <div key={`${rowError.row}-${rowError.barcode}`}>
-                      Row {rowError.row}
-                      {rowError.product_name ? ` - ${rowError.product_name}` : ''}
-                      {rowError.product_code ? ` (${rowError.product_code})` : ''}: {rowError.message || rowError.errors.join(', ')}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
+          {activeProductSection === PRODUCT_SECTIONS.LIST && (
+          <>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 120px', gap: 10, marginBottom: 12 }}>
             <input
               className="field"
@@ -1401,6 +1777,7 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
                   <th>Retail</th>
                   <th>Wholesale</th>
                   <th>Disc</th>
+                  <th>Offer</th>
                   <th>Stock</th>
                   <th>Entry Date</th>
                   <th>Edit Date</th>
@@ -1429,6 +1806,16 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
                         <td><strong>{formatMoney(product.sale_price)}</strong></td>
                         <td>{formatMoney(product.wholesale_price)}</td>
                         <td>{product.discount_value || 0}{product.discount_type === 'VALUE' ? ' Rs' : '%'}</td>
+                        <td>
+                          {product.is_free_item ? <span className="status-chip info">Free item</span> : null}
+                          {product.free_promo_enabled ? (
+                            <div className="offer-cell">
+                              <span className="status-chip success">Free promo</span>
+                              <span className="muted compact-cell-text">{product.free_promo_name || 'Free item offer'}</span>
+                            </div>
+                          ) : null}
+                          {!product.is_free_item && !product.free_promo_enabled ? '-' : null}
+                        </td>
                         <td className={isLow ? 'stock-low' : ''}>{product.stock_qty}</td>
                         <td>{formatProductDate(product.created_at || product.updated_at)}</td>
                         <td>{formatProductDate(product.updated_at || product.created_at)}</td>
@@ -1450,8 +1837,11 @@ export default function InventoryDashboardView({ setActiveWorkspace } = {}) {
               Next
             </button>
           </div>
+          </>
+          )}
         </div>
       </section>
+      )}
     </div>
   );
 }

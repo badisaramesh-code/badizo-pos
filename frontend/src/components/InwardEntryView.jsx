@@ -7,10 +7,15 @@ import {
   fetchInwardDetails,
   fetchInwardDetailsByNumber,
   fetchInwardHistory,
+  fetchPurchaseOrders,
   fetchRecentInwards,
+  fetchSuppliers,
+  savePurchaseOrder,
   saveInwardEntry,
+  saveSupplier,
   searchInwardSuppliers,
-  searchProducts
+  searchProducts,
+  updatePurchaseOrderStatus
 } from '../api/client';
 import { formatMoney, toNumber } from '../utils/money';
 
@@ -49,6 +54,32 @@ const blankSupplier = {
   phone: '',
   invoice_no: '',
   invoice_date: ''
+};
+
+const blankSupplierMasterForm = {
+  name: '',
+  address: '',
+  gstin: '',
+  phone: '',
+  contact_person: '',
+  payment_terms: ''
+};
+
+const INWARD_SECTIONS = {
+  ENTRY: 'entry',
+  SUPPLIERS: 'suppliers',
+  PURCHASE_ORDERS: 'purchaseOrders'
+};
+
+const blankPurchaseOrderLine = {
+  search: '',
+  barcode: '',
+  product_name: '',
+  current_stock: '',
+  min_stock_alert: '',
+  order_qty: '',
+  purchase_price: '',
+  note: ''
 };
 
 function todayIso() {
@@ -1909,6 +1940,7 @@ function parseOcrInvoiceRows(lines) {
 
 export default function InwardEntryView() {
   const suppressSupplierLookupRef = useRef(false);
+  const [activeInwardSection, setActiveInwardSection] = useState(INWARD_SECTIONS.ENTRY);
   const [supplier, setSupplier] = useState(blankSupplier);
   const [taxType, setTaxType] = useState('LOCAL');
   const [paymentMode, setPaymentMode] = useState('Credit');
@@ -1930,6 +1962,20 @@ export default function InwardEntryView() {
   const [supplierSuggestions, setSupplierSuggestions] = useState([]);
   const [isSupplierLookupOpen, setIsSupplierLookupOpen] = useState(false);
   const [isSupplierLookupLoading, setIsSupplierLookupLoading] = useState(false);
+  const [supplierMasterSearch, setSupplierMasterSearch] = useState('');
+  const [supplierMasterRows, setSupplierMasterRows] = useState([]);
+  const [supplierMasterForm, setSupplierMasterForm] = useState(blankSupplierMasterForm);
+  const [isSupplierMasterLoading, setIsSupplierMasterLoading] = useState(false);
+  const [isSupplierMasterSaving, setIsSupplierMasterSaving] = useState(false);
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [purchaseOrderSupplier, setPurchaseOrderSupplier] = useState(blankSupplier);
+  const [purchaseOrderExpectedDate, setPurchaseOrderExpectedDate] = useState('');
+  const [purchaseOrderNotes, setPurchaseOrderNotes] = useState('');
+  const [purchaseOrderLines, setPurchaseOrderLines] = useState([{ ...blankPurchaseOrderLine }]);
+  const [purchaseOrderSuggestions, setPurchaseOrderSuggestions] = useState({});
+  const [purchaseOrderFilter, setPurchaseOrderFilter] = useState({ status: 'ALL', supplier: '' });
+  const [isPurchaseOrderLoading, setIsPurchaseOrderLoading] = useState(false);
+  const [isPurchaseOrderSaving, setIsPurchaseOrderSaving] = useState(false);
 
   useEffect(() => {
     loadRecentInwards();
@@ -2512,8 +2558,177 @@ export default function InwardEntryView() {
     }
   }
 
+  async function loadSupplierMaster() {
+    setErrorMessage('');
+    setIsSupplierMasterLoading(true);
+    try {
+      const rows = await fetchSuppliers({ search: supplierMasterSearch });
+      setSupplierMasterRows(rows);
+      setStatusMessage(`${rows.length} supplier record(s) loaded.`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load suppliers.');
+    } finally {
+      setIsSupplierMasterLoading(false);
+    }
+  }
+
+  function editSupplierMaster(row) {
+    setSupplierMasterForm({
+      name: row.name || '',
+      address: row.address || '',
+      gstin: row.gstin || '',
+      phone: row.phone || '',
+      contact_person: row.contact_person || '',
+      payment_terms: row.payment_terms || ''
+    });
+    setStatusMessage(row.source === 'HISTORY' ? 'Loaded old supplier details. Save once to add it to Supplier Master.' : 'Supplier loaded for editing.');
+  }
+
+  async function handleSaveSupplierMaster(event) {
+    event.preventDefault();
+    setErrorMessage('');
+    setStatusMessage('');
+    if (!supplierMasterForm.name.trim()) {
+      setErrorMessage('Supplier name is required.');
+      return;
+    }
+    setIsSupplierMasterSaving(true);
+    try {
+      const saved = await saveSupplier(supplierMasterForm);
+      setStatusMessage(`Supplier saved: ${saved.name}.`);
+      setSupplierMasterForm(blankSupplierMasterForm);
+      await loadSupplierMaster();
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to save supplier.');
+    } finally {
+      setIsSupplierMasterSaving(false);
+    }
+  }
+
+  async function loadPurchaseOrders() {
+    setErrorMessage('');
+    setIsPurchaseOrderLoading(true);
+    try {
+      const rows = await fetchPurchaseOrders(purchaseOrderFilter);
+      setPurchaseOrders(rows);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load purchase orders.');
+    } finally {
+      setIsPurchaseOrderLoading(false);
+    }
+  }
+
+  function updatePurchaseOrderLine(index, field, value) {
+    setPurchaseOrderLines((current) => current.map((line, lineIndex) => (
+      lineIndex === index ? { ...line, [field]: value } : line
+    )));
+  }
+
+  async function searchPurchaseOrderProduct(index, value) {
+    updatePurchaseOrderLine(index, 'search', value);
+    if (String(value || '').trim().length < 3) {
+      setPurchaseOrderSuggestions((current) => ({ ...current, [index]: [] }));
+      return;
+    }
+
+    try {
+      const rows = await searchProducts(value);
+      setPurchaseOrderSuggestions((current) => ({ ...current, [index]: rows.slice(0, 6) }));
+    } catch (err) {
+      setPurchaseOrderSuggestions((current) => ({ ...current, [index]: [] }));
+    }
+  }
+
+  function selectPurchaseOrderProduct(index, product) {
+    setPurchaseOrderLines((current) => current.map((line, lineIndex) => (
+      lineIndex === index
+        ? {
+          ...line,
+          search: product.product_name || product.barcode || '',
+          barcode: product.barcode || '',
+          product_name: product.product_name || '',
+          current_stock: String(product.stock_qty ?? '0'),
+          min_stock_alert: String(product.min_stock_alert ?? '0'),
+          order_qty: line.order_qty || String(Math.max(Math.ceil((Number(product.min_stock_alert || 0) * 2) - Number(product.stock_qty || 0)), 1)),
+          purchase_price: line.purchase_price || String(product.purchase_price ?? '0')
+        }
+        : line
+    )));
+    setPurchaseOrderSuggestions((current) => ({ ...current, [index]: [] }));
+  }
+
+  function addPurchaseOrderLine() {
+    setPurchaseOrderLines((current) => [...current, { ...blankPurchaseOrderLine }]);
+  }
+
+  function removePurchaseOrderLine(index) {
+    setPurchaseOrderLines((current) => (current.length === 1 ? current : current.filter((_, lineIndex) => lineIndex !== index)));
+  }
+
+  async function submitPurchaseOrder(status = 'DRAFT') {
+    setErrorMessage('');
+    setStatusMessage('');
+    setIsPurchaseOrderSaving(true);
+    try {
+      const result = await savePurchaseOrder({
+        supplier: purchaseOrderSupplier,
+        expected_date: purchaseOrderExpectedDate,
+        notes: purchaseOrderNotes,
+        status,
+        lines: purchaseOrderLines.map((line) => ({
+          barcode: line.barcode,
+          product_name: line.product_name,
+          current_stock: line.current_stock,
+          min_stock_alert: line.min_stock_alert,
+          order_qty: line.order_qty,
+          purchase_price: line.purchase_price,
+          note: line.note
+        }))
+      });
+      setStatusMessage(`Purchase order ${result.po_no} saved as ${result.status}.`);
+      setPurchaseOrderSupplier(blankSupplier);
+      setPurchaseOrderExpectedDate('');
+      setPurchaseOrderNotes('');
+      setPurchaseOrderLines([{ ...blankPurchaseOrderLine }]);
+      await loadPurchaseOrders();
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to save purchase order.');
+    } finally {
+      setIsPurchaseOrderSaving(false);
+    }
+  }
+
+  async function changePurchaseOrderStatus(poNo, status) {
+    setErrorMessage('');
+    try {
+      await updatePurchaseOrderStatus(poNo, status);
+      setStatusMessage(`Purchase order ${poNo} marked ${status}.`);
+      await loadPurchaseOrders();
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to update purchase order status.');
+    }
+  }
+
   return (
     <div className="form-stack">
+      <section className="panel">
+        <div className="panel-header green">
+          <div>
+            <h2 className="panel-title">Inward</h2>
+            <span className="panel-subtitle">Purchase entry, supplier review, and purchase-order planning stay inside this page.</span>
+          </div>
+        </div>
+        <div className="panel-body">
+          <div className="product-section-tabs" role="tablist" aria-label="Inward sections">
+            <button type="button" className={activeInwardSection === INWARD_SECTIONS.ENTRY ? 'active' : ''} onClick={() => setActiveInwardSection(INWARD_SECTIONS.ENTRY)}>Purchase Entry</button>
+            <button type="button" className={activeInwardSection === INWARD_SECTIONS.SUPPLIERS ? 'active' : ''} onClick={() => { setActiveInwardSection(INWARD_SECTIONS.SUPPLIERS); if (!supplierMasterRows.length) loadSupplierMaster(); }}>Supplier Master</button>
+            <button type="button" className={activeInwardSection === INWARD_SECTIONS.PURCHASE_ORDERS ? 'active' : ''} onClick={() => { setActiveInwardSection(INWARD_SECTIONS.PURCHASE_ORDERS); loadPurchaseOrders(); }}>Purchase Orders</button>
+          </div>
+        </div>
+      </section>
+
+      {activeInwardSection === INWARD_SECTIONS.ENTRY && (
+      <>
       <section className="panel">
         <div className="panel-header green"><h2 className="panel-title">New Inward Entry (Purchase)</h2></div>
         <div className="panel-body form-stack">
@@ -2818,6 +3033,229 @@ export default function InwardEntryView() {
           </table>
         </div>
       </section>
+      </>
+      )}
+
+      {activeInwardSection === INWARD_SECTIONS.SUPPLIERS && (
+        <section className="panel">
+          <div className="panel-header green">
+            <div>
+              <h2 className="panel-title">Supplier Master</h2>
+              <span className="panel-subtitle">Add, edit, and reuse supplier details for purchase workflows.</span>
+            </div>
+          </div>
+          <div className="panel-body form-stack">
+            {errorMessage && <div className="alert-box">{errorMessage}</div>}
+            {statusMessage && <div className="change-box">{statusMessage}</div>}
+            <form className="supplier-master-form" onSubmit={handleSaveSupplierMaster}>
+              <label>
+                <span className="field-label">Supplier Name</span>
+                <input className="field" value={supplierMasterForm.name} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, name: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">GSTIN</span>
+                <input className="field" value={supplierMasterForm.gstin} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, gstin: event.target.value.toUpperCase() }))} />
+              </label>
+              <label>
+                <span className="field-label">Phone</span>
+                <input className="field" value={supplierMasterForm.phone} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, phone: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">Contact Person</span>
+                <input className="field" value={supplierMasterForm.contact_person} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, contact_person: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">Payment Terms</span>
+                <input className="field" value={supplierMasterForm.payment_terms} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, payment_terms: event.target.value }))} />
+              </label>
+              <label className="supplier-master-address">
+                <span className="field-label">Address</span>
+                <input className="field" value={supplierMasterForm.address} onChange={(event) => setSupplierMasterForm((current) => ({ ...current, address: event.target.value }))} />
+              </label>
+              <div className="supplier-master-actions">
+                <button className="primary-button compact-primary" type="submit" disabled={isSupplierMasterSaving}>
+                  {isSupplierMasterSaving ? 'Saving...' : 'Save Supplier'}
+                </button>
+                <button className="secondary-button" type="button" onClick={() => setSupplierMasterForm(blankSupplierMasterForm)}>
+                  Clear
+                </button>
+              </div>
+            </form>
+            <div className="history-search-row">
+              <input
+                className="field"
+                value={supplierMasterSearch}
+                onChange={(event) => setSupplierMasterSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') loadSupplierMaster();
+                }}
+                placeholder="Search supplier name, GSTIN, or phone"
+              />
+              <button className="primary-button compact-primary" type="button" onClick={loadSupplierMaster} disabled={isSupplierMasterLoading}>
+                {isSupplierMasterLoading ? 'Loading...' : 'Search'}
+              </button>
+            </div>
+            <table className="history-table">
+              <thead>
+                <tr><th>Supplier</th><th>GSTIN</th><th>Phone</th><th>Address</th><th>Source</th><th>Last Invoice</th><th>Last Date</th><th></th></tr>
+              </thead>
+              <tbody>
+                {supplierMasterRows.length === 0 ? (
+                  <tr><td colSpan="8">No suppliers found. Add a supplier above or search old inward suppliers.</td></tr>
+                ) : supplierMasterRows.map((row) => (
+                  <tr key={`${row.name}-${row.gstin}-${row.phone}`}>
+                    <td><strong>{row.name || '-'}</strong></td>
+                    <td>{row.gstin || '-'}</td>
+                    <td>{row.phone || '-'}</td>
+                    <td>{row.address || '-'}</td>
+                    <td><span className={`status-chip ${row.source === 'MASTER' ? 'success' : 'muted'}`}>{row.source === 'MASTER' ? 'Master' : 'History'}</span></td>
+                    <td>{row.last_invoice_no || '-'}</td>
+                    <td>{formatDate(row.last_invoice_date)}</td>
+                    <td>
+                      <button className="secondary-button" type="button" onClick={() => editSupplierMaster(row)}>
+                        Edit
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {activeInwardSection === INWARD_SECTIONS.PURCHASE_ORDERS && (
+        <section className="panel">
+          <div className="panel-header green">
+            <div>
+              <h2 className="panel-title">Purchase Orders</h2>
+              <span className="panel-subtitle">Create supplier orders before goods are received in Inward.</span>
+            </div>
+            <button className="secondary-button" type="button" onClick={loadPurchaseOrders} disabled={isPurchaseOrderLoading}>
+              {isPurchaseOrderLoading ? 'Loading...' : 'Refresh PO List'}
+            </button>
+          </div>
+          <div className="panel-body form-stack">
+            {errorMessage && <div className="alert-box">{errorMessage}</div>}
+            {statusMessage && <div className="change-box">{statusMessage}</div>}
+            <div className="form-grid">
+              <label>
+                <span className="field-label">Supplier Name</span>
+                <input className="field" value={purchaseOrderSupplier.name} onChange={(event) => setPurchaseOrderSupplier((current) => ({ ...current, name: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">Supplier GSTIN</span>
+                <input className="field" value={purchaseOrderSupplier.gstin} onChange={(event) => setPurchaseOrderSupplier((current) => ({ ...current, gstin: event.target.value.toUpperCase() }))} />
+              </label>
+              <label>
+                <span className="field-label">Supplier Phone</span>
+                <input className="field" value={purchaseOrderSupplier.phone} onChange={(event) => setPurchaseOrderSupplier((current) => ({ ...current, phone: event.target.value }))} />
+              </label>
+              <label>
+                <span className="field-label">Expected Date</span>
+                <input className="field" type="date" value={purchaseOrderExpectedDate} onChange={(event) => setPurchaseOrderExpectedDate(event.target.value)} />
+              </label>
+              <label>
+                <span className="field-label">Notes</span>
+                <input className="field" value={purchaseOrderNotes} onChange={(event) => setPurchaseOrderNotes(event.target.value)} />
+              </label>
+            </div>
+
+            <div className="bulk-table-wrap">
+              <table className="history-table">
+                <thead>
+                  <tr><th>Product</th><th>Barcode</th><th>Stock</th><th>Alert</th><th>Order Qty</th><th>Cost</th><th>Total</th><th>Note</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {purchaseOrderLines.map((line, index) => (
+                    <tr key={`po-line-${index}`}>
+                      <td className="supplier-lookup-field">
+                        <input
+                          className="field"
+                          value={line.search}
+                          onChange={(event) => searchPurchaseOrderProduct(index, event.target.value)}
+                          placeholder="Search product"
+                        />
+                        {Array.isArray(purchaseOrderSuggestions[index]) && purchaseOrderSuggestions[index].length > 0 && (
+                          <div className="supplier-suggestions">
+                            {purchaseOrderSuggestions[index].map((product) => (
+                              <button key={product.barcode} type="button" className="supplier-suggestion-row" onClick={() => selectPurchaseOrderProduct(index, product)}>
+                                <strong>{product.product_name}</strong>
+                                <span>{product.barcode} | Stock {product.stock_qty} | Cost {formatMoney(product.purchase_price)}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td><input className="field" value={line.barcode} onChange={(event) => updatePurchaseOrderLine(index, 'barcode', event.target.value.toUpperCase())} /></td>
+                      <td><input className="field compact-number-field" type="number" value={line.current_stock} onChange={(event) => updatePurchaseOrderLine(index, 'current_stock', event.target.value)} /></td>
+                      <td><input className="field compact-number-field" type="number" value={line.min_stock_alert} onChange={(event) => updatePurchaseOrderLine(index, 'min_stock_alert', event.target.value)} /></td>
+                      <td><input className="field compact-number-field" type="number" min="0" step="0.01" value={line.order_qty} onChange={(event) => updatePurchaseOrderLine(index, 'order_qty', event.target.value)} /></td>
+                      <td><input className="field compact-number-field" type="number" min="0" step="0.01" value={line.purchase_price} onChange={(event) => updatePurchaseOrderLine(index, 'purchase_price', event.target.value)} /></td>
+                      <td>{formatMoney(toNumber(line.order_qty) * toNumber(line.purchase_price))}</td>
+                      <td><input className="field" value={line.note} onChange={(event) => updatePurchaseOrderLine(index, 'note', event.target.value)} /></td>
+                      <td><button className="danger-button" type="button" onClick={() => removePurchaseOrderLine(index)}>Del</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="summary-band">
+              <span>Items: <strong>{purchaseOrderLines.filter((line) => line.barcode && Number(line.order_qty) > 0).length}</strong></span>
+              <span>Total Qty: <strong>{purchaseOrderLines.reduce((sum, line) => sum + toNumber(line.order_qty), 0)}</strong></span>
+              <span>Estimated Total: <strong>{formatMoney(purchaseOrderLines.reduce((sum, line) => sum + (toNumber(line.order_qty) * toNumber(line.purchase_price)), 0))}</strong></span>
+              <button className="secondary-button" type="button" onClick={addPurchaseOrderLine}>Add Row</button>
+              <button className="secondary-button" type="button" onClick={() => submitPurchaseOrder('DRAFT')} disabled={isPurchaseOrderSaving}>{isPurchaseOrderSaving ? 'Saving...' : 'Save Draft PO'}</button>
+              <button className="primary-button compact-primary" type="button" onClick={() => submitPurchaseOrder('ORDERED')} disabled={isPurchaseOrderSaving}>{isPurchaseOrderSaving ? 'Saving...' : 'Mark Ordered'}</button>
+            </div>
+
+            <form className="history-search-row inward-history-filters" onSubmit={(event) => { event.preventDefault(); loadPurchaseOrders(); }}>
+              <label>
+                <span className="field-label">Status</span>
+                <select className="select" value={purchaseOrderFilter.status} onChange={(event) => setPurchaseOrderFilter((current) => ({ ...current, status: event.target.value }))}>
+                  <option value="ALL">All</option>
+                  <option value="DRAFT">Draft</option>
+                  <option value="ORDERED">Ordered</option>
+                  <option value="RECEIVED">Received</option>
+                  <option value="CANCELLED">Cancelled</option>
+                </select>
+              </label>
+              <label>
+                <span className="field-label">Supplier</span>
+                <input className="field" value={purchaseOrderFilter.supplier} onChange={(event) => setPurchaseOrderFilter((current) => ({ ...current, supplier: event.target.value }))} />
+              </label>
+              <button className="primary-button compact-primary" type="submit">Search PO</button>
+            </form>
+
+            <table className="history-table">
+              <thead>
+                <tr><th>PO No</th><th>Status</th><th>Supplier</th><th>Expected</th><th>Items</th><th>Qty</th><th>Estimated</th><th>Updated</th><th>Action</th></tr>
+              </thead>
+              <tbody>
+                {purchaseOrders.length === 0 ? (
+                  <tr><td colSpan="9">No purchase orders found.</td></tr>
+                ) : purchaseOrders.map((order) => (
+                  <tr key={order.po_no}>
+                    <td className="mono">{order.po_no}</td>
+                    <td><strong>{order.status}</strong></td>
+                    <td>{order.supplier_name}</td>
+                    <td>{formatDate(order.expected_date)}</td>
+                    <td>{order.item_count}</td>
+                    <td>{order.total_qty}</td>
+                    <td>{formatMoney(order.estimated_total)}</td>
+                    <td>{formatDateTime(order.updated_at)}</td>
+                    <td>
+                      {order.status !== 'ORDERED' && <button className="secondary-button" type="button" onClick={() => changePurchaseOrderStatus(order.po_no, 'ORDERED')}>Ordered</button>}
+                      {order.status !== 'RECEIVED' && <button className="secondary-button" type="button" onClick={() => changePurchaseOrderStatus(order.po_no, 'RECEIVED')}>Received</button>}
+                      {order.status !== 'CANCELLED' && <button className="danger-button" type="button" onClick={() => changePurchaseOrderStatus(order.po_no, 'CANCELLED')}>Cancel</button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {viewedInward && (
         <div className="modal-backdrop">

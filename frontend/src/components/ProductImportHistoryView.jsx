@@ -22,7 +22,24 @@ function statusClass(status) {
   if (status === 'SUCCESS') return 'status-chip success';
   if (status === 'PARTIAL SUCCESS') return 'status-chip warning';
   if (status === 'ROLLED BACK') return 'status-chip muted';
+  if (['QUEUED', 'RUNNING'].includes(status)) return 'status-chip info';
   return 'status-chip danger';
+}
+
+function isActiveImport(status) {
+  return ['QUEUED', 'RUNNING'].includes(status);
+}
+
+function progressValue(row) {
+  const total = Number(row.total_rows || 0);
+  if (!total) return 0;
+  if (!isActiveImport(row.status)) return 100;
+  const processed = Number(row.inserted_count || 0) + Number(row.updated_count || 0) + Number(row.error_rows || 0);
+  return Math.max(0, Math.min(100, Math.round((processed / total) * 100)));
+}
+
+function processedRows(row) {
+  return Number(row.inserted_count || 0) + Number(row.updated_count || 0) + Number(row.error_rows || 0);
 }
 
 export default function ProductImportHistoryView() {
@@ -38,16 +55,28 @@ export default function ProductImportHistoryView() {
     loadHistory();
   }, []);
 
-  async function loadHistory() {
-    setStatusMessage('');
-    setErrorMessage('');
-    setIsLoading(true);
+  const hasActiveImports = rows.some((row) => isActiveImport(row.status));
+
+  useEffect(() => {
+    if (!hasActiveImports) return undefined;
+    const timer = window.setInterval(() => {
+      loadHistory({ silent: true });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveImports]);
+
+  async function loadHistory({ silent = false } = {}) {
+    if (!silent) {
+      setStatusMessage('');
+      setErrorMessage('');
+      setIsLoading(true);
+    }
     try {
       setRows(await fetchProductImportHistory());
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to load product import history.');
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   }
 
@@ -83,7 +112,7 @@ export default function ProductImportHistoryView() {
         delete next[importRow.id];
         return next;
       });
-      await loadHistory();
+      await loadHistory({ silent: true });
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to delete import.');
     } finally {
@@ -99,8 +128,10 @@ export default function ProductImportHistoryView() {
             <h2 className="panel-title">Product Import History</h2>
             <div className="inventory-stats">
               <span className="status-chip">{rows.length} imports</span>
+              <span className="status-chip">{rows.filter((row) => isActiveImport(row.status)).length} running</span>
               <span className="status-chip">{rows.filter((row) => row.status === 'PARTIAL SUCCESS').length} partial</span>
               <span className="status-chip">{rows.filter((row) => row.status === 'FAILED').length} failed</span>
+              {hasActiveImports && <span className="status-chip info">Auto-refreshing</span>}
             </div>
           </div>
           <button className="secondary-button" type="button" onClick={loadHistory} disabled={isLoading}>
@@ -120,6 +151,7 @@ export default function ProductImportHistoryView() {
                   <th>Date</th>
                   <th>File</th>
                   <th>Status</th>
+                  <th>Progress</th>
                   <th>Total</th>
                   <th>Inserted</th>
                   <th>Updated</th>
@@ -129,7 +161,7 @@ export default function ProductImportHistoryView() {
               </thead>
               <tbody>
                 {rows.length === 0 ? (
-                  <tr><td colSpan="9">No product imports found.</td></tr>
+                  <tr><td colSpan="10">No product imports found.</td></tr>
                 ) : (
                   rows.map((row) => {
                     const isExpanded = expandedId === row.id;
@@ -137,6 +169,7 @@ export default function ProductImportHistoryView() {
                     const lines = detail?.lines || [];
                     const errorLines = lines.filter((line) => line.action_status === 'ERROR');
                     const successLines = lines.filter((line) => ['INSERTED', 'UPDATED'].includes(line.action_status));
+                    const percent = progressValue(row);
 
                     return (
                       <React.Fragment key={row.id}>
@@ -148,6 +181,14 @@ export default function ProductImportHistoryView() {
                             <div className="muted compact-cell-text">{row.id}</div>
                           </td>
                           <td><span className={statusClass(row.status)}>{row.status}</span></td>
+                          <td>
+                            <div className="history-progress-cell">
+                              <div className="progress-track" aria-label={`Import progress ${percent}%`}>
+                                <div className="progress-fill" style={{ width: `${percent}%` }} />
+                              </div>
+                              <span className="muted compact-cell-text">{processedRows(row)} / {row.total_rows}</span>
+                            </div>
+                          </td>
                           <td>{row.total_rows}</td>
                           <td>{row.inserted_count}</td>
                           <td>{row.updated_count}</td>
@@ -157,14 +198,14 @@ export default function ProductImportHistoryView() {
 
                         {isExpanded && (
                           <tr>
-                            <td colSpan="9">
+                            <td colSpan="10">
                               <div className="change-box" style={{ marginBottom: 12 }}>
                                 Imported: {successLines.length || row.valid_rows} rows. Errors: {errorLines.length || row.error_rows}. Batches: {row.batch_count}.
                                 {row.failure_message ? ` Failure: ${row.failure_message}` : ''}
                                 {row.rollback_status === 'ROLLED_BACK' ? ` Rolled back by ${row.rollback_by || '-'} on ${formatDate(row.rollback_at)}.` : ''}
                               </div>
 
-                              {row.rollback_status !== 'ROLLED_BACK' && (
+                              {row.rollback_status !== 'ROLLED_BACK' && !isActiveImport(row.status) && (
                                 <button className="danger-button" type="button" onClick={() => deleteImport(row)} disabled={isDeleting === row.id}>
                                   {isDeleting === row.id ? 'Deleting Import...' : 'Delete Import'}
                                 </button>

@@ -37,13 +37,15 @@ if (!(Test-Path $nodeExe)) {
 }
 
 Write-BackendLog "Starting backend from $backendDir with $nodeExe"
-Start-Process `
-  -FilePath $nodeExe `
-  -ArgumentList 'server.js' `
-  -WorkingDirectory $backendDir `
-  -WindowStyle Hidden `
-  -RedirectStandardOutput (Join-Path $logDir 'backend.out.log') `
-  -RedirectStandardError (Join-Path $logDir 'backend.err.log')
+$processInfo = New-Object System.Diagnostics.ProcessStartInfo
+$processInfo.FileName = $nodeExe
+$processInfo.Arguments = 'server.js'
+$processInfo.WorkingDirectory = $backendDir
+$processInfo.UseShellExecute = $false
+$processInfo.CreateNoWindow = $true
+$process = New-Object System.Diagnostics.Process
+$process.StartInfo = $processInfo
+[void]$process.Start()
 
 Start-Sleep -Seconds 5
 
@@ -52,5 +54,5 @@ if (Test-BackendHealth) {
   exit 0
 }
 
-Write-BackendLog 'Backend did not respond after startup. Check backend.err.log.'
+Write-BackendLog 'Backend did not respond after startup. Run node server.js from the backend folder to see startup output.'
 exit 1

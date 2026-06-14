@@ -19,6 +19,20 @@ function inwardNo() {
   return `INW-${stamp}`;
 }
 
+function purchaseOrderNo() {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+    String(now.getSeconds()).padStart(2, '0'),
+    String(now.getMilliseconds()).padStart(3, '0')
+  ].join('');
+  return `PO-${stamp}`;
+}
+
 function normalizeDiscountType(value) {
   return String(value || '').toUpperCase() === 'VALUE' ? 'VALUE' : 'PERCENT';
 }
@@ -337,6 +351,308 @@ async function reversePostedInward(connection, inwardNo) {
 
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
+router.get('/suppliers', async (req, res) => {
+  const search = String(req.query.search || '').trim();
+  const like = `%${search}%`;
+  const masterParams = search ? [like, like, like] : [];
+  const historyParams = search ? [like, like, like] : [];
+
+  try {
+    const [masterRows] = await db.query(
+      `SELECT id, supplier_name, supplier_address, supplier_gstin, supplier_phone,
+              contact_person, payment_terms, is_active, created_at, updated_at
+       FROM suppliers
+       ${search ? 'WHERE supplier_name LIKE ? OR supplier_gstin LIKE ? OR supplier_phone LIKE ?' : ''}
+       ORDER BY updated_at DESC, supplier_name ASC
+       LIMIT 100`,
+      masterParams
+    );
+
+    const [historyRows] = await db.query(
+      `SELECT e.supplier_name, e.supplier_address, e.supplier_gstin, e.supplier_phone,
+              e.supplier_invoice_no, e.supplier_invoice_date, e.created_at
+       FROM inward_entries e
+       INNER JOIN (
+         SELECT MAX(id) AS id
+         FROM inward_entries
+         WHERE supplier_name <> ''
+         ${search ? 'AND (supplier_name LIKE ? OR supplier_gstin LIKE ? OR supplier_phone LIKE ?)' : ''}
+         GROUP BY UPPER(TRIM(supplier_name)), UPPER(TRIM(COALESCE(supplier_gstin, '')))
+       ) latest ON latest.id = e.id
+       ORDER BY e.id DESC
+       LIMIT 100`,
+      historyParams
+    );
+
+    const rowsByKey = new Map();
+    for (const row of masterRows || []) {
+      const key = `${String(row.supplier_name || '').trim().toUpperCase()}|${String(row.supplier_gstin || '').trim().toUpperCase()}`;
+      rowsByKey.set(key, {
+        id: row.id,
+        name: row.supplier_name || '',
+        address: row.supplier_address || '',
+        gstin: row.supplier_gstin || '',
+        phone: row.supplier_phone || '',
+        contact_person: row.contact_person || '',
+        payment_terms: row.payment_terms || '',
+        is_active: Boolean(row.is_active),
+        source: 'MASTER',
+        last_invoice_no: '',
+        last_invoice_date: '',
+        last_used_at: row.updated_at || row.created_at || ''
+      });
+    }
+
+    for (const row of historyRows || []) {
+      const key = `${String(row.supplier_name || '').trim().toUpperCase()}|${String(row.supplier_gstin || '').trim().toUpperCase()}`;
+      if (rowsByKey.has(key)) {
+        const current = rowsByKey.get(key);
+        rowsByKey.set(key, {
+          ...current,
+          last_invoice_no: row.supplier_invoice_no || current.last_invoice_no || '',
+          last_invoice_date: row.supplier_invoice_date || current.last_invoice_date || '',
+          last_used_at: row.created_at || current.last_used_at || ''
+        });
+        continue;
+      }
+      rowsByKey.set(key, {
+        id: null,
+        name: row.supplier_name || '',
+        address: row.supplier_address || '',
+        gstin: row.supplier_gstin || '',
+        phone: row.supplier_phone || '',
+        contact_person: '',
+        payment_terms: '',
+        is_active: true,
+        source: 'HISTORY',
+        last_invoice_no: row.supplier_invoice_no || '',
+        last_invoice_date: row.supplier_invoice_date || '',
+        last_used_at: row.created_at || ''
+      });
+    }
+
+    res.json(Array.from(rowsByKey.values()).slice(0, 100));
+  } catch (err) {
+    console.error('Supplier master fetch failed:', err.message);
+    res.status(500).json({ error: 'Unable to load suppliers.' });
+  }
+});
+
+router.post('/suppliers', async (req, res) => {
+  const supplier = req.body || {};
+  const name = String(supplier.name || supplier.supplier_name || '').trim();
+  const gstin = String(supplier.gstin || supplier.supplier_gstin || '').trim().toUpperCase();
+
+  if (!name) {
+    return res.status(400).json({ error: 'Supplier name is required.' });
+  }
+
+  const values = {
+    address: String(supplier.address || supplier.supplier_address || '').trim(),
+    phone: String(supplier.phone || supplier.supplier_phone || '').trim(),
+    contact_person: String(supplier.contact_person || '').trim(),
+    payment_terms: String(supplier.payment_terms || '').trim()
+  };
+
+  try {
+    const [result] = await db.query(
+      `INSERT INTO suppliers
+       (supplier_name, supplier_address, supplier_gstin, supplier_phone, contact_person, payment_terms, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         supplier_address = VALUES(supplier_address),
+         supplier_phone = VALUES(supplier_phone),
+         contact_person = VALUES(contact_person),
+         payment_terms = VALUES(payment_terms),
+         is_active = 1,
+         updated_at = CURRENT_TIMESTAMP`,
+      [name, values.address, gstin, values.phone, values.contact_person, values.payment_terms, req.user?.username || '']
+    );
+
+    await writeAuditLog({
+      user: req.user,
+      action: result.insertId ? 'SUPPLIER_CREATED' : 'SUPPLIER_UPDATED',
+      entityType: 'SUPPLIER',
+      entityId: `${name}|${gstin}`,
+      details: { name, gstin, phone: values.phone }
+    });
+
+    res.json({ success: true, id: result.insertId || null, name, gstin, ...values });
+  } catch (err) {
+    console.error('Supplier save failed:', err.message);
+    res.status(500).json({ error: 'Unable to save supplier.' });
+  }
+});
+
+router.get('/purchase-orders', async (req, res) => {
+  try {
+    const status = String(req.query.status || '').trim().toUpperCase();
+    const supplier = String(req.query.supplier || '').trim();
+    const clauses = [];
+    const params = [];
+
+    if (status && status !== 'ALL') {
+      clauses.push('status = ?');
+      params.push(status);
+    }
+    if (supplier) {
+      clauses.push('supplier_name LIKE ?');
+      params.push(`%${supplier}%`);
+    }
+
+    const whereSql = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const [rows] = await db.query(
+      `SELECT *
+       FROM purchase_orders
+       ${whereSql}
+       ORDER BY updated_at DESC, id DESC
+       LIMIT 100`,
+      params
+    );
+    res.json(rows || []);
+  } catch (err) {
+    console.error('Purchase order list failed:', err.message);
+    res.status(500).json({ error: 'Unable to load purchase orders.' });
+  }
+});
+
+router.get('/purchase-orders/:poNo', async (req, res) => {
+  try {
+    const poNo = String(req.params.poNo || '').trim();
+    const [orderRows] = await db.query(`SELECT * FROM purchase_orders WHERE po_no = ? LIMIT 1`, [poNo]);
+    if (!orderRows.length) return res.status(404).json({ error: 'Purchase order not found.' });
+
+    const [itemRows] = await db.query(
+      `SELECT * FROM purchase_order_items WHERE po_no = ? ORDER BY id ASC`,
+      [poNo]
+    );
+    res.json({ order: orderRows[0], items: itemRows || [] });
+  } catch (err) {
+    console.error('Purchase order detail failed:', err.message);
+    res.status(500).json({ error: 'Unable to load purchase order.' });
+  }
+});
+
+router.post('/purchase-orders', async (req, res) => {
+  const supplier = req.body?.supplier || {};
+  const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
+  const status = String(req.body?.status || 'DRAFT').trim().toUpperCase() === 'ORDERED' ? 'ORDERED' : 'DRAFT';
+  const expectedDate = req.body?.expected_date || null;
+  const notes = String(req.body?.notes || '').trim();
+
+  if (!String(supplier.name || '').trim()) {
+    return res.status(400).json({ error: 'Supplier name is required for purchase order.' });
+  }
+
+  const validLines = lines
+    .map((line) => ({
+      barcode: String(line.barcode || '').trim().toUpperCase(),
+      product_name: String(line.product_name || line.product || '').trim(),
+      current_stock: parseMoney(line.current_stock),
+      min_stock_alert: parseMoney(line.min_stock_alert),
+      order_qty: parseMoney(line.order_qty),
+      purchase_price: parseMoney(line.purchase_price),
+      note: String(line.note || '').trim()
+    }))
+    .filter((line) => line.barcode && line.product_name && line.order_qty > 0);
+
+  if (!validLines.length) {
+    return res.status(400).json({ error: 'Add at least one product with order quantity.' });
+  }
+
+  const poNo = purchaseOrderNo();
+  const totalQty = validLines.reduce((sum, line) => sum + line.order_qty, 0);
+  const estimatedTotal = validLines.reduce((sum, line) => sum + (line.order_qty * line.purchase_price), 0);
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+    await connection.query(
+      `INSERT INTO purchase_orders
+       (po_no, supplier_name, supplier_address, supplier_gstin, supplier_phone, expected_date, status, item_count, total_qty, estimated_total, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        poNo,
+        String(supplier.name || '').trim(),
+        String(supplier.address || '').trim(),
+        String(supplier.gstin || '').trim().toUpperCase(),
+        String(supplier.phone || '').trim(),
+        expectedDate || null,
+        status,
+        validLines.length,
+        totalQty,
+        estimatedTotal,
+        notes.slice(0, 255),
+        req.user?.username || ''
+      ]
+    );
+
+    for (const line of validLines) {
+      await connection.query(
+        `INSERT INTO purchase_order_items
+         (po_no, barcode, product_name, current_stock, min_stock_alert, order_qty, purchase_price, line_total, note)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          poNo,
+          line.barcode,
+          line.product_name,
+          line.current_stock,
+          line.min_stock_alert,
+          line.order_qty,
+          line.purchase_price,
+          line.order_qty * line.purchase_price,
+          line.note.slice(0, 255)
+        ]
+      );
+    }
+
+    await writeAuditLog({
+      user: req.user,
+      action: 'PURCHASE_ORDER_CREATED',
+      entityType: 'PURCHASE_ORDER',
+      entityId: poNo,
+      details: { status, supplier: supplier.name, item_count: validLines.length, total_qty: totalQty, estimated_total: estimatedTotal },
+      connection
+    });
+
+    await connection.commit();
+    res.json({ success: true, po_no: poNo, status, item_count: validLines.length, total_qty: totalQty, estimated_total: estimatedTotal });
+  } catch (err) {
+    await connection.rollback();
+    console.error('Purchase order save failed:', err.message);
+    res.status(500).json({ error: 'Unable to save purchase order.' });
+  } finally {
+    connection.release();
+  }
+});
+
+router.post('/purchase-orders/:poNo/status', async (req, res) => {
+  const poNo = String(req.params.poNo || '').trim();
+  const status = String(req.body?.status || '').trim().toUpperCase();
+  const allowedStatuses = new Set(['DRAFT', 'ORDERED', 'RECEIVED', 'CANCELLED']);
+  if (!allowedStatuses.has(status)) return res.status(400).json({ error: 'Invalid purchase order status.' });
+
+  try {
+    const [result] = await db.query(
+      `UPDATE purchase_orders SET status = ? WHERE po_no = ?`,
+      [status, poNo]
+    );
+    if (result.affectedRows !== 1) return res.status(404).json({ error: 'Purchase order not found.' });
+
+    await writeAuditLog({
+      user: req.user,
+      action: 'PURCHASE_ORDER_STATUS_UPDATED',
+      entityType: 'PURCHASE_ORDER',
+      entityId: poNo,
+      details: { status }
+    });
+    res.json({ success: true, po_no: poNo, status });
+  } catch (err) {
+    console.error('Purchase order status update failed:', err.message);
+    res.status(500).json({ error: 'Unable to update purchase order status.' });
+  }
+});
+
 router.get('/recent', async (_req, res) => {
   try {
     const [rows] = await db.query(
@@ -404,7 +720,17 @@ router.get('/suppliers/search', async (req, res) => {
   const like = `%${q}%`;
 
   try {
-    const [rows] = await db.query(
+    const [masterRows] = await db.query(
+      `SELECT supplier_name, supplier_address, supplier_gstin, supplier_phone, updated_at
+       FROM suppliers
+       WHERE is_active = 1
+         AND (supplier_name LIKE ? OR supplier_gstin LIKE ? OR supplier_phone LIKE ?)
+       ORDER BY updated_at DESC, supplier_name ASC
+       LIMIT 12`,
+      [like, like, like]
+    );
+
+    const [historyRows] = await db.query(
       `SELECT e.supplier_name, e.supplier_address, e.supplier_gstin, e.supplier_phone,
               e.supplier_invoice_no, e.supplier_invoice_date, e.created_at
        FROM inward_entries e
@@ -419,15 +745,45 @@ router.get('/suppliers/search', async (req, res) => {
       [like, like, like]
     );
 
-    res.json(rows.map((row) => ({
-      name: row.supplier_name || '',
-      address: row.supplier_address || '',
-      gstin: row.supplier_gstin || '',
-      phone: row.supplier_phone || '',
-      last_invoice_no: row.supplier_invoice_no || '',
-      last_invoice_date: row.supplier_invoice_date || '',
-      last_used_at: row.created_at || ''
-    })));
+    const rowsByKey = new Map();
+    for (const row of masterRows || []) {
+      const key = `${String(row.supplier_name || '').trim().toUpperCase()}|${String(row.supplier_gstin || '').trim().toUpperCase()}`;
+      rowsByKey.set(key, {
+        name: row.supplier_name || '',
+        address: row.supplier_address || '',
+        gstin: row.supplier_gstin || '',
+        phone: row.supplier_phone || '',
+        last_invoice_no: '',
+        last_invoice_date: '',
+        last_used_at: row.updated_at || '',
+        source: 'MASTER'
+      });
+    }
+    for (const row of historyRows || []) {
+      const key = `${String(row.supplier_name || '').trim().toUpperCase()}|${String(row.supplier_gstin || '').trim().toUpperCase()}`;
+      if (rowsByKey.has(key)) {
+        const current = rowsByKey.get(key);
+        rowsByKey.set(key, {
+          ...current,
+          last_invoice_no: row.supplier_invoice_no || current.last_invoice_no || '',
+          last_invoice_date: row.supplier_invoice_date || current.last_invoice_date || '',
+          last_used_at: row.created_at || current.last_used_at || ''
+        });
+        continue;
+      }
+      rowsByKey.set(key, {
+        name: row.supplier_name || '',
+        address: row.supplier_address || '',
+        gstin: row.supplier_gstin || '',
+        phone: row.supplier_phone || '',
+        last_invoice_no: row.supplier_invoice_no || '',
+        last_invoice_date: row.supplier_invoice_date || '',
+        last_used_at: row.created_at || '',
+        source: 'HISTORY'
+      });
+    }
+
+    res.json(Array.from(rowsByKey.values()).slice(0, 12));
   } catch (err) {
     console.error('Supplier lookup failed:', err.message);
     res.status(500).json({ error: 'Unable to search old suppliers.' });

@@ -6,9 +6,41 @@ const { csvEscape, csvLine } = require('../utils/formatters');
 const { writeAuditLog } = require('../services/auditService');
 const crypto = require('crypto');
 
-const PRODUCT_DROPBOX_DAYS = 1470;
+const PRODUCT_DROPBOX_DAYS = 365;
 const PRODUCT_IMPORT_BATCH_SIZE = 1000;
 const PRODUCT_IMPORT_LINE_LIMIT = 5000;
+const PRODUCT_IMPORT_TAX_SYNC_LIMIT = 200;
+const PRODUCT_IMPORT_HISTORY_INSERT_SIZE = 250;
+const PRODUCT_IMPORT_ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING']);
+const PRODUCT_IMPORT_COLUMNS = [
+  'product_code',
+  'barcode',
+  'product_name',
+  'alias_names',
+  'hsn_code',
+  'gst_percent',
+  'sales_sgst_percent',
+  'sales_cgst_percent',
+  'sales_igst_percent',
+  'unit_type',
+  'purchase_unit_type',
+  'purchase_unit_size',
+  'mrp',
+  'purchase_price',
+  'sale_price',
+  'wholesale_price',
+  'discount_type',
+  'discount_value',
+  'bulk_discount_value',
+  'is_free_item',
+  'free_promo_enabled',
+  'free_promo_name',
+  'free_promo_qty_per_sale',
+  'free_promo_total_qty',
+  'free_promo_remaining_qty',
+  'stock_qty',
+  'min_stock_alert'
+];
 
 function verifyPassword(password, storedValue) {
   const [salt, storedHash] = String(storedValue || '').split(':');
@@ -93,16 +125,16 @@ async function createProductImportJob({ fileName = '', user, totalRows = 0 } = {
   await db.query(
     `INSERT INTO product_import_jobs
      (id, file_name, status, total_rows, created_by)
-     VALUES (?, ?, 'FAILED', ?, ?)`,
+     VALUES (?, ?, 'QUEUED', ?, ?)`,
     [importId, String(fileName || '').slice(0, 255), totalRows, user?.username || '']
   );
   return importId;
 }
 
-async function updateProductImportJob(connection, importId, summary, failureMessage = '') {
-  const status = summary.errorRows > 0 && summary.validRows > 0
+async function updateProductImportJob(connection, importId, summary, failureMessage = '', forcedStatus = '') {
+  const status = forcedStatus || (summary.errorRows > 0 && summary.validRows > 0
     ? 'PARTIAL SUCCESS'
-    : (summary.validRows > 0 ? 'SUCCESS' : 'FAILED');
+    : (summary.validRows > 0 ? 'SUCCESS' : 'FAILED'));
   await connection.query(
     `UPDATE product_import_jobs
      SET status = ?,
@@ -131,6 +163,34 @@ async function updateProductImportJob(connection, importId, summary, failureMess
   return status;
 }
 
+async function updateProductImportProgress(connection, importId, summary, status = 'RUNNING', failureMessage = '') {
+  await connection.query(
+    `UPDATE product_import_jobs
+     SET status = ?,
+         total_rows = ?,
+         valid_rows = ?,
+         inserted_count = ?,
+         updated_count = ?,
+         error_rows = ?,
+         skipped_count = ?,
+         batch_count = ?,
+         failure_message = ?
+     WHERE id = ?`,
+    [
+      status,
+      summary.totalRows || 0,
+      summary.validRows || 0,
+      summary.inserted || 0,
+      summary.updated || 0,
+      summary.errorRows || 0,
+      summary.skipped || 0,
+      summary.batches || 0,
+      failureMessage || null,
+      importId
+    ]
+  );
+}
+
 async function insertProductImportLine(connection, importId, line) {
   await connection.query(
     `INSERT INTO product_import_lines
@@ -148,6 +208,33 @@ async function insertProductImportLine(connection, importId, line) {
       line.imported_product_json ? JSON.stringify(line.imported_product_json) : null
     ]
   );
+}
+
+async function insertProductImportLines(connection, importId, lines = []) {
+  if (!lines.length) return;
+
+  for (let index = 0; index < lines.length; index += PRODUCT_IMPORT_HISTORY_INSERT_SIZE) {
+    const batch = lines.slice(index, index + PRODUCT_IMPORT_HISTORY_INSERT_SIZE);
+    const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+    const values = batch.flatMap((line) => [
+      importId,
+      Number(line.row_no || 0),
+      String(line.product_code || '').slice(0, 60),
+      String(line.barcode || '').slice(0, 120),
+      String(line.product_name || '').slice(0, 255),
+      line.action_status,
+      line.error_message || null,
+      line.previous_product_json ? JSON.stringify(line.previous_product_json) : null,
+      line.imported_product_json ? JSON.stringify(line.imported_product_json) : null
+    ]);
+
+    await connection.query(
+      `INSERT INTO product_import_lines
+       (import_id, row_no, product_code, barcode, product_name, action_status, error_message, previous_product_json, imported_product_json)
+       VALUES ${placeholders}`,
+      values
+    );
+  }
 }
 
 function normalizeProductName(value) {
@@ -476,6 +563,7 @@ function cutoffDateForDays(days) {
 function buildDropboxBaseQuery({ search = '', barcodes = [], ageDays = PRODUCT_DROPBOX_DAYS } = {}) {
   const cutoffDate = cutoffDateForDays(normalizeDropboxDays(ageDays));
   const values = [cutoffDate];
+  // Dropbox candidates are products with no sale/inward activity after the cutoff and no sellable stock.
   const where = [
     'COALESCE(activity.last_activity_at, p.updated_at, p.created_at) < ?',
     'p.stock_qty <= 0',
@@ -870,6 +958,191 @@ router.get('/', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (re
   }
 });
 
+router.get('/expiry-dashboard', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const days = Math.min(Math.max(Number.parseInt(req.query.days, 10) || 30, 1), 365);
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 500, 50), 1000);
+    const [summaryRows] = await db.query(
+      `SELECT
+         SUM(CASE WHEN pb.expiry_date < CURDATE() THEN 1 ELSE 0 END) AS expired_count,
+         SUM(CASE WHEN pb.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY) THEN 1 ELSE 0 END) AS expiring_count,
+         COALESCE(SUM(CASE WHEN pb.expiry_date < CURDATE() THEN pb.quantity_available ELSE 0 END), 0) AS expired_qty,
+         COALESCE(SUM(CASE WHEN pb.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY) THEN pb.quantity_available ELSE 0 END), 0) AS expiring_qty
+       FROM product_batches pb
+       WHERE pb.expiry_date IS NOT NULL
+         AND pb.quantity_available > 0`,
+      [days, days]
+    );
+
+    const [rows] = await db.query(
+      `SELECT pb.barcode,
+              p.product_code,
+              p.product_name,
+              pb.batch_no,
+              pb.expiry_date,
+              pb.quantity_available,
+              pb.mrp,
+              pb.purchase_price,
+              CASE
+                WHEN pb.expiry_date < CURDATE() THEN 'EXPIRED'
+                WHEN pb.expiry_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY) THEN 'EXPIRING_7_DAYS'
+                ELSE 'EXPIRING_SOON'
+              END AS expiry_status
+       FROM product_batches pb
+       INNER JOIN products p ON p.barcode = pb.barcode
+       WHERE pb.expiry_date IS NOT NULL
+         AND pb.quantity_available > 0
+         AND pb.expiry_date <= DATE_ADD(CURDATE(), INTERVAL ? DAY)
+       ORDER BY pb.expiry_date ASC, p.product_name ASC
+       LIMIT ?`,
+      [days, limit]
+    );
+
+    res.json({
+      days,
+      summary: {
+        expiredCount: Number(summaryRows[0]?.expired_count || 0),
+        expiringCount: Number(summaryRows[0]?.expiring_count || 0),
+        expiredQty: Number(summaryRows[0]?.expired_qty || 0),
+        expiringQty: Number(summaryRows[0]?.expiring_qty || 0)
+      },
+      rows: (rows || []).map((row) => ({
+        ...row,
+        quantity_available: Number(row.quantity_available || 0),
+        mrp: Number(row.mrp || 0),
+        purchase_price: Number(row.purchase_price || 0)
+      }))
+    });
+  } catch (err) {
+    console.error('Expiry dashboard failed:', err.message);
+    res.status(500).json({ error: 'Unable to load expiry dashboard.' });
+  }
+});
+
+router.get('/reorder-suggestions', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 500, 50), 1000);
+    const [rows] = await db.query(
+      `SELECT p.barcode,
+              p.product_code,
+              p.product_name,
+              p.stock_qty,
+              p.min_stock_alert,
+              p.purchase_unit_type,
+              p.purchase_unit_size,
+              p.purchase_price,
+              p.sale_price,
+              COALESCE(sales_30.sold_qty, 0) AS sold_last_30_days,
+              GREATEST(CEIL((p.min_stock_alert * 2) - p.stock_qty), 0) AS suggested_qty
+       FROM products p
+       LEFT JOIN (
+         SELECT ii.barcode, SUM(ii.quantity) AS sold_qty
+         FROM invoice_items ii
+         INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
+         WHERE COALESCE(i.invoice_status, 'PAID') <> 'CANCELLED'
+           AND i.created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 30 DAY)
+         GROUP BY ii.barcode
+       ) sales_30 ON sales_30.barcode = p.barcode
+       WHERE p.stock_qty <= p.min_stock_alert
+       ORDER BY (p.stock_qty - p.min_stock_alert) ASC, sold_last_30_days DESC, p.product_name ASC
+       LIMIT ?`,
+      [limit]
+    );
+
+    res.json((rows || []).map((row) => ({
+      ...row,
+      stock_qty: Number(row.stock_qty || 0),
+      min_stock_alert: Number(row.min_stock_alert || 0),
+      purchase_unit_size: Number(row.purchase_unit_size || 1),
+      purchase_price: Number(row.purchase_price || 0),
+      sale_price: Number(row.sale_price || 0),
+      sold_last_30_days: Number(row.sold_last_30_days || 0),
+      suggested_qty: Number(row.suggested_qty || 0)
+    })));
+  } catch (err) {
+    console.error('Reorder suggestions failed:', err.message);
+    res.status(500).json({ error: 'Unable to load reorder suggestions.' });
+  }
+});
+
+router.post('/stock-adjustments', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  const barcode = String(req.body?.barcode || '').trim().toUpperCase();
+  const adjustmentQty = Number(req.body?.adjustment_qty);
+  const reason = String(req.body?.reason || 'OTHER').trim().toUpperCase();
+  const note = String(req.body?.note || '').trim();
+  const allowedReasons = new Set(['DAMAGE', 'EXPIRY', 'WASTAGE', 'THEFT', 'STOCK_AUDIT', 'OTHER']);
+
+  if (!barcode) return res.status(400).json({ error: 'Barcode is required for stock adjustment.' });
+  if (!Number.isFinite(adjustmentQty) || adjustmentQty === 0) return res.status(400).json({ error: 'Enter a non-zero adjustment quantity.' });
+  if (!allowedReasons.has(reason)) return res.status(400).json({ error: 'Select a valid stock adjustment reason.' });
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [productRows] = await connection.query(
+      `SELECT barcode, product_name, stock_qty FROM products WHERE barcode = ? LIMIT 1 FOR UPDATE`,
+      [barcode]
+    );
+    if (!productRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Product not found for this barcode.' });
+    }
+
+    const product = productRows[0];
+    const oldQty = Number(product.stock_qty || 0);
+    const newQty = oldQty + adjustmentQty;
+    if (newQty < 0) {
+      await connection.rollback();
+      return res.status(400).json({ error: `Adjustment cannot make stock negative. Current stock is ${oldQty}.` });
+    }
+
+    await connection.query(
+      `UPDATE products SET stock_qty = ?, updated_at = CURRENT_TIMESTAMP WHERE barcode = ?`,
+      [newQty, barcode]
+    );
+    const [adjustmentResult] = await connection.query(
+      `INSERT INTO stock_adjustments
+       (barcode, product_name, old_qty, adjustment_qty, new_qty, reason, note, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [barcode, product.product_name, oldQty, adjustmentQty, newQty, reason, note.slice(0, 255), req.user?.username || '']
+    );
+
+    await writeAuditLog({
+      user: req.user,
+      action: 'PRODUCT_STOCK_ADJUSTED',
+      entityType: 'PRODUCT',
+      entityId: barcode,
+      details: {
+        adjustment_id: adjustmentResult.insertId,
+        product_name: product.product_name,
+        old_qty: oldQty,
+        adjustment_qty: adjustmentQty,
+        new_qty: newQty,
+        reason,
+        note
+      },
+      connection
+    });
+
+    await connection.commit();
+    res.json({
+      success: true,
+      adjustmentId: adjustmentResult.insertId,
+      barcode,
+      product_name: product.product_name,
+      old_qty: oldQty,
+      adjustment_qty: adjustmentQty,
+      new_qty: newQty
+    });
+  } catch (err) {
+    await connection.rollback();
+    console.error('Stock adjustment failed:', err.message);
+    res.status(500).json({ error: 'Unable to save stock adjustment.' });
+  } finally {
+    connection.release();
+  }
+});
+
 router.get('/export/template', authenticate, authorize('SERVER', 'ADMIN'), (_req, res) => {
   const sampleRows = [
     ['73137', '89300296', '(180) JUMBO ROUND KAJU', '', '', '080211', '62.00', '62.00', '0', '2.5', '2.5', '5', '50 Gms', '62.00'],
@@ -924,6 +1197,417 @@ router.get('/export', authenticate, authorize('SERVER', 'ADMIN'), async (_req, r
     res.status(500).json({ error: 'Unable to export products.' });
   }
 });
+
+function buildImportSummary({ totalInputRows, inserted, updated, taxSynced = 0, batches, batchSize = PRODUCT_IMPORT_BATCH_SIZE, errors }) {
+  return {
+    totalRows: totalInputRows,
+    validRows: inserted + updated,
+    inserted,
+    updated,
+    taxSynced,
+    batches,
+    batchSize,
+    skipped: errors.length,
+    errorRows: errors.length,
+    errors: errors.slice(0, 100)
+  };
+}
+
+async function fetchExistingImportProducts(connection, batch) {
+  const barcodes = [...new Set(batch.map((product) => product.barcode).filter(Boolean))];
+  const productCodes = [...new Set(batch.map((product) => product.product_code).filter(Boolean))];
+  const clauses = [];
+  const values = [];
+
+  if (barcodes.length) {
+    clauses.push(`barcode IN (${barcodes.map(() => '?').join(',')})`);
+    values.push(...barcodes);
+  }
+
+  if (productCodes.length) {
+    clauses.push(`product_code IN (${productCodes.map(() => '?').join(',')})`);
+    values.push(...productCodes);
+  }
+
+  if (!clauses.length) {
+    return { byBarcode: new Map(), byCode: new Map() };
+  }
+
+  const [rows] = await connection.query(
+    `SELECT *
+     FROM products
+     WHERE ${clauses.join(' OR ')}`,
+    values
+  );
+
+  const byBarcode = new Map();
+  const byCode = new Map();
+  (rows || []).forEach((row) => {
+    if (row.barcode) byBarcode.set(row.barcode, row);
+    if (row.product_code) byCode.set(row.product_code, row);
+  });
+  return { byBarcode, byCode };
+}
+
+function existingImportProduct(existingProducts, product) {
+  return existingProducts.byBarcode.get(product.barcode)
+    || (product.product_code ? existingProducts.byCode.get(product.product_code) : null)
+    || null;
+}
+
+function rememberImportedProduct(existingProducts, product) {
+  if (!product?.barcode) return;
+  const snapshot = productSnapshot(product);
+  existingProducts.byBarcode.set(product.barcode, snapshot);
+  if (product.product_code) existingProducts.byCode.set(product.product_code, snapshot);
+}
+
+function productImportValues(product) {
+  return PRODUCT_IMPORT_COLUMNS.map((column) => product[column]);
+}
+
+async function bulkUpsertProducts(connection, products = []) {
+  if (!products.length) return;
+
+  const placeholders = products
+    .map(() => `(${PRODUCT_IMPORT_COLUMNS.map(() => '?').join(',')})`)
+    .join(',');
+  const values = products.flatMap(productImportValues);
+  const updateSql = PRODUCT_IMPORT_COLUMNS
+    .filter((column) => column !== 'barcode')
+    .map((column) => `${column} = VALUES(${column})`)
+    .join(',\n                 ');
+
+  await connection.query(
+    `INSERT INTO products
+     (${PRODUCT_IMPORT_COLUMNS.join(', ')})
+     VALUES ${placeholders}
+     ON DUPLICATE KEY UPDATE
+       ${updateSql}`,
+    values
+  );
+}
+
+function prepareImportBatch(batch, existingProducts) {
+  let inserted = 0;
+  let updated = 0;
+  const productsForWrite = [];
+  const historyLines = [];
+
+  for (const product of batch) {
+    const existingProduct = existingImportProduct(existingProducts, product);
+    const existed = Boolean(existingProduct);
+    const previousProduct = existed ? productSnapshot(existingProduct) : null;
+    const productForWrite = existed ? { ...product, barcode: existingProduct.barcode } : product;
+
+    if (existed) updated += 1;
+    else inserted += 1;
+
+    productsForWrite.push(productForWrite);
+    historyLines.push({
+      row_no: product.source_row,
+      product_code: productForWrite.product_code,
+      barcode: productForWrite.barcode,
+      product_name: productForWrite.product_name,
+      action_status: existed ? 'UPDATED' : 'INSERTED',
+      previous_product_json: previousProduct,
+      imported_product_json: productSnapshot(productForWrite)
+    });
+  }
+
+  return { inserted, updated, productsForWrite, historyLines };
+}
+
+function removeDuplicateProductsWithinImport(products, errors) {
+  const seenBarcodes = new Set();
+  const seenProductCodes = new Set();
+  const uniqueProducts = [];
+
+  for (const product of products) {
+    if (seenBarcodes.has(product.barcode)) {
+      errors.push({
+        row: product.source_row,
+        product_code: product.product_code || '',
+        barcode: product.barcode,
+        product_name: product.product_name || '',
+        errors: [`Duplicate barcode ${product.barcode} repeated in this import file`],
+        message: `Skipped: Duplicate barcode ${product.barcode} repeated in this import file. Keep only one row per product.`
+      });
+      continue;
+    }
+
+    if (product.product_code && seenProductCodes.has(product.product_code)) {
+      errors.push({
+        row: product.source_row,
+        product_code: product.product_code,
+        barcode: product.barcode || '',
+        product_name: product.product_name || '',
+        errors: [`Duplicate product code ${product.product_code} repeated in this import file`],
+        message: `Skipped: Duplicate product code ${product.product_code} repeated in this import file. Keep only one row per product code.`
+      });
+      continue;
+    }
+
+    seenBarcodes.add(product.barcode);
+    if (product.product_code) seenProductCodes.add(product.product_code);
+    uniqueProducts.push(product);
+  }
+
+  products.length = 0;
+  products.push(...uniqueProducts);
+}
+
+async function processImportBatchRowByRow(connection, { importId, batch, existingProducts, shouldSyncTaxByName }) {
+  let inserted = 0;
+  let updated = 0;
+  let taxSynced = 0;
+  const errors = [];
+
+  for (const product of batch) {
+    let productForWrite = product;
+    let savepointCreated = false;
+    try {
+      await connection.query('SAVEPOINT product_import_row');
+      savepointCreated = true;
+
+      const existingProduct = existingImportProduct(existingProducts, product);
+      const existed = Boolean(existingProduct);
+      const previousProduct = existed ? productSnapshot(existingProduct) : null;
+      productForWrite = existed ? { ...product, barcode: existingProduct.barcode } : product;
+
+      await bulkUpsertProducts(connection, [productForWrite]);
+
+      if (existed) updated += 1;
+      else inserted += 1;
+
+      await insertProductImportLine(connection, importId, {
+        row_no: product.source_row,
+        product_code: productForWrite.product_code,
+        barcode: productForWrite.barcode,
+        product_name: productForWrite.product_name,
+        action_status: existed ? 'UPDATED' : 'INSERTED',
+        previous_product_json: previousProduct,
+        imported_product_json: productSnapshot(productForWrite)
+      });
+
+      if (shouldSyncTaxByName) {
+        taxSynced += await syncProductTaxByName(connection, {
+          productName: product.product_name,
+          aliasNames: product.alias_names,
+          hsnCode: product.hsn_code,
+          gstPercent: product.gst_percent
+        });
+      }
+
+      rememberImportedProduct(existingProducts, productForWrite);
+      await connection.query('RELEASE SAVEPOINT product_import_row');
+      savepointCreated = false;
+    } catch (rowErr) {
+      if (savepointCreated) {
+        try {
+          await connection.query('ROLLBACK TO SAVEPOINT product_import_row');
+        } catch (rollbackErr) {
+          console.error('Product import row rollback failed:', rollbackErr.message);
+        }
+
+        try {
+          await connection.query('RELEASE SAVEPOINT product_import_row');
+        } catch (_releaseErr) {
+          // The savepoint may already be gone after a rollback or connection-level error.
+        }
+      }
+
+      const rowMessage = formatProductImportDbError(product, rowErr);
+      errors.push({
+        row: product.source_row,
+        product_code: product.product_code || '',
+        barcode: productForWrite?.barcode || product.barcode,
+        product_name: product.product_name,
+        errors: [rowMessage],
+        message: rowMessage,
+        logged: true
+      });
+      await insertProductImportLine(connection, importId, {
+        row_no: product.source_row,
+        product_code: product.product_code,
+        barcode: product.barcode,
+        product_name: product.product_name,
+        action_status: 'ERROR',
+        error_message: rowMessage,
+        imported_product_json: productSnapshot(product)
+      });
+    }
+  }
+
+  return { inserted, updated, taxSynced, errors };
+}
+
+async function processProductImportJob({ importId, totalInputRows, products, errors: initialErrors = [] }) {
+  let inserted = 0;
+  let updated = 0;
+  let taxSynced = 0;
+  let batches = 0;
+  const errors = initialErrors.map((rowError) => ({ ...rowError }));
+  const shouldSyncTaxByName = products.length <= PRODUCT_IMPORT_TAX_SYNC_LIMIT;
+
+  try {
+    const startConnection = await db.getConnection();
+    try {
+      await startConnection.beginTransaction();
+      for (const rowError of errors) {
+        await insertProductImportLine(startConnection, importId, {
+          row_no: rowError.row,
+          product_code: rowError.product_code,
+          barcode: rowError.barcode,
+          product_name: rowError.product_name,
+          action_status: 'ERROR',
+          error_message: rowError.message || rowError.errors.join(', ')
+        });
+        rowError.logged = true;
+      }
+      await updateProductImportProgress(startConnection, importId, {
+        totalRows: totalInputRows,
+        validRows: 0,
+        inserted,
+        updated,
+        errorRows: errors.length,
+        skipped: errors.length,
+        batches
+      });
+      await startConnection.commit();
+    } catch (err) {
+      await startConnection.rollback();
+      throw err;
+    } finally {
+      startConnection.release();
+    }
+
+    for (let index = 0; index < products.length; index += PRODUCT_IMPORT_BATCH_SIZE) {
+      const batch = products.slice(index, index + PRODUCT_IMPORT_BATCH_SIZE);
+      const connection = await db.getConnection();
+      batches += 1;
+
+      try {
+        await connection.beginTransaction();
+        const existingProducts = await fetchExistingImportProducts(connection, batch);
+        const preparedBatch = prepareImportBatch(batch, existingProducts);
+
+        try {
+          await bulkUpsertProducts(connection, preparedBatch.productsForWrite);
+          await insertProductImportLines(connection, importId, preparedBatch.historyLines);
+
+          if (shouldSyncTaxByName) {
+            for (const product of batch) {
+              taxSynced += await syncProductTaxByName(connection, {
+                productName: product.product_name,
+                aliasNames: product.alias_names,
+                hsnCode: product.hsn_code,
+                gstPercent: product.gst_percent
+              });
+            }
+          }
+
+          preparedBatch.productsForWrite.forEach((product) => rememberImportedProduct(existingProducts, product));
+          inserted += preparedBatch.inserted;
+          updated += preparedBatch.updated;
+        } catch (bulkErr) {
+          console.error(`Product import bulk batch ${batches} fell back to row mode:`, bulkErr.message);
+          await connection.rollback();
+          await connection.beginTransaction();
+
+          const fallbackExistingProducts = await fetchExistingImportProducts(connection, batch);
+          const fallbackResult = await processImportBatchRowByRow(connection, {
+            importId,
+            batch,
+            existingProducts: fallbackExistingProducts,
+            shouldSyncTaxByName
+          });
+          inserted += fallbackResult.inserted;
+          updated += fallbackResult.updated;
+          taxSynced += fallbackResult.taxSynced;
+          errors.push(...fallbackResult.errors);
+        }
+
+        await updateProductImportProgress(connection, importId, {
+          totalRows: totalInputRows,
+          validRows: inserted + updated,
+          inserted,
+          updated,
+          errorRows: errors.length,
+          skipped: errors.length,
+          batches
+        });
+        await connection.commit();
+      } catch (err) {
+        await connection.rollback();
+        throw err;
+      } finally {
+        connection.release();
+      }
+    }
+
+    const summary = buildImportSummary({
+      totalInputRows,
+      inserted,
+      updated,
+      taxSynced,
+      batches,
+      errors
+    });
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      for (const rowError of errors) {
+        if (rowError.logged) continue;
+        await insertProductImportLine(connection, importId, {
+          row_no: rowError.row,
+          product_code: rowError.product_code,
+          barcode: rowError.barcode,
+          product_name: rowError.product_name,
+          action_status: 'ERROR',
+          error_message: rowError.message || rowError.errors.join(', ')
+        });
+      }
+      await updateProductImportJob(connection, importId, summary);
+      await connection.commit();
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
+  } catch (err) {
+    console.error('Product import failed:', err.message);
+    try {
+      const connection = await db.getConnection();
+      try {
+        await connection.beginTransaction();
+        await updateProductImportJob(connection, importId, {
+          totalRows: totalInputRows,
+          validRows: inserted + updated,
+          inserted,
+          updated,
+          errorRows: Math.max(errors.length, 1),
+          skipped: errors.length,
+          batches
+        }, err.message, 'FAILED');
+        await insertProductImportLine(connection, importId, {
+          row_no: 0,
+          action_status: 'ERROR',
+          error_message: `Import failed before completion: ${err.message}`
+        });
+        await connection.commit();
+      } catch (historyErr) {
+        await connection.rollback();
+      } finally {
+        connection.release();
+      }
+    } catch (_historyErr) {
+      // Import failure logging should never crash the API process.
+    }
+  }
+}
 
 router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
   const csvText = String(req.body?.csv || '');
@@ -1060,6 +1744,8 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
     }
   }
 
+  removeDuplicateProductsWithinImport(products, errors);
+
   if (!products.length) {
     const connection = await db.getConnection();
     try {
@@ -1105,242 +1791,32 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
     });
   }
 
-  let inserted = 0;
-  let updated = 0;
-  let taxSynced = 0;
-  let batches = 0;
+  setImmediate(() => {
+    processProductImportJob({ importId, totalInputRows, products, errors }).catch((err) => {
+      console.error('Product import background job failed:', err.message);
+    });
+  });
 
-  try {
-    for (let index = 0; index < products.length; index += PRODUCT_IMPORT_BATCH_SIZE) {
-      const batch = products.slice(index, index + PRODUCT_IMPORT_BATCH_SIZE);
-      const connection = await db.getConnection();
-      batches += 1;
-
-      try {
-        await connection.beginTransaction();
-
-        for (const product of batch) {
-          let productForWrite = product;
-          let savepointCreated = false;
-          try {
-      await connection.query('SAVEPOINT product_import_row');
-      savepointCreated = true;
-      const [existingRows] = await connection.query(
-        `SELECT *
-         FROM products
-         WHERE barcode = ? OR (product_code IS NOT NULL AND product_code = ?)
-         ORDER BY CASE WHEN barcode = ? THEN 0 ELSE 1 END
-         LIMIT 1`,
-        [product.barcode, product.product_code, product.barcode]
-      );
-      const existed = existingRows.length > 0;
-      const previousProduct = existed ? productSnapshot(existingRows[0]) : null;
-      productForWrite = existed ? { ...product, barcode: existingRows[0].barcode } : product;
-
-      await connection.query(
-        `INSERT INTO products
-         (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, sales_sgst_percent, sales_cgst_percent, sales_igst_percent,
-          unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price,
-          discount_type, discount_value, bulk_discount_value, is_free_item, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
-          free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           product_code = VALUES(product_code),
-           product_name = VALUES(product_name),
-           alias_names = VALUES(alias_names),
-           hsn_code = VALUES(hsn_code),
-           gst_percent = VALUES(gst_percent),
-           sales_sgst_percent = VALUES(sales_sgst_percent),
-           sales_cgst_percent = VALUES(sales_cgst_percent),
-           sales_igst_percent = VALUES(sales_igst_percent),
-           unit_type = VALUES(unit_type),
-           purchase_unit_type = VALUES(purchase_unit_type),
-           purchase_unit_size = VALUES(purchase_unit_size),
-           mrp = VALUES(mrp),
-           purchase_price = VALUES(purchase_price),
-           sale_price = VALUES(sale_price),
-           wholesale_price = VALUES(wholesale_price),
-           discount_type = VALUES(discount_type),
-           discount_value = VALUES(discount_value),
-           bulk_discount_value = VALUES(bulk_discount_value),
-           is_free_item = VALUES(is_free_item),
-           free_promo_enabled = VALUES(free_promo_enabled),
-           free_promo_name = VALUES(free_promo_name),
-           free_promo_qty_per_sale = VALUES(free_promo_qty_per_sale),
-           free_promo_total_qty = VALUES(free_promo_total_qty),
-           free_promo_remaining_qty = VALUES(free_promo_remaining_qty),
-           stock_qty = VALUES(stock_qty),
-           min_stock_alert = VALUES(min_stock_alert)`,
-        [
-          productForWrite.product_code,
-          productForWrite.barcode,
-          productForWrite.product_name,
-          productForWrite.alias_names,
-          productForWrite.hsn_code,
-          productForWrite.gst_percent,
-          productForWrite.sales_sgst_percent,
-          productForWrite.sales_cgst_percent,
-          productForWrite.sales_igst_percent,
-          productForWrite.unit_type,
-          productForWrite.purchase_unit_type,
-          productForWrite.purchase_unit_size,
-          productForWrite.mrp,
-          productForWrite.purchase_price,
-          productForWrite.sale_price,
-          productForWrite.wholesale_price,
-          productForWrite.discount_type,
-          productForWrite.discount_value,
-          productForWrite.bulk_discount_value,
-          productForWrite.is_free_item,
-          productForWrite.free_promo_enabled,
-          productForWrite.free_promo_name,
-          productForWrite.free_promo_qty_per_sale,
-          productForWrite.free_promo_total_qty,
-          productForWrite.free_promo_remaining_qty,
-          productForWrite.stock_qty,
-          productForWrite.min_stock_alert
-        ]
-      );
-
-      if (existed) updated += 1;
-      else inserted += 1;
-
-      await insertProductImportLine(connection, importId, {
-        row_no: product.source_row,
-        product_code: productForWrite.product_code,
-        barcode: productForWrite.barcode,
-        product_name: productForWrite.product_name,
-        action_status: existed ? 'UPDATED' : 'INSERTED',
-        previous_product_json: previousProduct,
-        imported_product_json: productSnapshot(productForWrite)
-      });
-
-      taxSynced += await syncProductTaxByName(connection, {
-        productName: product.product_name,
-        aliasNames: product.alias_names,
-        hsnCode: product.hsn_code,
-        gstPercent: product.gst_percent
-      });
-      await connection.query('RELEASE SAVEPOINT product_import_row');
-      savepointCreated = false;
-          } catch (rowErr) {
-            if (savepointCreated) {
-              try {
-                await connection.query('ROLLBACK TO SAVEPOINT product_import_row');
-              } catch (rollbackErr) {
-                console.error('Product import row rollback failed:', rollbackErr.message);
-              }
-
-              try {
-                await connection.query('RELEASE SAVEPOINT product_import_row');
-              } catch (_releaseErr) {
-                // The savepoint may already be gone after a rollback or connection-level error.
-              }
-            }
-            const rowMessage = formatProductImportDbError(product, rowErr);
-            errors.push({
-              row: product.source_row,
-              product_code: product.product_code || '',
-              barcode: productForWrite?.barcode || product.barcode,
-              product_name: product.product_name,
-              errors: [rowMessage],
-              message: rowMessage,
-              logged: true
-            });
-            await insertProductImportLine(connection, importId, {
-              row_no: product.source_row,
-              product_code: product.product_code,
-              barcode: product.barcode,
-              product_name: product.product_name,
-              action_status: 'ERROR',
-              error_message: rowMessage,
-              imported_product_json: productSnapshot(product)
-            });
-          }
-    }
-
-        await connection.commit();
-      } catch (err) {
-        await connection.rollback();
-        throw err;
-      } finally {
-        connection.release();
-      }
-    }
-
-    const summary = {
+  return res.status(202).json({
+    success: true,
+    queued: true,
+    status: 'QUEUED',
+    importId,
+    message: 'Product import started. Track the live status in Import History.',
+    summary: {
       totalRows: totalInputRows,
-      validRows: inserted + updated,
-      inserted,
-      updated,
-      taxSynced,
-      batches,
-      batchSize: PRODUCT_IMPORT_BATCH_SIZE,
+      acceptedRows: products.length,
+      validRows: 0,
+      inserted: 0,
+      updated: 0,
       skipped: errors.length,
       errorRows: errors.length,
+      batches: Math.ceil(products.length / PRODUCT_IMPORT_BATCH_SIZE),
+      batchSize: PRODUCT_IMPORT_BATCH_SIZE,
       errors: errors.slice(0, 100)
-    };
-
-    const connection = await db.getConnection();
-    try {
-      await connection.beginTransaction();
-      for (const rowError of errors) {
-        if (rowError.logged) continue;
-        await insertProductImportLine(connection, importId, {
-          row_no: rowError.row,
-          product_code: rowError.product_code,
-          barcode: rowError.barcode,
-          product_name: rowError.product_name,
-          action_status: 'ERROR',
-          error_message: rowError.message || rowError.errors.join(', ')
-        });
-      }
-      await updateProductImportJob(connection, importId, summary);
-      await connection.commit();
-    } catch (err) {
-      await connection.rollback();
-      throw err;
-    } finally {
-      connection.release();
-    }
-
-    res.json({
-      success: true,
-      importId,
-      summary,
-      warnings: errors.slice(0, 100)
-    });
-  } catch (err) {
-    console.error('Product import failed:', err.message);
-    try {
-      const connection = await db.getConnection();
-      try {
-        await connection.beginTransaction();
-        await updateProductImportJob(connection, importId, {
-          totalRows: totalInputRows,
-          validRows: products.length,
-          inserted,
-          updated,
-          errorRows: Math.max(errors.length, 1),
-          skipped: errors.length,
-          batches
-        }, err.message);
-        await insertProductImportLine(connection, importId, {
-          row_no: 0,
-          action_status: 'ERROR',
-          error_message: `Import failed before completion: ${err.message}`
-        });
-        await connection.commit();
-      } catch (historyErr) {
-        await connection.rollback();
-      } finally {
-        connection.release();
-      }
-    } catch (_historyErr) {
-      // Import failure response is more important than history update failure.
-    }
-    res.status(500).json({ error: 'Unable to import products.' });
-  }
+    },
+    warnings: errors.slice(0, 100)
+  });
 });
 
 function parseJsonValue(value) {
@@ -1446,7 +1922,8 @@ router.get('/import-history', authenticate, authorize('SERVER', 'ADMIN'), async 
       rollback_at: row.rollback_at,
       rollback_by: row.rollback_by || '',
       created_by: row.created_by || '',
-      created_at: row.created_at
+      created_at: row.created_at,
+      updated_at: row.updated_at
     })));
   } catch (err) {
     console.error('Product import history load failed:', err.message);
@@ -1493,6 +1970,10 @@ router.delete('/import-history/:id', authenticate, authorize('SERVER', 'ADMIN'),
     if (job.rollback_status === 'ROLLED_BACK') {
       await connection.rollback();
       return res.status(400).json({ error: 'This import was already deleted/rolled back.' });
+    }
+    if (PRODUCT_IMPORT_ACTIVE_STATUSES.has(job.status)) {
+      await connection.rollback();
+      return res.status(400).json({ error: 'This import is still running. Delete/rollback is available after it completes.' });
     }
 
     const [lineRows] = await connection.query(

@@ -1769,7 +1769,11 @@ export default function BillingTerminalView({ isActive = true }) {
       return;
     }
 
-    const holdToken = window.prompt('Hold name or token:', `HOLD-${Date.now().toString().slice(-4)}`);
+    const customerLabel = (isBusinessBillingMode(billingMode) ? companyName : customerName).trim();
+    const defaultHoldToken = customerLabel
+      ? customerLabel.slice(0, 18).toUpperCase()
+      : `HOLD-C${counterNo}-${Date.now().toString().slice(-4)}`;
+    const holdToken = window.prompt('Hold bill name/token:', defaultHoldToken);
     if (!holdToken) return;
 
     try {
@@ -1800,9 +1804,10 @@ export default function BillingTerminalView({ isActive = true }) {
         bill_total: totals.grand.toFixed(2),
         item_count: cart.length
       });
-      setStatusMessage(`Bill held as ${holdToken}.`);
+      setStatusMessage(`Bill held as ${holdToken}. Ready for next customer.`);
       resetBill();
       refreshHeldBills(counterNo);
+      setIsHeldBillsOpen(true);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to hold bill.');
     }
@@ -2248,6 +2253,15 @@ export default function BillingTerminalView({ isActive = true }) {
 
           <div className="billing-activity-panel">
             <div className="activity-action-row">
+              <button
+                className="primary-button hold-current-button"
+                type="button"
+                onClick={holdCurrentBill}
+                disabled={cart.length === 0}
+                title={cart.length === 0 ? 'Add items before holding a bill' : 'Hold this bill and clear POS for the next customer'}
+              >
+                Hold Bill & New Customer
+              </button>
               <button className="secondary-button" onClick={() => refreshHistory(true)}>Old Bills / Reprint (F8)</button>
               {latestInvoice ? (
                 <details
@@ -2277,7 +2291,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 onToggle={(event) => setIsHeldBillsOpen(event.currentTarget.open)}
               >
                 <summary>
-                  <span>Held Bills</span>
+                  <span>Held Bills (F6)</span>
                   <strong>{heldBills.length}</strong>
                 </summary>
                 <div className="activity-held-list">
@@ -2306,7 +2320,7 @@ export default function BillingTerminalView({ isActive = true }) {
             {errorMessage && <div className="alert-box">{errorMessage}</div>}
             </div>
 
-          <div className="billing-table-wrap" ref={billingTableRef}>
+          <div className={`billing-table-wrap ${cart.length === 0 ? 'empty-cart' : ''}`} ref={billingTableRef}>
             <table className="product-table billing-product-table">
               <thead>
                 <tr>

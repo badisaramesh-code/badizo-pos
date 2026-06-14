@@ -67,7 +67,7 @@ export async function fetchBulkEditableProducts(search = '') {
   return Array.isArray(data) ? data : [];
 }
 
-export async function fetchProductDropbox({ search = '', ageDays = 1470, limit = 500 } = {}) {
+export async function fetchProductDropbox({ search = '', ageDays = 365, limit = 500 } = {}) {
   const { data } = await api.get('/products/dropbox', {
     params: { search, ageDays, limit }
   });
@@ -81,6 +81,25 @@ export async function fetchDuplicateProductCodes({ search = '', limit = 100 } = 
   return data;
 }
 
+export async function fetchProductExpiryDashboard({ days = 30, limit = 500 } = {}) {
+  const { data } = await api.get('/products/expiry-dashboard', {
+    params: { days, limit }
+  });
+  return data;
+}
+
+export async function fetchReorderSuggestions({ limit = 500 } = {}) {
+  const { data } = await api.get('/products/reorder-suggestions', {
+    params: { limit }
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function saveStockAdjustment(payload) {
+  const { data } = await api.post('/products/stock-adjustments', payload);
+  return data;
+}
+
 export async function saveProduct(product) {
   const { data } = await api.post('/products/save', product);
   return data;
@@ -91,7 +110,7 @@ export async function bulkUpdateProducts(rows) {
   return data;
 }
 
-export async function bulkDeleteProductDropbox({ barcodes, username, password, ageDays = 1470 }) {
+export async function bulkDeleteProductDropbox({ barcodes, username, password, ageDays = 365 }) {
   const { data } = await api.delete('/products/dropbox/bulk-delete', {
     data: { barcodes, username, password, ageDays }
   });
@@ -122,7 +141,7 @@ export async function exportProducts() {
 }
 
 export async function importProducts(csv, fileName = '') {
-  const { data } = await api.post('/products/import', { csv, fileName });
+  const { data } = await api.post('/products/import', { csv, fileName }, { timeout: 300000 });
   return data;
 }
 
@@ -354,6 +373,40 @@ export async function deleteHeldBill(holdToken) {
 export async function fetchRecentInwards() {
   const { data } = await api.get('/inward/recent');
   return Array.isArray(data) ? data : [];
+}
+
+export async function fetchPurchaseOrders({ status = 'ALL', supplier = '' } = {}) {
+  const { data } = await api.get('/inward/purchase-orders', {
+    params: { status, supplier }
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchPurchaseOrderDetails(poNo) {
+  const { data } = await api.get(`/inward/purchase-orders/${encodeURIComponent(poNo)}`);
+  return data;
+}
+
+export async function savePurchaseOrder(payload) {
+  const { data } = await api.post('/inward/purchase-orders', payload);
+  return data;
+}
+
+export async function updatePurchaseOrderStatus(poNo, status) {
+  const { data } = await api.post(`/inward/purchase-orders/${encodeURIComponent(poNo)}/status`, { status });
+  return data;
+}
+
+export async function fetchSuppliers({ search = '' } = {}) {
+  const { data } = await api.get('/inward/suppliers', {
+    params: { search }
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function saveSupplier(payload) {
+  const { data } = await api.post('/inward/suppliers', payload);
+  return data;
 }
 
 export async function fetchInwardHistory({ from = '', to = '', supplier = '', invoice = '' } = {}) {

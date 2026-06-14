@@ -94,7 +94,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
       CREATE TABLE IF NOT EXISTS product_import_jobs (
         id CHAR(36) PRIMARY KEY,
         file_name VARCHAR(255) DEFAULT '',
-        status ENUM('SUCCESS', 'FAILED', 'PARTIAL SUCCESS', 'ROLLED BACK') NOT NULL DEFAULT 'FAILED',
+        status ENUM('QUEUED', 'RUNNING', 'SUCCESS', 'FAILED', 'PARTIAL SUCCESS', 'ROLLED BACK') NOT NULL DEFAULT 'QUEUED',
         total_rows INT NOT NULL DEFAULT 0,
         valid_rows INT NOT NULL DEFAULT 0,
         inserted_count INT NOT NULL DEFAULT 0,
@@ -406,6 +406,66 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
 
     await connection.query(`
+      CREATE TABLE IF NOT EXISTS suppliers (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        supplier_name VARCHAR(255) NOT NULL,
+        supplier_address VARCHAR(255) DEFAULT '',
+        supplier_gstin VARCHAR(20) DEFAULT '',
+        supplier_phone VARCHAR(20) DEFAULT '',
+        contact_person VARCHAR(120) DEFAULT '',
+        payment_terms VARCHAR(120) DEFAULT '',
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_supplier_identity (supplier_name, supplier_gstin),
+        INDEX idx_supplier_name (supplier_name),
+        INDEX idx_supplier_phone (supplier_phone)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS purchase_orders (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        po_no VARCHAR(60) NOT NULL UNIQUE,
+        supplier_name VARCHAR(255) NOT NULL,
+        supplier_address VARCHAR(255) DEFAULT '',
+        supplier_gstin VARCHAR(20) DEFAULT '',
+        supplier_phone VARCHAR(20) DEFAULT '',
+        expected_date DATE DEFAULT NULL,
+        status ENUM('DRAFT', 'ORDERED', 'RECEIVED', 'CANCELLED') NOT NULL DEFAULT 'DRAFT',
+        item_count INT NOT NULL DEFAULT 0,
+        total_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        estimated_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        notes VARCHAR(255) DEFAULT '',
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_purchase_order_status (status),
+        INDEX idx_purchase_order_supplier (supplier_name),
+        INDEX idx_purchase_order_expected_date (expected_date)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS purchase_order_items (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        po_no VARCHAR(60) NOT NULL,
+        barcode VARCHAR(120) NOT NULL,
+        product_name VARCHAR(255) NOT NULL,
+        current_stock DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        min_stock_alert DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        order_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        purchase_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        line_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        note VARCHAR(255) DEFAULT '',
+        FOREIGN KEY (po_no) REFERENCES purchase_orders(po_no) ON DELETE CASCADE,
+        INDEX idx_purchase_order_items_po (po_no),
+        INDEX idx_purchase_order_items_barcode (barcode)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
       CREATE TABLE IF NOT EXISTS audit_logs (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         user_id BIGINT DEFAULT NULL,
@@ -419,6 +479,24 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         INDEX idx_audit_created_at (created_at),
         INDEX idx_audit_entity (entity_type, entity_id),
         INDEX idx_audit_user (username)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS stock_adjustments (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        barcode VARCHAR(120) NOT NULL,
+        product_name VARCHAR(255) NOT NULL,
+        old_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        adjustment_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        new_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        reason ENUM('DAMAGE', 'EXPIRY', 'WASTAGE', 'THEFT', 'STOCK_AUDIT', 'OTHER') NOT NULL DEFAULT 'OTHER',
+        note VARCHAR(255) DEFAULT '',
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_stock_adjustment_barcode (barcode),
+        INDEX idx_stock_adjustment_created_at (created_at),
+        INDEX idx_stock_adjustment_reason (reason)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
@@ -650,6 +728,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'products', 'min_stock_alert', 'DECIMAL(10,2) NOT NULL DEFAULT 10.00 AFTER stock_qty');
     await ensureColumn(connection, 'products', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER min_stock_alert');
     await ensureColumn(connection, 'products', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at');
+    await connection.query("ALTER TABLE product_import_jobs MODIFY status ENUM('QUEUED', 'RUNNING', 'SUCCESS', 'FAILED', 'PARTIAL SUCCESS', 'ROLLED BACK') NOT NULL DEFAULT 'QUEUED'");
     await ensureColumn(connection, 'invoices', 'transaction_type', "ENUM('B2C', 'B2B') NOT NULL DEFAULT 'B2C' AFTER created_at");
     await connection.query("ALTER TABLE invoices MODIFY payment_mode ENUM('Cash', 'UPI', 'Card', 'Mixed') NOT NULL DEFAULT 'Cash'");
     await ensureColumn(connection, 'invoices', 'payment_status', "ENUM('PENDING', 'PAID', 'FAILED') NOT NULL DEFAULT 'PAID' AFTER payment_mode");

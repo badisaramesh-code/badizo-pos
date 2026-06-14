@@ -16,6 +16,7 @@ import './styles.css';
 
 export default function App() {
   const [activeWorkspace, setActiveWorkspace] = useState('billing');
+  const [workspaceNavigationKey, setWorkspaceNavigationKey] = useState(0);
   const [mountedWorkspaces, setMountedWorkspaces] = useState(() => new Set(['billing']));
   const [currentUser, setCurrentUser] = useState(getStoredUser);
 
@@ -34,12 +35,22 @@ export default function App() {
 
   const allowedTabs = APP_TABS.filter((tab) => canAccessTab(tab, currentUser));
   const visibleTabs = allowedTabs.filter((tab) => !tab.hidden);
+  const openWorkspaceFromTopNav = (workspaceKey) => {
+    setActiveWorkspace(workspaceKey);
+    setWorkspaceNavigationKey((current) => current + 1);
+  };
 
   const views = {
     dashboard: <DashboardView setActiveWorkspace={setActiveWorkspace} />,
     billing: <BillingTerminalView isActive={activeWorkspace === 'billing'} />,
     closing: <CounterClosingView />,
-    inventory: <InventoryDashboardView setActiveWorkspace={setActiveWorkspace} />,
+    inventory: (
+      <InventoryDashboardView
+        isActive={activeWorkspace === 'inventory'}
+        navigationKey={workspaceNavigationKey}
+        setActiveWorkspace={setActiveWorkspace}
+      />
+    ),
     importHistory: <ProductImportHistoryView />,
     barcode: <BarcodeStickersView />,
     inward: <InwardEntryView />,
@@ -60,7 +71,7 @@ export default function App() {
             <button
               key={tab.key}
               className={`tab-button ${activeWorkspace === tab.key ? 'active' : ''}`}
-              onClick={() => setActiveWorkspace(tab.key)}
+              onClick={() => openWorkspaceFromTopNav(tab.key)}
             >
               {tab.label}
             </button>
