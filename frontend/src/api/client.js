@@ -185,6 +185,11 @@ export async function generateBarcodePrn(payload) {
   return data;
 }
 
+export async function printBarcodePrn(payload) {
+  const { data } = await api.post('/barcode/print', payload);
+  return data;
+}
+
 export async function fetchBarcodePrintLogs({ from, to, search = '' } = {}) {
   const { data } = await api.get('/barcode/print-logs', {
     params: { from, to, search }
@@ -390,7 +395,10 @@ export async function fetchRecentInwards() {
 
 export async function fetchPurchaseOrders({ status = 'ALL', supplier = '' } = {}) {
   const { data } = await api.get('/inward/purchase-orders', {
-    params: { status, supplier }
+    params: {
+      status,
+      ...(String(supplier || '').trim() ? { supplier: String(supplier || '').trim() } : {})
+    }
   });
   return Array.isArray(data) ? data : [];
 }

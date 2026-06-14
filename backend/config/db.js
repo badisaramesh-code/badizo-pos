@@ -800,7 +800,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         ('counter_count', '6'),
         ('default_print_mode', 'Thermal'),
         ('thermal_receipt_width_mm', '80'),
-        ('thermal_feed_margin_mm', '18')
+        ('thermal_feed_margin_mm', '18'),
+        ('barcode_printer_templates', '{"tsc-244-pro-50x50-two-up.prn":{"label":"50 x 50 mm Two-Up","printer":"TSC TTP-244 Pro","shares":["\\\\\\\\localhost\\\\TSC TTP-244 Pro","\\\\\\\\localhost\\\\TSC-244-Pro"]},"tsc-244-1-33x25-single.prn":{"label":"33 x 25 mm Two-Up","printer":"TSC TTP-244 -1","shares":["\\\\\\\\localhost\\\\TSC TTP-244 -1","\\\\\\\\localhost\\\\TSC 244-1"]},"tsc-244-2-jewellery-100x15-tail.prn":{"label":"100 x 15 mm Jewellery Tail","printer":"TSC 244-2","shares":["\\\\\\\\localhost\\\\TSC 244-2"]}}')
     `);
 
     await ensureColumn(connection, 'products', 'purchase_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER mrp');

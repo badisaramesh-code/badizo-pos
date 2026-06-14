@@ -18,8 +18,27 @@ const ALLOWED_SETTINGS = new Set([
   'counter_count',
   'default_print_mode',
   'thermal_receipt_width_mm',
-  'thermal_feed_margin_mm'
+  'thermal_feed_margin_mm',
+  'barcode_printer_templates'
 ]);
+
+const DEFAULT_BARCODE_PRINTER_TEMPLATES = {
+  'tsc-244-pro-50x50-two-up.prn': {
+    label: '50 x 50 mm Two-Up',
+    printer: 'TSC TTP-244 Pro',
+    shares: ['\\\\localhost\\TSC TTP-244 Pro', '\\\\localhost\\TSC-244-Pro']
+  },
+  'tsc-244-1-33x25-single.prn': {
+    label: '33 x 25 mm Two-Up',
+    printer: 'TSC TTP-244 -1',
+    shares: ['\\\\localhost\\TSC TTP-244 -1', '\\\\localhost\\TSC 244-1']
+  },
+  'tsc-244-2-jewellery-100x15-tail.prn': {
+    label: '100 x 15 mm Jewellery Tail',
+    printer: 'TSC 244-2',
+    shares: ['\\\\localhost\\TSC 244-2']
+  }
+};
 
 const VAULT_CATEGORIES = new Set(['BADIZO_PRODUCT', 'STORE_PROTECTED']);
 
@@ -51,6 +70,55 @@ async function readSettings() {
     settings[row.setting_key] = row.setting_value;
     return settings;
   }, {});
+}
+
+function normalizeBarcodePrinterTemplates(rawValue) {
+  let parsed = {};
+  try {
+    parsed = rawValue ? JSON.parse(rawValue) : {};
+  } catch (err) {
+    parsed = {};
+  }
+
+  return Object.entries(DEFAULT_BARCODE_PRINTER_TEMPLATES).reduce((acc, [templateName, defaults]) => {
+    const configured = parsed?.[templateName] || {};
+    const shares = Array.isArray(configured.shares)
+      ? configured.shares
+      : String(configured.shares || configured.share || '')
+        .split(/\r?\n|,/)
+        .map((share) => share.trim())
+        .filter(Boolean);
+
+    acc[templateName] = {
+      label: defaults.label,
+      printer: String(configured.printer || defaults.printer || '').trim(),
+      shares: shares.length ? shares.slice(0, 5) : defaults.shares
+    };
+    return acc;
+  }, {});
+}
+
+function publicSettings(settings) {
+  return {
+    shop_name: settings.shop_name || 'Hyper Fresh Mart LLP',
+    gst_number: settings.gst_number || '36AAJFH7790R1ZB',
+    phone: settings.phone || '08761 295000',
+    address: settings.address || 'Sathupally - Khammam(dt) - 507303',
+    bank_name: settings.bank_name || 'HDFC BANK',
+    bank_account_name: settings.bank_account_name || settings.shop_name || 'Hyper Fresh Mart LLP',
+    bank_account_no: settings.bank_account_no || '59209440987345',
+    bank_ifsc: settings.bank_ifsc || 'HDFC0004047',
+    bank_branch: settings.bank_branch || 'Sathupally',
+    counter_count: Number.parseInt(settings.counter_count, 10) || 6,
+    default_print_mode: ['Thermal', 'A4'].includes(settings.default_print_mode) ? settings.default_print_mode : 'Thermal',
+    thermal_receipt_width_mm: [58, 60, 72, 76, 80, 82, 85, 90].includes(Number.parseInt(settings.thermal_receipt_width_mm, 10))
+      ? Number.parseInt(settings.thermal_receipt_width_mm, 10)
+      : 80,
+    thermal_feed_margin_mm: Number.isFinite(Number.parseInt(settings.thermal_feed_margin_mm, 10))
+      ? Math.min(Math.max(Number.parseInt(settings.thermal_feed_margin_mm, 10), 0), 80)
+      : 18,
+    barcode_printer_templates: normalizeBarcodePrinterTemplates(settings.barcode_printer_templates)
+  };
 }
 
 function vaultKey() {
@@ -100,25 +168,7 @@ function publicVaultSlot(row, slotNo, category = 'STORE_PROTECTED') {
 router.get('/', async (_req, res) => {
   try {
     const settings = await readSettings();
-    res.json({
-      shop_name: settings.shop_name || 'Hyper Fresh Mart LLP',
-      gst_number: settings.gst_number || '36AAJFH7790R1ZB',
-      phone: settings.phone || '08761 295000',
-      address: settings.address || 'Sathupally - Khammam(dt) - 507303',
-      bank_name: settings.bank_name || 'HDFC BANK',
-      bank_account_name: settings.bank_account_name || settings.shop_name || 'Hyper Fresh Mart LLP',
-      bank_account_no: settings.bank_account_no || '59209440987345',
-      bank_ifsc: settings.bank_ifsc || 'HDFC0004047',
-      bank_branch: settings.bank_branch || 'Sathupally',
-      counter_count: Number.parseInt(settings.counter_count, 10) || 6,
-      default_print_mode: ['Thermal', 'A4'].includes(settings.default_print_mode) ? settings.default_print_mode : 'Thermal',
-      thermal_receipt_width_mm: [58, 60, 72, 76, 80, 82, 85, 90].includes(Number.parseInt(settings.thermal_receipt_width_mm, 10))
-        ? Number.parseInt(settings.thermal_receipt_width_mm, 10)
-        : 80,
-      thermal_feed_margin_mm: Number.isFinite(Number.parseInt(settings.thermal_feed_margin_mm, 10))
-        ? Math.min(Math.max(Number.parseInt(settings.thermal_feed_margin_mm, 10), 0), 80)
-        : 18
-    });
+    res.json(publicSettings(settings));
   } catch (err) {
     console.error('Settings fetch failed:', err.message);
     res.status(500).json({ error: 'Unable to fetch settings.' });
@@ -130,7 +180,9 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
     const entries = Object.entries(req.body || {}).filter(([key]) => ALLOWED_SETTINGS.has(key));
 
     for (const [key, rawValue] of entries) {
-      let value = String(rawValue ?? '').trim();
+      let value = key === 'barcode_printer_templates'
+        ? JSON.stringify(normalizeBarcodePrinterTemplates(JSON.stringify(rawValue || {})))
+        : String(rawValue ?? '').trim();
 
       if (key === 'counter_count') {
         const counterCount = Math.min(Math.max(Number.parseInt(value, 10) || 1, 1), 99);
@@ -159,7 +211,7 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
       );
     }
 
-    res.json(await readSettings());
+    res.json(publicSettings(await readSettings()));
   } catch (err) {
     console.error('Settings save failed:', err.message);
     res.status(500).json({ error: 'Unable to save settings.' });

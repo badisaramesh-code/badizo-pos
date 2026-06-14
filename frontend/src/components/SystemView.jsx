@@ -37,6 +37,39 @@ const PASSWORD_VAULT_FOLDERS = [
   }
 ];
 
+const BARCODE_TEMPLATE_ROWS = [
+  {
+    key: 'tsc-244-pro-50x50-two-up.prn',
+    label: '50 x 50 mm Two-Up'
+  },
+  {
+    key: 'tsc-244-1-33x25-single.prn',
+    label: '33 x 25 mm Two-Up'
+  },
+  {
+    key: 'tsc-244-2-jewellery-100x15-tail.prn',
+    label: '100 x 15 mm Jewellery Tail'
+  }
+];
+
+const DEFAULT_BARCODE_PRINTER_TEMPLATES = {
+  'tsc-244-pro-50x50-two-up.prn': {
+    label: '50 x 50 mm Two-Up',
+    printer: 'TSC TTP-244 Pro',
+    shares: ['\\\\localhost\\TSC TTP-244 Pro', '\\\\localhost\\TSC-244-Pro']
+  },
+  'tsc-244-1-33x25-single.prn': {
+    label: '33 x 25 mm Two-Up',
+    printer: 'TSC TTP-244 -1',
+    shares: ['\\\\localhost\\TSC TTP-244 -1', '\\\\localhost\\TSC 244-1']
+  },
+  'tsc-244-2-jewellery-100x15-tail.prn': {
+    label: '100 x 15 mm Jewellery Tail',
+    printer: 'TSC 244-2',
+    shares: ['\\\\localhost\\TSC 244-2']
+  }
+};
+
 export default function SystemView() {
   const [settings, setSettings] = useState({
     shop_name: 'Hyper Fresh Mart LLP',
@@ -51,7 +84,8 @@ export default function SystemView() {
     counter_count: 6,
     default_print_mode: 'Thermal',
     thermal_receipt_width_mm: 80,
-    thermal_feed_margin_mm: 18
+    thermal_feed_margin_mm: 18,
+    barcode_printer_templates: DEFAULT_BARCODE_PRINTER_TEMPLATES
   });
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -122,6 +156,26 @@ export default function SystemView() {
 
   function updateSetting(field, value) {
     setSettings((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateBarcodePrinterTemplate(templateName, field, value) {
+    setSettings((current) => {
+      const currentTemplates = current.barcode_printer_templates || DEFAULT_BARCODE_PRINTER_TEMPLATES;
+      const currentTemplate = currentTemplates[templateName] || DEFAULT_BARCODE_PRINTER_TEMPLATES[templateName] || {};
+      return {
+        ...current,
+        barcode_printer_templates: {
+          ...currentTemplates,
+          [templateName]: {
+            ...currentTemplate,
+            label: currentTemplate.label || DEFAULT_BARCODE_PRINTER_TEMPLATES[templateName]?.label || templateName,
+            [field]: field === 'shares'
+              ? String(value || '').split(/\r?\n|,/).map((share) => share.trim()).filter(Boolean)
+              : value
+          }
+        }
+      };
+    });
   }
 
   const storeName = settings.shop_name || 'Hyper Fresh Mart LLP';
@@ -399,6 +453,55 @@ export default function SystemView() {
                   onChange={(event) => updateSetting('thermal_feed_margin_mm', event.target.value)}
                 />
               </label>
+            </div>
+            <div className="settings-section">
+              <div className="settings-section-title">Barcode Sticker Printers</div>
+              <div className="change-box">
+                Each sticker size can print to a different Windows shared printer. Use one share path per line, for example \\localhost\TSC TTP-244 -1.
+              </div>
+              <div className="table-scroll">
+                <table className="history-table barcode-printer-settings-table">
+                  <thead>
+                    <tr>
+                      <th>Sticker Size</th>
+                      <th>Printer Name</th>
+                      <th>Windows Share Path</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {BARCODE_TEMPLATE_ROWS.map((template) => {
+                      const config = settings.barcode_printer_templates?.[template.key]
+                        || DEFAULT_BARCODE_PRINTER_TEMPLATES[template.key]
+                        || {};
+                      return (
+                        <tr key={template.key}>
+                          <td>
+                            <strong>{config.label || template.label}</strong>
+                            <span className="muted mono">{template.key}</span>
+                          </td>
+                          <td>
+                            <input
+                              className="field"
+                              value={config.printer || ''}
+                              onChange={(event) => updateBarcodePrinterTemplate(template.key, 'printer', event.target.value)}
+                              placeholder="Windows printer name"
+                            />
+                          </td>
+                          <td>
+                            <textarea
+                              className="field barcode-share-field"
+                              rows="2"
+                              value={(config.shares || []).join('\n')}
+                              onChange={(event) => updateBarcodePrinterTemplate(template.key, 'shares', event.target.value)}
+                              placeholder="\\localhost\Printer Share Name"
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
             <button className="primary-button" onClick={handleSave}>Save Settings</button>
             <button className="secondary-button" type="button" onClick={() => setSetupUnlocked(false)}>Close Setup Folder</button>

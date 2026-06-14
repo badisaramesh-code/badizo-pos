@@ -1,18 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { approveSensitiveBillingMode, fetchBarcodeTemplate, generateBarcodePrn, searchProducts } from '../api/client';
+import { approveSensitiveBillingMode, fetchBarcodeTemplate, fetchSettings, generateBarcodePrn, printBarcodePrn, searchProducts } from '../api/client';
 
 const TEMPLATE_OPTIONS = [
   {
     name: 'tsc-244-pro-50x50-two-up.prn',
     label: '50 x 50 mm Two-Up',
     printer: 'TSC-244-Pro',
-    help: 'One printer row prints two 50x50mm stickers.'
+    help: 'One printer row prints two 50x50mm stickers side-by-side.'
   },
   {
     name: 'tsc-244-1-33x25-single.prn',
-    label: '33 x 25 mm Product Sticker',
+    label: '33 x 25 mm Two-Up',
     printer: 'TSC 244-1',
-    help: 'Small product label with product, barcode, MRP, price, tax note, qty, shop, address, phone.'
+    help: 'One printer row prints two 33x25mm stickers side-by-side.'
   },
   {
     name: 'tsc-244-2-jewellery-100x15-tail.prn',
@@ -95,7 +95,15 @@ export default function BarcodeStickersView() {
   const [outputInfo, setOutputInfo] = useState(null);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [isPrinting, setIsPrinting] = useState(false);
+  const [barcodePrinterTemplates, setBarcodePrinterTemplates] = useState({});
   const selectedTemplate = TEMPLATE_OPTIONS.find((option) => option.name === templateName) || TEMPLATE_OPTIONS[0];
+  const selectedPrinterConfig = barcodePrinterTemplates[templateName] || {};
+  const selectedPrinterName = selectedPrinterConfig.printer || selectedTemplate.printer;
+
+  useEffect(() => {
+    loadBarcodePrinterSettings();
+  }, []);
 
   useEffect(() => {
     setPrn('');
@@ -106,6 +114,15 @@ export default function BarcodeStickersView() {
       setTemplateInfo(null);
     }
   }, [templateName, screenMode, setupUnlocked]);
+
+  async function loadBarcodePrinterSettings() {
+    try {
+      const settings = await fetchSettings();
+      setBarcodePrinterTemplates(settings.barcode_printer_templates || {});
+    } catch (err) {
+      setBarcodePrinterTemplates({});
+    }
+  }
 
   async function loadTemplate() {
     try {
@@ -205,13 +222,14 @@ export default function BarcodeStickersView() {
     }
   }
 
-  async function generatePrn() {
+  async function generatePrn({ sendToPrinter = false } = {}) {
     setErrorMessage('');
     setStatusMessage('');
     if (!form.barcode || !form.product_name) {
       setErrorMessage('Scan/search a product before printing sticker.');
       return;
     }
+    setIsPrinting(sendToPrinter);
     try {
       const result = await generateBarcodePrn({
         ...form,
@@ -221,9 +239,26 @@ export default function BarcodeStickersView() {
       });
       setPrn(result.prn || '');
       setOutputInfo(result);
-      setStatusMessage(`Sticker print file ready and report saved: ${result.output_name}. Printer: ${result.printer_name || selectedTemplate.printer}`);
+      if (!sendToPrinter) {
+      setStatusMessage(`Sticker print file ready and report saved: ${result.output_name}. Printer: ${result.printer_name || selectedPrinterName}`);
+        return;
+      }
+
+      try {
+        const printResult = await printBarcodePrn({
+          output_name: result.output_name,
+          template_name: result.template_name
+        });
+        setOutputInfo({ ...result, ...printResult });
+        setStatusMessage(`Sticker sent to ${printResult.printer_name || selectedPrinterName}. File: ${result.output_name}`);
+      } catch (printErr) {
+        setErrorMessage(printErr.response?.data?.error || 'Sticker file was created, but Windows could not send it to the printer.');
+        setStatusMessage(`Sticker file is ready: ${result.output_path}. Check printer sharing, then print this PRN file.`);
+      }
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to generate PRN.');
+    } finally {
+      setIsPrinting(false);
     }
   }
 
@@ -310,7 +345,7 @@ export default function BarcodeStickersView() {
           </label>
 
           <div className="change-box">
-            Printer Name: <strong>{selectedTemplate.printer}</strong> | {selectedTemplate.help}
+            Printer Name: <strong>{selectedPrinterName}</strong> | {selectedTemplate.help}
           </div>
 
           <label>
@@ -408,11 +443,14 @@ export default function BarcodeStickersView() {
             <input className="field" value={form.customer_care} readOnly />
           </label>
 
-          <button className="primary-button" type="button" onClick={generatePrn}>Print Stickers</button>
+          <button className="primary-button" type="button" onClick={() => generatePrn({ sendToPrinter: true })} disabled={isPrinting}>
+            {isPrinting ? 'Sending to Printer...' : 'Print Stickers'}
+          </button>
+          <button className="secondary-button" type="button" onClick={() => generatePrn()} disabled={isPrinting}>Create Print File Only</button>
           <button className="secondary-button" type="button" onClick={() => prn && downloadTextFile(prn, outputInfo?.output_name || 'barcode-sticker.prn')} disabled={!prn}>Download Print File</button>
 
           <div className="change-box">
-            Scan/search product, enter only sticker count, then print/download the generated file from barcode/output.
+            Scan/search product, enter sticker count, then print. If Windows blocks the printer, the PRN file is still saved in barcode/output.
           </div>
         </div>
       </section>
@@ -422,7 +460,7 @@ export default function BarcodeStickersView() {
         <div className="panel-body barcode-preview-wrap">
           <StickerPreview form={form} templateName={templateName} />
           <div className="change-box">
-            Output printer: <strong>{selectedTemplate.printer}</strong>. Print history is saved in Reports - Barcode Stickers.
+            Output printer: <strong>{selectedPrinterName}</strong>. Print history is saved in Reports - Barcode Stickers.
           </div>
         </div>
       </section>
@@ -461,7 +499,7 @@ export default function BarcodeStickersView() {
                   </select>
                 </label>
                 <div className="change-box">
-                  Printer Name: <strong>{selectedTemplate.printer}</strong> | {selectedTemplate.help}
+                  Printer Name: <strong>{selectedPrinterName}</strong> | {selectedTemplate.help}
                 </div>
                 <div className="change-box">
                   Edit these sample values only for PRN template testing. Store sticker print screen will still auto-fill product data.
@@ -519,7 +557,7 @@ export default function BarcodeStickersView() {
                   </div>
                 )}
                 <button className="secondary-button" type="button" onClick={loadTemplate}>Reload Template</button>
-                <button className="secondary-button" type="button" onClick={generatePrn}>Create Test PRN From Current Product</button>
+                <button className="secondary-button" type="button" onClick={() => generatePrn()}>Create Test PRN From Current Product</button>
                 <button className="secondary-button" type="button" onClick={copyPrn} disabled={!prn}>Copy Test PRN</button>
                 <button className="secondary-button" type="button" onClick={() => {
                   setSetupUnlocked(false);

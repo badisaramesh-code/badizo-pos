@@ -1,10 +1,13 @@
 const express = require('express');
 const fs = require('fs/promises');
 const path = require('path');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const { authenticate, authorize } = require('../middleware/auth');
 const db = require('../config/db');
 
 const router = express.Router();
+const execFileAsync = promisify(execFile);
 
 const APP_ROOT = path.resolve(__dirname, '..', '..');
 const TEMPLATE_DIR = path.join(APP_ROOT, 'barcode', 'templates');
@@ -12,10 +15,60 @@ const OUTPUT_DIR = path.join(APP_ROOT, 'barcode', 'output');
 const DEFAULT_TEMPLATE = 'tsc-244-pro-50x50-two-up.prn';
 
 const TEMPLATE_META = {
-  'tsc-244-pro-50x50-two-up.prn': { size: '50 x 50 mm Two-Up', printer: 'TSC-244-Pro' },
-  'tsc-244-1-33x25-single.prn': { size: '33 x 25 mm Product Sticker', printer: 'TSC 244-1' },
-  'tsc-244-2-jewellery-100x15-tail.prn': { size: '100 x 15 mm Jewellery Tail', printer: 'TSC 244-2' }
+  'tsc-244-pro-50x50-two-up.prn': {
+    size: '50 x 50 mm Two-Up',
+    printer: 'TSC TTP-244 Pro',
+    shares: ['\\\\localhost\\TSC TTP-244 Pro', '\\\\localhost\\TSC-244-Pro']
+  },
+  'tsc-244-1-33x25-single.prn': {
+    size: '33 x 25 mm Two-Up',
+    printer: 'TSC TTP-244 -1',
+    shares: ['\\\\localhost\\TSC TTP-244 -1', '\\\\localhost\\TSC 244-1']
+  },
+  'tsc-244-2-jewellery-100x15-tail.prn': {
+    size: '100 x 15 mm Jewellery Tail',
+    printer: 'TSC 244-2',
+    shares: ['\\\\localhost\\TSC 244-2']
+  }
 };
+
+function normalizeTemplateMeta(rawValue) {
+  let parsed = {};
+  try {
+    parsed = rawValue ? JSON.parse(rawValue) : {};
+  } catch (err) {
+    parsed = {};
+  }
+
+  return Object.entries(TEMPLATE_META).reduce((acc, [templateName, defaults]) => {
+    const configured = parsed?.[templateName] || {};
+    const shares = Array.isArray(configured.shares)
+      ? configured.shares
+      : String(configured.shares || configured.share || '')
+        .split(/\r?\n|,/)
+        .map((share) => share.trim())
+        .filter(Boolean);
+
+    acc[templateName] = {
+      size: defaults.size,
+      printer: String(configured.printer || defaults.printer || '').trim(),
+      shares: shares.length ? shares.slice(0, 5) : defaults.shares
+    };
+    return acc;
+  }, {});
+}
+
+async function getTemplateMeta(templateName) {
+  try {
+    const [rows] = await db.query(
+      `SELECT setting_value FROM app_settings WHERE setting_key = 'barcode_printer_templates' LIMIT 1`
+    );
+    const configuredMeta = normalizeTemplateMeta(rows[0]?.setting_value || '');
+    return configuredMeta[templateName] || TEMPLATE_META[templateName] || { size: templateName, printer: '', shares: [] };
+  } catch (err) {
+    return TEMPLATE_META[templateName] || { size: templateName, printer: '', shares: [] };
+  }
+}
 
 function cleanTemplateName(value) {
   const fileName = path.basename(String(value || DEFAULT_TEMPLATE));
@@ -40,6 +93,8 @@ function replaceFields(block, data) {
   const fields = {
     PRODUCT_NAME: tsplText(data.product_name, 28).toUpperCase(),
     PRODUCT_NAME_25: tsplText(data.product_name, 25).toUpperCase(),
+    PRODUCT_NAME_20: tsplText(data.product_name, 20).toUpperCase(),
+    PRODUCT_NAME_18: tsplText(data.product_name, 18).toUpperCase(),
     BARCODE: tsplText(data.barcode, 40),
     MRP: moneyText(data.mrp),
     SALE_PRICE: moneyText(data.sale_price),
@@ -47,8 +102,13 @@ function replaceFields(block, data) {
     UNIT: tsplText(data.unit, 10),
     PKD_DATE: tsplText(data.pkd_date, 14),
     COMPANY: tsplText(data.company, 32),
+    COMPANY_22: tsplText(data.company, 22),
+    COMPANY_20: tsplText(data.company, 20),
     ADDRESS_LINE_1: tsplText(data.address_line_1 || data.address, 38),
+    ADDRESS_LINE_1_28: tsplText(data.address_line_1 || data.address, 28),
+    ADDRESS_LINE_1_24: tsplText(data.address_line_1 || data.address, 24),
     ADDRESS_LINE_2: tsplText(data.address_line_2, 38),
+    ADDRESS_LINE_2_24: tsplText(data.address_line_2, 24),
     CUSTOMER_CARE: tsplText(data.customer_care, 48),
     ADDRESS: tsplText(data.address, 40),
     PHONE: tsplText(data.phone, 20)
@@ -96,6 +156,33 @@ function renderLabels(template, data) {
   return template
     .replace(/{{#ROW}}[\s\S]*?{{\/ROW}}/, renderedRows.join('\r\n'))
     .replace(/\n/g, '\r\n');
+}
+
+async function sendPrnToPrinter(outputPath, printerShares) {
+  const shares = Array.isArray(printerShares) ? printerShares.filter(Boolean) : [printerShares].filter(Boolean);
+  if (!shares.length) {
+    throw new Error('Printer share is not configured for this sticker template.');
+  }
+
+  await fs.access(outputPath);
+  const errors = [];
+
+  for (const printerShare of shares) {
+    try {
+      await execFileAsync('cmd.exe', ['/c', 'copy', '/b', outputPath, printerShare], {
+        windowsHide: true,
+        timeout: 15000
+      });
+      return printerShare;
+    } catch (err) {
+      const detail = String(err.stderr || err.stdout || err.message || '').trim();
+      errors.push(`${printerShare}: ${detail || err.message}`);
+    }
+  }
+
+  throw new Error(
+    `Unable to send sticker file to barcode printer. Tried: ${shares.join(', ')}. Share the Windows printer with one of these exact names and try again. Details: ${errors.join(' | ')}`
+  );
 }
 
 router.use(authenticate);
@@ -157,7 +244,7 @@ router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) =>
   try {
     await fs.mkdir(OUTPUT_DIR, { recursive: true });
     const templateName = cleanTemplateName(req.body?.template_name);
-    const templateMeta = TEMPLATE_META[templateName] || { size: templateName, printer: '' };
+    const templateMeta = await getTemplateMeta(templateName);
     const templatePath = path.join(TEMPLATE_DIR, templateName);
     const template = await fs.readFile(templatePath, 'utf8');
     const prn = renderLabels(template, req.body || {});
@@ -204,6 +291,32 @@ router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) =>
   } catch (err) {
     console.error('Barcode PRN render failed:', err.message);
     res.status(500).json({ error: 'Unable to generate barcode PRN.' });
+  }
+});
+
+router.post('/print', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
+  try {
+    const templateName = cleanTemplateName(req.body?.template_name);
+    const templateMeta = await getTemplateMeta(templateName);
+    const outputName = path.basename(String(req.body?.output_name || ''));
+
+    if (!outputName.endsWith('.prn')) {
+      return res.status(400).json({ error: 'Valid PRN output file name is required.' });
+    }
+
+    const outputPath = path.join(OUTPUT_DIR, outputName);
+    const printerShare = await sendPrnToPrinter(outputPath, templateMeta.shares);
+
+    res.json({
+      printed: true,
+      output_name: outputName,
+      output_path: outputPath,
+      printer_name: templateMeta.printer,
+      printer_share: printerShare
+    });
+  } catch (err) {
+    console.error('Barcode PRN print failed:', err.message);
+    res.status(500).json({ error: err.message || 'Unable to print barcode sticker.' });
   }
 });
 
