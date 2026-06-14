@@ -6,6 +6,45 @@ Project path: `D:\badizo-pos-main\badizo-pos-main`
 
 This guide documents the browser-only setup we completed for Badizo POS. Electron packaging is intentionally skipped until the software is ready.
 
+## Correct Git Folder
+
+Use this folder in Visual Studio, VS Code, Git Bash, or PowerShell:
+
+```text
+D:\badizo-pos-main
+```
+
+That folder contains `.git`, `backend`, `frontend`, `electron`, `database`, and the rest of the project.
+
+Do not use the old nested ZIP folder path:
+
+```text
+D:\badizo-pos-main\badizo-pos-main
+```
+
+That was the extracted ZIP copy. It was moved out of the repo to:
+
+```text
+D:\badizo-pos-main-zip-backup-20260614
+```
+
+Reason:
+
+Git was initialized at `D:\badizo-pos-main`, while the ZIP had extracted source into `D:\badizo-pos-main\badizo-pos-main`. Because of that, Git saw the whole project as newly added files. The fix was to fetch `origin/main`, check out the real repo at `D:\badizo-pos-main`, copy only the intended local changes, and move the ZIP copy outside the Git repo.
+
+To check you are in the correct Git folder:
+
+```powershell
+cd D:\badizo-pos-main
+git status --short --branch
+```
+
+Expected:
+
+```text
+## main...origin/main
+```
+
 ## 1. What This Setup Runs
 
 For browser testing, only these parts are required:
