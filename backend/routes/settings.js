@@ -16,7 +16,9 @@ const ALLOWED_SETTINGS = new Set([
   'bank_ifsc',
   'bank_branch',
   'counter_count',
-  'default_print_mode'
+  'default_print_mode',
+  'thermal_receipt_width_mm',
+  'thermal_feed_margin_mm'
 ]);
 
 const VAULT_CATEGORIES = new Set(['BADIZO_PRODUCT', 'STORE_PROTECTED']);
@@ -109,7 +111,13 @@ router.get('/', async (_req, res) => {
       bank_ifsc: settings.bank_ifsc || 'HDFC0004047',
       bank_branch: settings.bank_branch || 'Sathupally',
       counter_count: Number.parseInt(settings.counter_count, 10) || 6,
-      default_print_mode: ['Thermal', 'A4'].includes(settings.default_print_mode) ? settings.default_print_mode : 'Thermal'
+      default_print_mode: ['Thermal', 'A4'].includes(settings.default_print_mode) ? settings.default_print_mode : 'Thermal',
+      thermal_receipt_width_mm: [58, 60, 72, 76, 80, 82, 85, 90].includes(Number.parseInt(settings.thermal_receipt_width_mm, 10))
+        ? Number.parseInt(settings.thermal_receipt_width_mm, 10)
+        : 80,
+      thermal_feed_margin_mm: Number.isFinite(Number.parseInt(settings.thermal_feed_margin_mm, 10))
+        ? Math.min(Math.max(Number.parseInt(settings.thermal_feed_margin_mm, 10), 0), 80)
+        : 18
     });
   } catch (err) {
     console.error('Settings fetch failed:', err.message);
@@ -131,6 +139,16 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
 
       if (key === 'default_print_mode' && !['Thermal', 'A4'].includes(value)) {
         value = 'Thermal';
+      }
+
+      if (key === 'thermal_receipt_width_mm') {
+        const width = Number.parseInt(value, 10);
+        value = String([58, 60, 72, 76, 80, 82, 85, 90].includes(width) ? width : 80);
+      }
+
+      if (key === 'thermal_feed_margin_mm') {
+        const margin = Number.parseInt(value, 10);
+        value = String(Number.isFinite(margin) ? Math.min(Math.max(margin, 0), 80) : 18);
       }
 
       await db.query(

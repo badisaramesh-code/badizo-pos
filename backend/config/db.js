@@ -798,7 +798,9 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         ('bank_ifsc', 'HDFC0004047'),
         ('bank_branch', 'Sathupally'),
         ('counter_count', '6'),
-        ('default_print_mode', 'Thermal')
+        ('default_print_mode', 'Thermal'),
+        ('thermal_receipt_width_mm', '80'),
+        ('thermal_feed_margin_mm', '18')
     `);
 
     await ensureColumn(connection, 'products', 'purchase_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER mrp');

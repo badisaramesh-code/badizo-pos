@@ -49,7 +49,9 @@ export default function SystemView() {
     bank_ifsc: 'HDFC0004047',
     bank_branch: 'Sathupally',
     counter_count: 6,
-    default_print_mode: 'Thermal'
+    default_print_mode: 'Thermal',
+    thermal_receipt_width_mm: 80,
+    thermal_feed_margin_mm: 18
   });
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -368,6 +370,34 @@ export default function SystemView() {
                   <option value="Thermal">Thermal receipt</option>
                   <option value="A4">A4 invoice</option>
                 </select>
+              </label>
+              <label>
+                <span className="field-label">Thermal Width</span>
+                <select
+                  className="select"
+                  value={settings.thermal_receipt_width_mm || 80}
+                  onChange={(event) => updateSetting('thermal_receipt_width_mm', event.target.value)}
+                >
+                  <option value="58">58 mm</option>
+                  <option value="60">60 mm</option>
+                  <option value="72">72 mm</option>
+                  <option value="76">76 mm</option>
+                  <option value="80">80 mm</option>
+                  <option value="82">82 mm</option>
+                  <option value="85">85 mm</option>
+                  <option value="90">90 mm</option>
+                </select>
+              </label>
+              <label>
+                <span className="field-label">Thermal Feed Margin</span>
+                <input
+                  className="field"
+                  type="number"
+                  min="0"
+                  max="80"
+                  value={settings.thermal_feed_margin_mm ?? 18}
+                  onChange={(event) => updateSetting('thermal_feed_margin_mm', event.target.value)}
+                />
               </label>
             </div>
             <button className="primary-button" onClick={handleSave}>Save Settings</button>

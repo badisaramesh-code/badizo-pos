@@ -197,7 +197,9 @@ export default function BillingTerminalView({ isActive = true }) {
     bank_account_name: 'Hyper Fresh Mart LLP',
     bank_account_no: '59209440987345',
     bank_ifsc: 'HDFC0004047',
-    bank_branch: 'Sathupally'
+    bank_branch: 'Sathupally',
+    thermal_receipt_width_mm: 80,
+    thermal_feed_margin_mm: 18
   });
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
@@ -1701,6 +1703,7 @@ export default function BillingTerminalView({ isActive = true }) {
   async function printCounterSaleSlip() {
     try {
       const printedAt = new Date();
+      const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
       const slip = await fetchCounterSaleSlip({ date: localIsoDate(printedAt), counterNo });
       const slipMarkup = renderToStaticMarkup(<CounterSaleSlip slip={slip} shop={shopSettings} printedAt={printedAt} />);
       const printFrame = document.createElement('iframe');
@@ -1708,7 +1711,7 @@ export default function BillingTerminalView({ isActive = true }) {
       printFrame.style.position = 'fixed';
       printFrame.style.left = '-10000px';
       printFrame.style.top = '0';
-      printFrame.style.width = '90mm';
+      printFrame.style.width = `${thermalWidthMm}mm`;
       printFrame.style.height = '800mm';
       printFrame.style.border = '0';
       printFrame.style.visibility = 'hidden';
@@ -1728,9 +1731,9 @@ export default function BillingTerminalView({ isActive = true }) {
   <title>Counter Sale Slip</title>
   <style>
     html, body {
-      width: 80mm;
-      min-width: 80mm;
-      max-width: 80mm;
+      width: ${thermalWidthMm}mm;
+      min-width: ${thermalWidthMm}mm;
+      max-width: ${thermalWidthMm}mm;
       margin: 0;
       padding: 0;
       background: #fff;
@@ -1738,7 +1741,7 @@ export default function BillingTerminalView({ isActive = true }) {
       font-family: Arial, Helvetica, sans-serif;
     }
     .counter-sale-slip {
-      width: 80mm;
+      width: ${thermalWidthMm}mm;
       box-sizing: border-box;
       padding: 3mm 3mm 12mm;
       font-size: 12px;
@@ -1801,11 +1804,11 @@ export default function BillingTerminalView({ isActive = true }) {
       font-weight: 700;
     }
     @media print {
-      @page { size: 80mm 160mm; margin: 0; }
+      @page { size: ${thermalWidthMm}mm 160mm; margin: 0; }
       html, body {
-        width: 80mm !important;
-        min-width: 80mm !important;
-        max-width: 80mm !important;
+        width: ${thermalWidthMm}mm !important;
+        min-width: ${thermalWidthMm}mm !important;
+        max-width: ${thermalWidthMm}mm !important;
         height: auto !important;
         margin: 0 !important;
         padding: 0 !important;
@@ -1836,6 +1839,9 @@ export default function BillingTerminalView({ isActive = true }) {
 
   function schedulePrint(mode = printMode, afterPrint, invoiceForPrint = printableInvoice || printableDraft) {
     const printClass = mode === 'A4' ? 'printing-a4' : 'printing-thermal';
+    const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
+    const thermalFeedMarginMm = Math.min(Math.max(Number(shopSettings.thermal_feed_margin_mm ?? 18) || 18, 0), 80);
+    const thermalLogoMaxWidthMm = Math.max(45, thermalWidthMm - 10);
     let cleanupTimer;
     let printFrame = null;
     let didCleanup = false;
@@ -1861,8 +1867,8 @@ export default function BillingTerminalView({ isActive = true }) {
     printFrame.style.position = 'fixed';
     printFrame.style.left = '-10000px';
     printFrame.style.top = '0';
-    printFrame.style.width = mode === 'A4' ? '210mm' : '80mm';
-    printFrame.style.height = mode === 'A4' ? '260mm' : '2000mm';
+    printFrame.style.width = mode === 'A4' ? '210mm' : `${thermalWidthMm}mm`;
+    printFrame.style.height = mode === 'A4' ? '260mm' : '360mm';
     printFrame.style.border = '0';
     printFrame.style.visibility = 'hidden';
     document.body.appendChild(printFrame);
@@ -1895,9 +1901,9 @@ export default function BillingTerminalView({ isActive = true }) {
       visibility: visible !important;
     }
     .print-host-thermal {
-      width: 80mm !important;
-      min-width: 80mm !important;
-      max-width: 80mm !important;
+      width: ${thermalWidthMm}mm !important;
+      min-width: ${thermalWidthMm}mm !important;
+      max-width: ${thermalWidthMm}mm !important;
       box-sizing: border-box !important;
       overflow: visible !important;
     }
@@ -1939,9 +1945,9 @@ export default function BillingTerminalView({ isActive = true }) {
     html.printing-thermal,
     html.printing-thermal body,
     body.printing-thermal {
-      width: 80mm !important;
-      min-width: 80mm !important;
-      max-width: 80mm !important;
+      width: ${thermalWidthMm}mm !important;
+      min-width: ${thermalWidthMm}mm !important;
+      max-width: ${thermalWidthMm}mm !important;
       box-sizing: border-box !important;
       height: auto !important;
       min-height: 0 !important;
@@ -1951,9 +1957,9 @@ export default function BillingTerminalView({ isActive = true }) {
     body.printing-thermal .print-host-thermal,
     body.printing-thermal .thermal-paper {
       display: block !important;
-      width: 80mm !important;
-      min-width: 80mm !important;
-      max-width: 80mm !important;
+      width: ${thermalWidthMm}mm !important;
+      min-width: ${thermalWidthMm}mm !important;
+      max-width: ${thermalWidthMm}mm !important;
       height: auto !important;
       min-height: 0 !important;
       max-height: none !important;
@@ -1977,7 +1983,7 @@ export default function BillingTerminalView({ isActive = true }) {
     }
     body.printing-thermal .thermal-logo-slot img {
       max-height: 13mm !important;
-      max-width: 70mm !important;
+      max-width: ${thermalLogoMaxWidthMm}mm !important;
     }
     body.printing-thermal .print-rule {
       margin: 2px 0 !important;
@@ -2025,11 +2031,11 @@ export default function BillingTerminalView({ isActive = true }) {
     }
     @media print {
       @page {
-        size: ${mode === 'A4' ? 'A4 portrait' : '80mm 2000mm'};
+        size: ${mode === 'A4' ? 'A4 portrait' : `${thermalWidthMm}mm auto`};
         margin: 0;
       }
       @page thermal-receipt {
-        size: 80mm 2000mm;
+        size: ${thermalWidthMm}mm auto;
         margin: 0;
       }
       body.${printClass} {
@@ -2115,12 +2121,12 @@ export default function BillingTerminalView({ isActive = true }) {
             printHost.scrollHeight || 0,
             420
           );
-          const contentHeightMm = Math.max(420, Math.ceil((contentHeightPx * 25.4) / 96) + 140);
+          const contentHeightMm = Math.max(80, Math.ceil((contentHeightPx * 25.4) / 96) + thermalFeedMarginMm);
           const dynamicPrintStyle = doc.createElement('style');
           dynamicPrintStyle.textContent = `
             @media print {
-              @page { size: 80mm ${contentHeightMm}mm; margin: 0; }
-              @page thermal-receipt { size: 80mm ${contentHeightMm}mm; margin: 0; }
+              @page { size: ${thermalWidthMm}mm ${contentHeightMm}mm; margin: 0; }
+              @page thermal-receipt { size: ${thermalWidthMm}mm ${contentHeightMm}mm; margin: 0; }
               html.printing-thermal,
               html.printing-thermal body,
               html.printing-thermal #root,
@@ -2128,15 +2134,16 @@ export default function BillingTerminalView({ isActive = true }) {
               html.printing-thermal .thermal-paper,
               body.printing-thermal .print-host-thermal,
               body.printing-thermal .thermal-paper {
-                width: 80mm !important;
-                min-width: 80mm !important;
-                max-width: 80mm !important;
+                width: ${thermalWidthMm}mm !important;
+                min-width: ${thermalWidthMm}mm !important;
+                max-width: ${thermalWidthMm}mm !important;
                 box-sizing: border-box !important;
                 height: auto !important;
-                min-height: ${contentHeightMm}mm !important;
+                min-height: 0 !important;
+                height: auto !important;
                 max-height: none !important;
                 overflow: visible !important;
-                padding-bottom: 12mm !important;
+                padding-bottom: ${thermalFeedMarginMm}mm !important;
                 box-sizing: border-box !important;
               }
             }
