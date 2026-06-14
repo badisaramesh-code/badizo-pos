@@ -618,7 +618,8 @@ router.get('/invoice/details', authenticate, authorize('SERVER', 'ADMIN', 'COUNT
       `SELECT ii.id, ii.invoice_no, ii.barcode, ii.product_name, ii.quantity, ii.sale_price, ii.gst_percent,
               ii.cgst_amount, ii.sgst_amount, ii.igst_amount, ii.is_free_bonus, ii.free_offer_id, ii.returned_qty,
               COALESCE(p.mrp, 0) AS mrp,
-              COALESCE(p.hsn_code, '') AS hsn_code
+              COALESCE(p.hsn_code, '') AS hsn_code,
+              COALESCE(p.unit_type, '') AS unit_type
        FROM invoice_items ii
        LEFT JOIN products p ON p.barcode = ii.barcode
        WHERE ii.invoice_no = ?

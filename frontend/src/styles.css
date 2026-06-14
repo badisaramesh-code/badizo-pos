@@ -3662,12 +3662,13 @@ button:disabled {
 .thermal-items th,
 .thermal-items td {
   padding: 3px 2px;
+  border-bottom: 1px dotted #111;
   font-size: 9.5px;
   line-height: 1.15;
 }
 
 .thermal-items th {
-  border-bottom: 1px dashed #111;
+  border-bottom: 1px dotted #111;
   font-size: 9px;
 }
 
@@ -3684,7 +3685,7 @@ button:disabled {
 }
 
 .thermal-product-row td {
-  border-bottom: 0;
+  border-bottom: 1px dotted #111;
   padding-top: 1px;
   padding-bottom: 1px;
 }

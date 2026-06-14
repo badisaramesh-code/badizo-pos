@@ -270,6 +270,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const exchangeScannerBufferLastKeyAtRef = useRef(0);
   const exchangeScannerBufferTimerRef = useRef(null);
   const exchangeScannerInputModeRef = useRef('keyboard');
+  const previousExchangeModeRef = useRef(exchangeMode);
   const priceCheckKeyTimesRef = useRef([]);
   const lastPriceCheckScanRef = useRef('');
   const exchangeScannerRef = useRef(null);
@@ -311,7 +312,10 @@ export default function BillingTerminalView({ isActive = true }) {
   }, [isActive]);
 
   useEffect(() => {
-    if (!isActive || !exchangeMode) return undefined;
+    const wasExchangeMode = previousExchangeModeRef.current;
+    previousExchangeModeRef.current = exchangeMode;
+    if (!isActive || !exchangeMode || wasExchangeMode) return undefined;
+
     const timer = window.setTimeout(() => {
       exchangeScannerRef.current?.focus();
       exchangeScannerRef.current?.select?.();
@@ -436,6 +440,27 @@ export default function BillingTerminalView({ isActive = true }) {
     return () => window.clearTimeout(timer);
   }, [query]);
 
+  useEffect(() => {
+    const { search: cleaned, quantity } = parseQuantitySearch(query);
+    if (!cleaned || !SCANNER_BARCODE_PATTERN.test(cleaned)) return undefined;
+    if (scannerInputModeRef.current !== 'keyboard' || suppressSuggestionsUntilKeyboardInputRef.current) return undefined;
+
+    const timer = window.setTimeout(async () => {
+      if (scannerInputModeRef.current !== 'keyboard' || suppressSuggestionsUntilKeyboardInputRef.current) return;
+      if (scannerBufferRef.current || scannerBufferTimerRef.current) return;
+      try {
+        const exactProduct = await findExactProductFast(cleaned);
+        if (!exactProduct) return;
+        if (String(scannerRef.current?.value || '').trim().toUpperCase() !== cleaned.toUpperCase()) return;
+        addProduct(exactProduct, quantity);
+      } catch (err) {
+        setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
+      }
+    }, 650);
+
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
   useEffect(() => () => {
     if (scannerAutoAddTimerRef.current) {
       window.clearTimeout(scannerAutoAddTimerRef.current);
@@ -507,6 +532,21 @@ export default function BillingTerminalView({ isActive = true }) {
     const timer = window.setTimeout(() => autoRunScannedPriceCheck(cleaned), 70);
     return () => window.clearTimeout(timer);
   }, [priceCheckQuery, showPriceCheck]);
+
+  useEffect(() => {
+    const { search: cleaned } = parseQuantitySearch(exchangeQuery);
+    if (!exchangeMode || !cleaned || !SCANNER_BARCODE_PATTERN.test(cleaned)) return undefined;
+    if (exchangeScannerInputModeRef.current !== 'keyboard') return undefined;
+
+    const timer = window.setTimeout(async () => {
+      if (exchangeScannerInputModeRef.current !== 'keyboard') return;
+      if (exchangeScannerBufferRef.current || exchangeScannerBufferTimerRef.current) return;
+      if (String(exchangeScannerRef.current?.value || '').trim().toUpperCase() !== cleaned.toUpperCase()) return;
+      await addExchangeProductByExactScan(cleaned);
+    }, 650);
+
+    return () => window.clearTimeout(timer);
+  }, [exchangeMode, exchangeQuery]);
 
   const totals = useMemo(() => {
     let taxable = 0;
@@ -923,6 +963,9 @@ export default function BillingTerminalView({ isActive = true }) {
     if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
 
     scannerReadQueueRef.current.push({ barcode: normalized, quantity });
+    if (scannerInputModeRef.current !== 'scan') {
+      resetScannerBuffer();
+    }
     scannerInputModeRef.current = 'keyboard';
     suppressSuggestionsUntilKeyboardInputRef.current = true;
     scannerKeyTimesRef.current = [];
@@ -986,7 +1029,6 @@ export default function BillingTerminalView({ isActive = true }) {
     if (scannerBufferRef.current.length >= 2 && (gap <= SCANNER_FAST_KEY_MS || scannerInputModeRef.current === 'scan')) {
       scannerInputModeRef.current = 'scan';
       suppressSuggestionsUntilKeyboardInputRef.current = true;
-      event.preventDefault();
       setSuggestions([]);
       setSelectedSuggestion(0);
       scheduleScannerBufferCommit();
@@ -1222,7 +1264,7 @@ export default function BillingTerminalView({ isActive = true }) {
 
   async function handleSearchKeyDown(event) {
     markRapidInputKey(event, scannerKeyTimesRef);
-    const handledScannerKey = bufferScannerKey(event);
+    const handledScannerKey = event.key === 'Enter' ? false : bufferScannerKey(event);
     if (handledScannerKey && (event.key === 'Enter' || event.key === 'Tab')) return;
 
     if (event.key === 'ArrowDown' && suggestions.length) {
@@ -1237,6 +1279,13 @@ export default function BillingTerminalView({ isActive = true }) {
 
     if (event.key === 'Enter') {
       event.preventDefault();
+      resetScannerBuffer();
+      if (scannerAutoAddTimerRef.current) {
+        window.clearTimeout(scannerAutoAddTimerRef.current);
+        scannerAutoAddTimerRef.current = null;
+      }
+      scannerInputModeRef.current = 'keyboard';
+      suppressSuggestionsUntilKeyboardInputRef.current = false;
       const { search: cleaned, quantity } = parseQuantitySearch(query);
 
       if (!cleaned) {
@@ -1352,6 +1401,7 @@ export default function BillingTerminalView({ isActive = true }) {
           barcode: product.barcode,
           product_name: String(product.product_name || '').toUpperCase(),
           hsn_code: product.hsn_code || '',
+          unit_type: product.unit_type || product.unit || '',
           gst_percent: toNumber(product.gst_percent),
           mrp: toNumber(product.mrp),
           sale_price: unitPrice,
@@ -1372,6 +1422,9 @@ export default function BillingTerminalView({ isActive = true }) {
   async function addExchangeProductByExactScan(rawValue) {
     const { search: cleaned } = parseQuantitySearch(rawValue);
     if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
+    if (exchangeScannerInputModeRef.current !== 'scan') {
+      resetExchangeScannerBuffer();
+    }
     exchangeScannerInputModeRef.current = 'keyboard';
     setExchangeQuery('');
 
@@ -1440,7 +1493,6 @@ export default function BillingTerminalView({ isActive = true }) {
 
     if (exchangeScannerBufferRef.current.length >= 2 && (gap <= SCANNER_FAST_KEY_MS || exchangeScannerInputModeRef.current === 'scan')) {
       exchangeScannerInputModeRef.current = 'scan';
-      event.preventDefault();
       scheduleExchangeScannerBufferCommit();
     }
 
@@ -1448,10 +1500,12 @@ export default function BillingTerminalView({ isActive = true }) {
   }
 
   async function handleExchangeSearchKeyDown(event) {
-    const handledScannerKey = bufferExchangeScannerKey(event);
+    const handledScannerKey = event.key === 'Enter' ? false : bufferExchangeScannerKey(event);
     if (handledScannerKey && (event.key === 'Enter' || event.key === 'Tab')) return;
     if (event.key !== 'Enter') return;
     event.preventDefault();
+    resetExchangeScannerBuffer();
+    exchangeScannerInputModeRef.current = 'keyboard';
     const cleaned = exchangeQuery.trim();
     if (!cleaned) {
       setErrorMessage('Enter exchange product barcode or product name.');
@@ -2320,11 +2374,15 @@ export default function BillingTerminalView({ isActive = true }) {
     }
 
     const customerLabel = (isBusinessBillingMode(billingMode) ? companyName : customerName).trim();
-    const defaultHoldToken = customerLabel
-      ? customerLabel.slice(0, 18).toUpperCase()
-      : `HOLD-C${counterNo}-${Date.now().toString().slice(-4)}`;
-    const holdToken = window.prompt('Hold bill name/token:', defaultHoldToken);
-    if (!holdToken) return;
+    const billLabel = String(invoiceNo || `HOLD-C${counterNo}`).trim();
+    const holdPrefix = `${billLabel} - `;
+    const defaultHoldToken = `${holdPrefix}${customerLabel ? customerLabel.slice(0, 24).toUpperCase() : ''}`;
+    const holdTokenInput = window.prompt('Hold bill details:', defaultHoldToken);
+    if (!holdTokenInput) return;
+    const holdTokenText = holdTokenInput.trim();
+    const holdToken = holdTokenText.toUpperCase().startsWith(billLabel.toUpperCase())
+      ? holdTokenText
+      : `${holdPrefix}${holdTokenText}`;
 
     try {
       const savedState = {
@@ -2591,6 +2649,7 @@ export default function BillingTerminalView({ isActive = true }) {
           barcode: item.barcode,
           product_name: item.product_name,
           hsn_code: item.hsn_code || '',
+          unit_type: item.unit_type || item.unit || '',
           quantity: toNumber(item.quantity, 1),
           sale_price: toNumber(item.unitPrice || item.sale_price || item.mrp),
           gst_percent: toNumber(item.gst_percent)
@@ -2605,6 +2664,7 @@ export default function BillingTerminalView({ isActive = true }) {
         unitPrice: 0,
         sale_price: 0,
         mrp: 0,
+        unit_type: item.unit_type || item.unit || 'Nos',
         gst_percent: 0,
         lineTotal: 0,
         taxableRate: 0,
@@ -2727,6 +2787,7 @@ export default function BillingTerminalView({ isActive = true }) {
               <input
                 ref={scannerRef}
                 className="field search-input"
+                autoFocus
                 value={query}
                 onChange={handleSearchChange}
                 onKeyDown={handleSearchKeyDown}

@@ -7,6 +7,20 @@ function formatPlainMoney(value) {
   return toNumber(value).toFixed(2);
 }
 
+function getItemUnit(item) {
+  return String(item?.unit_type || item?.unit || '').trim() || 'Nos';
+}
+
+function formatQuantityWithUnit(itemOrQuantity, maybeUnit = '') {
+  const quantity = typeof itemOrQuantity === 'object'
+    ? toNumber(itemOrQuantity?.quantity, 1)
+    : toNumber(itemOrQuantity, 1);
+  const unit = typeof itemOrQuantity === 'object'
+    ? getItemUnit(itemOrQuantity)
+    : (String(maybeUnit || '').trim() || 'Nos');
+  return `${formatPlainMoney(quantity)} ${unit}`;
+}
+
 function SectionLine() {
   return <div className="print-rule" />;
 }
@@ -161,6 +175,7 @@ function StoreHeader({ invoice }) {
       <h2>{invoice.shop.shop_name}</h2>
       <p>{invoice.shop.address}</p>
       <p>GSTIN: {invoice.shop.gst_number}</p>
+      <p>Phone: {invoice.shop.phone || '-'}</p>
       <SectionLine />
       <strong>GST INVOICE</strong>
       {invoice.isDuplicate && <strong className="duplicate-invoice-label">DUPLICATE INVOICE</strong>}
@@ -227,7 +242,7 @@ function ThermalItemTable({ invoice, template }) {
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.mrp)}</td>
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(discount)}</td>
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.gst_percent)}</td>
-                <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.quantity)}</td>
+                <td style={{ textAlign: 'right' }}>{formatQuantityWithUnit(item)}</td>
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.lineTotal)}</td>
               </tr>
               <tr className="thermal-product-row">
@@ -261,7 +276,7 @@ function ThermalFreeProducts({ invoice, title }) {
           return (
             <div className="thermal-free-product-line" key={`${freeItem.barcode}-${index}`}>
               <strong>{freeItem.product_name}</strong>
-              <span>x {formatPlainMoney(freeItem.quantity)} - Free Counter</span>
+              <span>x {formatQuantityWithUnit(freeItem)} - Free Counter</span>
               {trigger && <em>For: {trigger.product_name}</em>}
             </div>
           );
@@ -319,7 +334,7 @@ function ExchangeDetails({ invoice, compact = false }) {
               <tr key={`${item.barcode}-${index}`}>
                 <td>{item.barcode || '-'}</td>
                 <td>{item.product_name || '-'}</td>
-                <td style={{ textAlign: 'right' }}>{formatPlainMoney(qty)}</td>
+                <td style={{ textAlign: 'right' }}>{formatQuantityWithUnit(item)}</td>
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(rate)}</td>
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(rate * qty)}</td>
               </tr>
@@ -513,7 +528,7 @@ function A4ItemTable({ invoice, template }) {
             <td>{index + 1}</td>
             <td><strong>{item.product_name}</strong></td>
             <td>{item.hsn_code || '-'}</td>
-            <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.quantity)}</td>
+            <td style={{ textAlign: 'right' }}>{formatQuantityWithUnit(item)}</td>
             <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.unitPrice)}</td>
             <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.taxableRate)}</td>
             <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.gst_percent)}%</td>
@@ -778,13 +793,13 @@ function A4StoreItemsTable({ rows, freeItems = [], startIndex, blankRowCount = 0
                 <td>{formatPlainMoney(item.mrp)}</td>
                 <td>{formatPlainMoney(discount)}</td>
                 <td>{formatPlainMoney(item.gst_percent)}</td>
-                <td>{formatPlainMoney(item.quantity)}</td>
+                <td>{formatQuantityWithUnit(item)}</td>
                 <td><strong>{formatPlainMoney(item.lineTotal)}</strong></td>
               </tr>
               {itemFreebies.map((freeItem, freeIndex) => (
                 <tr className="a4-free-inline-row" key={`${item.barcode}-free-${freeIndex}`}>
                   <td />
-                  <td colSpan="7"><strong>Free:</strong> {freeItem.product_name} x {formatPlainMoney(freeItem.quantity)} <span>Issue at Free Counter</span></td>
+                  <td colSpan="7"><strong>Free:</strong> {freeItem.product_name} x {formatQuantityWithUnit(freeItem)} <span>Issue at Free Counter</span></td>
                   <td />
                 </tr>
               ))}
