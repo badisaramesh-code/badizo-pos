@@ -502,7 +502,8 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
 
       const [stockResult] = await connection.query(
         `UPDATE products
-         SET stock_qty = stock_qty - ?
+         SET stock_qty = stock_qty - ?,
+             updated_at = CURRENT_TIMESTAMP
          WHERE barcode = ?`,
         [quantity, item.barcode]
       );
@@ -540,7 +541,8 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     for (const item of normalizedExchangeItems) {
       const [stockResult] = await connection.query(
         `UPDATE products
-         SET stock_qty = stock_qty + ?
+         SET stock_qty = stock_qty + ?,
+             updated_at = CURRENT_TIMESTAMP
          WHERE barcode = ?`,
         [item.quantity, item.barcode]
       );
@@ -726,7 +728,7 @@ router.post('/invoice/void', authenticate, authorize('SERVER', 'ADMIN'), async (
     for (const item of items) {
       if (!item.is_free_bonus) {
         await connection.query(
-          `UPDATE products SET stock_qty = stock_qty + ? WHERE barcode = ?`,
+          `UPDATE products SET stock_qty = stock_qty + ?, updated_at = CURRENT_TIMESTAMP WHERE barcode = ?`,
           [parseMoney(item.quantity), item.barcode]
         );
         await restoreBatchStock(connection, item.id, item.quantity);
@@ -875,7 +877,8 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
 
       await connection.query(
         `UPDATE products
-         SET stock_qty = stock_qty + ?
+         SET stock_qty = stock_qty + ?,
+             updated_at = CURRENT_TIMESTAMP
          WHERE barcode = ?`,
         [returnQty, item.barcode]
       );

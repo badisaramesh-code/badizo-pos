@@ -277,7 +277,8 @@ async function applyPostedInwardStockDelta(connection, inwardNo, validLines) {
       const reduceQty = Math.abs(delta);
       const [productResult] = await connection.query(
         `UPDATE products
-         SET stock_qty = stock_qty - ?
+         SET stock_qty = stock_qty - ?,
+             updated_at = CURRENT_TIMESTAMP
          WHERE barcode = ? AND stock_qty >= ?`,
         [reduceQty, oldBatch.barcode, reduceQty]
       );
@@ -286,7 +287,10 @@ async function applyPostedInwardStockDelta(connection, inwardNo, validLines) {
       }
     } else {
       await connection.query(
-        `UPDATE products SET stock_qty = stock_qty + ? WHERE barcode = ?`,
+        `UPDATE products
+         SET stock_qty = stock_qty + ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE barcode = ?`,
         [delta, oldBatch.barcode]
       );
     }
@@ -319,7 +323,13 @@ async function applyPostedInwardStockDelta(connection, inwardNo, validLines) {
     );
     const [productRows] = await connection.query(`SELECT barcode FROM products WHERE barcode = ? LIMIT 1`, [meta.barcode]);
     if (productRows.length) {
-      await connection.query(`UPDATE products SET stock_qty = stock_qty + ? WHERE barcode = ?`, [meta.stockQty, meta.barcode]);
+      await connection.query(
+        `UPDATE products
+         SET stock_qty = stock_qty + ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE barcode = ?`,
+        [meta.stockQty, meta.barcode]
+      );
     } else {
       await connection.query(
         `INSERT INTO products
@@ -376,7 +386,8 @@ async function reversePostedInward(connection, inwardNo) {
   for (const [barcode, qty] of Object.entries(stockByBarcode)) {
     const [result] = await connection.query(
       `UPDATE products
-       SET stock_qty = stock_qty - ?
+       SET stock_qty = stock_qty - ?,
+           updated_at = CURRENT_TIMESTAMP
        WHERE barcode = ? AND stock_qty >= ?`,
       [qty, barcode, qty]
     );
@@ -1416,7 +1427,8 @@ router.post('/', async (req, res) => {
                  product_name = COALESCE(NULLIF(?, ''), product_name),
                  hsn_code = COALESCE(NULLIF(?, ''), hsn_code),
                  gst_percent = ?,
-                 purchase_price = ?
+                 purchase_price = ?,
+                 updated_at = CURRENT_TIMESTAMP
              WHERE barcode = ?`,
             [stockQty, line.product_name, line.hsn_code, line.gst_percent, basePurchasePrice, line.barcode]
           );

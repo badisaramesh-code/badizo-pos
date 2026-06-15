@@ -58,7 +58,9 @@ export async function lookupExactProduct(query) {
   if (!trimmed) return null;
 
   try {
-    const { data } = await api.get(`/products/exact/${encodeURIComponent(trimmed)}`);
+    const { data } = await api.get(`/products/exact/${encodeURIComponent(trimmed)}`, {
+      params: { _: Date.now() }
+    });
     return data || null;
   } catch (err) {
     if (err.response?.status === 404) return null;

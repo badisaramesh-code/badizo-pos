@@ -143,6 +143,8 @@ Recommended:
 
 If receipt appears compressed, check that the Windows driver is not using 58 mm paper.
 
+Avoid using a very long fixed paper form such as `80 x 3276 mm` for normal browser printing. Chrome/Edge can treat that full height as the bill page, so even a one-product bill may feed a very long blank tail. Use the normal Epson receipt/roll paper option where possible. The POS will calculate the needed bill height.
+
 ## 6. Configure In Badizo POS
 
 Open:
@@ -156,7 +158,7 @@ Set:
 ```text
 Default Print = Thermal receipt
 Thermal Width = 80 mm
-Thermal Feed Margin = 18
+Thermal Feed Margin = 4
 ```
 
 Click:
@@ -186,13 +188,13 @@ Thermal Feed Margin
 Try:
 
 ```text
-8 to 12
+2 to 4
 ```
 
 If print is cutting too close, increase it:
 
 ```text
-18 to 25
+6 to 10
 ```
 
 ## 7. Browser Print Settings
@@ -215,6 +217,8 @@ Scale: 100
 Headers and footers: Off
 Background graphics: On
 ```
+
+Do not select a fixed long page like `80 x 3276 mm` in the browser dialog unless the driver has no receipt/roll option. If it must be selected, keep `Thermal Feed Margin` small, usually `4`, because the POS already sends a content-height receipt page.
 
 If the browser keeps selecting HP or PDF:
 
@@ -274,13 +278,14 @@ Receipt height/feed margin is too large or printer driver feed setting is high.
 Fix in POS:
 
 ```text
-Thermal Feed Margin = 8 to 12
+Thermal Feed Margin = 2 to 4
 ```
 
 Fix in Windows driver:
 
 ```text
 Reduce feed / paper cut feed
+Use receipt/roll paper instead of 80 x 3276 mm fixed page when possible
 ```
 
 ### Issue: Nothing Prints But Browser Says Printed
@@ -340,7 +345,7 @@ System > Open Setup Folder
 ```text
 Default Print = Thermal receipt
 Thermal Width = 80 mm
-Thermal Feed Margin = 18
+Thermal Feed Margin = 4
 ```
 
 5. Save settings.
@@ -362,4 +367,3 @@ When Electron is used, we can improve this further by adding:
 - printer selection from System settings
 
 For now, browser mode depends on Windows/default printer and browser print dialog.
-

@@ -46,6 +46,28 @@ function Get-ServerIp {
   return @($addresses)[0]
 }
 
+function Test-BackendHealth {
+  try {
+    $response = Invoke-WebRequest -UseBasicParsing -Uri 'http://localhost:5000/api/health' -TimeoutSec 3
+    return $response.StatusCode -eq 200
+  } catch {
+    return $false
+  }
+}
+
+function Wait-BackendHealth {
+  param([int]$Seconds = 20)
+
+  for ($i = 0; $i -lt $Seconds; $i++) {
+    if (Test-BackendHealth) {
+      return $true
+    }
+    Start-Sleep -Seconds 1
+  }
+
+  return $false
+}
+
 $npm = Resolve-Npm
 if ([string]::IsNullOrWhiteSpace($ServerIp)) {
   $ServerIp = Get-ServerIp
@@ -86,8 +108,17 @@ if (!$SkipBackendRestart) {
     Stop-ScheduledTask -TaskName 'Badizo POS Backend' -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
     Start-ScheduledTask -TaskName 'Badizo POS Backend'
+    if (!(Wait-BackendHealth -Seconds 20)) {
+      Write-Host 'Scheduled task did not make backend healthy. Starting backend directly once.' -ForegroundColor Yellow
+      & (Join-Path $PSScriptRoot 'start-backend.ps1')
+    }
   } else {
+    Write-Host 'Backend scheduled task not found. Starting backend directly once.' -ForegroundColor Yellow
     & (Join-Path $PSScriptRoot 'start-backend.ps1')
+  }
+
+  if (!(Wait-BackendHealth -Seconds 20)) {
+    throw 'Backend is still not reachable on port 5000. Run scripts\windows\install-backend-startup-task.ps1 from Administrator PowerShell, then run this update script again.'
   }
 }
 
@@ -106,6 +137,9 @@ if ($RestartFrontendTask) {
 Write-Step 'Checking ports'
 $backendPort = Test-NetConnection localhost -Port 5000 -WarningAction SilentlyContinue
 Write-Host "Backend 5000: $($backendPort.TcpTestSucceeded)"
+if (!$backendPort.TcpTestSucceeded) {
+  throw 'Backend port 5000 is not reachable. The update did not fully complete.'
+}
 if ($RestartFrontendTask) {
   $frontendPort = Test-NetConnection localhost -Port 3000 -WarningAction SilentlyContinue
   Write-Host "Frontend 3000: $($frontendPort.TcpTestSucceeded)"

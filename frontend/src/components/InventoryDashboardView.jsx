@@ -78,14 +78,16 @@ const PRODUCT_EXCEL_HEADERS = [
   'Sales CGST %',
   'Sales IGST %',
   'Unit',
-  'Sales Rate'
+  'Sales Rate',
+  'Wholesale Price',
+  'Inward Quantity'
 ];
 
 const PRODUCT_EXCEL_SAMPLE_ROWS = [
-  ['73137', '89300296', '(180) JUMBO ROUND KAJU', '', '', '080211', '62.00', '62.00', '0', '2.5', '2.5', '5', '50 Gms', '62.00'],
-  ['73138', '89300297', '(180) JUMBO ROUND KAJU', '', '', '080211', '120.00', '120.00', '0', '2.5', '2.5', '5', '100 Gms', '120.00'],
-  ['73139', '89300298', '(180) JUMBO ROUND KAJU', '', '', '080211', '235.00', '235.00', '0', '2.5', '2.5', '5', '200 Gms', '235.00'],
-  ['73140', '89300299', '(180) JUMBO ROUND KAJU', '', '', '080211', '580.00', '580.00', '0', '2.5', '2.5', '5', '500 Gms', '580.00']
+  ['73137', '89300296', '(180) JUMBO ROUND KAJU', '', '', '080211', '62.00', '62.00', '0', '2.5', '2.5', '5', '50 Gms', '62.00', '60.00', '10'],
+  ['73138', '89300297', '(180) JUMBO ROUND KAJU', '', '', '080211', '120.00', '120.00', '0', '2.5', '2.5', '5', '100 Gms', '120.00', '116.00', '8'],
+  ['73139', '89300298', '(180) JUMBO ROUND KAJU', '', '', '080211', '235.00', '235.00', '0', '2.5', '2.5', '5', '200 Gms', '235.00', '226.00', '5'],
+  ['73140', '89300299', '(180) JUMBO ROUND KAJU', '', '', '080211', '580.00', '580.00', '0', '2.5', '2.5', '5', '500 Gms', '580.00', '560.00', '3']
 ];
 
 const PRODUCT_API_IMPORT_HEADERS = [
@@ -251,7 +253,7 @@ function rowsToApiImportCsv(rows) {
     wholesalePrice: columnIndex(['Wholesale Price', 'wholesale_price', 'wholesale rate']),
     discount: columnIndex(['Discount', 'discount_value', 'disc']),
     salePrice: columnIndex(['Sales Rate', 'Sale Rate', 'Sale Net Price', 'sale_price', 'sale price', 'retail price']),
-    stock: columnIndex(['Opening Stock', 'stock_qty', 'stock']),
+    stock: columnIndex(['Inward Quantity', 'Inward Qty', 'Inward Stock', 'Opening Stock', 'stock_qty', 'stock', 'Stock Qty', 'Current Stock']),
     lowStock: columnIndex(['Low Stock Alert', 'min_stock_alert', 'minimum stock'])
   };
 
@@ -274,23 +276,23 @@ function rowsToApiImportCsv(rows) {
         alias_names: uppercaseProductName(valueAt(row, indexes.aliasNames)),
         free_promo_name: uppercaseProductName(valueAt(row, indexes.freeProductName)),
         hsn_code: valueAt(row, indexes.hsn),
-        gst_percent: valueAt(row, indexes.gst) || '0',
-        sales_sgst_percent: valueAt(row, indexes.sgst) || '0',
-        sales_cgst_percent: valueAt(row, indexes.cgst) || '0',
-        sales_igst_percent: valueAt(row, indexes.igst) || '0',
-        unit_type: valueAt(row, indexes.unit) || 'Nos',
-        purchase_unit_type: valueAt(row, indexes.purchaseUnit) || 'Loose',
-        purchase_unit_size: valueAt(row, indexes.purchaseUnitSize) || '1',
+        gst_percent: valueAt(row, indexes.gst),
+        sales_sgst_percent: valueAt(row, indexes.sgst),
+        sales_cgst_percent: valueAt(row, indexes.cgst),
+        sales_igst_percent: valueAt(row, indexes.igst),
+        unit_type: valueAt(row, indexes.unit),
+        purchase_unit_type: valueAt(row, indexes.purchaseUnit),
+        purchase_unit_size: valueAt(row, indexes.purchaseUnitSize),
         mrp: valueAt(row, indexes.mrp),
         purchase_price: valueAt(row, indexes.purchasePrice),
         sale_price: valueAt(row, indexes.salePrice),
-        wholesale_price: valueAt(row, indexes.wholesalePrice) || valueAt(row, indexes.salePrice),
-        discount_type: discount ? 'VALUE' : 'PERCENT',
-        discount_value: discount || '0',
-        bulk_discount_value: '0',
-        is_free_item: '0',
-        stock_qty: valueAt(row, indexes.stock) || '0',
-        min_stock_alert: valueAt(row, indexes.lowStock) || '10'
+        wholesale_price: valueAt(row, indexes.wholesalePrice),
+        discount_type: discount ? 'VALUE' : '',
+        discount_value: discount,
+        bulk_discount_value: '',
+        is_free_item: '',
+        stock_qty: valueAt(row, indexes.stock),
+        min_stock_alert: valueAt(row, indexes.lowStock)
       };
     });
 
@@ -322,7 +324,9 @@ function downloadProductExcelTemplate() {
     { wch: 15 },
     { wch: 15 },
     { wch: 15 },
-    { wch: 16 }
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 18 }
   ];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Products');
@@ -1704,6 +1708,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                                   value={row.product_name}
                                   onChange={(event) => updateBulkRow(index, 'product_name', event.target.value.toUpperCase())}
                                 />
+                                {row.alias_names ? <div className="muted compact-cell-text">{row.alias_names}</div> : null}
                               </td>
                               <td>
                                 <input

@@ -116,8 +116,8 @@ function publicSettings(settings) {
       ? Number.parseInt(settings.thermal_receipt_width_mm, 10)
       : 80,
     thermal_feed_margin_mm: Number.isFinite(Number.parseInt(settings.thermal_feed_margin_mm, 10))
-      ? Math.min(Math.max(Number.parseInt(settings.thermal_feed_margin_mm, 10), 0), 80)
-      : 18,
+      ? Math.min(Math.max(Number.parseInt(settings.thermal_feed_margin_mm, 10), 0), 30)
+      : 4,
     backup_daily_time: /^\d{2}:\d{2}$/.test(settings.backup_daily_time || '')
       ? settings.backup_daily_time
       : (process.env.BACKUP_DAILY_TIME || '09:00'),
@@ -204,7 +204,7 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
 
       if (key === 'thermal_feed_margin_mm') {
         const margin = Number.parseInt(value, 10);
-        value = String(Number.isFinite(margin) ? Math.min(Math.max(margin, 0), 80) : 18);
+        value = String(Number.isFinite(margin) ? Math.min(Math.max(margin, 0), 30) : 4);
       }
 
       if (key === 'backup_daily_time') {

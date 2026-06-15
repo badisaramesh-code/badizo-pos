@@ -85,7 +85,7 @@ export default function SystemView() {
     counter_count: 6,
     default_print_mode: 'Thermal',
     thermal_receipt_width_mm: 80,
-    thermal_feed_margin_mm: 18,
+    thermal_feed_margin_mm: 4,
     backup_daily_time: '09:00',
     barcode_printer_templates: DEFAULT_BARCODE_PRINTER_TEMPLATES
   });
@@ -582,8 +582,8 @@ export default function SystemView() {
                   className="field"
                   type="number"
                   min="0"
-                  max="80"
-                  value={settings.thermal_feed_margin_mm ?? 18}
+                  max="30"
+                  value={settings.thermal_feed_margin_mm ?? 4}
                   onChange={(event) => updateSetting('thermal_feed_margin_mm', event.target.value)}
                 />
               </label>

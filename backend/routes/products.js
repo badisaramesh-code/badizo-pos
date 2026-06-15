@@ -263,6 +263,10 @@ function parseImportNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : Number.NaN;
 }
 
+function hasImportValue(value) {
+  return String(value ?? '').trim() !== '';
+}
+
 function compactImportValue(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
 }
@@ -303,7 +307,9 @@ const PRODUCT_CSV_HEADERS = [
   'Sales CGST %',
   'Sales IGST %',
   'Unit',
-  'Sales Rate'
+  'Sales Rate',
+  'Wholesale Price',
+  'Inward Quantity'
 ];
 
 const PRODUCT_EXPORT_HEADERS = [
@@ -356,7 +362,7 @@ const PRODUCT_IMPORT_ALIASES = {
   discount_value: ['discount', 'disc', 'disc %', 'discount %'],
   sale_price: ['sales rate', 'sale rate', 'sale net price', 'sale price', 'selling price', 'retail price', 'net price'],
   wholesale_price: ['wholesale price', 'wholesale rate'],
-  stock_qty: ['opening stock', 'stock', 'stock qty', 'current stock'],
+  stock_qty: ['inward quantity', 'inward qty', 'inward stock', 'opening stock', 'stock', 'stock qty', 'current stock'],
   min_stock_alert: ['low stock alert', 'min stock alert', 'minimum stock']
 };
 
@@ -397,31 +403,61 @@ function parseCsv(text) {
 function normalizeCsvRow(rawRow, rowNumber) {
   const productCode = String(rawRow.product_code || '').trim().toUpperCase();
   const barcode = String(rawRow.barcode || productCode || '').trim().toUpperCase();
+  const importFields = {
+    product_code: hasImportValue(rawRow.product_code),
+    product_name: hasImportValue(rawRow.product_name),
+    alias_names: hasImportValue(rawRow.alias_names),
+    free_promo_name: hasImportValue(rawRow.free_promo_name),
+    hsn_code: hasImportValue(rawRow.hsn_code),
+    gst_percent: hasImportValue(rawRow.gst_percent),
+    sales_sgst_percent: hasImportValue(rawRow.sales_sgst_percent),
+    sales_cgst_percent: hasImportValue(rawRow.sales_cgst_percent),
+    sales_igst_percent: hasImportValue(rawRow.sales_igst_percent),
+    unit_type: hasImportValue(rawRow.unit_type),
+    purchase_unit_type: hasImportValue(rawRow.purchase_unit_type),
+    purchase_unit_size: hasImportValue(rawRow.purchase_unit_size),
+    mrp: hasImportValue(rawRow.mrp),
+    purchase_price: hasImportValue(rawRow.purchase_price),
+    sale_price: hasImportValue(rawRow.sale_price) || hasImportValue(rawRow.mrp),
+    wholesale_price: hasImportValue(rawRow.wholesale_price),
+    discount_type: hasImportValue(rawRow.discount_type),
+    discount_value: hasImportValue(rawRow.discount_value),
+    bulk_discount_value: hasImportValue(rawRow.bulk_discount_value),
+    is_free_item: hasImportValue(rawRow.is_free_item),
+    free_promo_enabled: hasImportValue(rawRow.free_promo_name),
+    free_promo_qty_per_sale: false,
+    free_promo_total_qty: false,
+    free_promo_remaining_qty: false,
+    stock_qty: hasImportValue(rawRow.stock_qty),
+    min_stock_alert: hasImportValue(rawRow.min_stock_alert)
+  };
   const productName = normalizeProductName(rawRow.product_name);
   const aliasNames = normalizeAliasNames(rawRow.alias_names);
-  const salesGstPercent = parseImportNumber(rawRow.gst_percent, 0);
-  const salesSgstPercent = parseImportNumber(rawRow.sales_sgst_percent, 0);
-  const salesCgstPercent = parseImportNumber(rawRow.sales_cgst_percent, 0);
-  const salesIgstPercent = parseImportNumber(rawRow.sales_igst_percent, 0);
+  const salesGstPercent = importFields.gst_percent ? parseImportNumber(rawRow.gst_percent, 0) : 0;
+  const salesSgstPercent = importFields.sales_sgst_percent ? parseImportNumber(rawRow.sales_sgst_percent, 0) : 0;
+  const salesCgstPercent = importFields.sales_cgst_percent ? parseImportNumber(rawRow.sales_cgst_percent, 0) : 0;
+  const salesIgstPercent = importFields.sales_igst_percent ? parseImportNumber(rawRow.sales_igst_percent, 0) : 0;
   const splitGstPercent = salesCgstPercent + salesSgstPercent;
   const gstPercent = salesIgstPercent > 0 ? salesIgstPercent : (splitGstPercent > 0 ? splitGstPercent : salesGstPercent);
-  const mrp = parseImportNumber(rawRow.mrp, 0);
-  const purchasePrice = parseImportNumber(rawRow.purchase_price, 0);
-  const purchaseUnitSize = parseImportNumber(rawRow.purchase_unit_size, 1) || 1;
-  const salePrice = parseImportNumber(rawRow.sale_price || rawRow.mrp, 0);
-  const wholesalePrice = parseImportNumber(rawRow.wholesale_price || rawRow.sale_price || rawRow.mrp, 0);
-  const discountValue = parseImportNumber(rawRow.discount_value, 0) || 0;
+  const mrp = importFields.mrp ? parseImportNumber(rawRow.mrp, 0) : 0;
+  const purchasePrice = importFields.purchase_price ? parseImportNumber(rawRow.purchase_price, 0) : 0;
+  const purchaseUnitSize = importFields.purchase_unit_size ? parseImportNumber(rawRow.purchase_unit_size, 1) : 1;
+  const salePrice = importFields.sale_price ? parseImportNumber(rawRow.sale_price || rawRow.mrp, 0) : 0;
+  const wholesalePrice = importFields.wholesale_price ? parseImportNumber(rawRow.wholesale_price, 0) : salePrice;
+  const discountValue = importFields.discount_value ? parseImportNumber(rawRow.discount_value, 0) : 0;
+  const stockQty = importFields.stock_qty ? parseImportNumber(rawRow.stock_qty, 0) : 0;
 
   const errors = [];
   if (!barcode) errors.push('Product Code or barcode is required');
-  if (!productName) errors.push('product_name is required');
-  if (!Number.isFinite(gstPercent) || ![0, 3, 5, 12, 18, 28, 40].includes(gstPercent)) errors.push('gst_percent must be 0, 3, 5, 12, 18, 28, or 40');
+  if ((importFields.gst_percent || importFields.sales_sgst_percent || importFields.sales_cgst_percent || importFields.sales_igst_percent)
+    && (!Number.isFinite(gstPercent) || ![0, 3, 5, 12, 18, 28, 40].includes(gstPercent))) errors.push('gst_percent must be 0, 3, 5, 12, 18, 28, or 40');
   if (![salesSgstPercent, salesCgstPercent, salesIgstPercent].every((tax) => Number.isFinite(tax) && tax >= 0 && tax <= 100)) errors.push('sales tax split percentages must be valid numbers');
-  if (!Number.isFinite(mrp) || mrp < 0) errors.push('mrp must be a valid number');
-  if (!Number.isFinite(purchaseUnitSize) || purchaseUnitSize <= 0) errors.push('purchase_unit_size must be greater than zero');
-  if (!Number.isFinite(purchasePrice) || purchasePrice < 0) errors.push('purchase_price must be a valid number');
-  if (!Number.isFinite(salePrice) || salePrice < 0) errors.push('sale_price must be a valid number');
-  if (mrp > 0 && salePrice > mrp) errors.push('sale_price cannot be greater than mrp');
+  if (importFields.mrp && (!Number.isFinite(mrp) || mrp < 0)) errors.push('mrp must be a valid number');
+  if (importFields.purchase_unit_size && (!Number.isFinite(purchaseUnitSize) || purchaseUnitSize <= 0)) errors.push('purchase_unit_size must be greater than zero');
+  if (importFields.purchase_price && (!Number.isFinite(purchasePrice) || purchasePrice < 0)) errors.push('purchase_price must be a valid number');
+  if (importFields.sale_price && (!Number.isFinite(salePrice) || salePrice < 0)) errors.push('sale_price must be a valid number');
+  if (importFields.stock_qty && (!Number.isFinite(stockQty) || stockQty < 0)) errors.push('Inward Quantity must be a valid zero or positive number');
+  if (importFields.mrp && importFields.sale_price && mrp > 0 && salePrice > mrp) errors.push('sale_price cannot be greater than mrp');
 
   return {
     rowNumber,
@@ -436,7 +472,8 @@ function normalizeCsvRow(rawRow, rowNumber) {
       sales_cgst: rawRow.sales_cgst_percent,
       sales_igst: rawRow.sales_igst_percent,
       unit: rawRow.unit_type,
-      sales_rate: rawRow.sale_price
+      sales_rate: rawRow.sale_price,
+      inward_quantity: rawRow.stock_qty
     },
     errors,
     product: {
@@ -466,7 +503,9 @@ function normalizeCsvRow(rawRow, rowNumber) {
       free_promo_qty_per_sale: 1,
       free_promo_total_qty: 0,
       free_promo_remaining_qty: 0,
-      stock_qty: parseImportNumber(rawRow.stock_qty, 0) || 0,
+      stock_qty: stockQty,
+      import_fields: importFields,
+      import_stock_qty_present: importFields.stock_qty,
       min_stock_alert: parseImportNumber(rawRow.min_stock_alert, 10) || 10
     }
   };
@@ -1146,10 +1185,10 @@ router.post('/stock-adjustments', authenticate, authorize('SERVER', 'ADMIN'), as
 
 router.get('/export/template', authenticate, authorize('SERVER', 'ADMIN'), (_req, res) => {
   const sampleRows = [
-    ['73137', '89300296', '(180) JUMBO ROUND KAJU', '', '', '080211', '62.00', '62.00', '0', '2.5', '2.5', '5', '50 Gms', '62.00'],
-    ['73138', '89300297', '(180) JUMBO ROUND KAJU', '', '', '080211', '120.00', '120.00', '0', '2.5', '2.5', '5', '100 Gms', '120.00'],
-    ['73139', '89300298', '(180) JUMBO ROUND KAJU', '', '', '080211', '235.00', '235.00', '0', '2.5', '2.5', '5', '200 Gms', '235.00'],
-    ['73140', '89300299', '(180) JUMBO ROUND KAJU', '', '', '080211', '580.00', '580.00', '0', '2.5', '2.5', '5', '500 Gms', '580.00']
+    ['73137', '89300296', '(180) JUMBO ROUND KAJU', '', '', '080211', '62.00', '62.00', '0', '2.5', '2.5', '5', '50 Gms', '62.00', '60.00', '10'],
+    ['73138', '89300297', '(180) JUMBO ROUND KAJU', '', '', '080211', '120.00', '120.00', '0', '2.5', '2.5', '5', '100 Gms', '120.00', '116.00', '8'],
+    ['73139', '89300298', '(180) JUMBO ROUND KAJU', '', '', '080211', '235.00', '235.00', '0', '2.5', '2.5', '5', '200 Gms', '235.00', '226.00', '5'],
+    ['73140', '89300299', '(180) JUMBO ROUND KAJU', '', '', '080211', '580.00', '580.00', '0', '2.5', '2.5', '5', '500 Gms', '580.00', '560.00', '3']
   ];
 
   const tableRows = [
@@ -1256,6 +1295,17 @@ function existingImportProduct(existingProducts, product) {
     || null;
 }
 
+async function fetchExistingImportProductsFromDb(products) {
+  const existingProducts = { byBarcode: new Map(), byCode: new Map() };
+  for (let index = 0; index < products.length; index += PRODUCT_IMPORT_BATCH_SIZE) {
+    const batch = products.slice(index, index + PRODUCT_IMPORT_BATCH_SIZE);
+    const batchExisting = await fetchExistingImportProducts(db, batch);
+    batchExisting.byBarcode.forEach((value, key) => existingProducts.byBarcode.set(key, value));
+    batchExisting.byCode.forEach((value, key) => existingProducts.byCode.set(key, value));
+  }
+  return existingProducts;
+}
+
 function rememberImportedProduct(existingProducts, product) {
   if (!product?.barcode) return;
   const snapshot = productSnapshot(product);
@@ -1263,8 +1313,95 @@ function rememberImportedProduct(existingProducts, product) {
   if (product.product_code) existingProducts.byCode.set(product.product_code, snapshot);
 }
 
+function requiredImportErrorsForNewProduct(product) {
+  const errors = [];
+  const hasAnyGst = product.import_fields?.gst_percent
+    || product.import_fields?.sales_sgst_percent
+    || product.import_fields?.sales_cgst_percent
+    || product.import_fields?.sales_igst_percent;
+
+  if (!product.product_name) errors.push('Product name is required for new barcode');
+  if (!hasAnyGst) errors.push('GST is required for new barcode');
+  if (!product.import_fields?.mrp) errors.push('MRP is required for new barcode');
+  if (!product.import_fields?.sale_price) errors.push('Sales Rate is required for new barcode');
+  return errors;
+}
+
+async function resolveImportProductsAgainstExisting(products, errors) {
+  if (!products.length) return;
+  const existingProducts = await fetchExistingImportProductsFromDb(products);
+  const validProducts = [];
+
+  for (const product of products) {
+    const existingProduct = existingImportProduct(existingProducts, product);
+    if (existingProduct) {
+      if (!product.import_fields?.product_name) {
+        product.product_name = existingProduct.product_name;
+      }
+      product.product_code = existingProduct.product_code;
+      validProducts.push(product);
+      continue;
+    }
+
+    const requiredErrors = requiredImportErrorsForNewProduct(product);
+    if (requiredErrors.length) {
+      const message = `Barcode ${product.barcode} was not found in products. ${requiredErrors.join(', ')}. Add the product name/details for a new product, or correct the barcode.`;
+      errors.push({
+        row: product.source_row,
+        product_code: product.product_code || '',
+        barcode: product.barcode,
+        product_name: product.product_name || '',
+        errors: [message],
+        message,
+        rawValues: {
+          product_code: product.product_code || '',
+          barcode: product.barcode,
+          description: product.product_name || ''
+        }
+      });
+      continue;
+    }
+
+    validProducts.push(product);
+  }
+
+  products.length = 0;
+  products.push(...validProducts);
+}
+
 function productImportValues(product) {
   return PRODUCT_IMPORT_COLUMNS.map((column) => product[column]);
+}
+
+function productForImportWrite(product, existingProduct) {
+  if (!existingProduct) {
+    return {
+      ...product,
+      stock_qty: product.import_fields?.stock_qty ? product.stock_qty : 0
+    };
+  }
+
+  const merged = {
+    ...product,
+    barcode: existingProduct.barcode
+  };
+
+  PRODUCT_IMPORT_COLUMNS.forEach((column) => {
+    if (column === 'barcode') return;
+    if (column === 'stock_qty') {
+      merged.stock_qty = product.import_fields?.stock_qty
+        ? Number(existingProduct.stock_qty || 0) + Number(product.stock_qty || 0)
+        : Number(existingProduct.stock_qty || 0);
+      return;
+    }
+    if (!product.import_fields?.[column]) {
+      merged[column] = existingProduct[column];
+    }
+  });
+
+  merged.product_code = existingProduct.product_code;
+
+  return merged;
 }
 
 async function bulkUpsertProducts(connection, products = []) {
@@ -1299,7 +1436,7 @@ function prepareImportBatch(batch, existingProducts) {
     const existingProduct = existingImportProduct(existingProducts, product);
     const existed = Boolean(existingProduct);
     const previousProduct = existed ? productSnapshot(existingProduct) : null;
-    const productForWrite = existed ? { ...product, barcode: existingProduct.barcode } : product;
+    const productForWrite = productForImportWrite(product, existingProduct);
 
     if (existed) updated += 1;
     else inserted += 1;
@@ -1374,7 +1511,7 @@ async function processImportBatchRowByRow(connection, { importId, batch, existin
       const existingProduct = existingImportProduct(existingProducts, product);
       const existed = Boolean(existingProduct);
       const previousProduct = existed ? productSnapshot(existingProduct) : null;
-      productForWrite = existed ? { ...product, barcode: existingProduct.barcode } : product;
+      productForWrite = productForImportWrite(product, existingProduct);
 
       await bulkUpsertProducts(connection, [productForWrite]);
 
@@ -1655,8 +1792,7 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
   const importId = await createProductImportJob({ fileName, user: req.user, totalRows: totalInputRows });
   const hasProductCode = headers.includes('product_code') || headers.includes('barcode');
   const missingHeaders = [
-    ...(!hasProductCode ? ['Product Code'] : []),
-    ...(['product_name', 'gst_percent', 'mrp', 'sale_price'].filter((header) => !headers.includes(header)))
+    ...(!hasProductCode ? ['Product Code'] : [])
   ];
   if (missingHeaders.length) {
     const connection = await db.getConnection();
@@ -1714,6 +1850,8 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
       products.push(normalized.product);
     }
   });
+
+  await resolveImportProductsAgainstExisting(products, errors);
 
   const productCodes = [...new Set(products.map((product) => product.product_code).filter(Boolean))];
   if (productCodes.length) {
@@ -2070,7 +2208,7 @@ router.get('/bulk-edit/search', authenticate, authorize('SERVER', 'ADMIN'), asyn
     const values = [];
     applyProductSearch(where, values, search);
     const [rows] = await db.query(
-      `SELECT id, barcode, product_name, hsn_code, gst_percent, unit_type
+      `SELECT id, barcode, product_name, alias_names, hsn_code, gst_percent, unit_type
        FROM products
        WHERE ${where.join(' AND ')}
        ORDER BY product_name ASC, id DESC
@@ -2082,6 +2220,7 @@ router.get('/bulk-edit/search', authenticate, authorize('SERVER', 'ADMIN'), asyn
       id: row.id,
       barcode: row.barcode,
       product_name: row.product_name,
+      alias_names: row.alias_names || '',
       hsn_code: row.hsn_code || '',
       gst_percent: Number(row.gst_percent || 0),
       unit_type: row.unit_type || 'Nos'
@@ -2142,6 +2281,7 @@ router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER
 
 router.get('/exact/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     const q = decodeURIComponent(req.params.query || '').trim().toUpperCase();
     if (!q) return res.status(400).json({ error: 'Barcode or product code is required.' });
 
