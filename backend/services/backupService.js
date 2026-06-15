@@ -2,7 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 require('dotenv').config();
+const db = require('../config/db');
 const { logError, logInfo } = require('./logger');
+const {
+  driveKeepCount,
+  isDriveBackupEnabled,
+  pruneDriveBackups,
+  uploadBackupToDrive
+} = require('./googleDriveBackupService');
 
 const backupDir = process.env.BACKUP_DIR || path.join(__dirname, '..', 'backups');
 
@@ -42,6 +49,33 @@ async function listBackups() {
   );
 
   return backups.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+}
+
+async function pruneLocalBackups(keepCount = driveKeepCount()) {
+  const backups = await listBackups();
+  const oldBackups = backups.slice(keepCount);
+  const deleted = [];
+  for (const backup of oldBackups) {
+    await fs.promises.rm(getBackupPath(backup.file), { force: true });
+    deleted.push(backup.file);
+  }
+  if (deleted.length) {
+    logInfo('Old local backups deleted', { keepCount, deleted });
+  }
+  return deleted;
+}
+
+async function getDailyBackupTime() {
+  try {
+    const [rows] = await db.query(
+      `SELECT setting_value FROM app_settings WHERE setting_key = 'backup_daily_time' LIMIT 1`
+    );
+    const value = String(rows[0]?.setting_value || process.env.BACKUP_DAILY_TIME || '09:00').trim();
+    return /^\d{2}:\d{2}$/.test(value) ? value : '09:00';
+  } catch (err) {
+    logError('Backup time setting read failed', err);
+    return process.env.BACKUP_DAILY_TIME || '09:00';
+  }
 }
 
 function getBackupPath(fileName) {
@@ -146,23 +180,37 @@ async function runDatabaseBackup() {
       }
 
       const stats = await fs.promises.stat(filePath);
-      resolve({
+      const backup = {
         file: fileName,
         path: filePath,
         sizeBytes: stats.size,
         createdAt: stats.birthtime
-      });
+      };
+
+      try {
+        if (isDriveBackupEnabled()) {
+          backup.cloudBackup = await uploadBackupToDrive(backup);
+          backup.deletedDriveBackups = (await pruneDriveBackups()).deleted;
+          backup.deletedLocalBackups = await pruneLocalBackups();
+        } else {
+          backup.cloudBackup = { enabled: false };
+        }
+      } catch (err) {
+        backup.cloudBackup = { enabled: true, uploaded: false, error: err.message };
+        logError('Google Drive backup upload failed', err, { file: backup.file, sizeBytes: backup.sizeBytes });
+      }
+
+      resolve(backup);
     });
   });
 }
 
 function scheduleDailyBackup() {
-  const runAt = process.env.BACKUP_DAILY_TIME || '22:30';
-  const [hourText, minuteText] = runAt.split(':');
-  const hour = Math.min(Math.max(Number.parseInt(hourText, 10) || 22, 0), 23);
-  const minute = Math.min(Math.max(Number.parseInt(minuteText, 10) || 30, 0), 59);
-
-  const scheduleNext = () => {
+  const scheduleNext = async () => {
+    const runAt = await getDailyBackupTime();
+    const [hourText, minuteText] = runAt.split(':');
+    const hour = Math.min(Math.max(Number.parseInt(hourText, 10) || 9, 0), 23);
+    const minute = Math.min(Math.max(Number.parseInt(minuteText, 10) || 0, 0), 59);
     const now = new Date();
     const next = new Date(now);
     next.setHours(hour, minute, 0, 0);
@@ -181,17 +229,19 @@ function scheduleDailyBackup() {
         scheduleNext();
       }
     }, delay);
+
+    console.log(`Daily database backup scheduled at ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}.`);
+    logInfo('Daily database backup scheduled', { time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` });
   };
 
   scheduleNext();
-  console.log(`Daily database backup scheduled at ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}.`);
-  logInfo('Daily database backup scheduled', { time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` });
 }
 
 module.exports = {
   backupDir,
   getBackupPath,
   listBackups,
+  pruneLocalBackups,
   runDatabaseBackup,
   restoreDatabaseBackup,
   scheduleDailyBackup

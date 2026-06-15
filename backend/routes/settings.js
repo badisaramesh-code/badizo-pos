@@ -19,6 +19,7 @@ const ALLOWED_SETTINGS = new Set([
   'default_print_mode',
   'thermal_receipt_width_mm',
   'thermal_feed_margin_mm',
+  'backup_daily_time',
   'barcode_printer_templates'
 ]);
 
@@ -117,6 +118,9 @@ function publicSettings(settings) {
     thermal_feed_margin_mm: Number.isFinite(Number.parseInt(settings.thermal_feed_margin_mm, 10))
       ? Math.min(Math.max(Number.parseInt(settings.thermal_feed_margin_mm, 10), 0), 80)
       : 18,
+    backup_daily_time: /^\d{2}:\d{2}$/.test(settings.backup_daily_time || '')
+      ? settings.backup_daily_time
+      : (process.env.BACKUP_DAILY_TIME || '09:00'),
     barcode_printer_templates: normalizeBarcodePrinterTemplates(settings.barcode_printer_templates)
   };
 }
@@ -201,6 +205,13 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
       if (key === 'thermal_feed_margin_mm') {
         const margin = Number.parseInt(value, 10);
         value = String(Number.isFinite(margin) ? Math.min(Math.max(margin, 0), 80) : 18);
+      }
+
+      if (key === 'backup_daily_time') {
+        const [hour, minute] = String(value || '').split(':').map((part) => Number.parseInt(part, 10));
+        value = Number.isInteger(hour) && Number.isInteger(minute) && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
+          ? `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+          : '09:00';
       }
 
       await db.query(

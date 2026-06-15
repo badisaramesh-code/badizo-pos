@@ -86,6 +86,7 @@ export default function SystemView() {
     default_print_mode: 'Thermal',
     thermal_receipt_width_mm: 80,
     thermal_feed_margin_mm: 18,
+    backup_daily_time: '09:00',
     barcode_printer_templates: DEFAULT_BARCODE_PRINTER_TEMPLATES
   });
   const [statusMessage, setStatusMessage] = useState('');
@@ -302,7 +303,14 @@ export default function SystemView() {
 
     try {
       const result = await runBackup();
-      setStatusMessage(`Backup created: ${result.backup.file}`);
+      const cloudBackup = result.backup?.cloudBackup;
+      if (cloudBackup?.enabled && cloudBackup?.uploaded) {
+        setStatusMessage(`Backup created and uploaded to Google Drive: ${result.backup.file}`);
+      } else if (cloudBackup?.enabled && cloudBackup?.error) {
+        setStatusMessage(`Local backup created: ${result.backup.file}. Google Drive upload failed: ${cloudBackup.error}`);
+      } else {
+        setStatusMessage(`Backup created: ${result.backup.file}`);
+      }
       await loadBackups();
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to create backup.');
@@ -358,6 +366,18 @@ export default function SystemView() {
     if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
     if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
     return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  }
+
+  async function handleSaveBackupTime() {
+    setStatusMessage('');
+    setErrorMessage('');
+    try {
+      const savedSettings = await saveSettings({ backup_daily_time: settings.backup_daily_time || '09:00' });
+      setSettings((current) => ({ ...current, ...savedSettings }));
+      setStatusMessage('Backup time saved. Restart backend once for the daily scheduler to use the new time.');
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to save backup time.');
+    }
   }
 
   function formatHealthDate(value) {
@@ -786,8 +806,20 @@ export default function SystemView() {
           </div>
           <div className="panel-body form-stack">
             <div className="change-box backup-folder-box">
-              <span>Daily backup runs at 10:30 PM by default.</span>
+              <span>Daily backup runs at <strong>{settings.backup_daily_time || '09:00'}</strong>.</span>
               <span>Backup folder: <strong>{backupInfo.backupDir || 'backend/backups'}</strong></span>
+            </div>
+            <div className="settings-section settings-inline-section">
+              <label>
+                <span className="field-label">Daily Backup Time</span>
+                <input
+                  className="field"
+                  type="time"
+                  value={settings.backup_daily_time || '09:00'}
+                  onChange={(event) => updateSetting('backup_daily_time', event.target.value)}
+                />
+              </label>
+              <button className="secondary-button" type="button" onClick={handleSaveBackupTime}>Save Backup Time</button>
             </div>
             <button className="primary-button" onClick={handleBackupNow} disabled={isBackingUp}>
               {isBackingUp ? 'Creating Backup...' : 'Backup Now'}
