@@ -811,6 +811,11 @@ button:disabled {
   color: var(--muted);
 }
 
+.activity-held-row .held-customer-name {
+  color: var(--text);
+  font-weight: 900;
+}
+
 .activity-held-actions {
   display: flex;
   gap: 5px;
@@ -3620,6 +3625,10 @@ button:disabled {
 }
 
 .digital-contact-modal {
+  width: min(420px, 100%);
+}
+
+.hold-bill-modal {
   width: min(420px, 100%);
 }
 

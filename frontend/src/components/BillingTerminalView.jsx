@@ -156,6 +156,15 @@ function getThermalFeedMarginMm(settings) {
   return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 0), 30) : 4;
 }
 
+function buildHoldToken({ invoiceNo, counterNo, customerLabel }) {
+  const billLabel = String(invoiceNo || '').trim();
+  const stableBillLabel = billLabel && billLabel !== 'Loading...'
+    ? billLabel
+    : `HOLD-C${counterNo}-${Date.now()}`;
+  const customerText = String(customerLabel || '').trim() || 'WALK-IN';
+  return `${stableBillLabel} - ${customerText.toUpperCase()}`.slice(0, 80);
+}
+
 function CounterSaleSlip({ slip, shop, printedAt }) {
   const printedDate = printedAt.toLocaleDateString('en-IN');
   const printedTime = printedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
@@ -234,6 +243,8 @@ export default function BillingTerminalView({ isActive = true }) {
   const [mixedPayment, setMixedPayment] = useState(initialDraft?.mixedPayment || EMPTY_MIXED_PAYMENT);
   const [paymentReference, setPaymentReference] = useState(initialDraft?.paymentReference || '');
   const [paymentConfirmed, setPaymentConfirmed] = useState(Boolean(initialDraft?.paymentConfirmed));
+  const [holdBillDialogOpen, setHoldBillDialogOpen] = useState(false);
+  const [holdCustomerName, setHoldCustomerName] = useState('');
   const [digitalContactModal, setDigitalContactModal] = useState(null);
   const [digitalContactDraft, setDigitalContactDraft] = useState({ name: '', phone: '' });
   const [digitalContactError, setDigitalContactError] = useState('');
@@ -275,6 +286,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const exchangeScannerBufferLastKeyAtRef = useRef(0);
   const exchangeScannerBufferTimerRef = useRef(null);
   const exchangeScannerInputModeRef = useRef('keyboard');
+  const holdBillShortcutKeysRef = useRef({ ctrl: false, alt: false });
   const holdBillShortcutPressedRef = useRef(false);
   const previousExchangeModeRef = useRef(exchangeMode);
   const priceCheckKeyTimesRef = useRef([]);
@@ -287,6 +299,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const mixedCashRef = useRef(null);
   const mixedUpiRef = useRef(null);
   const mixedCardRef = useRef(null);
+  const holdCustomerNameRef = useRef(null);
   const customerPhoneRef = useRef(null);
   const customerGstinRef = useRef(null);
   const customerAddressRef = useRef(null);
@@ -480,11 +493,20 @@ export default function BillingTerminalView({ isActive = true }) {
   }, []);
 
   useEffect(() => {
+    const resetHoldBillShortcut = () => {
+      holdBillShortcutKeysRef.current = { ctrl: false, alt: false };
+      holdBillShortcutPressedRef.current = false;
+    };
+
     const handleShortcut = (event) => {
-      if (event.ctrlKey && event.altKey && !holdBillShortcutPressedRef.current) {
+      if (event.key === 'Control') holdBillShortcutKeysRef.current.ctrl = true;
+      if (event.key === 'Alt') holdBillShortcutKeysRef.current.alt = true;
+      const isHoldBillShortcut = holdBillShortcutKeysRef.current.ctrl && holdBillShortcutKeysRef.current.alt;
+
+      if (isHoldBillShortcut && !holdBillShortcutPressedRef.current) {
         event.preventDefault();
         holdBillShortcutPressedRef.current = true;
-        holdCurrentBill();
+        openHoldBillDialog();
         return;
       }
 
@@ -535,22 +557,22 @@ export default function BillingTerminalView({ isActive = true }) {
     };
 
     const handleShortcutKeyUp = (event) => {
-      if (!event.ctrlKey || !event.altKey) {
+      if (event.key === 'Control') holdBillShortcutKeysRef.current.ctrl = false;
+      if (event.key === 'Alt') holdBillShortcutKeysRef.current.alt = false;
+      if (!holdBillShortcutKeysRef.current.ctrl || !holdBillShortcutKeysRef.current.alt) {
         holdBillShortcutPressedRef.current = false;
       }
-    };
-
-    const resetHoldBillShortcut = () => {
-      holdBillShortcutPressedRef.current = false;
     };
 
     window.addEventListener('keydown', handleShortcut);
     window.addEventListener('keyup', handleShortcutKeyUp);
     window.addEventListener('blur', resetHoldBillShortcut);
+    document.addEventListener('visibilitychange', resetHoldBillShortcut);
     return () => {
       window.removeEventListener('keydown', handleShortcut);
       window.removeEventListener('keyup', handleShortcutKeyUp);
       window.removeEventListener('blur', resetHoldBillShortcut);
+      document.removeEventListener('visibilitychange', resetHoldBillShortcut);
     };
   });
 
@@ -1811,7 +1833,7 @@ export default function BillingTerminalView({ isActive = true }) {
     .counter-sale-slip {
       width: ${thermalWidthMm}mm;
       box-sizing: border-box;
-      padding: 3mm 3mm ${thermalFeedMarginMm}mm;
+      padding: 3mm 5mm ${thermalFeedMarginMm}mm;
       font-size: 12px;
       line-height: 1.2;
     }
@@ -2622,6 +2644,22 @@ export default function BillingTerminalView({ isActive = true }) {
     submitCheckout(mode);
   }
 
+  function openHoldBillDialog() {
+    if (cart.length === 0) {
+      setErrorMessage('Add at least one item before holding a bill.');
+      return;
+    }
+
+    const currentCustomerLabel = (isBusinessBillingMode(billingMode) ? companyName : customerName).trim();
+    setHoldCustomerName(currentCustomerLabel);
+    setHoldBillDialogOpen(true);
+    setErrorMessage('');
+    window.setTimeout(() => {
+      holdCustomerNameRef.current?.focus();
+      holdCustomerNameRef.current?.select?.();
+    }, 50);
+  }
+
   async function refreshHistory(openModal) {
     try {
       const rows = await fetchInvoiceHistory();
@@ -2646,16 +2684,10 @@ export default function BillingTerminalView({ isActive = true }) {
       return;
     }
 
-    const customerLabel = (isBusinessBillingMode(billingMode) ? companyName : customerName).trim();
-    const billLabel = String(invoiceNo || `HOLD-C${counterNo}`).trim();
-    const holdPrefix = `${billLabel} - `;
-    const defaultHoldToken = `${holdPrefix}${customerLabel ? customerLabel.slice(0, 24).toUpperCase() : ''}`;
-    const holdTokenInput = window.prompt('Hold bill details:', defaultHoldToken);
-    if (!holdTokenInput) return;
-    const holdTokenText = holdTokenInput.trim();
-    const holdToken = holdTokenText.toUpperCase().startsWith(billLabel.toUpperCase())
-      ? holdTokenText
-      : `${holdPrefix}${holdTokenText}`;
+    const customerLabel = String(holdCustomerName || '').trim()
+      || (isBusinessBillingMode(billingMode) ? companyName : customerName).trim()
+      || 'Walk-in Customer';
+    const holdToken = buildHoldToken({ invoiceNo, counterNo, customerLabel });
 
     try {
       const savedState = {
@@ -2686,6 +2718,8 @@ export default function BillingTerminalView({ isActive = true }) {
         item_count: cart.length
       });
       setStatusMessage(`Bill held as ${holdToken}. Ready for next customer.`);
+      setHoldBillDialogOpen(false);
+      setHoldCustomerName('');
       resetBill();
       refreshHeldBills(counterNo);
       setIsHeldBillsOpen(true);
@@ -3150,7 +3184,7 @@ export default function BillingTerminalView({ isActive = true }) {
               <button
                 className="primary-button hold-current-button"
                 type="button"
-                onClick={holdCurrentBill}
+                onClick={openHoldBillDialog}
                 disabled={cart.length === 0}
                 title={cart.length === 0 ? 'Add items before holding a bill' : 'Hold this bill and clear POS for the next customer (Ctrl + Alt)'}
               >
@@ -3196,6 +3230,7 @@ export default function BillingTerminalView({ isActive = true }) {
                       <div key={heldBill.hold_token} className="activity-held-row">
                         <div>
                           <strong>{heldBill.hold_token}</strong>
+                          <span className="held-customer-name">{heldBill.customer_name || 'Walk-in Customer'}</span>
                           <span>{heldBill.item_count} items | {formatMoney(heldBill.bill_total)}</span>
                         </div>
                         <div className="activity-held-actions">
@@ -3618,6 +3653,49 @@ export default function BillingTerminalView({ isActive = true }) {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {holdBillDialogOpen && (
+        <div className="modal-backdrop">
+          <form
+            className="modal hold-bill-modal"
+            onSubmit={(event) => {
+              event.preventDefault();
+              holdCurrentBill();
+            }}
+          >
+            <div className="panel-header">
+              <h2 className="panel-title">Hold Bill</h2>
+              <button
+                className="close-action-button"
+                type="button"
+                onClick={() => {
+                  setHoldBillDialogOpen(false);
+                  scannerRef.current?.focus();
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+            <div className="panel-body form-stack">
+              <label>
+                <span className="field-label">Customer name</span>
+                <input
+                  ref={holdCustomerNameRef}
+                  className="field"
+                  value={holdCustomerName}
+                  onChange={(event) => setHoldCustomerName(event.target.value)}
+                  placeholder="Customer name or bill identifier"
+                />
+              </label>
+              <div className="summary-line">
+                <span>Bill total</span>
+                <strong>{formatMoney(totals.grand)}</strong>
+              </div>
+              <button className="primary-button" type="submit">Hold Bill & New Customer</button>
+            </div>
+          </form>
         </div>
       )}
 
