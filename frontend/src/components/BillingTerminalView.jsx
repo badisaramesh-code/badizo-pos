@@ -282,6 +282,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const scannerBufferRef = useRef('');
   const scannerBufferLastKeyAtRef = useRef(0);
   const scannerBufferTimerRef = useRef(null);
+  const searchFocusTimerRef = useRef(null);
   const exchangeScannerBufferRef = useRef('');
   const exchangeScannerBufferLastKeyAtRef = useRef(0);
   const exchangeScannerBufferTimerRef = useRef(null);
@@ -329,6 +330,51 @@ export default function BillingTerminalView({ isActive = true }) {
     }, 80);
     return () => window.clearTimeout(timer);
   }, [isActive]);
+
+  useEffect(() => {
+    if (!isActive) return undefined;
+
+    const shouldPauseSearchFocus = () => (
+      Boolean(approvalDialog)
+      || Boolean(digitalContactModal)
+      || holdBillDialogOpen
+      || showHistory
+      || showPriceCheck
+      || Boolean(returnInvoice)
+    );
+
+    const focusSearchInput = () => {
+      if (!isActive || shouldPauseSearchFocus()) return;
+      if (!document.hasFocus()) return;
+      const scanner = scannerRef.current;
+      if (!scanner || document.activeElement === scanner) return;
+      scanner.focus();
+      scanner.select?.();
+    };
+
+    const delayedFocus = () => {
+      if (searchFocusTimerRef.current) window.clearTimeout(searchFocusTimerRef.current);
+      searchFocusTimerRef.current = window.setTimeout(() => {
+        searchFocusTimerRef.current = null;
+        focusSearchInput();
+      }, 1200);
+    };
+    const interval = window.setInterval(focusSearchInput, 1800);
+    delayedFocus();
+
+    window.addEventListener('focus', focusSearchInput);
+    document.addEventListener('focusin', delayedFocus);
+
+    return () => {
+      if (searchFocusTimerRef.current) {
+        window.clearTimeout(searchFocusTimerRef.current);
+        searchFocusTimerRef.current = null;
+      }
+      window.clearInterval(interval);
+      window.removeEventListener('focus', focusSearchInput);
+      document.removeEventListener('focusin', delayedFocus);
+    };
+  }, [approvalDialog, digitalContactModal, holdBillDialogOpen, isActive, returnInvoice, showHistory, showPriceCheck]);
 
   useEffect(() => {
     const wasExchangeMode = previousExchangeModeRef.current;
