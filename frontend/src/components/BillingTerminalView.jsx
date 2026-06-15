@@ -1894,8 +1894,10 @@ export default function BillingTerminalView({ isActive = true }) {
   function schedulePrint(mode = printMode, afterPrint, invoiceForPrint = printableInvoice || printableDraft) {
     const printClass = mode === 'A4' ? 'printing-a4' : 'printing-thermal';
     const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
+    const thermalContentWidthMm = thermalWidthMm >= 76 ? 72 : Math.max(48, thermalWidthMm - 8);
     const thermalFeedMarginMm = Math.min(Math.max(Number(shopSettings.thermal_feed_margin_mm ?? 18) || 18, 0), 80);
-    const thermalLogoMaxWidthMm = Math.max(45, thermalWidthMm - 10);
+    const thermalLogoMaxWidthMm = Math.max(45, thermalContentWidthMm - 4);
+    const canUseElectronThermalPrint = mode === 'Thermal' && typeof window !== 'undefined' && Boolean(window.badizoDesktop?.printThermalHtml);
     let cleanupTimer;
     let printFrame = null;
     let didCleanup = false;
@@ -1939,12 +1941,19 @@ export default function BillingTerminalView({ isActive = true }) {
 <head>
   <meta charset="utf-8" />
   <title>Print Bill</title>
+  <base href="${window.location.origin}/" />
   ${styleMarkup}
   <style>
     html.${printClass}, html.${printClass} body {
       margin: 0 !important;
       padding: 0 !important;
       background: #fff !important;
+      display: block !important;
+      align-items: flex-start !important;
+      justify-content: flex-start !important;
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
     }
     .print-host {
       display: block !important;
@@ -2006,11 +2015,18 @@ export default function BillingTerminalView({ isActive = true }) {
       height: auto !important;
       min-height: 0 !important;
       max-height: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      display: block !important;
+      align-items: flex-start !important;
+      justify-content: flex-start !important;
       overflow: visible !important;
     }
-    body.printing-thermal .print-host-thermal,
-    body.printing-thermal .thermal-paper {
+    body.printing-thermal .print-host-thermal {
       display: block !important;
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
       width: ${thermalWidthMm}mm !important;
       min-width: ${thermalWidthMm}mm !important;
       max-width: ${thermalWidthMm}mm !important;
@@ -2026,17 +2042,33 @@ export default function BillingTerminalView({ isActive = true }) {
       break-inside: auto !important;
     }
     body.printing-thermal .thermal-paper {
+      display: block !important;
+      width: ${thermalContentWidthMm}mm !important;
+      min-width: ${thermalContentWidthMm}mm !important;
+      max-width: ${thermalContentWidthMm}mm !important;
       box-sizing: border-box !important;
-      padding: 2mm 1.5mm 14mm !important;
+      margin-left: auto !important;
+      margin-right: auto !important;
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      overflow: visible !important;
+      page-break-before: avoid !important;
+      page-break-after: auto !important;
+      page-break-inside: auto !important;
+      break-before: avoid !important;
+      break-after: auto !important;
+      break-inside: auto !important;
+      padding: 0 1.5mm 14mm !important;
       font-size: 10px !important;
       line-height: 1.05 !important;
     }
     body.printing-thermal .thermal-logo-slot {
-      height: 14mm !important;
+      height: 25mm !important;
       margin-bottom: 1mm !important;
     }
     body.printing-thermal .thermal-logo-slot img {
-      max-height: 13mm !important;
+      max-height: 23mm !important;
       max-width: ${thermalLogoMaxWidthMm}mm !important;
     }
     body.printing-thermal .print-rule {
@@ -2112,6 +2144,11 @@ export default function BillingTerminalView({ isActive = true }) {
         position: static !important;
         visibility: visible !important;
       }
+      body.printing-thermal .print-host-thermal {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+      }
       body.printing-a4 .print-host-a4,
       body.printing-a4 .a4-paper.a4-one-page {
         height: 250mm !important;
@@ -2183,26 +2220,203 @@ export default function BillingTerminalView({ isActive = true }) {
               @page thermal-receipt { size: ${thermalWidthMm}mm ${contentHeightMm}mm; margin: 0; }
               html.printing-thermal,
               html.printing-thermal body,
-              html.printing-thermal #root,
-              html.printing-thermal .print-host-thermal,
-              html.printing-thermal .thermal-paper,
-              body.printing-thermal .print-host-thermal,
-              body.printing-thermal .thermal-paper {
+              html.printing-thermal #root {
                 width: ${thermalWidthMm}mm !important;
                 min-width: ${thermalWidthMm}mm !important;
                 max-width: ${thermalWidthMm}mm !important;
+                margin: 0 !important;
+                padding: 0 !important;
                 box-sizing: border-box !important;
                 height: auto !important;
                 min-height: 0 !important;
+                max-height: none !important;
+                display: block !important;
+                align-items: flex-start !important;
+                justify-content: flex-start !important;
+                overflow: visible !important;
+              }
+              html.printing-thermal .print-host-thermal,
+              body.printing-thermal .print-host-thermal {
+                position: absolute !important;
+                top: 0 !important;
+                left: 0 !important;
+                width: ${thermalWidthMm}mm !important;
+                min-width: ${thermalWidthMm}mm !important;
+                max-width: ${thermalWidthMm}mm !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                box-sizing: border-box !important;
                 height: auto !important;
+                min-height: 0 !important;
+                max-height: none !important;
+                overflow: visible !important;
+              }
+              html.printing-thermal .thermal-paper,
+              body.printing-thermal .thermal-paper {
+                width: ${thermalContentWidthMm}mm !important;
+                min-width: ${thermalContentWidthMm}mm !important;
+                max-width: ${thermalContentWidthMm}mm !important;
+                margin-left: auto !important;
+                margin-right: auto !important;
+                box-sizing: border-box !important;
+                height: auto !important;
+                min-height: 0 !important;
                 max-height: none !important;
                 overflow: visible !important;
                 padding-bottom: ${thermalFeedMarginMm}mm !important;
-                box-sizing: border-box !important;
               }
             }
           `;
           doc.head.appendChild(dynamicPrintStyle);
+
+          if (canUseElectronThermalPrint) {
+            try {
+              await waitForFrameAssets(doc);
+              const receiptMarkup = receipt?.outerHTML || printHost.innerHTML;
+              const printHtml = `<!doctype html>
+<html class="printing-thermal">
+<head>
+  <meta charset="utf-8" />
+  <base href="${window.location.origin}/" />
+  ${styleMarkup}
+  <style>
+    @page { size: ${thermalWidthMm}mm ${contentHeightMm}mm; margin: 0; }
+    html,
+    body {
+      width: ${thermalWidthMm}mm !important;
+      min-width: ${thermalWidthMm}mm !important;
+      max-width: ${thermalWidthMm}mm !important;
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: visible !important;
+      background: #fff !important;
+      display: block !important;
+      align-items: flex-start !important;
+      justify-content: flex-start !important;
+    }
+    * {
+      visibility: visible !important;
+      box-sizing: border-box !important;
+    }
+    .thermal-paper {
+      display: block !important;
+      position: static !important;
+      width: ${thermalContentWidthMm}mm !important;
+      min-width: ${thermalContentWidthMm}mm !important;
+      max-width: ${thermalContentWidthMm}mm !important;
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      margin: 0 auto !important;
+      padding: 0 1.5mm ${thermalFeedMarginMm}mm !important;
+      overflow: visible !important;
+      page-break-before: avoid !important;
+      page-break-after: auto !important;
+      page-break-inside: auto !important;
+      break-before: avoid !important;
+      break-after: auto !important;
+      break-inside: auto !important;
+      font-size: 10px !important;
+      line-height: 1.05 !important;
+    }
+    .thermal-logo-slot {
+      height: 25mm !important;
+      margin-bottom: 1mm !important;
+    }
+    .thermal-logo-slot img {
+      max-width: ${thermalLogoMaxWidthMm}mm !important;
+      max-height: 23mm !important;
+    }
+    .print-rule {
+      margin: 2px 0 !important;
+    }
+    .print-meta-grid,
+    .thermal-customer-block {
+      gap: 2px 5px !important;
+      margin: 2px 0 !important;
+      padding: 2px 0 !important;
+    }
+    .print-table th,
+    .print-table td,
+    .thermal-items th,
+    .thermal-items td,
+    .gst-summary-table th,
+    .gst-summary-table td {
+      padding: 1.5px 1px !important;
+      font-size: 8.8px !important;
+      line-height: 1.02 !important;
+    }
+    .thermal-product-row td {
+      padding-top: 2px !important;
+      padding-bottom: 1px !important;
+    }
+    .thermal-hsn-row td {
+      padding-top: 0.5px !important;
+      padding-bottom: 0.5px !important;
+      font-size: 8.5px !important;
+    }
+    .thermal-detail-row td {
+      padding-top: 1px !important;
+      padding-bottom: 2px !important;
+      border-bottom: 1px solid #111 !important;
+    }
+    .thermal-product-name {
+      display: block !important;
+      max-height: none !important;
+      overflow: visible !important;
+      -webkit-line-clamp: unset !important;
+      font-size: 10px !important;
+      line-height: 1.1 !important;
+    }
+    .thermal-total-box {
+      gap: 1px !important;
+      font-size: 10px !important;
+    }
+    .thermal-total-box strong {
+      font-size: 13px !important;
+    }
+    .print-terms {
+      gap: 2px !important;
+      margin-top: 2px !important;
+    }
+    .thermal-bill-qr-wrap {
+      gap: 0.5mm !important;
+      margin-top: 0.5mm !important;
+      page-break-inside: auto !important;
+      break-inside: auto !important;
+    }
+    .thermal-bill-qr {
+      width: 18mm !important;
+      height: 18mm !important;
+    }
+    table,
+    thead,
+    tbody,
+    tr,
+    th,
+    td {
+      page-break-inside: auto !important;
+      break-inside: auto !important;
+    }
+  </style>
+</head>
+<body class="printing-thermal">${receiptMarkup}</body>
+</html>`;
+              await window.badizoDesktop.printThermalHtml({
+                html: printHtml,
+                widthMm: thermalWidthMm,
+                heightMm: contentHeightMm
+              });
+              cleanup();
+              return;
+            } catch (err) {
+              console.error('Electron thermal print failed; falling back to browser print.', err);
+              setErrorMessage(`Direct thermal print failed. Browser print opened instead. ${err.message || err}`);
+            }
+          }
         }
       }
 

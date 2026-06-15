@@ -1,8 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const Module = require('module');
 const express = require('express');
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { print: printPdf } = require('pdf-to-printer');
 
 const DEFAULT_APP_URL = 'http://localhost:3000';
 const DEFAULT_API_URL = 'http://localhost:5000/api/health';
@@ -155,6 +157,7 @@ function createWindow(config) {
     autoHideMenuBar: true,
     kiosk: config.kiosk,
     webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
@@ -188,6 +191,145 @@ function createWindow(config) {
     showStartupError(error, config.appUrl);
   });
 }
+
+function clampNumber(value, fallback, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(Math.max(number, min), max);
+}
+
+async function printThermalHtml({ html, widthMm, heightMm, printerName }) {
+  if (!html || typeof html !== 'string') {
+    throw new Error('Thermal print HTML is empty.');
+  }
+
+  const receiptWidthMm = clampNumber(widthMm, 80, 40, 100);
+  const receiptHeightMm = clampNumber(heightMm, 297, 80, 3276);
+  const printWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+
+  try {
+    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    await printWindow.webContents.executeJavaScript('document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true');
+    await printWindow.webContents.executeJavaScript(`
+      Promise.all(Array.from(document.images || []).map((image) => {
+        if (image.complete) return true;
+        return new Promise((resolve) => {
+          image.addEventListener('load', resolve, { once: true });
+          image.addEventListener('error', resolve, { once: true });
+        });
+      })).then(() => true)
+    `);
+
+    const measuredHeightPx = await printWindow.webContents.executeJavaScript(`
+      (() => {
+        const receipt = document.querySelector('.thermal-paper');
+        const values = [
+          receipt?.scrollHeight || 0,
+          receipt?.offsetHeight || 0,
+          receipt?.getBoundingClientRect?.().height || 0,
+          document.body?.scrollHeight || 0,
+          document.documentElement?.scrollHeight || 0
+        ];
+        return Math.ceil(Math.max(...values.filter((value) => Number.isFinite(value))));
+      })()
+    `);
+    const measuredHeightMm = Math.ceil((measuredHeightPx * 25.4) / 96) + 6;
+    const effectiveHeightMm = clampNumber(Math.max(receiptHeightMm, measuredHeightMm), receiptHeightMm, 80, 3276);
+    const finalPageCss = `
+      @page { size: ${receiptWidthMm}mm ${effectiveHeightMm}mm; margin: 0; }
+      html, body {
+        width: ${receiptWidthMm}mm !important;
+        min-width: ${receiptWidthMm}mm !important;
+        max-width: ${receiptWidthMm}mm !important;
+        height: auto !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+      }
+    `;
+    await printWindow.webContents.executeJavaScript(`
+      (() => {
+        const style = document.createElement('style');
+        style.setAttribute('data-badizo-final-page', 'true');
+        style.textContent = ${JSON.stringify(finalPageCss)};
+        document.head.appendChild(style);
+        return true;
+      })()
+    `);
+
+    const printers = await printWindow.webContents.getPrintersAsync();
+    const selectedPrinter = printerName
+      || printers.find((printer) => printer.isDefault)?.name
+      || printers.find((printer) => /EPSON.*TM|TM-T82|Receipt/i.test(printer.name))?.name
+      || '';
+
+    logMessage(`Thermal HTML PDF print: printer=${selectedPrinter || '(default)'} widthMm=${receiptWidthMm} heightMm=${effectiveHeightMm} measuredPx=${measuredHeightPx}`);
+
+    const pdf = await printWindow.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+      marginsType: 1,
+      pageSize: {
+        width: Math.ceil(receiptWidthMm * 1000),
+        height: Math.ceil(effectiveHeightMm * 1000)
+      }
+    });
+
+    const outputDir = path.join(os.tmpdir(), 'badizo-thermal-print');
+    fs.mkdirSync(outputDir, { recursive: true });
+    const pdfPath = path.join(outputDir, `receipt-${Date.now()}.pdf`);
+    fs.writeFileSync(pdfPath, pdf);
+    const debugDir = path.join(app.getPath('userData'), 'thermal-debug');
+    fs.mkdirSync(debugDir, { recursive: true });
+    const debugPdfPath = path.join(debugDir, 'last-receipt.pdf');
+    const debugHtmlPath = path.join(debugDir, 'last-receipt.html');
+    fs.writeFileSync(debugPdfPath, pdf);
+    fs.writeFileSync(debugHtmlPath, html, 'utf8');
+    logMessage(`Thermal debug PDF saved: ${debugPdfPath}`);
+
+    const basePrintOptions = {
+      printer: selectedPrinter || undefined,
+      scale: 'noscale',
+      silent: true,
+      orientation: 'portrait'
+    };
+    const longRollPaperSize = receiptWidthMm >= 76 ? 'Roll Paper 80 x 3276 mm' : 'Roll Paper 58 x 3276 mm';
+    const shouldUseLongRoll = effectiveHeightMm > 297;
+    const printOptions = shouldUseLongRoll
+      ? { ...basePrintOptions, paperSize: longRollPaperSize }
+      : basePrintOptions;
+
+    try {
+      logMessage(`Thermal PDF spool options: ${JSON.stringify({ ...printOptions, printer: printOptions.printer || '(default)' })}`);
+      try {
+        await printPdf(pdfPath, printOptions);
+      } catch (error) {
+        if (!shouldUseLongRoll) throw error;
+        logMessage(`Thermal PDF print with ${longRollPaperSize} failed, retrying without explicit paperSize: ${error.message || error}`);
+        await printPdf(pdfPath, basePrintOptions);
+      }
+    } finally {
+      fs.unlink(pdfPath, () => {});
+    }
+
+    return { ok: true, printerName: selectedPrinter || null, widthMm: receiptWidthMm, heightMm: effectiveHeightMm, method: 'pdf-to-printer' };
+  } finally {
+    if (!printWindow.isDestroyed()) printWindow.destroy();
+  }
+}
+
+ipcMain.handle('badizo:print-thermal-html', async (_event, payload) => {
+  return printThermalHtml(payload || {});
+});
 
 app.whenReady().then(async () => {
   const config = getConfig();

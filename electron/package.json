@@ -18,6 +18,7 @@
     },
     "files": [
       "main.js",
+      "preload.js",
       "app-config.json",
       "assets/**/*"
     ],
@@ -65,7 +66,8 @@
     "dotenv": "^17.4.2",
     "express": "^4.22.2",
     "jsonwebtoken": "^9.0.2",
-    "mysql2": "^3.22.4"
+    "mysql2": "^3.22.4",
+    "pdf-to-printer": "^5.8.0"
   },
   "devDependencies": {
     "electron": "^31.7.7",
