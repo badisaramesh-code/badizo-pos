@@ -19,6 +19,8 @@ const ALLOWED_SETTINGS = new Set([
   'default_print_mode',
   'thermal_receipt_width_mm',
   'thermal_feed_margin_mm',
+  'thermal_bill_logo_enabled',
+  'thermal_bill_logo_data_url',
   'backup_daily_time',
   'barcode_printer_templates'
 ]);
@@ -100,6 +102,7 @@ function normalizeBarcodePrinterTemplates(rawValue) {
 }
 
 function publicSettings(settings) {
+  const logoDataUrl = String(settings.thermal_bill_logo_data_url || '').trim();
   return {
     shop_name: settings.shop_name || 'Hyper Fresh Mart LLP',
     gst_number: settings.gst_number || '36AAJFH7790R1ZB',
@@ -118,6 +121,8 @@ function publicSettings(settings) {
     thermal_feed_margin_mm: Number.isFinite(Number.parseInt(settings.thermal_feed_margin_mm, 10))
       ? Math.min(Math.max(Number.parseInt(settings.thermal_feed_margin_mm, 10), 0), 30)
       : 4,
+    thermal_bill_logo_enabled: String(settings.thermal_bill_logo_enabled || '1') !== '0',
+    thermal_bill_logo_data_url: /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(logoDataUrl) ? logoDataUrl : '',
     backup_daily_time: /^\d{2}:\d{2}$/.test(settings.backup_daily_time || '')
       ? settings.backup_daily_time
       : (process.env.BACKUP_DAILY_TIME || '09:00'),
@@ -205,6 +210,20 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
       if (key === 'thermal_feed_margin_mm') {
         const margin = Number.parseInt(value, 10);
         value = String(Number.isFinite(margin) ? Math.min(Math.max(margin, 0), 30) : 4);
+      }
+
+      if (key === 'thermal_bill_logo_enabled') {
+        value = ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase()) ? '1' : '0';
+      }
+
+      if (key === 'thermal_bill_logo_data_url') {
+        value = String(rawValue || '').trim();
+        if (value && !/^data:image\/(png|jpeg|jpg|webp);base64,/i.test(value)) {
+          return res.status(400).json({ error: 'Thermal bill logo must be a PNG, JPG, or WebP image.' });
+        }
+        if (value.length > 700000) {
+          return res.status(400).json({ error: 'Thermal bill logo is too large. Use a small 22mm x 22mm image.' });
+        }
       }
 
       if (key === 'backup_daily_time') {

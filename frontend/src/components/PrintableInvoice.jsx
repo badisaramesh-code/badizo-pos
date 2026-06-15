@@ -118,13 +118,16 @@ function BillQrCode({ invoice, className = '' }) {
   );
 }
 
-function ThermalLogoSlot() {
+function ThermalLogoSlot({ invoice }) {
+  const shop = invoice?.shop || {};
+  const logoEnabled = shop.thermal_bill_logo_enabled !== false && shop.thermal_bill_logo_enabled !== '0';
+  const logoSrc = String(shop.thermal_bill_logo_data_url || '').trim();
+
   return (
     <div className="thermal-logo-slot">
-      <picture>
-        <source srcSet="/thermal-logo.png" type="image/png" />
-        <img src="/thermal-logo.jpg" alt="" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
-      </picture>
+      {logoEnabled && logoSrc && (
+        <img src={logoSrc} alt="" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
+      )}
     </div>
   );
 }
@@ -955,7 +958,7 @@ function renderSection(section, invoice, template) {
 
   switch (section.type) {
     case 'thermalLogo':
-      return <ThermalLogoSlot />;
+      return <ThermalLogoSlot invoice={invoice} />;
     case 'storeHeader':
       return <StoreHeader invoice={invoice} />;
     case 'metaGrid':

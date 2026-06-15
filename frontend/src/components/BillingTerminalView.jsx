@@ -1896,7 +1896,6 @@ export default function BillingTerminalView({ isActive = true }) {
     const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
     const thermalContentWidthMm = thermalWidthMm >= 76 ? 72 : Math.max(48, thermalWidthMm - 8);
     const thermalFeedMarginMm = Math.min(Math.max(Number(shopSettings.thermal_feed_margin_mm ?? 18) || 18, 0), 80);
-    const thermalLogoMaxWidthMm = Math.max(45, thermalContentWidthMm - 4);
     const canUseElectronThermalPrint = mode === 'Thermal' && typeof window !== 'undefined' && Boolean(window.badizoDesktop?.printThermalHtml);
     let cleanupTimer;
     let printFrame = null;
@@ -2068,8 +2067,11 @@ export default function BillingTerminalView({ isActive = true }) {
       margin-bottom: 1mm !important;
     }
     body.printing-thermal .thermal-logo-slot img {
-      max-height: 23mm !important;
-      max-width: ${thermalLogoMaxWidthMm}mm !important;
+      width: 22mm !important;
+      height: 22mm !important;
+      max-height: 22mm !important;
+      max-width: 22mm !important;
+      object-fit: contain !important;
     }
     body.printing-thermal .print-rule {
       margin: 2px 0 !important;
@@ -2327,8 +2329,11 @@ export default function BillingTerminalView({ isActive = true }) {
       margin-bottom: 1mm !important;
     }
     .thermal-logo-slot img {
-      max-width: ${thermalLogoMaxWidthMm}mm !important;
-      max-height: 23mm !important;
+      width: 22mm !important;
+      height: 22mm !important;
+      max-width: 22mm !important;
+      max-height: 22mm !important;
+      object-fit: contain !important;
     }
     .print-rule {
       margin: 2px 0 !important;

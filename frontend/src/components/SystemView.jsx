@@ -86,6 +86,8 @@ export default function SystemView() {
     default_print_mode: 'Thermal',
     thermal_receipt_width_mm: 80,
     thermal_feed_margin_mm: 4,
+    thermal_bill_logo_enabled: true,
+    thermal_bill_logo_data_url: '',
     backup_daily_time: '09:00',
     barcode_printer_templates: DEFAULT_BARCODE_PRINTER_TEMPLATES
   });
@@ -164,6 +166,35 @@ export default function SystemView() {
     setSettings((current) => ({ ...current, [field]: value }));
   }
 
+  function handleThermalLogoUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    setStatusMessage('');
+    setErrorMessage('');
+    if (!file) return;
+    if (!/^image\/(png|jpeg|jpg|webp)$/i.test(file.type)) {
+      setErrorMessage('Thermal bill logo must be PNG, JPG, or WebP.');
+      return;
+    }
+    if (file.size > 512 * 1024) {
+      setErrorMessage('Thermal bill logo is too large. Use a small 22mm x 22mm image under 512 KB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      updateSetting('thermal_bill_logo_data_url', String(reader.result || ''));
+      updateSetting('thermal_bill_logo_enabled', true);
+      setStatusMessage('Thermal bill logo selected. Press Save Settings to apply.');
+    };
+    reader.onerror = () => setErrorMessage('Unable to read selected logo image.');
+    reader.readAsDataURL(file);
+  }
+
+  function clearThermalLogo() {
+    updateSetting('thermal_bill_logo_data_url', '');
+    setStatusMessage('Thermal bill logo removed. Press Save Settings to apply.');
+  }
+
   async function loadSystemHealth() {
     setIsHealthLoading(true);
     setHealthLoadError('');
@@ -209,7 +240,9 @@ export default function SystemView() {
     try {
       const savedSettings = await saveSettings(settings);
       setSettings((current) => ({ ...current, ...savedSettings }));
-      setStatusMessage('Settings saved. Restart or refresh counters to apply the new counter list.');
+      setSetupUnlocked(false);
+      setSetupPassword({ username: '', password: '' });
+      setStatusMessage('Settings saved. Setup folder closed. Thermal logo will print on the next bill.');
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save settings.');
     }
@@ -524,6 +557,33 @@ export default function SystemView() {
               <div className="pos-header-preview">
                 <strong>{storeName}</strong>
                 <span>GST: {storeGst} | {storeAddress} | Ph: {storePhone}</span>
+              </div>
+              <div className="thermal-logo-settings">
+                <div className="thermal-logo-preview-box">
+                  {settings.thermal_bill_logo_data_url ? (
+                    <img src={settings.thermal_bill_logo_data_url} alt="Thermal bill logo preview" />
+                  ) : (
+                    <span>No Logo</span>
+                  )}
+                </div>
+                <div className="thermal-logo-controls">
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={settings.thermal_bill_logo_enabled !== false && settings.thermal_bill_logo_enabled !== '0'}
+                      onChange={(event) => updateSetting('thermal_bill_logo_enabled', event.target.checked)}
+                    />
+                    <span>Print logo in 25mm thermal bill top space</span>
+                  </label>
+                  <label>
+                    <span className="field-label">Thermal Bill Logo</span>
+                    <input className="field" type="file" accept="image/png,image/jpeg,image/webp" onChange={handleThermalLogoUpload} />
+                  </label>
+                  <div className="settings-action-row">
+                    <button className="secondary-button" type="button" onClick={clearThermalLogo} disabled={!settings.thermal_bill_logo_data_url}>Remove Logo</button>
+                    <span className="muted">Use a square 22mm x 22mm image. Save settings after upload.</span>
+                  </div>
+                </div>
               </div>
             </div>
 

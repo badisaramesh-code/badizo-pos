@@ -237,6 +237,8 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(720px, 1fr) 390px;
   gap: 18px;
+  align-items: start;
+  min-height: calc(100vh - 40px);
 }
 
 .panel {
@@ -283,6 +285,7 @@ button:disabled {
   background: var(--pista);
   color: var(--pista-text);
   border-bottom: 2px solid var(--accent);
+  flex: 0 0 auto;
 }
 
 .billing-store-banner .panel-title {
@@ -343,6 +346,25 @@ button:disabled {
 
 .billing-panel-body {
   padding: 7px 8px 10px;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.billing-panel-body > :not(.billing-table-wrap) {
+  flex: 0 0 auto;
+}
+
+.billing-main-panel {
+  position: sticky;
+  top: 12px;
+  display: flex;
+  max-height: calc(100vh - 24px);
+  min-height: calc(100vh - 40px);
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .billing-topline {
@@ -1193,8 +1215,9 @@ button:disabled {
 }
 
 .billing-table-wrap {
-  max-height: 62vh;
-  min-height: 310px;
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 0;
   margin-top: 6px;
   overflow: auto;
   border: 1px solid var(--line);
@@ -2512,6 +2535,61 @@ button:disabled {
   line-height: 1.35;
 }
 
+.thermal-logo-settings {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid #d6e7d8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.thermal-logo-preview-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 78px;
+  height: 78px;
+  border: 1px dashed #99c8a5;
+  border-radius: 6px;
+  background: #f8fcf8;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.thermal-logo-preview-box img {
+  width: 22mm;
+  height: 22mm;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.thermal-logo-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.checkbox-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.settings-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .book-select-card {
   border: 1px solid var(--line);
   min-height: 92px;
@@ -3586,8 +3664,10 @@ button:disabled {
 
 .thermal-logo-slot img {
   display: block;
-  max-width: 72mm;
-  max-height: 23mm;
+  width: 22mm;
+  height: 22mm;
+  max-width: 22mm;
+  max-height: 22mm;
   object-fit: contain;
 }
 
@@ -5344,6 +5424,26 @@ button:disabled {
   .handover-sales-strip,
   .handover-total-strip {
     grid-template-columns: 1fr;
+  }
+
+  .billing-grid {
+    min-height: 0;
+  }
+
+  .billing-main-panel {
+    position: static;
+    max-height: none;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .billing-panel-body {
+    overflow: visible;
+  }
+
+  .billing-table-wrap {
+    flex: none;
+    max-height: 62vh;
   }
 
   .product-list-panel,
