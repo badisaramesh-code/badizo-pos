@@ -198,13 +198,18 @@ function clampNumber(value, fallback, min, max) {
   return Math.min(Math.max(number, min), max);
 }
 
-async function printThermalHtml({ html, widthMm, heightMm, printerName }) {
+async function printThermalHtml({ html, widthMm, heightMm, printerName, feedMarginMm }) {
   if (!html || typeof html !== 'string') {
     throw new Error('Thermal print HTML is empty.');
   }
 
   const receiptWidthMm = clampNumber(widthMm, 80, 40, 100);
-  const receiptHeightMm = clampNumber(heightMm, 297, 80, 3276);
+  const requestedHeightMm = Number.isFinite(Number(heightMm))
+    ? clampNumber(heightMm, 0, 40, 3276)
+    : 0;
+  const extraFeedMm = Number.isFinite(Number(feedMarginMm))
+    ? clampNumber(feedMarginMm, 0, 0, 30)
+    : 0;
   const printWindow = new BrowserWindow({
     show: false,
     webPreferences: {
@@ -240,8 +245,8 @@ async function printThermalHtml({ html, widthMm, heightMm, printerName }) {
         return Math.ceil(Math.max(...values.filter((value) => Number.isFinite(value))));
       })()
     `);
-    const measuredHeightMm = Math.ceil((measuredHeightPx * 25.4) / 96) + 6;
-    const effectiveHeightMm = clampNumber(Math.max(receiptHeightMm, measuredHeightMm), receiptHeightMm, 80, 3276);
+    const measuredHeightMm = Math.ceil((measuredHeightPx * 25.4) / 96) + extraFeedMm;
+    const effectiveHeightMm = clampNumber(Math.max(requestedHeightMm, measuredHeightMm, 40), 80, 40, 3276);
     const finalPageCss = `
       @page { size: ${receiptWidthMm}mm ${effectiveHeightMm}mm; margin: 0; }
       html, body {

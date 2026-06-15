@@ -95,6 +95,10 @@ function normalizePaymentSplits(paymentMode, paymentSplits, grandTotal, cashRece
     { payment_mode: 'Card', amount: parseMoney(source.card), payment_reference: source.card_reference || source.reference || paymentReference || null }
   ].filter((row) => row.amount > 0);
 
+  if (rows.length < 2) {
+    throw new Error('Enter amounts in any two payment modes for Mixed payment.');
+  }
+
   const paidTotal = rows.reduce((sum, row) => sum + row.amount, 0);
   if (paidTotal + 0.001 < total) {
     throw new Error('Mixed payment total must be equal to or greater than bill amount.');

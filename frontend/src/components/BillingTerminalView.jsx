@@ -151,6 +151,11 @@ function localIsoDate(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function getThermalFeedMarginMm(settings) {
+  const parsed = Number(settings?.thermal_feed_margin_mm ?? 4);
+  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 0), 30) : 4;
+}
+
 function CounterSaleSlip({ slip, shop, printedAt }) {
   const printedDate = printedAt.toLocaleDateString('en-IN');
   const printedTime = printedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
@@ -199,7 +204,7 @@ export default function BillingTerminalView({ isActive = true }) {
     bank_ifsc: 'HDFC0004047',
     bank_branch: 'Sathupally',
     thermal_receipt_width_mm: 80,
-    thermal_feed_margin_mm: 18
+    thermal_feed_margin_mm: 4
   });
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
@@ -270,6 +275,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const exchangeScannerBufferLastKeyAtRef = useRef(0);
   const exchangeScannerBufferTimerRef = useRef(null);
   const exchangeScannerInputModeRef = useRef('keyboard');
+  const holdBillShortcutPressedRef = useRef(false);
   const previousExchangeModeRef = useRef(exchangeMode);
   const priceCheckKeyTimesRef = useRef([]);
   const lastPriceCheckScanRef = useRef('');
@@ -475,6 +481,13 @@ export default function BillingTerminalView({ isActive = true }) {
 
   useEffect(() => {
     const handleShortcut = (event) => {
+      if (event.ctrlKey && event.altKey && !holdBillShortcutPressedRef.current) {
+        event.preventDefault();
+        holdBillShortcutPressedRef.current = true;
+        holdCurrentBill();
+        return;
+      }
+
       if (event.key === 'Delete') {
         const target = event.target;
         const isScannerInputWithText = target === scannerRef.current && String(query || '').length > 0;
@@ -521,8 +534,24 @@ export default function BillingTerminalView({ isActive = true }) {
       }
     };
 
+    const handleShortcutKeyUp = (event) => {
+      if (!event.ctrlKey || !event.altKey) {
+        holdBillShortcutPressedRef.current = false;
+      }
+    };
+
+    const resetHoldBillShortcut = () => {
+      holdBillShortcutPressedRef.current = false;
+    };
+
     window.addEventListener('keydown', handleShortcut);
-    return () => window.removeEventListener('keydown', handleShortcut);
+    window.addEventListener('keyup', handleShortcutKeyUp);
+    window.addEventListener('blur', resetHoldBillShortcut);
+    return () => {
+      window.removeEventListener('keydown', handleShortcut);
+      window.removeEventListener('keyup', handleShortcutKeyUp);
+      window.removeEventListener('blur', resetHoldBillShortcut);
+    };
   });
 
   useEffect(() => {
@@ -586,11 +615,13 @@ export default function BillingTerminalView({ isActive = true }) {
   }, [cart, billingMode, exchangeItems]);
 
   const mixedPaidTotal = toNumber(mixedPayment.cash) + toNumber(mixedPayment.upi) + toNumber(mixedPayment.card);
+  const mixedPaymentModeCount = [mixedPayment.cash, mixedPayment.upi, mixedPayment.card]
+    .filter((amount) => toNumber(amount) > 0).length;
   const mixedHasDigital = toNumber(mixedPayment.upi) > 0 || toNumber(mixedPayment.card) > 0;
   const changeDue = Math.max((paymentMode === 'Mixed' ? mixedPaidTotal : toNumber(cashReceived)) - totals.grand, 0);
   const cashReceivedAmount = toNumber(cashReceived);
   const isCashReady = paymentMode === 'Mixed'
-    ? mixedPaidTotal >= totals.grand
+    ? mixedPaymentModeCount >= 2 && mixedPaidTotal >= totals.grand
     : paymentMode !== 'Cash' || cashReceivedAmount >= totals.grand;
   const canCompleteSale = cart.length > 0 && isCashReady && !cart.some((item) => item.isUnknown);
   const hasUnknownLine = cart.some((item) => item.isUnknown);
@@ -1758,27 +1789,10 @@ export default function BillingTerminalView({ isActive = true }) {
     try {
       const printedAt = new Date();
       const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
+      const thermalFeedMarginMm = getThermalFeedMarginMm(shopSettings);
       const slip = await fetchCounterSaleSlip({ date: localIsoDate(printedAt), counterNo });
       const slipMarkup = renderToStaticMarkup(<CounterSaleSlip slip={slip} shop={shopSettings} printedAt={printedAt} />);
-      const printFrame = document.createElement('iframe');
-      printFrame.title = 'Counter sale print frame';
-      printFrame.style.position = 'fixed';
-      printFrame.style.left = '-10000px';
-      printFrame.style.top = '0';
-      printFrame.style.width = `${thermalWidthMm}mm`;
-      printFrame.style.height = '800mm';
-      printFrame.style.border = '0';
-      printFrame.style.visibility = 'hidden';
-      document.body.appendChild(printFrame);
-
-      const frameDocument = printFrame.contentDocument || printFrame.contentWindow?.document;
-      if (!frameDocument) {
-        printFrame.remove();
-        return;
-      }
-
-      frameDocument.open();
-      frameDocument.write(`<!doctype html>
+      const slipPrintHtml = `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -1797,7 +1811,7 @@ export default function BillingTerminalView({ isActive = true }) {
     .counter-sale-slip {
       width: ${thermalWidthMm}mm;
       box-sizing: border-box;
-      padding: 3mm 3mm 12mm;
+      padding: 3mm 3mm ${thermalFeedMarginMm}mm;
       font-size: 12px;
       line-height: 1.2;
     }
@@ -1858,7 +1872,7 @@ export default function BillingTerminalView({ isActive = true }) {
       font-weight: 700;
     }
     @media print {
-      @page { size: ${thermalWidthMm}mm 160mm; margin: 0; }
+      @page { size: ${thermalWidthMm}mm auto; margin: 0; }
       html, body {
         width: ${thermalWidthMm}mm !important;
         min-width: ${thermalWidthMm}mm !important;
@@ -1872,13 +1886,53 @@ export default function BillingTerminalView({ isActive = true }) {
   </style>
 </head>
 <body>${slipMarkup}</body>
-</html>`);
+</html>`;
+
+      if (window.badizoDesktop?.printThermalHtml) {
+        await window.badizoDesktop.printThermalHtml({
+          html: slipPrintHtml,
+          widthMm: thermalWidthMm,
+          feedMarginMm: 0
+        });
+        setStatusMessage(`Counter ${counterNo} sale slip printed.`);
+        return;
+      }
+
+      const printFrame = document.createElement('iframe');
+      printFrame.title = 'Counter sale print frame';
+      printFrame.style.position = 'fixed';
+      printFrame.style.left = '-10000px';
+      printFrame.style.top = '0';
+      printFrame.style.width = `${thermalWidthMm}mm`;
+      printFrame.style.height = '240mm';
+      printFrame.style.border = '0';
+      printFrame.style.visibility = 'hidden';
+      document.body.appendChild(printFrame);
+
+      const frameDocument = printFrame.contentDocument || printFrame.contentWindow?.document;
+      if (!frameDocument) {
+        printFrame.remove();
+        return;
+      }
+
+      frameDocument.open();
+      frameDocument.write(slipPrintHtml);
       frameDocument.close();
 
       const cleanup = () => window.setTimeout(() => printFrame.remove(), 300);
       const frameWindow = printFrame.contentWindow;
       frameWindow?.addEventListener('afterprint', cleanup, { once: true });
       window.setTimeout(() => {
+        const slipElement = frameDocument.querySelector('.counter-sale-slip');
+        const contentHeightPx = Math.max(
+          slipElement?.scrollHeight || 0,
+          slipElement?.getBoundingClientRect?.().height || 0,
+          frameDocument.body?.scrollHeight || 0
+        );
+        const contentHeightMm = Math.max(40, Math.ceil((contentHeightPx * 25.4) / 96));
+        const dynamicStyle = frameDocument.createElement('style');
+        dynamicStyle.textContent = `@media print { @page { size: ${thermalWidthMm}mm ${contentHeightMm}mm; margin: 0; } }`;
+        frameDocument.head.appendChild(dynamicStyle);
         frameWindow?.focus();
         frameWindow?.print();
         window.setTimeout(() => {
@@ -1895,7 +1949,7 @@ export default function BillingTerminalView({ isActive = true }) {
     const printClass = mode === 'A4' ? 'printing-a4' : 'printing-thermal';
     const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
     const thermalContentWidthMm = thermalWidthMm >= 76 ? 72 : Math.max(48, thermalWidthMm - 8);
-    const thermalFeedMarginMm = Math.min(Math.max(Number(shopSettings.thermal_feed_margin_mm ?? 18) || 18, 0), 80);
+    const thermalFeedMarginMm = getThermalFeedMarginMm(shopSettings);
     const canUseElectronThermalPrint = mode === 'Thermal' && typeof window !== 'undefined' && Boolean(window.badizoDesktop?.printThermalHtml);
     let cleanupTimer;
     let printFrame = null;
@@ -2058,7 +2112,7 @@ export default function BillingTerminalView({ isActive = true }) {
       break-before: avoid !important;
       break-after: auto !important;
       break-inside: auto !important;
-      padding: 0 1.5mm 14mm !important;
+      padding: 0 1.5mm ${thermalFeedMarginMm}mm !important;
       font-size: 10px !important;
       line-height: 1.05 !important;
     }
@@ -2211,10 +2265,9 @@ export default function BillingTerminalView({ isActive = true }) {
           const contentHeightPx = Math.max(
             receipt?.scrollHeight || 0,
             receipt?.getBoundingClientRect?.().height || 0,
-            printHost.scrollHeight || 0,
-            420
+            printHost.scrollHeight || 0
           );
-          const contentHeightMm = Math.max(80, Math.ceil((contentHeightPx * 25.4) / 96) + thermalFeedMarginMm);
+          const contentHeightMm = Math.max(40, Math.ceil((contentHeightPx * 25.4) / 96));
           const dynamicPrintStyle = doc.createElement('style');
           dynamicPrintStyle.textContent = `
             @media print {
@@ -2413,7 +2466,8 @@ export default function BillingTerminalView({ isActive = true }) {
               await window.badizoDesktop.printThermalHtml({
                 html: printHtml,
                 widthMm: thermalWidthMm,
-                heightMm: contentHeightMm
+                heightMm: contentHeightMm,
+                feedMarginMm: 0
               });
               cleanup();
               return;
@@ -2758,6 +2812,8 @@ export default function BillingTerminalView({ isActive = true }) {
     const effectivePaymentConfirmed = overrides.paymentConfirmed ?? paymentConfirmed;
     const effectiveMixedPayment = overrides.mixedPayment ?? mixedPayment;
     const effectiveMixedPaidTotal = toNumber(effectiveMixedPayment.cash) + toNumber(effectiveMixedPayment.upi) + toNumber(effectiveMixedPayment.card);
+    const effectiveMixedPaymentModeCount = [effectiveMixedPayment.cash, effectiveMixedPayment.upi, effectiveMixedPayment.card]
+      .filter((amount) => toNumber(amount) > 0).length;
     const effectiveMixedHasDigital = toNumber(effectiveMixedPayment.upi) > 0 || toNumber(effectiveMixedPayment.card) > 0;
     setErrorMessage('');
     setStatusMessage('');
@@ -2801,6 +2857,12 @@ export default function BillingTerminalView({ isActive = true }) {
     if (activePaymentMode === 'Cash' && received < totals.grand) {
       setErrorMessage('Cash received must be equal to or greater than the bill total.');
       window.setTimeout(() => cashReceivedRef.current?.focus(), 50);
+      return;
+    }
+
+    if (activePaymentMode === 'Mixed' && effectiveMixedPaymentModeCount < 2) {
+      setErrorMessage('Enter amounts in any two payment modes for Mixed payment.');
+      window.setTimeout(() => mixedCashRef.current?.focus(), 50);
       return;
     }
 
@@ -3090,7 +3152,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 type="button"
                 onClick={holdCurrentBill}
                 disabled={cart.length === 0}
-                title={cart.length === 0 ? 'Add items before holding a bill' : 'Hold this bill and clear POS for the next customer'}
+                title={cart.length === 0 ? 'Add items before holding a bill' : 'Hold this bill and clear POS for the next customer (Ctrl + Alt)'}
               >
                 Hold Bill & New Customer
               </button>
@@ -3448,7 +3510,8 @@ export default function BillingTerminalView({ isActive = true }) {
                     <span>Paid total</span>
                     <strong>{formatMoney(mixedPaidTotal)}</strong>
                   </div>
-                  {mixedPaidTotal < totals.grand && <div className="alert-box">Cash + UPI + Card total bill amount ki equal or more undali.</div>}
+                  {mixedPaymentModeCount < 2 && <div className="alert-box">Enter amounts in any two payment modes for Mixed payment.</div>}
+                  {mixedPaidTotal < totals.grand && <div className="alert-box">Mixed payment total must be equal to or greater than the bill total.</div>}
                   {mixedHasDigital && !isDigitalPaymentContactReady(customerPhone) && <div className="alert-box">UPI/Card split ki phone number 10 digits or NO required.</div>}
                   <label className="change-box">
                     <input
