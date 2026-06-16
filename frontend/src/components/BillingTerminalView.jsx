@@ -621,13 +621,13 @@ export default function BillingTerminalView({ isActive = true }) {
       if (isF10) {
         event.preventDefault();
         event.stopPropagation();
-        preparePayment('Card');
+        preparePayment('Card', true);
       }
 
       if (isF11) {
         event.preventDefault();
         event.stopPropagation();
-        preparePayment('UPI');
+        preparePayment('UPI', true);
       }
 
       if (isF12) {
@@ -2721,7 +2721,18 @@ export default function BillingTerminalView({ isActive = true }) {
     }, 50);
   }
 
-  function preparePayment(mode) {
+  function preparePayment(mode, submitAfterContact = false) {
+    if (
+      submitAfterContact
+      && mode !== 'Cash'
+      && mode !== 'Mixed'
+      && cart.length > 0
+      && !isDigitalPaymentContactReady(customerPhone)
+    ) {
+      openDigitalContactModal(mode, true);
+      return;
+    }
+
     selectPaymentMode(mode);
   }
 
