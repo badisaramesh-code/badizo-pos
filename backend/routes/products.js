@@ -2306,6 +2306,7 @@ router.get('/exact/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'
 
 router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
   const {
+    original_barcode,
     barcode,
     product_code,
     code_mode,
@@ -2403,64 +2404,123 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       finalProductCode = `BDZ${Date.now().toString().slice(-8)}`;
     }
 
-    await db.query(
-      `INSERT INTO products
-       (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price,
-        discount_type, discount_value, bulk_discount_value, is_free_item, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
-        free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         product_code = VALUES(product_code),
-         product_name = VALUES(product_name),
-         alias_names = VALUES(alias_names),
-         hsn_code = VALUES(hsn_code),
-         gst_percent = VALUES(gst_percent),
-         unit_type = VALUES(unit_type),
-         purchase_unit_type = VALUES(purchase_unit_type),
-         purchase_unit_size = VALUES(purchase_unit_size),
-         mrp = VALUES(mrp),
-         purchase_price = VALUES(purchase_price),
-         sale_price = VALUES(sale_price),
-         wholesale_price = VALUES(wholesale_price),
-         discount_type = VALUES(discount_type),
-         discount_value = VALUES(discount_value),
-         bulk_discount_value = VALUES(bulk_discount_value),
-         is_free_item = VALUES(is_free_item),
-         free_promo_enabled = VALUES(free_promo_enabled),
-         free_promo_name = VALUES(free_promo_name),
-         free_promo_qty_per_sale = VALUES(free_promo_qty_per_sale),
-         free_promo_total_qty = VALUES(free_promo_total_qty),
-         free_promo_remaining_qty = VALUES(free_promo_remaining_qty),
-         stock_qty = VALUES(stock_qty),
-         min_stock_alert = VALUES(min_stock_alert),
-         updated_at = CURRENT_TIMESTAMP`,
-      [
-        finalProductCode,
-        finalBarcode,
-        values.productName,
-        values.aliasNames,
-        values.hsnCode,
-        values.gstPercent,
-        values.unitType,
-        values.purchaseUnitType,
-        values.purchaseUnitSize,
-        values.mrp,
-        values.purchasePrice,
-        values.salePrice,
-        values.wholesalePrice,
-        values.discountType,
-        values.discountValue,
-        values.bulkDiscountValue,
-        values.isFreeItem,
-        values.freePromoEnabled,
-        values.freePromoEnabled ? values.freePromoName : '',
-        values.freePromoQtyPerSale,
-        values.freePromoEnabled ? values.freePromoTotalQty : 0,
-        values.freePromoEnabled ? values.freePromoTotalQty : 0,
-        values.stockQty,
-        values.minStockAlert
-      ]
-    );
+    const originalBarcode = String(original_barcode || '').trim().toUpperCase();
+    const saveValues = [
+      finalProductCode,
+      finalBarcode,
+      values.productName,
+      values.aliasNames,
+      values.hsnCode,
+      values.gstPercent,
+      values.unitType,
+      values.purchaseUnitType,
+      values.purchaseUnitSize,
+      values.mrp,
+      values.purchasePrice,
+      values.salePrice,
+      values.wholesalePrice,
+      values.discountType,
+      values.discountValue,
+      values.bulkDiscountValue,
+      values.isFreeItem,
+      values.freePromoEnabled,
+      values.freePromoEnabled ? values.freePromoName : '',
+      values.freePromoQtyPerSale,
+      values.freePromoEnabled ? values.freePromoTotalQty : 0,
+      values.freePromoEnabled ? values.freePromoTotalQty : 0,
+      values.stockQty,
+      values.minStockAlert
+    ];
+
+    if (finalProductCode) {
+      const [codeConflicts] = await db.query(
+        'SELECT barcode FROM products WHERE product_code = ? LIMIT 1',
+        [finalProductCode]
+      );
+      const conflictBarcode = String(codeConflicts[0]?.barcode || '').trim().toUpperCase();
+      if (conflictBarcode && conflictBarcode !== finalBarcode && conflictBarcode !== originalBarcode) {
+        return res.status(409).json({ error: 'Another product already uses this product code.' });
+      }
+    }
+
+    if (originalBarcode && originalBarcode !== finalBarcode) {
+      const [barcodeConflicts] = await db.query(
+        'SELECT barcode FROM products WHERE barcode = ? LIMIT 1',
+        [finalBarcode]
+      );
+      if (barcodeConflicts.length) {
+        return res.status(409).json({ error: 'Another product already uses this barcode.' });
+      }
+
+      const [updateResult] = await db.query(
+        `UPDATE products
+         SET product_code = ?,
+             barcode = ?,
+             product_name = ?,
+             alias_names = ?,
+             hsn_code = ?,
+             gst_percent = ?,
+             unit_type = ?,
+             purchase_unit_type = ?,
+             purchase_unit_size = ?,
+             mrp = ?,
+             purchase_price = ?,
+             sale_price = ?,
+             wholesale_price = ?,
+             discount_type = ?,
+             discount_value = ?,
+             bulk_discount_value = ?,
+             is_free_item = ?,
+             free_promo_enabled = ?,
+             free_promo_name = ?,
+             free_promo_qty_per_sale = ?,
+             free_promo_total_qty = ?,
+             free_promo_remaining_qty = ?,
+             stock_qty = ?,
+             min_stock_alert = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE barcode = ?`,
+        [...saveValues, originalBarcode]
+      );
+
+      if (!updateResult.affectedRows) {
+        return res.status(404).json({ error: 'Original product was not found. Refresh products and try again.' });
+      }
+    } else {
+      await db.query(
+        `INSERT INTO products
+         (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price,
+          discount_type, discount_value, bulk_discount_value, is_free_item, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
+          free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           product_code = VALUES(product_code),
+           product_name = VALUES(product_name),
+           alias_names = VALUES(alias_names),
+           hsn_code = VALUES(hsn_code),
+           gst_percent = VALUES(gst_percent),
+           unit_type = VALUES(unit_type),
+           purchase_unit_type = VALUES(purchase_unit_type),
+           purchase_unit_size = VALUES(purchase_unit_size),
+           mrp = VALUES(mrp),
+           purchase_price = VALUES(purchase_price),
+           sale_price = VALUES(sale_price),
+           wholesale_price = VALUES(wholesale_price),
+           discount_type = VALUES(discount_type),
+           discount_value = VALUES(discount_value),
+           bulk_discount_value = VALUES(bulk_discount_value),
+           is_free_item = VALUES(is_free_item),
+           free_promo_enabled = VALUES(free_promo_enabled),
+           free_promo_name = VALUES(free_promo_name),
+           free_promo_qty_per_sale = VALUES(free_promo_qty_per_sale),
+           free_promo_total_qty = VALUES(free_promo_total_qty),
+           free_promo_remaining_qty = VALUES(free_promo_remaining_qty),
+           stock_qty = VALUES(stock_qty),
+           min_stock_alert = VALUES(min_stock_alert),
+           updated_at = CURRENT_TIMESTAMP`,
+        saveValues
+      );
+    }
 
     const taxSynced = await syncProductTaxByName(db, {
       productName: values.productName,

@@ -234,7 +234,7 @@ async function printThermalHtml({ html, widthMm, heightMm, printerName, feedMarg
 
     const measuredHeightPx = await printWindow.webContents.executeJavaScript(`
       (() => {
-        const receipt = document.querySelector('.thermal-paper');
+        const receipt = document.querySelector('.thermal-paper, .counter-sale-slip');
         const values = [
           receipt?.scrollHeight || 0,
           receipt?.offsetHeight || 0,

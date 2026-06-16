@@ -861,6 +861,21 @@ button:disabled {
   box-shadow: 0 0 0 3px rgba(22, 114, 74, 0.12);
 }
 
+.cash-received-input.cash-received-flash {
+  animation: cashReceivedFlash 0.9s ease-in-out 2;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(255, 138, 0, 0.24);
+}
+
+@keyframes cashReceivedFlash {
+  0%, 100% {
+    background: #fff;
+  }
+  50% {
+    background: #fff7d6;
+  }
+}
+
 .report-filter-row {
   display: flex;
   align-items: end;

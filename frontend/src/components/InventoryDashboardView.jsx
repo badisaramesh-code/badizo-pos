@@ -21,6 +21,7 @@ import {
 import { formatMoney, toNumber } from '../utils/money';
 
 const emptyForm = {
+  original_barcode: '',
   product_code: '',
   code_mode: 'AUTO',
   barcode: '',
@@ -426,11 +427,6 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   }, [page]);
 
   useEffect(() => {
-    if (!isActive) return;
-    setActiveProductSection(PRODUCT_SECTIONS.LIST);
-  }, [isActive, navigationKey]);
-
-  useEffect(() => {
     loadProducts();
   }, [page, limit, gstFilter]);
 
@@ -632,6 +628,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
   function editProduct(product) {
     setForm({
+      original_barcode: product.barcode || '',
       product_code: product.product_code || '',
       code_mode: product.product_code ? 'MANUAL' : 'AUTO',
       barcode: product.barcode || '',
@@ -678,6 +675,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     try {
       const result = await saveProduct({
         ...productForm,
+        original_barcode: String(productForm.original_barcode || '').trim().toUpperCase(),
         barcode: productForm.barcode.trim(),
         product_name: uppercaseProductName(productForm.product_name),
         alias_names: uppercaseProductName(productForm.alias_names),

@@ -69,7 +69,13 @@ function readActivePosDraft(username) {
     if (!raw) return null;
     const draft = JSON.parse(raw);
     if (draft.username && username && draft.username !== username) return null;
-    return draft;
+    const hasBillLines = Array.isArray(draft.cart) && draft.cart.length > 0;
+    const hasExchangeLines = Array.isArray(draft.exchangeItems) && draft.exchangeItems.length > 0;
+    if (!hasBillLines && !hasExchangeLines) {
+      window.localStorage.removeItem(POS_DRAFT_KEY);
+      return null;
+    }
+    return { ...draft, cashReceived: '' };
   } catch (err) {
     return null;
   }
@@ -243,13 +249,15 @@ export default function BillingTerminalView({ isActive = true }) {
   const [mixedPayment, setMixedPayment] = useState(initialDraft?.mixedPayment || EMPTY_MIXED_PAYMENT);
   const [paymentReference, setPaymentReference] = useState(initialDraft?.paymentReference || '');
   const [paymentConfirmed, setPaymentConfirmed] = useState(Boolean(initialDraft?.paymentConfirmed));
+  const [isCheckoutSubmitting, setIsCheckoutSubmitting] = useState(false);
   const [holdBillDialogOpen, setHoldBillDialogOpen] = useState(false);
   const [holdCustomerName, setHoldCustomerName] = useState('');
   const [digitalContactModal, setDigitalContactModal] = useState(null);
   const [digitalContactDraft, setDigitalContactDraft] = useState({ name: '', phone: '' });
   const [digitalContactError, setDigitalContactError] = useState('');
   const [printMode, setPrintMode] = useState(initialDraft?.printMode || 'Thermal');
-  const [cashReceived, setCashReceived] = useState(initialDraft?.cashReceived || '');
+  const [cashReceived, setCashReceived] = useState('');
+  const [cashReceivedFlashToken, setCashReceivedFlashToken] = useState(0);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [invoiceHistory, setInvoiceHistory] = useState([]);
@@ -289,6 +297,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const exchangeScannerInputModeRef = useRef('keyboard');
   const holdBillShortcutKeysRef = useRef({ ctrl: false, alt: false });
   const holdBillShortcutPressedRef = useRef(false);
+  const checkoutInFlightRef = useRef(false);
   const previousExchangeModeRef = useRef(exchangeMode);
   const priceCheckKeyTimesRef = useRef([]);
   const lastPriceCheckScanRef = useRef('');
@@ -348,6 +357,10 @@ export default function BillingTerminalView({ isActive = true }) {
       if (!document.hasFocus()) return;
       const scanner = scannerRef.current;
       if (!scanner || document.activeElement === scanner) return;
+      const activeElement = document.activeElement;
+      const isEditableTarget = activeElement?.isContentEditable
+        || ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeElement?.tagName);
+      if (isEditableTarget) return;
       scanner.focus();
       scanner.select?.();
     };
@@ -389,21 +402,23 @@ export default function BillingTerminalView({ isActive = true }) {
   }, [exchangeMode, isActive]);
 
   useEffect(() => {
-    const hasDraft = cart.length > 0
-      || exchangeItems.length > 0
-      || exchangeMode
+    const hasBillLines = cart.length > 0 || exchangeItems.length > 0;
+    const hasDraft = hasBillLines && (
+      exchangeMode
       || billingMode !== RETAIL_MODE
       || customerName
       || customerAddress
       || customerPhone
       || companyName
       || customerGstin
-      || cashReceived
       || paymentMode !== 'Cash'
       || Object.values(mixedPayment).some(Boolean)
       || paymentReference
       || paymentConfirmed
-      || printMode !== 'Thermal';
+      || printMode !== 'Thermal'
+      || cart.length > 0
+      || exchangeItems.length > 0
+    );
 
     if (!hasDraft) {
       clearActivePosDraft();
@@ -429,7 +444,6 @@ export default function BillingTerminalView({ isActive = true }) {
         paymentReference,
         paymentConfirmed,
         printMode,
-        cashReceived,
         savedAt: new Date().toISOString()
       }));
     } catch (err) {
@@ -545,12 +559,19 @@ export default function BillingTerminalView({ isActive = true }) {
     };
 
     const handleShortcut = (event) => {
-      if (event.key === 'Control') holdBillShortcutKeysRef.current.ctrl = true;
-      if (event.key === 'Alt') holdBillShortcutKeysRef.current.alt = true;
-      const isHoldBillShortcut = holdBillShortcutKeysRef.current.ctrl && holdBillShortcutKeysRef.current.alt;
+      const keyName = event.key || '';
+      if (keyName === 'Control') holdBillShortcutKeysRef.current.ctrl = true;
+      if (keyName === 'Alt') holdBillShortcutKeysRef.current.alt = true;
+      holdBillShortcutKeysRef.current = {
+        ctrl: holdBillShortcutKeysRef.current.ctrl || event.ctrlKey,
+        alt: holdBillShortcutKeysRef.current.alt || event.altKey
+      };
+      const isHoldBillShortcut = (event.ctrlKey && event.altKey)
+        || (holdBillShortcutKeysRef.current.ctrl && holdBillShortcutKeysRef.current.alt);
 
       if (isHoldBillShortcut && !holdBillShortcutPressedRef.current) {
         event.preventDefault();
+        event.stopPropagation();
         holdBillShortcutPressedRef.current = true;
         openHoldBillDialog();
         return;
@@ -570,52 +591,66 @@ export default function BillingTerminalView({ isActive = true }) {
         }
       }
 
-      if (event.key === 'F9') {
+      const keyCode = event.keyCode || event.which;
+      const isF9 = keyName === 'F9' || event.code === 'F9' || keyCode === 120;
+      const isF8 = keyName === 'F8' || event.code === 'F8' || keyCode === 119;
+      const isF6 = keyName === 'F6' || event.code === 'F6' || keyCode === 117;
+      const isF10 = keyName === 'F10' || event.code === 'F10' || keyCode === 121;
+      const isF11 = keyName === 'F11' || event.code === 'F11' || keyCode === 122;
+      const isF12 = keyName === 'F12' || event.code === 'F12' || keyCode === 123;
+
+      if (isF9) {
         event.preventDefault();
+        event.stopPropagation();
         scannerRef.current?.focus();
       }
 
-      if (event.key === 'F8') {
+      if (isF8) {
         event.preventDefault();
+        event.stopPropagation();
         refreshHistory(true);
       }
 
-      if (event.key === 'F6') {
+      if (isF6) {
         event.preventDefault();
+        event.stopPropagation();
         setIsHeldBillsOpen((current) => !current);
         refreshHeldBills(counterNo);
       }
 
-      if (event.key === 'F10') {
+      if (isF10) {
         event.preventDefault();
+        event.stopPropagation();
         preparePayment('Card');
       }
 
-      if (event.key === 'F11') {
+      if (isF11) {
         event.preventDefault();
+        event.stopPropagation();
         preparePayment('UPI');
       }
 
-      if (event.key === 'F12') {
+      if (isF12) {
         event.preventDefault();
-        preparePayment('Cash');
+        event.stopPropagation();
+        prepareExactCashPayment();
       }
     };
 
     const handleShortcutKeyUp = (event) => {
-      if (event.key === 'Control') holdBillShortcutKeysRef.current.ctrl = false;
-      if (event.key === 'Alt') holdBillShortcutKeysRef.current.alt = false;
-      if (!holdBillShortcutKeysRef.current.ctrl || !holdBillShortcutKeysRef.current.alt) {
+      if (event.key === 'Control' || !event.ctrlKey) holdBillShortcutKeysRef.current.ctrl = false;
+      if (event.key === 'Alt' || !event.altKey) holdBillShortcutKeysRef.current.alt = false;
+      if (!event.ctrlKey || !event.altKey) {
         holdBillShortcutPressedRef.current = false;
       }
     };
 
-    window.addEventListener('keydown', handleShortcut);
+    window.addEventListener('keydown', handleShortcut, true);
     window.addEventListener('keyup', handleShortcutKeyUp);
     window.addEventListener('blur', resetHoldBillShortcut);
     document.addEventListener('visibilitychange', resetHoldBillShortcut);
     return () => {
-      window.removeEventListener('keydown', handleShortcut);
+      window.removeEventListener('keydown', handleShortcut, true);
       window.removeEventListener('keyup', handleShortcutKeyUp);
       window.removeEventListener('blur', resetHoldBillShortcut);
       document.removeEventListener('visibilitychange', resetHoldBillShortcut);
@@ -691,7 +726,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const isCashReady = paymentMode === 'Mixed'
     ? mixedPaymentModeCount >= 2 && mixedPaidTotal >= totals.grand
     : paymentMode !== 'Cash' || cashReceivedAmount >= totals.grand;
-  const canCompleteSale = cart.length > 0 && isCashReady && !cart.some((item) => item.isUnknown);
+  const canCompleteSale = cart.length > 0 && isCashReady && !cart.some((item) => item.isUnknown) && !isCheckoutSubmitting;
   const hasUnknownLine = cart.some((item) => item.isUnknown);
   const latestInvoice = invoiceHistory[0];
   const filteredInvoiceHistory = useMemo(() => {
@@ -1772,7 +1807,7 @@ export default function BillingTerminalView({ isActive = true }) {
     setPaymentReference(savedState.paymentReference || '');
     setPaymentConfirmed(Boolean(savedState.paymentConfirmed));
     setPrintMode(savedState.printMode || 'Thermal');
-    setCashReceived(savedState.cashReceived || '');
+    setCashReceived('');
     await deleteHeldBill(holdToken);
     refreshHeldBills(savedState.counterNo || counterNo);
     scannerRef.current?.focus();
@@ -1857,6 +1892,7 @@ export default function BillingTerminalView({ isActive = true }) {
     try {
       const printedAt = new Date();
       const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
+      const defaultSlipHeightMm = 90;
       const thermalFeedMarginMm = getThermalFeedMarginMm(shopSettings);
       const slip = await fetchCounterSaleSlip({ date: localIsoDate(printedAt), counterNo });
       const slipMarkup = renderToStaticMarkup(<CounterSaleSlip slip={slip} shop={shopSettings} printedAt={printedAt} />);
@@ -1940,7 +1976,7 @@ export default function BillingTerminalView({ isActive = true }) {
       font-weight: 700;
     }
     @media print {
-      @page { size: ${thermalWidthMm}mm auto; margin: 0; }
+      @page { size: ${thermalWidthMm}mm ${defaultSlipHeightMm}mm; margin: 0; }
       html, body {
         width: ${thermalWidthMm}mm !important;
         min-width: ${thermalWidthMm}mm !important;
@@ -1956,23 +1992,13 @@ export default function BillingTerminalView({ isActive = true }) {
 <body>${slipMarkup}</body>
 </html>`;
 
-      if (window.badizoDesktop?.printThermalHtml) {
-        await window.badizoDesktop.printThermalHtml({
-          html: slipPrintHtml,
-          widthMm: thermalWidthMm,
-          feedMarginMm: 0
-        });
-        setStatusMessage(`Counter ${counterNo} sale slip printed.`);
-        return;
-      }
-
       const printFrame = document.createElement('iframe');
       printFrame.title = 'Counter sale print frame';
       printFrame.style.position = 'fixed';
       printFrame.style.left = '-10000px';
       printFrame.style.top = '0';
       printFrame.style.width = `${thermalWidthMm}mm`;
-      printFrame.style.height = '240mm';
+      printFrame.style.height = `${defaultSlipHeightMm}mm`;
       printFrame.style.border = '0';
       printFrame.style.visibility = 'hidden';
       document.body.appendChild(printFrame);
@@ -1990,22 +2016,41 @@ export default function BillingTerminalView({ isActive = true }) {
       const cleanup = () => window.setTimeout(() => printFrame.remove(), 300);
       const frameWindow = printFrame.contentWindow;
       frameWindow?.addEventListener('afterprint', cleanup, { once: true });
-      window.setTimeout(() => {
-        const slipElement = frameDocument.querySelector('.counter-sale-slip');
-        const contentHeightPx = Math.max(
-          slipElement?.scrollHeight || 0,
-          slipElement?.getBoundingClientRect?.().height || 0,
-          frameDocument.body?.scrollHeight || 0
-        );
-        const contentHeightMm = Math.max(40, Math.ceil((contentHeightPx * 25.4) / 96));
-        const dynamicStyle = frameDocument.createElement('style');
-        dynamicStyle.textContent = `@media print { @page { size: ${thermalWidthMm}mm ${contentHeightMm}mm; margin: 0; } }`;
-        frameDocument.head.appendChild(dynamicStyle);
-        frameWindow?.focus();
-        frameWindow?.print();
-        window.setTimeout(() => {
-          if (document.body.contains(printFrame)) printFrame.remove();
-        }, 120000);
+      window.setTimeout(async () => {
+        try {
+          const slipElement = frameDocument.querySelector('.counter-sale-slip');
+          const contentHeightPx = Math.max(
+            slipElement?.scrollHeight || 0,
+            slipElement?.getBoundingClientRect?.().height || 0,
+            frameDocument.body?.scrollHeight || 0
+          );
+          const contentHeightMm = Math.max(45, Math.ceil((contentHeightPx * 25.4) / 96) + thermalFeedMarginMm);
+          const dynamicStyle = frameDocument.createElement('style');
+          dynamicStyle.textContent = `@media print { @page { size: ${thermalWidthMm}mm ${contentHeightMm}mm; margin: 0; } }`;
+          frameDocument.head.appendChild(dynamicStyle);
+          printFrame.style.height = `${contentHeightMm}mm`;
+
+          if (window.badizoDesktop?.printThermalHtml) {
+            await window.badizoDesktop.printThermalHtml({
+              html: frameDocument.documentElement.outerHTML,
+              widthMm: thermalWidthMm,
+              heightMm: contentHeightMm,
+              feedMarginMm: 0
+            });
+            cleanup();
+            setStatusMessage(`Counter ${counterNo} sale slip printed.`);
+            return;
+          }
+
+          frameWindow?.focus();
+          frameWindow?.print();
+          window.setTimeout(() => {
+            if (document.body.contains(printFrame)) printFrame.remove();
+          }, 120000);
+        } catch (err) {
+          cleanup();
+          setErrorMessage(err.response?.data?.error || err.message || 'Unable to print counter sale slip.');
+        }
       }, 250);
       setStatusMessage(`Counter ${counterNo} sale slip ready.`);
     } catch (err) {
@@ -2680,6 +2725,15 @@ export default function BillingTerminalView({ isActive = true }) {
     selectPaymentMode(mode);
   }
 
+  function prepareExactCashPayment() {
+    selectPaymentMode('Cash');
+    setCashReceivedFlashToken((current) => current + 1);
+    window.setTimeout(() => {
+      cashReceivedRef.current?.focus();
+      cashReceivedRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  }
+
   function toggleMixedPayment(checked) {
     selectPaymentMode(checked ? 'Mixed' : 'Cash');
   }
@@ -2890,6 +2944,7 @@ export default function BillingTerminalView({ isActive = true }) {
     const effectiveCustomerPhone = overrides.customerPhone ?? customerPhone;
     const effectivePaymentReference = overrides.paymentReference ?? paymentReference;
     const effectivePaymentConfirmed = overrides.paymentConfirmed ?? paymentConfirmed;
+    const effectiveCashReceived = overrides.cashReceived ?? cashReceived;
     const effectiveMixedPayment = overrides.mixedPayment ?? mixedPayment;
     const effectiveMixedPaidTotal = toNumber(effectiveMixedPayment.cash) + toNumber(effectiveMixedPayment.upi) + toNumber(effectiveMixedPayment.card);
     const effectiveMixedPaymentModeCount = [effectiveMixedPayment.cash, effectiveMixedPayment.upi, effectiveMixedPayment.card]
@@ -2930,7 +2985,7 @@ export default function BillingTerminalView({ isActive = true }) {
     }
 
     const received = activePaymentMode === 'Cash'
-      ? toNumber(cashReceived)
+      ? toNumber(effectiveCashReceived)
       : activePaymentMode === 'Mixed'
         ? effectiveMixedPaidTotal
         : totals.grand;
@@ -2968,6 +3023,9 @@ export default function BillingTerminalView({ isActive = true }) {
     }
 
     const mode = BILLING_MODES[billingMode];
+    if (checkoutInFlightRef.current) return;
+    checkoutInFlightRef.current = true;
+    setIsCheckoutSubmitting(true);
 
     try {
       const checkoutResult = await checkout({
@@ -3058,12 +3116,20 @@ export default function BillingTerminalView({ isActive = true }) {
       };
       setPrintableInvoice(completedInvoice);
       setStatusMessage(`Invoice ${checkoutResult.invoice_no || invoiceNo} saved. Change due: ${formatMoney(Math.max(received - totals.grand, 0))}`);
+      setCashReceived('');
+      setPaymentMode('Cash');
+      setMixedPayment(EMPTY_MIXED_PAYMENT);
+      setPaymentReference('');
+      setPaymentConfirmed(false);
+      resetBill();
       schedulePrint(printMode, () => {
-        resetBill();
         refreshHistory(false);
       }, completedInvoice);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Checkout failed.');
+    } finally {
+      checkoutInFlightRef.current = false;
+      setIsCheckoutSubmitting(false);
     }
   }
 
@@ -3502,10 +3568,11 @@ export default function BillingTerminalView({ isActive = true }) {
                     <span className="field-label">Cash received</span>
                     <input
                       ref={cashReceivedRef}
-                      className="field"
+                      className={`field cash-received-input ${cashReceivedFlashToken ? 'cash-received-flash' : ''}`}
                       type="number"
                       min="0"
                       value={cashReceived}
+                      onAnimationEnd={() => setCashReceivedFlashToken(0)}
                       onKeyDown={(event) => handlePaymentEnter(event, 'Cash')}
                       onChange={(event) => {
                         setCashReceived(event.target.value);
@@ -3629,9 +3696,11 @@ export default function BillingTerminalView({ isActive = true }) {
                 </>
               )}
 
-              <button className="primary-button" disabled={!canCompleteSale} onClick={() => submitCheckout(paymentMode)}>Complete Sale</button>
+              <button className="primary-button" disabled={!canCompleteSale} onClick={() => submitCheckout(paymentMode)}>
+                {isCheckoutSubmitting ? 'Saving...' : 'Complete Sale'}
+              </button>
               <div className="quick-actions">
-                <button className="secondary-button" onClick={() => preparePayment('Cash')}>F12 Cash</button>
+                <button className="secondary-button" onClick={prepareExactCashPayment} disabled={isCheckoutSubmitting}>F12 Cash</button>
                 <button className="secondary-button" onClick={() => preparePayment('UPI')}>F11 UPI</button>
                 <button className="secondary-button" onClick={() => preparePayment('Card')}>F10 Card</button>
                 <button className="secondary-button" onClick={() => preparePayment('Mixed')}>Mixed</button>
