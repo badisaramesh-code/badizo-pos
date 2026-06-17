@@ -40,9 +40,20 @@ function Find-Installer {
 
 function Test-Server {
   Write-Step 'Checking server connection'
+  $frontendPortTest = Test-NetConnection -ComputerName $ServerIp -Port 3000 -WarningAction SilentlyContinue
+  if (!$frontendPortTest.TcpTestSucceeded) {
+    throw "Cannot reach Badizo frontend at ${ServerIp}:3000. Check server frontend, server firewall, and same Wi-Fi/LAN."
+  }
+
   $portTest = Test-NetConnection -ComputerName $ServerIp -Port 5000 -WarningAction SilentlyContinue
   if (!$portTest.TcpTestSucceeded) {
     throw "Cannot reach Badizo server at ${ServerIp}:5000. Check server backend, server firewall, and same Wi-Fi/LAN."
+  }
+
+  $frontendUrl = "http://${ServerIp}:3000"
+  $frontendResponse = Invoke-WebRequest -UseBasicParsing -Uri $frontendUrl -TimeoutSec 5
+  if ($frontendResponse.StatusCode -lt 200 -or $frontendResponse.StatusCode -ge 400) {
+    throw "Server frontend check failed: $frontendUrl"
   }
 
   $healthUrl = "http://${ServerIp}:5000/api/health"
@@ -51,6 +62,7 @@ function Test-Server {
     throw "Server health check failed: $healthUrl"
   }
 
+  Write-Host "Frontend OK: $frontendUrl" -ForegroundColor Green
   Write-Host "Server OK: $healthUrl" -ForegroundColor Green
 }
 
@@ -69,12 +81,12 @@ function Write-AppConfig {
   New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 
   $config = [ordered]@{
-    appUrl = 'http://localhost:3000'
+    appUrl = "http://${ServerIp}:3000"
     apiHealthUrl = "http://${ServerIp}:5000/api/health"
     backendPort = 5000
     frontendPort = 3000
     startBackend = $false
-    startFrontend = $true
+    startFrontend = $false
     kiosk = [bool]$Kiosk
     devTools = $false
   }

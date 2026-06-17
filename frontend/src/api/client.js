@@ -5,8 +5,20 @@ const api = axios.create({
   timeout: 10000
 });
 
+const AUTH_TOKEN_KEY = 'badizo_token';
+const AUTH_USER_KEY = 'badizo_user';
+
+function getAuthStorage() {
+  return window.sessionStorage;
+}
+
+function clearLegacyAuthSession() {
+  window.localStorage.removeItem(AUTH_TOKEN_KEY);
+  window.localStorage.removeItem(AUTH_USER_KEY);
+}
+
 api.interceptors.request.use((config) => {
-  const token = window.localStorage.getItem('badizo_token');
+  const token = getAuthStorage().getItem(AUTH_TOKEN_KEY);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -14,17 +26,20 @@ api.interceptors.request.use((config) => {
 });
 
 export function setAuthSession(token, user) {
-  window.localStorage.setItem('badizo_token', token);
-  window.localStorage.setItem('badizo_user', JSON.stringify(user));
+  clearLegacyAuthSession();
+  getAuthStorage().setItem(AUTH_TOKEN_KEY, token);
+  getAuthStorage().setItem(AUTH_USER_KEY, JSON.stringify(user));
 }
 
 export function clearAuthSession() {
-  window.localStorage.removeItem('badizo_token');
-  window.localStorage.removeItem('badizo_user');
+  getAuthStorage().removeItem(AUTH_TOKEN_KEY);
+  getAuthStorage().removeItem(AUTH_USER_KEY);
+  clearLegacyAuthSession();
 }
 
 export function getStoredUser() {
-  const rawUser = window.localStorage.getItem('badizo_user');
+  clearLegacyAuthSession();
+  const rawUser = getAuthStorage().getItem(AUTH_USER_KEY);
   if (!rawUser) return null;
 
   try {

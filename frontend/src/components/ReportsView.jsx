@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import {
   exportDailySalesReport,
@@ -65,6 +65,8 @@ const DEFAULT_HSN_FILTERS = {
   qtySort: 'DEFAULT'
 };
 
+const HSN_VISIBLE_ROW_LIMIT = 500;
+
 function getHsnNumber(value) {
   const match = String(value || '').match(/\d+/);
   return match ? Number(match[0]) : null;
@@ -120,17 +122,20 @@ export default function ReportsView({ isActive = true, onClose }) {
   const [exchangeReport, setExchangeReport] = useState({ rows: [], totals: {} });
   const [barcodePrintReport, setBarcodePrintReport] = useState({ rows: [], totals: {} });
   const [reprintReport, setReprintReport] = useState({ rows: [], totals: {} });
+  const [isReportLoading, setIsReportLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-
-  useEffect(() => {
-    loadReports();
-  }, []);
+  const deferredHsnProductSearch = useDeferredValue(hsnFilters.productSearch);
 
   useEffect(() => {
     if (isActive) loadReports();
   }, [isActive]);
 
+  useEffect(() => {
+    if (isActive) refreshSelectedReport(activeReport);
+  }, [activeReport, isActive]);
+
   const filteredHsnRows = useMemo(() => {
+    const productSearch = deferredHsnProductSearch.trim().toLowerCase();
     const selectedRange = HSN_RANGE_OPTIONS.find((option) => option.value === hsnFilters.hsnRange);
     const rows = (hsnReport.rows || []).filter((row) => {
       if (selectedRange && selectedRange.value !== 'ALL') {
@@ -144,7 +149,6 @@ export default function ReportsView({ isActive = true, onClose }) {
         return false;
       }
 
-      const productSearch = hsnFilters.productSearch.trim().toLowerCase();
       if (productSearch) {
         const productText = `${row.product_code || ''} ${row.product_name || ''}`.toLowerCase();
         if (!productText.includes(productSearch)) return false;
@@ -162,7 +166,9 @@ export default function ReportsView({ isActive = true, onClose }) {
     }
 
     return rows;
-  }, [hsnFilters, hsnReport.rows]);
+  }, [deferredHsnProductSearch, hsnFilters.gstPercent, hsnFilters.hsnRange, hsnFilters.qtySort, hsnReport.rows]);
+
+  const visibleHsnRows = useMemo(() => filteredHsnRows.slice(0, HSN_VISIBLE_ROW_LIMIT), [filteredHsnRows]);
 
   const filteredHsnTotals = useMemo(() => filteredHsnRows.reduce((totals, row) => ({
     gross: totals.gross + Number(row.gross_total || 0),
@@ -196,38 +202,99 @@ export default function ReportsView({ isActive = true, onClose }) {
     }
   }
 
+  async function loadSelectedReport(reportKey = activeReport, range = getOrderedRange(fromDate, toDate)) {
+    const { from, to } = range;
+    switch (reportKey) {
+      case 'hsn': {
+        const hsn = await fetchGstHsnReport({ from, to });
+        setHsnReport(hsn);
+        return;
+      }
+      case 'monthly': {
+        const monthly = await fetchMonthlySalesReport(from.slice(0, 7));
+        setMonthlyReport(monthly);
+        return;
+      }
+      case 'stock': {
+        const stock = await fetchStockReport(false);
+        setStockReport(stock);
+        return;
+      }
+      case 'top': {
+        const top = await fetchTopProductsReport({ from, to });
+        setTopProducts(top);
+        return;
+      }
+      case 'tax': {
+        const tax = await fetchTaxSummaryReport({ from, to });
+        setTaxSummary(tax);
+        return;
+      }
+      case 'gstr1': {
+        const gstr1 = await fetchGstr1Report({ from, to });
+        setGstr1Report(gstr1);
+        return;
+      }
+      case 'handover': {
+        const handover = await fetchCounterHandoverReport({ from, to, counter });
+        setCounterHandoverReport(handover);
+        return;
+      }
+      case 'exchange': {
+        const exchange = await fetchExchangeBillsReport({ from, to, counter });
+        setExchangeReport(exchange);
+        return;
+      }
+      case 'barcodePrints': {
+        const barcodePrints = await fetchBarcodePrintLogs({ from, to, search: reportSearch });
+        setBarcodePrintReport(barcodePrints);
+        return;
+      }
+      case 'reprints': {
+        const reprints = await fetchReprintReport({ from, to, counter, search: reportSearch });
+        setReprintReport(reprints);
+        return;
+      }
+      case 'returns':
+      case 'cancelled': {
+        const exceptions = await fetchExceptionReport({ from, to });
+        setExceptionReport(exceptions);
+        return;
+      }
+      case 'daily':
+      default: {
+        const daily = await fetchDailySalesReport({ from, to, counter });
+        setDailyReport(daily);
+      }
+    }
+  }
+
+  async function refreshSelectedReport(reportKey = activeReport) {
+    setErrorMessage('');
+    setIsReportLoading(true);
+    try {
+      await loadSelectedReport(reportKey);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load selected report.');
+    } finally {
+      setIsReportLoading(false);
+    }
+  }
+
   async function loadReports() {
     setErrorMessage('');
+    setIsReportLoading(true);
     const { from, to } = getOrderedRange(fromDate, toDate);
     try {
-      const [daily, hsn, monthly, stock, top, tax, gstr1, handover, exceptions, exchange, barcodePrints, reprints] = await Promise.all([
-        fetchDailySalesReport({ from, to, counter }),
-        fetchGstHsnReport({ from, to }),
-        fetchMonthlySalesReport(from.slice(0, 7)),
-        fetchStockReport(false),
-        fetchTopProductsReport({ from, to }),
-        fetchTaxSummaryReport({ from, to }),
-        fetchGstr1Report({ from, to }),
-        fetchCounterHandoverReport({ from, to, counter }),
-        fetchExceptionReport({ from, to }),
-        fetchExchangeBillsReport({ from, to, counter }),
-        fetchBarcodePrintLogs({ from, to, search: reportSearch }),
-        fetchReprintReport({ from, to, counter, search: reportSearch })
-      ]);
+      const daily = await fetchDailySalesReport({ from, to, counter });
       setDailyReport(daily);
-      setHsnReport(hsn);
-      setMonthlyReport(monthly);
-      setStockReport(stock);
-      setTopProducts(top);
-      setTaxSummary(tax);
-      setGstr1Report(gstr1);
-      setCounterHandoverReport(handover);
-      setExceptionReport(exceptions);
-      setExchangeReport(exchange);
-      setBarcodePrintReport(barcodePrints);
-      setReprintReport(reprints);
+      if (activeReport !== 'daily') {
+        await loadSelectedReport(activeReport, { from, to });
+      }
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to load reports from database.');
+    } finally {
+      setIsReportLoading(false);
     }
   }
 
@@ -616,6 +683,9 @@ export default function ReportsView({ isActive = true, onClose }) {
                 </label>
                 <button className="secondary-button" type="button" onClick={() => setHsnFilters(DEFAULT_HSN_FILTERS)}>Clear</button>
                 <span className="status-chip">{filteredHsnRows.length} rows</span>
+                {filteredHsnRows.length > HSN_VISIBLE_ROW_LIMIT ? (
+                  <span className="status-chip warning">Showing first {HSN_VISIBLE_ROW_LIMIT}</span>
+                ) : null}
                 <div className="hsn-summary-total-box">
                   <span>Gross</span>
                   <strong>{formatMoney(filteredHsnTotals.gross)}</strong>
@@ -695,7 +765,7 @@ export default function ReportsView({ isActive = true, onClose }) {
               <table className="history-table">
                 <thead><tr><th>HSN</th><th>Product Code</th><th>Product Name</th><th>GST %</th><th>Qty</th><th>Gross</th><th>CGST</th><th>SGST</th><th>IGST</th></tr></thead>
                 <tbody>
-                  {filteredHsnRows.length === 0 ? <tr><td colSpan="9">No GST data for selected filters/date range.</td></tr> : filteredHsnRows.map((row) => (
+                  {filteredHsnRows.length === 0 ? <tr><td colSpan="9">No GST data for selected filters/date range.</td></tr> : visibleHsnRows.map((row) => (
                     <tr key={`${row.hsn_code}-${row.product_code}-${row.product_name}-${row.gst_percent}`}><td>{row.hsn_code || '-'}</td><td>{row.product_code || '-'}</td><td>{row.product_name || '-'}</td><td>{Number(row.gst_percent || 0)}%</td><td>{Number(row.quantity || 0)}</td><td>{formatMoney(row.gross_total)}</td><td>{formatMoney(row.cgst)}</td><td>{formatMoney(row.sgst)}</td><td>{formatMoney(row.igst)}</td></tr>
                   ))}
                 </tbody>
@@ -1141,7 +1211,9 @@ export default function ReportsView({ isActive = true, onClose }) {
                 placeholder="Invoice / customer / barcode / user"
               />
             </label>
-            <button className="secondary-button" type="button" onClick={loadReports}>View</button>
+            <button className="secondary-button" type="button" onClick={loadReports} disabled={isReportLoading}>
+              {isReportLoading ? 'Loading...' : 'View'}
+            </button>
             <button className="close-action-button" type="button" onClick={onClose}>Close</button>
           </form>
 

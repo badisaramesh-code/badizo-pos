@@ -303,6 +303,8 @@ export default function BillingTerminalView({ isActive = true }) {
   const lastPriceCheckScanRef = useRef('');
   const exchangeScannerRef = useRef(null);
   const billingTableRef = useRef(null);
+  const lastBillDetailsRef = useRef(null);
+  const heldBillsDetailsRef = useRef(null);
   const priceCheckInputRef = useRef(null);
   const customerNameRef = useRef(null);
   const cashReceivedRef = useRef(null);
@@ -452,9 +454,11 @@ export default function BillingTerminalView({ isActive = true }) {
   }, [billingMode, cart, cashReceived, companyName, counterNo, currentUser?.username, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, exchangeMode, invoiceNo, mixedPayment, paymentConfirmed, paymentMode, paymentReference, printMode]);
 
   useEffect(() => {
+    if (!isActive) return undefined;
+    setLiveTime(new Date());
     const timer = window.setInterval(() => setLiveTime(new Date()), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [isActive]);
 
   useEffect(() => {
     refreshInvoicePreview(counterNo);
@@ -553,6 +557,8 @@ export default function BillingTerminalView({ isActive = true }) {
   }, []);
 
   useEffect(() => {
+    if (!isActive) return undefined;
+
     const resetHoldBillShortcut = () => {
       holdBillShortcutKeysRef.current = { ctrl: false, alt: false };
       holdBillShortcutPressedRef.current = false;
@@ -602,18 +608,23 @@ export default function BillingTerminalView({ isActive = true }) {
       if (isF9) {
         event.preventDefault();
         event.stopPropagation();
+        closeBillingActivityPanels();
         scannerRef.current?.focus();
       }
 
       if (isF8) {
         event.preventDefault();
         event.stopPropagation();
+        setIsLastBillOpen(false);
+        setIsHeldBillsOpen(false);
         refreshHistory(true);
       }
 
       if (isF6) {
         event.preventDefault();
         event.stopPropagation();
+        setShowHistory(false);
+        setIsLastBillOpen(false);
         setIsHeldBillsOpen((current) => !current);
         refreshHeldBills(counterNo);
       }
@@ -664,6 +675,23 @@ export default function BillingTerminalView({ isActive = true }) {
     const timer = window.setTimeout(() => autoRunScannedPriceCheck(cleaned), 70);
     return () => window.clearTimeout(timer);
   }, [priceCheckQuery, showPriceCheck]);
+
+  useEffect(() => {
+    if (!isActive || (!isLastBillOpen && !isHeldBillsOpen)) return undefined;
+
+    const closeActivityPanelsOnOutsideClick = (event) => {
+      const target = event.target;
+      if (isLastBillOpen && lastBillDetailsRef.current && !lastBillDetailsRef.current.contains(target)) {
+        setIsLastBillOpen(false);
+      }
+      if (isHeldBillsOpen && heldBillsDetailsRef.current && !heldBillsDetailsRef.current.contains(target)) {
+        setIsHeldBillsOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', closeActivityPanelsOnOutsideClick);
+    return () => document.removeEventListener('pointerdown', closeActivityPanelsOnOutsideClick);
+  }, [isActive, isHeldBillsOpen, isLastBillOpen]);
 
   useEffect(() => {
     const { search: cleaned } = parseQuantitySearch(exchangeQuery);
@@ -813,6 +841,12 @@ export default function BillingTerminalView({ isActive = true }) {
       }
     };
   }, [billingMode, cart, cashReceived, changeDue, companyName, counterNo, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, invoiceDate, invoiceNo, mixedPaidTotal, mixedPayment, paymentMode, shopSettings, totals]);
+
+  function closeBillingActivityPanels() {
+    setShowHistory(false);
+    setIsLastBillOpen(false);
+    setIsHeldBillsOpen(false);
+  }
 
   function invoiceDetailsToPrintable(details, duplicate = false) {
     const invoice = details.invoice;
@@ -1723,12 +1757,9 @@ export default function BillingTerminalView({ isActive = true }) {
       return;
     }
 
-    setApprovalDialog({
-      action: 'EXCHANGE',
-      targetMode: billingMode,
-      title: 'Approve Exchange Bill',
-      message: 'Exchange billing needs supervisor password. Exchange amount will be deducted from this bill only, then POS will return to Retail.'
-    });
+    setExchangeMode(true);
+    setStatusMessage('Exchange bill enabled.');
+    window.setTimeout(() => exchangeScannerRef.current?.focus(), 50);
   }
 
   function closeApprovalDialog() {
@@ -1826,10 +1857,8 @@ export default function BillingTerminalView({ isActive = true }) {
         username: approvalUsername,
         password: approvalPassword,
         reason: approvalDialog.action === 'RESUME'
-          ? `Resume held ${BILLING_MODES[approvalDialog.targetMode].label} bill`
-          : approvalDialog.action === 'EXCHANGE'
-            ? 'Start exchange bill'
-          : `Start ${BILLING_MODES[approvalDialog.targetMode].label} bill`
+            ? `Resume held ${BILLING_MODES[approvalDialog.targetMode].label} bill`
+            : `Start ${BILLING_MODES[approvalDialog.targetMode].label} bill`
       });
 
       if (approvalDialog.action === 'RESUME') {
@@ -1839,10 +1868,6 @@ export default function BillingTerminalView({ isActive = true }) {
         setPrintMode(approvalDialog.targetPrintMode);
         setStatusMessage(`${approvalDialog.targetPrintMode} enabled for this bill. Approved by ${result.approved_by}.`);
         scannerRef.current?.focus();
-      } else if (approvalDialog.action === 'EXCHANGE') {
-        setExchangeMode(true);
-        setStatusMessage(`Exchange bill enabled. Approved by ${result.approved_by}.`);
-        exchangeScannerRef.current?.focus();
       } else {
         setBillingMode(approvalDialog.targetMode);
         setStatusMessage(`${BILLING_MODES[approvalDialog.targetMode].label} enabled for this bill. Approved by ${result.approved_by}.`);
@@ -2847,17 +2872,15 @@ export default function BillingTerminalView({ isActive = true }) {
 
       const heldMode = normalizeBillingMode(savedState.billingMode);
       savedState.billingMode = heldMode;
-      if (isSensitiveBillingMode(heldMode) || savedState.exchangeMode) {
+      if (isSensitiveBillingMode(heldMode)) {
         setApprovalError('');
         setApprovalDialog({
           action: 'RESUME',
           targetMode: heldMode,
           savedState,
           holdToken: heldBill.hold_token,
-          title: savedState.exchangeMode ? 'Approve held Exchange Bill' : `Approve held ${BILLING_MODES[heldMode].label} bill`,
-          message: savedState.exchangeMode
-            ? 'This held bill has exchange products. Supervisor approval is required again before resuming.'
-            : `This held bill was saved as ${BILLING_MODES[heldMode].label}. Supervisor approval is required again before resuming.`
+          title: `Approve held ${BILLING_MODES[heldMode].label} bill`,
+          message: `This held bill was saved as ${BILLING_MODES[heldMode].label}. Supervisor approval is required again before resuming.`
         });
         return;
       }
@@ -3227,6 +3250,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 className="field search-input"
                 autoFocus
                 value={query}
+                onFocus={closeBillingActivityPanels}
                 onChange={handleSearchChange}
                 onKeyDown={handleSearchKeyDown}
                 onPaste={handleSearchPaste}
@@ -3313,9 +3337,20 @@ export default function BillingTerminalView({ isActive = true }) {
               >
                 Hold Bill & New Customer
               </button>
-              <button className="secondary-button" onClick={() => refreshHistory(true)}>Old Bills / Reprint (F8)</button>
+              <button
+                className="secondary-button"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => {
+                  setIsLastBillOpen(false);
+                  setIsHeldBillsOpen(false);
+                  refreshHistory(true);
+                }}
+              >
+                Old Bills / Reprint (F8)
+              </button>
               {latestInvoice ? (
                 <details
+                  ref={lastBillDetailsRef}
                   className="activity-details activity-last-bill-details"
                   open={isLastBillOpen}
                   onToggle={(event) => setIsLastBillOpen(event.currentTarget.open)}
@@ -3337,6 +3372,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 <button className="secondary-button" disabled>Last Bill</button>
               )}
               <details
+                ref={heldBillsDetailsRef}
                 className="activity-details activity-held-details"
                 open={isHeldBillsOpen}
                 onToggle={(event) => setIsHeldBillsOpen(event.currentTarget.open)}
@@ -3715,8 +3751,20 @@ export default function BillingTerminalView({ isActive = true }) {
                 <button className="secondary-button" onClick={() => preparePayment('UPI')}>F11 UPI</button>
                 <button className="secondary-button" onClick={() => preparePayment('Card')}>F10 Card</button>
                 <button className="secondary-button" onClick={() => preparePayment('Mixed')}>Mixed</button>
-                <button className="secondary-button" onClick={() => refreshHistory(true)}>F8 Old Bills</button>
-                <button className="secondary-button" onClick={() => {
+                <button
+                  className="secondary-button"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={() => {
+                    setIsLastBillOpen(false);
+                    setIsHeldBillsOpen(false);
+                    refreshHistory(true);
+                  }}
+                >
+                  F8 Old Bills
+                </button>
+                <button className="secondary-button" onPointerDown={(event) => event.stopPropagation()} onClick={() => {
+                  setShowHistory(false);
+                  setIsLastBillOpen(false);
                   setIsHeldBillsOpen((current) => !current);
                   refreshHeldBills(counterNo);
                 }}>F6 Held Bills</button>
@@ -3876,7 +3924,12 @@ export default function BillingTerminalView({ isActive = true }) {
       )}
 
       {showHistory && (
-        <div className="modal-backdrop">
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowHistory(false);
+          }}
+        >
           <div className="modal">
             <div className="panel-header">
               <h2 className="panel-title">Recent Invoices</h2>
@@ -4050,8 +4103,6 @@ export default function BillingTerminalView({ isActive = true }) {
                   ? 'Verifying...'
                   : `Approve ${approvalDialog.action === 'PRINT_MODE'
                     ? approvalDialog.targetPrintMode
-                    : approvalDialog.action === 'EXCHANGE'
-                      ? 'Exchange Bill'
                       : BILLING_MODES[approvalDialog.targetMode].label}`}
               </button>
             </div>
