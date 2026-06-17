@@ -1,5 +1,7 @@
 # Server-Slave Setup
 
+For the full existing-shop and new-shop guide, read `BADIZO_DEPLOYMENT_GUIDE.md`.
+
 For a fresh shop/server installation, use `NEW_SHOP_DEPLOYMENT.md` first. That flow builds one folder for the installer and includes the new one-click server setup with Node.js/MySQL checks.
 
 ## Server PC

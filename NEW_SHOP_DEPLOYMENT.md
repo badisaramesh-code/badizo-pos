@@ -1,5 +1,7 @@
 # Badizo New Shop Deployment
 
+For the full existing-shop and new-shop guide, read `BADIZO_DEPLOYMENT_GUIDE.md`.
+
 This is the simplest recommended flow when setting up Badizo in another shop.
 
 ## Can Node.js and MySQL be installed in one click?

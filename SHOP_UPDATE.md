@@ -24,15 +24,16 @@ Send the full `shop-update` folder to the shop.
 ## Shop Server PC
 
 1. Close the Badizo Electron app on server and slave PCs.
-2. Copy the new `shop-update` package contents into the existing Badizo app folder on the server.
-3. Double-click:
+2. Copy the full `shop-update` folder to the server.
+3. Open the copied `shop-update` folder.
+4. Double-click:
 
 ```text
 apply-shop-update-one-click.bat
 ```
 
-4. Click Yes when Windows asks for Administrator permission.
-5. Wait for the success message.
+5. Click Yes when Windows asks for Administrator permission.
+6. Wait for the success message.
 
 The update script will:
 
