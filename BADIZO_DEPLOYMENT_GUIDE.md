@@ -49,6 +49,42 @@ These folders are created by build scripts. Copy the full folder to the shop PC.
 
 Use this when the shop server already has Badizo installed and running.
 
+### Existing Shop: Convert Repo Server To Deployment Folder
+
+Use this once when the existing server currently runs from the development repo folder and you want to move it to:
+
+```text
+C:\BadizoServer
+```
+
+On the existing server, from the repo folder, double-click:
+
+```text
+scripts\windows\migrate-existing-server-to-deployment-one-click.bat
+```
+
+This will:
+
+- Stop old Badizo backend/frontend startup tasks.
+- Stop old processes using ports `3000` and `5000`.
+- Copy app files to `C:\BadizoServer`.
+- Exclude `.git`, `node_modules`, logs, and local database backup folders.
+- Install backend/frontend dependencies in `C:\BadizoServer`.
+- Build frontend for the server IP.
+- Reinstall backend/frontend startup tasks pointing to `C:\BadizoServer`.
+- Keep MySQL untouched.
+- Check server health.
+
+It does not:
+
+- Uninstall MySQL.
+- Delete `C:\ProgramData\MySQL`.
+- Drop database `badizo_pos`.
+- Delete sales/invoices/products.
+- Reset tables.
+
+After success, keep the old repo folder for a few days as a code backup. Do not delete MySQL folders.
+
 ### Existing Shop: Setup Slaves
 
 On each slave PC, keep these three files in one folder:
@@ -353,6 +389,12 @@ Existing shop slave setup:
 
 ```text
 setup-slave-one-click.bat
+```
+
+Existing shop convert repo server to deployment folder:
+
+```text
+scripts\windows\migrate-existing-server-to-deployment-one-click.bat
 ```
 
 Existing shop update package build:
