@@ -27,7 +27,8 @@ router.get('/dashboard', authorize('SERVER', 'ADMIN'), async (_req, res) => {
          COALESCE(SUM(gst_total), 0) AS gst_total,
          COALESCE(AVG(grand_total), 0) AS average_bill
        FROM invoices
-       WHERE DATE(created_at) = ?`,
+       WHERE DATE(created_at) = ?
+         AND invoice_status <> 'CANCELLED'`,
       [date]
     );
 
@@ -42,17 +43,30 @@ router.get('/dashboard', authorize('SERVER', 'ADMIN'), async (_req, res) => {
       `SELECT billing_counter, COUNT(*) AS bill_count, COALESCE(SUM(grand_total), 0) AS sales_total
        FROM invoices
        WHERE DATE(created_at) = ?
+         AND invoice_status <> 'CANCELLED'
        GROUP BY billing_counter
        ORDER BY billing_counter ASC`,
       [date]
     );
 
     const [paymentRows] = await db.query(
-      `SELECT payment_mode, COALESCE(SUM(grand_total), 0) AS sales_total
-       FROM invoices
-       WHERE DATE(created_at) = ?
+      `SELECT payment_mode, COALESCE(SUM(amount), 0) AS sales_total
+       FROM (
+         SELECT ip.invoice_no, ip.payment_mode, ip.amount
+         FROM invoice_payments ip
+         INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
+         WHERE DATE(i.created_at) = ?
+           AND i.invoice_status <> 'CANCELLED'
+         UNION ALL
+         SELECT i.invoice_no, i.payment_mode, i.grand_total AS amount
+         FROM invoices i
+         LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
+         WHERE DATE(i.created_at) = ?
+           AND i.invoice_status <> 'CANCELLED'
+           AND ip.id IS NULL
+       ) payments
        GROUP BY payment_mode`,
-      [date]
+      [date, date]
     );
 
     const [topProductRows] = await db.query(
@@ -60,6 +74,7 @@ router.get('/dashboard', authorize('SERVER', 'ADMIN'), async (_req, res) => {
        FROM invoice_items ii
        INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
        WHERE DATE(i.created_at) = ?
+         AND i.invoice_status <> 'CANCELLED'
        GROUP BY ii.barcode, ii.product_name
        ORDER BY quantity DESC
        LIMIT 5`,
@@ -148,6 +163,7 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
          GROUP BY invoice_no
        ) item_counts ON item_counts.invoice_no = i.invoice_no
        WHERE DATE(i.created_at) BETWEEN ? AND ?
+       AND i.invoice_status <> 'CANCELLED'
        ${counterSql}
        ORDER BY i.created_at DESC`,
       values
@@ -473,6 +489,7 @@ async function getDailySalesForExport(from, to, counter) {
        GROUP BY invoice_no
      ) item_counts ON item_counts.invoice_no = i.invoice_no
      WHERE DATE(i.created_at) BETWEEN ? AND ?
+     AND i.invoice_status <> 'CANCELLED'
      ${counterSql}
      ORDER BY i.created_at DESC`,
     values
@@ -513,6 +530,7 @@ router.get('/gst-hsn', authorize('SERVER', 'ADMIN'), async (req, res) => {
        INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
        LEFT JOIN products p ON p.barcode = ii.barcode
        WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
        GROUP BY
          COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), ''),
          COALESCE(NULLIF(p.product_code, ''), ii.barcode, ''),
@@ -567,6 +585,7 @@ router.get('/gst-hsn/product-details', authorize('SERVER', 'ADMIN'), async (req,
        INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
        LEFT JOIN products p ON p.barcode = ii.barcode
        WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
          AND (
            ii.barcode LIKE ?
            OR COALESCE(p.product_code, '') LIKE ?

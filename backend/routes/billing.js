@@ -26,6 +26,18 @@ function formatReturnNo() {
   return `SR-${stamp}`;
 }
 
+function moneyToPaise(value) {
+  return Math.round(parseMoney(value) * 100);
+}
+
+function paiseToMoney(value) {
+  return value / 100;
+}
+
+function parseCurrency(value) {
+  return paiseToMoney(moneyToPaise(value));
+}
+
 async function awardLoyaltyPoints(connection, invoiceNo, customerName, customerPhone, grandTotal, user) {
   const phone = normalizePhone(customerPhone);
   if (!phone || phone.length < 10) return null;
@@ -79,7 +91,8 @@ function enforceSavedStateCounter(user, savedState, counterNo) {
 
 function normalizePaymentSplits(paymentMode, paymentSplits, grandTotal, cashReceived, paymentReference) {
   const mode = ['Cash', 'UPI', 'Card', 'Mixed'].includes(paymentMode) ? paymentMode : 'Cash';
-  const total = parseMoney(grandTotal);
+  const totalPaise = moneyToPaise(grandTotal);
+  const total = paiseToMoney(totalPaise);
   if (mode !== 'Mixed') {
     return [{
       payment_mode: mode,
@@ -90,24 +103,24 @@ function normalizePaymentSplits(paymentMode, paymentSplits, grandTotal, cashRece
 
   const source = paymentSplits && typeof paymentSplits === 'object' ? paymentSplits : {};
   const rows = [
-    { payment_mode: 'Cash', amount: parseMoney(source.cash), payment_reference: null },
-    { payment_mode: 'UPI', amount: parseMoney(source.upi), payment_reference: source.upi_reference || source.reference || paymentReference || null },
-    { payment_mode: 'Card', amount: parseMoney(source.card), payment_reference: source.card_reference || source.reference || paymentReference || null }
+    { payment_mode: 'Cash', amount: parseCurrency(source.cash), payment_reference: null },
+    { payment_mode: 'UPI', amount: parseCurrency(source.upi), payment_reference: source.upi_reference || source.reference || paymentReference || null },
+    { payment_mode: 'Card', amount: parseCurrency(source.card), payment_reference: source.card_reference || source.reference || paymentReference || null }
   ].filter((row) => row.amount > 0);
 
   if (rows.length < 2) {
     throw new Error('Enter amounts in any two payment modes for Mixed payment.');
   }
 
-  const paidTotal = rows.reduce((sum, row) => sum + row.amount, 0);
-  if (paidTotal + 0.001 < total) {
+  const paidPaise = rows.reduce((sum, row) => sum + moneyToPaise(row.amount), 0);
+  if (paidPaise < totalPaise) {
     throw new Error('Mixed payment total must be equal to or greater than bill amount.');
   }
-  const excess = paidTotal - total;
-  if (excess > 0.001) {
+  const excessPaise = paidPaise - totalPaise;
+  if (excessPaise > 0) {
     const cashRow = rows.find((row) => row.payment_mode === 'Cash' && row.amount > 0);
     const adjustmentRow = cashRow || rows[rows.length - 1];
-    adjustmentRow.amount = Math.max(adjustmentRow.amount - excess, 0);
+    adjustmentRow.amount = paiseToMoney(Math.max(moneyToPaise(adjustmentRow.amount) - excessPaise, 0));
   }
   return rows.filter((row) => row.amount > 0);
 }
@@ -432,10 +445,15 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       : [];
     const exchangeTotal = normalizedExchangeItems.reduce((total, item) => total + item.line_total, 0) || parseMoney(exchange_total);
     const normalizedPaymentMode = ['Cash', 'UPI', 'Card', 'Mixed'].includes(payment_mode) ? payment_mode : 'Cash';
-    const paymentSplits = normalizePaymentSplits(normalizedPaymentMode, payment_splits, grand_total, cash_received, payment_reference);
-    const paidTotal = paymentSplits.reduce((sum, row) => sum + row.amount, 0);
-    const tenderTotal = normalizedPaymentMode === 'Mixed' ? parseMoney(cash_received || paidTotal) : paidTotal;
-    const changeReturned = Math.max(tenderTotal - parseMoney(grand_total), 0);
+    const grandTotal = parseCurrency(grand_total);
+    const paymentSplits = normalizePaymentSplits(normalizedPaymentMode, payment_splits, grandTotal, cash_received, payment_reference);
+    const paidTotalPaise = paymentSplits.reduce((sum, row) => sum + moneyToPaise(row.amount), 0);
+    const tenderTotalPaise = normalizedPaymentMode === 'Mixed' ? moneyToPaise(cash_received || paiseToMoney(paidTotalPaise)) : paidTotalPaise;
+    const grandTotalPaise = moneyToPaise(grandTotal);
+    if (normalizedPaymentMode === 'Cash' && moneyToPaise(cash_received) < grandTotalPaise) {
+      throw new Error('Cash received must be equal to or greater than the bill total.');
+    }
+    const changeReturned = paiseToMoney(Math.max(tenderTotalPaise - grandTotalPaise, 0));
     const referenceText = normalizedPaymentMode === 'Mixed'
       ? paymentSplits
         .filter((row) => row.payment_reference)
@@ -454,11 +472,11 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         customer_name || 'Walk-in Customer',
         customer_address || null,
         customer_phone || '',
-        parseMoney(sub_total),
-        parseMoney(gst_total),
-        parseMoney(grand_total),
-        normalizedPaymentMode === 'Cash' ? parseMoney(cash_received) : tenderTotal,
-        normalizedPaymentMode === 'Cash' ? parseMoney(change_returned) : changeReturned,
+        parseCurrency(sub_total),
+        parseCurrency(gst_total),
+        grandTotal,
+        normalizedPaymentMode === 'Cash' ? parseCurrency(cash_received) : paiseToMoney(tenderTotalPaise),
+        normalizedPaymentMode === 'Cash' ? parseCurrency(change_returned) : changeReturned,
         normalizedPaymentMode,
         payment_status || 'PAID',
         referenceText,
@@ -468,10 +486,10 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         tax_type || 'LOCAL',
         customer_company_name || null,
         customer_gstin || null,
-        parseMoney(total_cgst),
-        parseMoney(total_sgst),
-        parseMoney(total_igst),
-        exchangeTotal,
+        parseCurrency(total_cgst),
+        parseCurrency(total_sgst),
+        parseCurrency(total_igst),
+        parseCurrency(exchangeTotal),
         normalizedExchangeItems.length ? JSON.stringify(normalizedExchangeItems) : null
       ]
     );
@@ -565,7 +583,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       details: {
         counterNo,
         paymentMode: payment_mode || 'Cash',
-        grandTotal: parseMoney(grand_total),
+        grandTotal,
         itemCount: items.length,
         freeItemCount: freeItems.length,
         exchangeTotal,
@@ -700,7 +718,7 @@ router.post('/invoice/void', authenticate, authorize('SERVER', 'ADMIN'), async (
     await connection.beginTransaction();
 
     const [invoiceRows] = await connection.query(
-      `SELECT invoice_no, invoice_status
+      `SELECT invoice_no, invoice_status, exchange_items_json
        FROM invoices
        WHERE invoice_no = ?
        FOR UPDATE`,
@@ -740,6 +758,28 @@ router.post('/invoice/void', authenticate, authorize('SERVER', 'ADMIN'), async (
       }
       await restoreFreeOfferQuantity(connection, item.id, item.quantity);
       await restoreProductFreePromotionQuantity(connection, item.id, item.quantity);
+    }
+
+    let exchangeItems = [];
+    try {
+      exchangeItems = Array.isArray(invoice.exchange_items_json)
+        ? invoice.exchange_items_json
+        : JSON.parse(invoice.exchange_items_json || '[]');
+    } catch (err) {
+      exchangeItems = [];
+    }
+
+    for (const item of exchangeItems) {
+      const quantity = parseMoney(item.quantity);
+      const barcode = String(item.barcode || '').trim();
+      if (!barcode || quantity <= 0) continue;
+      await connection.query(
+        `UPDATE products
+         SET stock_qty = stock_qty - ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE barcode = ?`,
+        [quantity, barcode]
+      );
     }
 
     await connection.query(
@@ -904,7 +944,7 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
     const [remainingRows] = await connection.query(
       `SELECT COUNT(*) AS remaining
        FROM invoice_items
-       WHERE invoice_no = ? AND returned_qty < quantity`,
+       WHERE invoice_no = ? AND is_free_bonus = 0 AND returned_qty < quantity`,
       [invoiceNo]
     );
     const nextStatus = Number(remainingRows[0]?.remaining || 0) === 0 ? 'RETURNED' : 'PARTIALLY_RETURNED';
