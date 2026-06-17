@@ -234,6 +234,13 @@ export async function fetchGstHsnReport({ from, to } = {}) {
   return data;
 }
 
+export async function fetchGstHsnProductDetails({ from, to, search } = {}) {
+  const { data } = await api.get('/reports/gst-hsn/product-details', {
+    params: { from, to, search }
+  });
+  return data;
+}
+
 export async function fetchMonthlySalesReport(month) {
   const { data } = await api.get('/reports/monthly-sales', { params: { month } });
   return data;

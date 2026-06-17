@@ -883,6 +883,63 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.hsn-summary-controls {
+  margin-bottom: 12px;
+}
+
+.hsn-summary-field {
+  min-width: 140px;
+}
+
+.hsn-summary-product-field {
+  min-width: 220px;
+}
+
+.hsn-summary-total-box {
+  display: inline-flex;
+  min-width: 118px;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  padding: 8px 10px;
+}
+
+.hsn-summary-total-box span {
+  color: #667085;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.hsn-summary-total-box strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.hsn-product-detail-box {
+  margin: 12px 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  padding: 12px;
+}
+
+.hsn-product-detail-form {
+  margin-bottom: 10px;
+}
+
+.hsn-product-detail-search {
+  min-width: 320px;
+  flex: 1 1 320px;
+}
+
+.hsn-product-detail-table {
+  margin-top: 8px;
+}
+
 .date-range-field {
   min-width: 170px;
 }

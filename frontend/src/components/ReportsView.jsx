@@ -8,6 +8,7 @@ import {
   fetchExchangeBillsReport,
   fetchExceptionReport,
   fetchGstHsnReport,
+  fetchGstHsnProductDetails,
   fetchGstr1Report,
   fetchMonthlySalesReport,
   fetchReprintReport,
@@ -40,6 +41,33 @@ function exportWorkbook(filename, sheets) {
 
 function reportFileName(name, from, to) {
   return `badizo_${name}_${from}_to_${to}.xlsx`;
+}
+
+const HSN_RANGE_OPTIONS = [
+  { value: 'ALL', label: 'All HSN' },
+  { value: '0-1000', label: '0 - 1000', min: 0, max: 1000 },
+  { value: '1001-9999', label: '1001 - 9999', min: 1001, max: 9999 },
+  { value: '10000-UP', label: '10000 & above', min: 10000, max: Infinity }
+];
+
+const GST_PERCENT_OPTIONS = ['ALL', '0', '3', '5', '18', '40'];
+
+const QTY_SORT_OPTIONS = [
+  { value: 'DEFAULT', label: 'Default Qty' },
+  { value: 'TOP', label: 'Top Qty' },
+  { value: 'LOW', label: 'Low Qty' }
+];
+
+const DEFAULT_HSN_FILTERS = {
+  hsnRange: 'ALL',
+  gstPercent: 'ALL',
+  productSearch: '',
+  qtySort: 'DEFAULT'
+};
+
+function getHsnNumber(value) {
+  const match = String(value || '').match(/\d+/);
+  return match ? Number(match[0]) : null;
 }
 
 function ReportHeader({ title, onExcel, onPdf }) {
@@ -77,6 +105,11 @@ export default function ReportsView({ isActive = true, onClose }) {
     }
   });
   const [hsnReport, setHsnReport] = useState({ rows: [] });
+  const [hsnFilters, setHsnFilters] = useState(DEFAULT_HSN_FILTERS);
+  const [hsnProductSearch, setHsnProductSearch] = useState('');
+  const [hsnProductDetails, setHsnProductDetails] = useState({ rows: [], totals: { quantity: 0, gross: 0, cgst: 0, sgst: 0, igst: 0 } });
+  const [hsnProductDetailError, setHsnProductDetailError] = useState('');
+  const [hsnProductDetailLoading, setHsnProductDetailLoading] = useState(false);
   const [monthlyReport, setMonthlyReport] = useState({ rows: [] });
   const [stockReport, setStockReport] = useState([]);
   const [topProducts, setTopProducts] = useState({ rows: [] });
@@ -96,6 +129,72 @@ export default function ReportsView({ isActive = true, onClose }) {
   useEffect(() => {
     if (isActive) loadReports();
   }, [isActive]);
+
+  const filteredHsnRows = useMemo(() => {
+    const selectedRange = HSN_RANGE_OPTIONS.find((option) => option.value === hsnFilters.hsnRange);
+    const rows = (hsnReport.rows || []).filter((row) => {
+      if (selectedRange && selectedRange.value !== 'ALL') {
+        const hsnNumber = getHsnNumber(row.hsn_code);
+        if (hsnNumber === null || hsnNumber < selectedRange.min || hsnNumber > selectedRange.max) {
+          return false;
+        }
+      }
+
+      if (hsnFilters.gstPercent !== 'ALL' && Number(row.gst_percent || 0) !== Number(hsnFilters.gstPercent)) {
+        return false;
+      }
+
+      const productSearch = hsnFilters.productSearch.trim().toLowerCase();
+      if (productSearch) {
+        const productText = `${row.product_code || ''} ${row.product_name || ''}`.toLowerCase();
+        if (!productText.includes(productSearch)) return false;
+      }
+
+      return true;
+    });
+
+    if (hsnFilters.qtySort === 'TOP') {
+      return [...rows].sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0));
+    }
+
+    if (hsnFilters.qtySort === 'LOW') {
+      return [...rows].sort((a, b) => Number(a.quantity || 0) - Number(b.quantity || 0));
+    }
+
+    return rows;
+  }, [hsnFilters, hsnReport.rows]);
+
+  const filteredHsnTotals = useMemo(() => filteredHsnRows.reduce((totals, row) => ({
+    gross: totals.gross + Number(row.gross_total || 0),
+    cgst: totals.cgst + Number(row.cgst || 0),
+    sgst: totals.sgst + Number(row.sgst || 0),
+    igst: totals.igst + Number(row.igst || 0)
+  }), { gross: 0, cgst: 0, sgst: 0, igst: 0 }), [filteredHsnRows]);
+
+  async function handleHsnProductDetailSubmit(event) {
+    event.preventDefault();
+    const search = hsnProductSearch.trim();
+    if (!search) {
+      setHsnProductDetailError('Enter product code, barcode, or product name.');
+      setHsnProductDetails({ rows: [], totals: { quantity: 0, gross: 0, cgst: 0, sgst: 0, igst: 0 } });
+      return;
+    }
+
+    setHsnProductDetailLoading(true);
+    setHsnProductDetailError('');
+    try {
+      const { from, to } = getOrderedRange(fromDate, toDate);
+      const data = await fetchGstHsnProductDetails({ from, to, search });
+      setHsnProductDetails({
+        rows: data.rows || [],
+        totals: data.totals || { quantity: 0, gross: 0, cgst: 0, sgst: 0, igst: 0 }
+      });
+    } catch (err) {
+      setHsnProductDetailError(err.response?.data?.error || err.message || 'Unable to load product sale details.');
+    } finally {
+      setHsnProductDetailLoading(false);
+    }
+  }
 
   async function loadReports() {
     setErrorMessage('');
@@ -204,8 +303,10 @@ export default function ReportsView({ isActive = true, onClose }) {
   }
 
   function exportHsnExcel() {
-    exportRows('gst_hsn_summary', hsnReport.rows.map((row) => ({
+    exportRows('gst_hsn_summary', filteredHsnRows.map((row) => ({
       HSN: row.hsn_code || '-',
+      'Product Code': row.product_code || '',
+      'Product Name': row.product_name || '',
       'GST %': Number(row.gst_percent || 0),
       Qty: Number(row.quantity || 0),
       Gross: Number(row.gross_total || 0),
@@ -467,11 +568,135 @@ export default function ReportsView({ isActive = true, onClose }) {
           <section className="panel">
             <ReportHeader title="GST HSN-wise Summary" onExcel={exportHsnExcel} onPdf={exportPdf} />
             <div className="panel-body">
+              <div className="report-filter-row hsn-summary-controls">
+                <label className="hsn-summary-field">
+                  <span className="field-label">HSN</span>
+                  <select
+                    className="select"
+                    value={hsnFilters.hsnRange}
+                    onChange={(event) => setHsnFilters((current) => ({ ...current, hsnRange: event.target.value }))}
+                  >
+                    {HSN_RANGE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="hsn-summary-field">
+                  <span className="field-label">GST %</span>
+                  <select
+                    className="select"
+                    value={hsnFilters.gstPercent}
+                    onChange={(event) => setHsnFilters((current) => ({ ...current, gstPercent: event.target.value }))}
+                  >
+                    {GST_PERCENT_OPTIONS.map((percent) => (
+                      <option key={percent} value={percent}>{percent === 'ALL' ? 'All GST' : `${percent}%`}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="hsn-summary-product-field">
+                  <span className="field-label">Product</span>
+                  <input
+                    className="field"
+                    value={hsnFilters.productSearch}
+                    onChange={(event) => setHsnFilters((current) => ({ ...current, productSearch: event.target.value }))}
+                    placeholder="Code / name"
+                  />
+                </label>
+                <label className="hsn-summary-field">
+                  <span className="field-label">Qty</span>
+                  <select
+                    className="select"
+                    value={hsnFilters.qtySort}
+                    onChange={(event) => setHsnFilters((current) => ({ ...current, qtySort: event.target.value }))}
+                  >
+                    {QTY_SORT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <button className="secondary-button" type="button" onClick={() => setHsnFilters(DEFAULT_HSN_FILTERS)}>Clear</button>
+                <span className="status-chip">{filteredHsnRows.length} rows</span>
+                <div className="hsn-summary-total-box">
+                  <span>Gross</span>
+                  <strong>{formatMoney(filteredHsnTotals.gross)}</strong>
+                </div>
+                <div className="hsn-summary-total-box">
+                  <span>CGST</span>
+                  <strong>{formatMoney(filteredHsnTotals.cgst)}</strong>
+                </div>
+                <div className="hsn-summary-total-box">
+                  <span>SGST</span>
+                  <strong>{formatMoney(filteredHsnTotals.sgst)}</strong>
+                </div>
+                <div className="hsn-summary-total-box">
+                  <span>IGST</span>
+                  <strong>{formatMoney(filteredHsnTotals.igst)}</strong>
+                </div>
+              </div>
+              <div className="hsn-product-detail-box">
+                <form className="report-filter-row hsn-product-detail-form" onSubmit={handleHsnProductDetailSubmit}>
+                  <label className="hsn-product-detail-search">
+                    <span className="field-label">Product Sale Details</span>
+                    <input
+                      className="field"
+                      value={hsnProductSearch}
+                      onChange={(event) => setHsnProductSearch(event.target.value)}
+                      placeholder="Product code / barcode / product name"
+                    />
+                  </label>
+                  <button className="secondary-button" type="submit" disabled={hsnProductDetailLoading}>
+                    {hsnProductDetailLoading ? 'Loading...' : 'Search'}
+                  </button>
+                  <span className="status-chip">{hsnProductDetails.rows.length} entries</span>
+                  <div className="hsn-summary-total-box">
+                    <span>Qty</span>
+                    <strong>{Number(hsnProductDetails.totals?.quantity || 0)}</strong>
+                  </div>
+                  <div className="hsn-summary-total-box">
+                    <span>Gross</span>
+                    <strong>{formatMoney(hsnProductDetails.totals?.gross)}</strong>
+                  </div>
+                  <div className="hsn-summary-total-box">
+                    <span>CGST</span>
+                    <strong>{formatMoney(hsnProductDetails.totals?.cgst)}</strong>
+                  </div>
+                  <div className="hsn-summary-total-box">
+                    <span>SGST</span>
+                    <strong>{formatMoney(hsnProductDetails.totals?.sgst)}</strong>
+                  </div>
+                  <div className="hsn-summary-total-box">
+                    <span>IGST</span>
+                    <strong>{formatMoney(hsnProductDetails.totals?.igst)}</strong>
+                  </div>
+                </form>
+                {hsnProductDetailError ? <div className="error-banner">{hsnProductDetailError}</div> : null}
+                <table className="history-table hsn-product-detail-table">
+                  <thead><tr><th>Date</th><th>Time</th><th>Invoice</th><th>Counter</th><th>Product Code</th><th>Product Name</th><th>HSN</th><th>GST %</th><th>Qty</th><th>Gross</th></tr></thead>
+                  <tbody>
+                    {hsnProductDetails.rows.length === 0 ? (
+                      <tr><td colSpan="10">Search a product to view date/time/counter wise sale details.</td></tr>
+                    ) : hsnProductDetails.rows.map((row, index) => (
+                      <tr key={`${row.invoice_no}-${row.barcode}-${row.sale_time}-${index}`}>
+                        <td>{row.sale_date || '-'}</td>
+                        <td>{row.sale_time || '-'}</td>
+                        <td>{row.invoice_no || '-'}</td>
+                        <td>{row.billing_counter || '-'}</td>
+                        <td>{row.product_code || row.barcode || '-'}</td>
+                        <td>{row.product_name || '-'}</td>
+                        <td>{row.hsn_code || '-'}</td>
+                        <td>{Number(row.gst_percent || 0)}%</td>
+                        <td>{Number(row.quantity || 0)}</td>
+                        <td>{formatMoney(row.gross_total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               <table className="history-table">
-                <thead><tr><th>HSN</th><th>GST %</th><th>Qty</th><th>Gross</th><th>CGST</th><th>SGST</th><th>IGST</th></tr></thead>
+                <thead><tr><th>HSN</th><th>Product Code</th><th>Product Name</th><th>GST %</th><th>Qty</th><th>Gross</th><th>CGST</th><th>SGST</th><th>IGST</th></tr></thead>
                 <tbody>
-                  {hsnReport.rows.length === 0 ? <tr><td colSpan="7">No GST data for selected date range.</td></tr> : hsnReport.rows.map((row) => (
-                    <tr key={`${row.hsn_code}-${row.gst_percent}`}><td>{row.hsn_code || '-'}</td><td>{Number(row.gst_percent || 0)}%</td><td>{Number(row.quantity || 0)}</td><td>{formatMoney(row.gross_total)}</td><td>{formatMoney(row.cgst)}</td><td>{formatMoney(row.sgst)}</td><td>{formatMoney(row.igst)}</td></tr>
+                  {filteredHsnRows.length === 0 ? <tr><td colSpan="9">No GST data for selected filters/date range.</td></tr> : filteredHsnRows.map((row) => (
+                    <tr key={`${row.hsn_code}-${row.product_code}-${row.product_name}-${row.gst_percent}`}><td>{row.hsn_code || '-'}</td><td>{row.product_code || '-'}</td><td>{row.product_name || '-'}</td><td>{Number(row.gst_percent || 0)}%</td><td>{Number(row.quantity || 0)}</td><td>{formatMoney(row.gross_total)}</td><td>{formatMoney(row.cgst)}</td><td>{formatMoney(row.sgst)}</td><td>{formatMoney(row.igst)}</td></tr>
                   ))}
                 </tbody>
               </table>

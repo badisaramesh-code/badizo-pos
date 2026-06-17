@@ -499,11 +499,13 @@ router.get('/gst-hsn', authorize('SERVER', 'ADMIN'), async (req, res) => {
     const from = normalizeDate(req.query.from, todayIso());
     const to = normalizeDate(req.query.to, from);
     const [rows] = await db.query(
-      `SELECT
-         COALESCE(p.hsn_code, '') AS hsn_code,
-         ii.gst_percent,
-         SUM(ii.quantity) AS quantity,
-         SUM(ii.quantity * ii.sale_price) AS gross_total,
+       `SELECT
+          COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), '') AS hsn_code,
+          COALESCE(NULLIF(p.product_code, ''), ii.barcode, '') AS product_code,
+          COALESCE(NULLIF(ii.product_name, ''), NULLIF(p.product_name, ''), '') AS product_name,
+          ii.gst_percent,
+          SUM(ii.quantity) AS quantity,
+          SUM(ii.quantity * ii.sale_price) AS gross_total,
          SUM(ii.cgst_amount) AS cgst,
          SUM(ii.sgst_amount) AS sgst,
          SUM(ii.igst_amount) AS igst
@@ -511,8 +513,12 @@ router.get('/gst-hsn', authorize('SERVER', 'ADMIN'), async (req, res) => {
        INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
        LEFT JOIN products p ON p.barcode = ii.barcode
        WHERE DATE(i.created_at) BETWEEN ? AND ?
-       GROUP BY COALESCE(p.hsn_code, ''), ii.gst_percent
-       ORDER BY hsn_code ASC, ii.gst_percent ASC`,
+       GROUP BY
+         COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), ''),
+         COALESCE(NULLIF(p.product_code, ''), ii.barcode, ''),
+         COALESCE(NULLIF(ii.product_name, ''), NULLIF(p.product_name, ''), ''),
+         ii.gst_percent
+       ORDER BY hsn_code ASC, ii.gst_percent ASC, product_name ASC`,
       [from, to]
     );
 
@@ -520,6 +526,70 @@ router.get('/gst-hsn', authorize('SERVER', 'ADMIN'), async (req, res) => {
   } catch (err) {
     console.error('GST HSN report failed:', err.message);
     res.status(500).json({ error: 'Unable to load GST HSN report.' });
+  }
+});
+
+router.get('/gst-hsn/product-details', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const from = normalizeDate(req.query.from, todayIso());
+    const to = normalizeDate(req.query.to, from);
+    const search = String(req.query.search || '').trim();
+
+    if (!search) {
+      return res.json({
+        from,
+        to,
+        search,
+        rows: [],
+        totals: { quantity: 0, gross: 0, cgst: 0, sgst: 0, igst: 0 }
+      });
+    }
+
+    const like = `%${search}%`;
+    const [rows] = await db.query(
+      `SELECT
+         DATE_FORMAT(i.created_at, '%Y-%m-%d') AS sale_date,
+         TIME_FORMAT(i.created_at, '%H:%i:%s') AS sale_time,
+         i.invoice_no,
+         i.billing_counter,
+         ii.barcode,
+         COALESCE(NULLIF(p.product_code, ''), ii.barcode, '') AS product_code,
+         COALESCE(NULLIF(ii.product_name, ''), NULLIF(p.product_name, ''), '') AS product_name,
+         COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), '') AS hsn_code,
+         ii.gst_percent,
+         ii.quantity,
+         ii.sale_price,
+         (ii.quantity * ii.sale_price) AS gross_total,
+         ii.cgst_amount AS cgst,
+         ii.sgst_amount AS sgst,
+         ii.igst_amount AS igst
+       FROM invoice_items ii
+       INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
+       LEFT JOIN products p ON p.barcode = ii.barcode
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND (
+           ii.barcode LIKE ?
+           OR COALESCE(p.product_code, '') LIKE ?
+           OR COALESCE(ii.product_name, '') LIKE ?
+           OR COALESCE(p.product_name, '') LIKE ?
+         )
+       ORDER BY i.created_at DESC, i.invoice_no DESC, ii.id DESC
+       LIMIT 500`,
+      [from, to, like, like, like, like]
+    );
+
+    const totals = rows.reduce((acc, row) => ({
+      quantity: acc.quantity + Number(row.quantity || 0),
+      gross: acc.gross + Number(row.gross_total || 0),
+      cgst: acc.cgst + Number(row.cgst || 0),
+      sgst: acc.sgst + Number(row.sgst || 0),
+      igst: acc.igst + Number(row.igst || 0)
+    }), { quantity: 0, gross: 0, cgst: 0, sgst: 0, igst: 0 });
+
+    res.json({ from, to, search, rows, totals });
+  } catch (err) {
+    console.error('GST HSN product details failed:', err.message);
+    res.status(500).json({ error: 'Unable to load GST HSN product details.' });
   }
 });
 
@@ -768,7 +838,7 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
 
     const [hsn] = await db.query(
       `SELECT
-         COALESCE(p.hsn_code, '') AS hsn_code,
+         COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), '') AS hsn_code,
          ii.gst_percent,
          SUM(ii.quantity) AS quantity,
          SUM((ii.quantity * ii.sale_price) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable_value,
@@ -780,14 +850,14 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
        INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
        LEFT JOIN products p ON p.barcode = ii.barcode
        WHERE DATE(i.created_at) BETWEEN ? AND ? AND i.invoice_status <> 'CANCELLED'
-       GROUP BY COALESCE(p.hsn_code, ''), ii.gst_percent
+       GROUP BY COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), ''), ii.gst_percent
        ORDER BY hsn_code ASC, ii.gst_percent ASC`,
       [from, to]
     );
 
     const [hsnB2b] = await db.query(
       `SELECT
-         COALESCE(p.hsn_code, '') AS hsn_code,
+         COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), '') AS hsn_code,
          ii.gst_percent,
          SUM(ii.quantity) AS quantity,
          SUM((ii.quantity * ii.sale_price) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable_value,
@@ -801,14 +871,14 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
        WHERE DATE(i.created_at) BETWEEN ? AND ?
          AND i.invoice_status <> 'CANCELLED'
          AND (i.transaction_type = 'B2B' OR COALESCE(i.customer_gstin, '') <> '')
-       GROUP BY COALESCE(p.hsn_code, ''), ii.gst_percent
+       GROUP BY COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), ''), ii.gst_percent
        ORDER BY hsn_code ASC, ii.gst_percent ASC`,
       [from, to]
     );
 
     const [hsnB2c] = await db.query(
       `SELECT
-         COALESCE(p.hsn_code, '') AS hsn_code,
+         COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), '') AS hsn_code,
          ii.gst_percent,
          SUM(ii.quantity) AS quantity,
          SUM((ii.quantity * ii.sale_price) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable_value,
@@ -823,7 +893,7 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
          AND i.invoice_status <> 'CANCELLED'
          AND i.transaction_type <> 'B2B'
          AND COALESCE(i.customer_gstin, '') = ''
-       GROUP BY COALESCE(p.hsn_code, ''), ii.gst_percent
+       GROUP BY COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), ''), ii.gst_percent
        ORDER BY hsn_code ASC, ii.gst_percent ASC`,
       [from, to]
     );

@@ -179,6 +179,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         invoice_no VARCHAR(50) NOT NULL,
         barcode VARCHAR(120) NOT NULL,
         product_name VARCHAR(255) NOT NULL,
+        hsn_code VARCHAR(20) DEFAULT '',
         quantity DECIMAL(10,2) NOT NULL DEFAULT 1.00,
         sale_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         gst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
@@ -850,6 +851,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'invoices', 'cancelled_by', 'VARCHAR(100) DEFAULT NULL AFTER cancel_reason');
     await ensureColumn(connection, 'invoices', 'cancelled_at', 'TIMESTAMP NULL DEFAULT NULL AFTER cancelled_by');
     await ensureColumn(connection, 'invoices', 'reprint_count', 'INT NOT NULL DEFAULT 0 AFTER cancelled_at');
+    await ensureColumn(connection, 'invoice_items', 'hsn_code', "VARCHAR(20) DEFAULT '' AFTER product_name");
     await ensureColumn(connection, 'invoice_items', 'cgst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER gst_percent');
     await ensureColumn(connection, 'invoice_items', 'sgst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER cgst_amount');
     await ensureColumn(connection, 'invoice_items', 'igst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER sgst_amount');
@@ -857,6 +859,13 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'invoice_items', 'free_offer_id', 'BIGINT DEFAULT NULL AFTER is_free_bonus');
     await ensureColumn(connection, 'invoice_items', 'returned_qty', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER igst_amount');
     await ensureColumn(connection, 'invoice_item_batches', 'returned_qty', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER quantity');
+    await connection.query(`
+      UPDATE invoice_items ii
+      LEFT JOIN products p ON p.barcode = ii.barcode
+      SET ii.hsn_code = COALESCE(NULLIF(p.hsn_code, ''), ii.hsn_code)
+      WHERE COALESCE(ii.hsn_code, '') = ''
+        AND COALESCE(p.hsn_code, '') <> ''
+    `);
     await ensureColumn(connection, 'batch_free_offers', 'free_qty_per_sale', 'DECIMAL(12,3) NOT NULL DEFAULT 1.000 AFTER free_product_name');
     await ensureColumn(connection, 'inward_entries', 'total_cgst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER gst_total');
     await ensureColumn(connection, 'inward_entries', 'total_sgst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER total_cgst');
