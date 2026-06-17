@@ -150,6 +150,14 @@ function formatSlipAmount(value) {
   return toNumber(value).toFixed(2);
 }
 
+function moneyToPaise(value) {
+  return Math.round(toNumber(value) * 100);
+}
+
+function paiseToMoney(value) {
+  return moneyToPaise(value) / 100;
+}
+
 function localIsoDate(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -749,11 +757,16 @@ export default function BillingTerminalView({ isActive = true }) {
   const mixedPaymentModeCount = [mixedPayment.cash, mixedPayment.upi, mixedPayment.card]
     .filter((amount) => toNumber(amount) > 0).length;
   const mixedHasDigital = toNumber(mixedPayment.upi) > 0 || toNumber(mixedPayment.card) > 0;
-  const changeDue = Math.max((paymentMode === 'Mixed' ? mixedPaidTotal : toNumber(cashReceived)) - totals.grand, 0);
+  const payableTotal = paiseToMoney(totals.grand);
+  const mixedPaidPaise = moneyToPaise(mixedPaidTotal);
   const cashReceivedAmount = toNumber(cashReceived);
+  const cashReceivedPaise = moneyToPaise(cashReceived);
+  const paidPaise = paymentMode === 'Mixed' ? mixedPaidPaise : cashReceivedPaise;
+  const payablePaise = moneyToPaise(payableTotal);
+  const changeDue = Math.max(paidPaise - payablePaise, 0) / 100;
   const isCashReady = paymentMode === 'Mixed'
-    ? mixedPaymentModeCount >= 2 && mixedPaidTotal >= totals.grand
-    : paymentMode !== 'Cash' || cashReceivedAmount >= totals.grand;
+    ? mixedPaymentModeCount >= 2 && mixedPaidPaise >= payablePaise
+    : paymentMode !== 'Cash' || payablePaise <= 0 || (cashReceivedAmount > 0 && cashReceivedPaise >= payablePaise);
   const canCompleteSale = cart.length > 0 && isCashReady && !cart.some((item) => item.isUnknown) && !isCheckoutSubmitting;
   const hasUnknownLine = cart.some((item) => item.isUnknown);
   const latestInvoice = invoiceHistory[0];
@@ -2984,6 +2997,7 @@ export default function BillingTerminalView({ isActive = true }) {
     const effectiveMixedPaymentModeCount = [effectiveMixedPayment.cash, effectiveMixedPayment.upi, effectiveMixedPayment.card]
       .filter((amount) => toNumber(amount) > 0).length;
     const effectiveMixedHasDigital = toNumber(effectiveMixedPayment.upi) > 0 || toNumber(effectiveMixedPayment.card) > 0;
+    const payablePaiseForCheckout = moneyToPaise(paiseToMoney(totals.grand));
     setErrorMessage('');
     setStatusMessage('');
 
@@ -3023,7 +3037,8 @@ export default function BillingTerminalView({ isActive = true }) {
       : activePaymentMode === 'Mixed'
         ? effectiveMixedPaidTotal
         : totals.grand;
-    if (activePaymentMode === 'Cash' && received < totals.grand) {
+    const receivedPaise = moneyToPaise(received);
+    if (activePaymentMode === 'Cash' && receivedPaise < payablePaiseForCheckout) {
       setErrorMessage('Cash received must be equal to or greater than the bill total.');
       window.setTimeout(() => cashReceivedRef.current?.focus(), 50);
       return;
@@ -3035,7 +3050,7 @@ export default function BillingTerminalView({ isActive = true }) {
       return;
     }
 
-    if (activePaymentMode === 'Mixed' && received < totals.grand) {
+    if (activePaymentMode === 'Mixed' && receivedPaise < payablePaiseForCheckout) {
       setErrorMessage('Mixed payment total must be equal to or greater than the bill total.');
       window.setTimeout(() => mixedCashRef.current?.focus(), 50);
       return;
@@ -3088,7 +3103,7 @@ export default function BillingTerminalView({ isActive = true }) {
           card_reference: effectiveMixedPayment.card_reference || ''
         } : undefined,
         cash_received: received.toFixed(2),
-        change_returned: Math.max(received - totals.grand, 0).toFixed(2),
+        change_returned: (Math.max(receivedPaise - payablePaiseForCheckout, 0) / 100).toFixed(2),
         transaction_type: mode.transactionType,
         billing_tier: mode.tier,
         tax_type: mode.taxType,
@@ -3138,7 +3153,7 @@ export default function BillingTerminalView({ isActive = true }) {
           { mode: 'Card', amount: toNumber(effectiveMixedPayment.card), reference: effectiveMixedPayment.card_reference || '' }
         ].filter((row) => row.amount > 0) : [],
         cashReceived: received,
-        changeReturned: Math.max(received - totals.grand, 0),
+        changeReturned: Math.max(receivedPaise - payablePaiseForCheckout, 0) / 100,
         totals: {
           ...printableDraft.totals,
           grand: Math.round(totals.grand),
@@ -3149,7 +3164,7 @@ export default function BillingTerminalView({ isActive = true }) {
         exchangeItems: printableDraft.exchangeItems
       };
       setPrintableInvoice(completedInvoice);
-      setStatusMessage(`Invoice ${checkoutResult.invoice_no || invoiceNo} saved. Change due: ${formatMoney(Math.max(received - totals.grand, 0))}`);
+      setStatusMessage(`Invoice ${checkoutResult.invoice_no || invoiceNo} saved. Change due: ${formatMoney(Math.max(receivedPaise - payablePaiseForCheckout, 0) / 100)}`);
       setCashReceived('');
       setPaymentMode('Cash');
       setMixedPayment(EMPTY_MIXED_PAYMENT);
@@ -3706,7 +3721,7 @@ export default function BillingTerminalView({ isActive = true }) {
                     <strong>{formatMoney(mixedPaidTotal)}</strong>
                   </div>
                   {mixedPaymentModeCount < 2 && <div className="alert-box">Enter amounts in any two payment modes for Mixed payment.</div>}
-                  {mixedPaidTotal < totals.grand && <div className="alert-box">Mixed payment total must be equal to or greater than the bill total.</div>}
+                  {mixedPaidPaise < payablePaise && <div className="alert-box">Mixed payment total must be equal to or greater than the bill total.</div>}
                   {mixedHasDigital && !isDigitalPaymentContactReady(customerPhone) && <div className="alert-box">UPI/Card split ki phone number 10 digits or NO required.</div>}
                   <label className="change-box">
                     <input
