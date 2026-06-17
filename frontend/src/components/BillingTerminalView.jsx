@@ -3250,7 +3250,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 className="field search-input"
                 autoFocus
                 value={query}
-                onFocus={closeBillingActivityPanels}
+                onPointerDown={closeBillingActivityPanels}
                 onChange={handleSearchChange}
                 onKeyDown={handleSearchKeyDown}
                 onPaste={handleSearchPaste}
