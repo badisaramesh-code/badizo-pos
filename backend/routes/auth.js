@@ -23,6 +23,39 @@ function publicUser(row) {
   };
 }
 
+function loginOption(row) {
+  const counterNo = Number(row.counter_no || 0);
+  const label = row.role === 'COUNTER' && counterNo > 0
+    ? `Counter ${counterNo}`
+    : String(row.role || row.username).toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
+
+  return {
+    username: row.username,
+    label,
+    role: row.role,
+    counter_no: row.counter_no
+  };
+}
+
+router.get('/login-options', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT username, role, counter_no
+       FROM users
+       WHERE is_active = 1
+       ORDER BY
+         FIELD(role, 'SERVER', 'ADMIN', 'COUNTER'),
+         COALESCE(counter_no, 0),
+         username`
+    );
+
+    res.json({ options: rows.map(loginOption) });
+  } catch (err) {
+    console.error('Login options failed:', err.message);
+    res.status(500).json({ error: 'Unable to load login options.' });
+  }
+});
+
 router.post('/login', async (req, res) => {
   const { username, password } = req.body || {};
 

@@ -55,6 +55,11 @@ export async function login(username, password) {
   return data.user;
 }
 
+export async function fetchLoginOptions() {
+  const { data } = await api.get('/auth/login-options');
+  return Array.isArray(data.options) ? data.options : [];
+}
+
 export async function approveSensitiveBillingMode({ username, password, reason }) {
   const { data } = await api.post('/auth/approve-sensitive-mode', { username, password, reason });
   return data;

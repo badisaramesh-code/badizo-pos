@@ -1,17 +1,47 @@
-import React, { useState } from 'react';
-import { login } from '../api/client';
+import React, { useEffect, useState } from 'react';
+import { fetchLoginOptions, login } from '../api/client';
 
-const LOGIN_ROLES = [
+const FALLBACK_LOGIN_OPTIONS = [
   { label: 'Server', username: 'server' },
   { label: 'Admin', username: 'admin' },
-  { label: 'Counter 1', username: 'counter1' }
+  { label: 'Counter 1', username: 'counter1' },
+  { label: 'Counter 2', username: 'counter2' },
+  { label: 'Counter 3', username: 'counter3' }
 ];
 
 export default function LoginView({ onLogin }) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('admin123');
+  const [loginOptions, setLoginOptions] = useState(FALLBACK_LOGIN_OPTIONS);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadLoginOptions() {
+      try {
+        const options = await fetchLoginOptions();
+        if (!isMounted || options.length === 0) return;
+
+        setLoginOptions(options);
+        setUsername((currentUsername) => (
+          options.some((option) => option.username === currentUsername)
+            ? currentUsername
+            : options[0].username
+        ));
+      } catch (err) {
+        if (isMounted) {
+          setLoginOptions(FALLBACK_LOGIN_OPTIONS);
+        }
+      }
+    }
+
+    loadLoginOptions();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -42,7 +72,7 @@ export default function LoginView({ onLogin }) {
         <label>
           <span className="field-label">Role</span>
           <select className="field" value={username} onChange={(event) => setUsername(event.target.value)} autoFocus>
-            {LOGIN_ROLES.map((role) => (
+            {loginOptions.map((role) => (
               <option key={role.username} value={role.username}>{role.label}</option>
             ))}
           </select>
@@ -58,7 +88,7 @@ export default function LoginView({ onLogin }) {
         </button>
 
         <div className="change-box">
-          Select a role and enter its password.
+          Default passwords: Server server123, Admin admin123, Counters counter123.
         </div>
       </form>
     </div>

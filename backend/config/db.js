@@ -968,7 +968,9 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     const defaultUsers = [
       ['server', 'server123', 'SERVER', null],
       ['admin', 'admin123', 'ADMIN', null],
-      ['counter1', 'counter123', 'COUNTER', 1]
+      ['counter1', 'counter123', 'COUNTER', 1],
+      ['counter2', 'counter123', 'COUNTER', 2],
+      ['counter3', 'counter123', 'COUNTER', 3]
     ];
 
     for (const [username, password, role, counterNo] of defaultUsers) {
