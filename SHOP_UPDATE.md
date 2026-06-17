@@ -2,6 +2,14 @@
 
 Use this flow when Badizo is already installed in a shop and you want to send a new version.
 
+If the shop server still has the Git/repo folder, use this instead:
+
+```text
+scripts\windows\update-existing-server-from-git-one-click.bat
+```
+
+That script pulls latest code from Git and restarts backend/frontend. The `shop-update` package flow below is mainly for servers where you send a prepared package from another development computer.
+
 ## Developer Computer
 
 1. Update and test the code in your development repo.

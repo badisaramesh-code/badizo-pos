@@ -79,6 +79,36 @@ Slaves do not need MySQL, backend, or frontend server. Slaves only run the Elect
 
 Do this whenever you have made code changes and want to update the shop.
 
+#### If Existing Server Still Has Git/Repo Folder
+
+Use this when the shop server itself has this folder:
+
+```text
+C:\Users\badis\Downloads\BADIZO_COMPLETE_APPLICATION
+```
+
+and the latest code is available in GitHub.
+
+On the server PC, double-click:
+
+```text
+scripts\windows\update-existing-server-from-git-one-click.bat
+```
+
+This will:
+
+- Pull latest code from Git.
+- Install backend dependencies.
+- Install frontend dependencies.
+- Build frontend for the server IP.
+- Restart backend.
+- Restart frontend task.
+- Check backend health.
+
+Use this for your current existing server if it still has the development/repo folder. You do not need `dist\shop-update` for this case.
+
+Use `dist\shop-update` only when you are updating a shop server that does not have Git/repo setup, or when you want to send a prepared package from your personal laptop.
+
 #### Step A: On Your Development PC
 
 Update and test code in your development repo. Then build the update package:
@@ -329,6 +359,12 @@ Existing shop update package build:
 
 ```powershell
 .\scripts\windows\build-shop-update-package.ps1 -ServerIp 192.168.1.12
+```
+
+Existing shop update directly from Git/repo folder:
+
+```text
+scripts\windows\update-existing-server-from-git-one-click.bat
 ```
 
 Existing shop update run on server:
