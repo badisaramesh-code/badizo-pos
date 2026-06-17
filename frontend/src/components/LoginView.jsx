@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
 import { login } from '../api/client';
 
+const LOGIN_ROLES = [
+  { label: 'Server', username: 'server' },
+  { label: 'Admin', username: 'admin' },
+  { label: 'Counter 1', username: 'counter1' }
+];
+
 export default function LoginView({ onLogin }) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('admin123');
@@ -34,8 +40,12 @@ export default function LoginView({ onLogin }) {
         {errorMessage && <div className="alert-box">{errorMessage}</div>}
 
         <label>
-          <span className="field-label">Username</span>
-          <input className="field" value={username} onChange={(event) => setUsername(event.target.value)} autoFocus />
+          <span className="field-label">Role</span>
+          <select className="field" value={username} onChange={(event) => setUsername(event.target.value)} autoFocus>
+            {LOGIN_ROLES.map((role) => (
+              <option key={role.username} value={role.username}>{role.label}</option>
+            ))}
+          </select>
         </label>
 
         <label>
@@ -48,7 +58,7 @@ export default function LoginView({ onLogin }) {
         </button>
 
         <div className="change-box">
-          Default test users: admin/admin123, counter1/counter123, server/server123
+          Select a role and enter its password.
         </div>
       </form>
     </div>
