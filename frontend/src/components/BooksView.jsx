@@ -11,6 +11,9 @@ const BOOK_ORDER = [
   ['purchaseBook', 'Purchase Book'],
   ['sundryCreditors', 'Sundry Creditors'],
   ['sundryDebtors', 'Sundry Debtors'],
+  ['accountsPayableAging', 'Payables Aging'],
+  ['accountsReceivableAging', 'Receivables Aging'],
+  ['bankSettlement', 'Bank Settlement'],
   ['taxBook', 'Tax Book'],
   ['profitLoss', 'Profit & Loss Book'],
   ['balanceSheet', 'Balance Sheet']
@@ -51,6 +54,24 @@ const DEFAULT_BOOKS = {
     title: 'Sundry Debtors',
     summary: { accounts: 0, debit: 0, credit: 0, balance: 0 },
     columns: ['Date', 'Account', 'Voucher', 'Particulars', 'Debit', 'Credit', 'Balance', 'Balance Type'],
+    rows: []
+  },
+  accountsPayableAging: {
+    title: 'Payables Aging',
+    summary: { accounts: 0, bills: 0, notDue: 0, days1To30: 0, days31To60: 0, days61To90: 0, days90Plus: 0, overdue: 0, total: 0 },
+    columns: ['Supplier', 'Inward No', 'Supplier Invoice', 'Bill Date', 'Due Date', 'Bill Total', 'Paid', 'Due', 'Overdue Days', 'Bucket', 'Status'],
+    rows: []
+  },
+  accountsReceivableAging: {
+    title: 'Receivables Aging',
+    summary: { accounts: 0, bills: 0, notDue: 0, days1To30: 0, days31To60: 0, days61To90: 0, days90Plus: 0, overdue: 0, total: 0 },
+    columns: ['Customer', 'Reference Date', 'Due Date', 'Bill Total', 'Received', 'Due', 'Overdue Days', 'Bucket', 'Status'],
+    rows: []
+  },
+  bankSettlement: {
+    title: 'Bank / UPI / Card Settlement',
+    summary: { entries: 0, upi: 0, card: 0, expected: 0, matched: 0, pending: 0 },
+    columns: ['Date', 'Counter', 'Mode', 'Bills', 'Expected Bank Credit', 'Matched Bank Credit', 'Difference', 'Status'],
     rows: []
   },
   taxBook: {
@@ -131,6 +152,8 @@ function getBookCardValue(key, book) {
   if (['sundryCreditors', 'sundryDebtors'].includes(key)) {
     return formatMoney(book.summary.balance || 0);
   }
+  if (['accountsPayableAging', 'accountsReceivableAging'].includes(key)) return formatMoney(book.summary.total || 0);
+  if (key === 'bankSettlement') return formatMoney(book.summary.pending || 0);
   if (key === 'purchaseBook') return formatMoney(book.summary.purchases || 0);
   if (key === 'cashBook') return formatMoney(book.summary.closing || 0);
   if (key === 'counterCashBalance') return formatMoney(book.summary.notesBalance || 0);
@@ -225,6 +248,47 @@ export default function BooksView() {
       entries: book?.rows?.length || 0
     };
   }), [booksData]);
+
+  const ownerFocusCards = useMemo(() => {
+    const books = booksData?.books || DEFAULT_BOOKS;
+    return [
+      {
+        key: 'payables',
+        title: 'Pay suppliers',
+        value: formatMoney(books.accountsPayableAging?.summary?.total || 0),
+        note: `${books.accountsPayableAging?.summary?.bills || 0} open bills`,
+        actionBook: 'accountsPayableAging'
+      },
+      {
+        key: 'receivables',
+        title: 'Collect money',
+        value: formatMoney(books.accountsReceivableAging?.summary?.total || 0),
+        note: `${books.accountsReceivableAging?.summary?.accounts || 0} customers`,
+        actionBook: 'accountsReceivableAging'
+      },
+      {
+        key: 'settlement',
+        title: 'Check bank credit',
+        value: formatMoney(books.bankSettlement?.summary?.pending || 0),
+        note: 'UPI/Card to reconcile',
+        actionBook: 'bankSettlement'
+      },
+      {
+        key: 'gst',
+        title: 'GST payable',
+        value: formatMoney(books.taxBook?.summary?.payable || 0),
+        note: 'Output minus input tax',
+        actionBook: 'taxBook'
+      },
+      {
+        key: 'stock',
+        title: 'Stock value',
+        value: formatMoney(books.balanceSheet?.summary?.stockValue || 0),
+        note: 'As per product master',
+        actionBook: 'balanceSheet'
+      }
+    ];
+  }, [booksData]);
 
   async function loadBooks() {
     setErrorMessage('');
@@ -337,6 +401,23 @@ export default function BooksView() {
             <button className="secondary-button" type="button" onClick={exportAllExcel}>Export All Excel</button>
             <button className="secondary-button" type="button" onClick={printSelectedBook}>Print / PDF</button>
           </form>
+          <div className="books-owner-focus">
+            {ownerFocusCards.map((card) => (
+              <button
+                key={card.key}
+                type="button"
+                className="books-focus-card"
+                onClick={() => {
+                  setActiveBook(card.actionBook);
+                  setAccountSearch('');
+                }}
+              >
+                <span>{card.title}</span>
+                <strong>{card.value}</strong>
+                <small>{card.note}</small>
+              </button>
+            ))}
+          </div>
           <div className="books-grid">
             {bookCards.map((book) => (
               <button

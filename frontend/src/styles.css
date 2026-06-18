@@ -2711,6 +2711,49 @@ button:disabled {
   padding: 8px 12px;
 }
 
+.books-owner-focus {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.books-focus-card {
+  min-height: 82px;
+  display: grid;
+  gap: 5px;
+  align-content: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.books-focus-card:hover {
+  border-color: var(--brand);
+  background: #f3fbf5;
+}
+
+.books-focus-card span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.books-focus-card strong {
+  color: var(--brand-dark);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.books-focus-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .books-print-heading {
   display: none;
 }
@@ -2759,13 +2802,17 @@ button:disabled {
 
 .voucher-entry-row {
   display: grid;
-  grid-template-columns: minmax(210px, 1.2fr) 100px 120px minmax(130px, 0.8fr) minmax(170px, 1fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
   align-items: end;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f7fcf8;
+}
+
+.voucher-entry-row .compact-primary {
+  min-height: 38px;
 }
 
 @media (max-width: 980px) {

@@ -28,6 +28,47 @@ async function hasTable(tableName) {
   return rows.length > 0;
 }
 
+function daysBetween(fromValue, toValue) {
+  const fromDate = new Date(fromValue);
+  const toDate = new Date(toValue);
+  if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) return 0;
+  fromDate.setHours(0, 0, 0, 0);
+  toDate.setHours(0, 0, 0, 0);
+  return Math.floor((toDate - fromDate) / 86400000);
+}
+
+function agingBucket(days) {
+  if (days <= 0) return 'Not Due';
+  if (days <= 30) return '1-30 Days';
+  if (days <= 60) return '31-60 Days';
+  if (days <= 90) return '61-90 Days';
+  return '90+ Days';
+}
+
+function emptyAgingSummary() {
+  return {
+    accounts: 0,
+    bills: 0,
+    notDue: 0,
+    days1To30: 0,
+    days31To60: 0,
+    days61To90: 0,
+    days90Plus: 0,
+    overdue: 0,
+    total: 0
+  };
+}
+
+function addAgingAmount(summary, bucket, amount) {
+  if (bucket === 'Not Due') summary.notDue += amount;
+  else if (bucket === '1-30 Days') summary.days1To30 += amount;
+  else if (bucket === '31-60 Days') summary.days31To60 += amount;
+  else if (bucket === '61-90 Days') summary.days61To90 += amount;
+  else summary.days90Plus += amount;
+  if (bucket !== 'Not Due') summary.overdue += amount;
+  summary.total += amount;
+}
+
 router.get('/summary', async (req, res) => {
   try {
     const from = normalizeDate(req.query.from || req.query.date);
@@ -190,6 +231,31 @@ router.get('/accounting', async (req, res) => {
       [from, to]
     );
 
+    const [digitalSettlementRows] = await db.query(
+      `SELECT settlement_date, payment_mode, billing_counter,
+              SUM(amount) AS amount,
+              COUNT(DISTINCT invoice_no) AS bills
+       FROM (
+         SELECT DATE(i.created_at) AS settlement_date, ip.payment_mode, i.billing_counter, ip.amount, i.invoice_no
+         FROM invoice_payments ip
+         INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
+         WHERE DATE(i.created_at) BETWEEN ? AND ?
+           AND i.invoice_status <> 'CANCELLED'
+           AND ip.payment_mode IN ('UPI', 'Card')
+         UNION ALL
+         SELECT DATE(i.created_at) AS settlement_date, i.payment_mode, i.billing_counter, i.grand_total AS amount, i.invoice_no
+         FROM invoices i
+         LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
+         WHERE DATE(i.created_at) BETWEEN ? AND ?
+           AND i.invoice_status <> 'CANCELLED'
+           AND ip.id IS NULL
+           AND i.payment_mode IN ('UPI', 'Card')
+       ) payments
+       GROUP BY settlement_date, payment_mode, billing_counter
+       ORDER BY settlement_date ASC, billing_counter ASC, payment_mode ASC`,
+      [from, to, from, to]
+    );
+
     const [taxSales] = await db.query(
       `SELECT ii.gst_percent,
               SUM((ii.sale_price * ii.quantity) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable,
@@ -240,6 +306,29 @@ router.get('/accounting', async (req, res) => {
       );
     }
 
+    let supplierPayments = [];
+    if (await hasTable('supplier_payments')) {
+      [supplierPayments] = await db.query(
+        `SELECT id, inward_no, supplier_name, supplier_gstin, payment_date, amount, payment_mode, reference_no, notes, created_by, created_at
+         FROM supplier_payments
+         WHERE payment_date BETWEEN ? AND ?
+         ORDER BY payment_date ASC, id ASC`,
+        [from, to]
+      );
+    }
+
+    const [openPayables] = await db.query(
+      `SELECT inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date, created_at,
+              grand_total, paid_amount, due_amount, payment_status, due_date
+       FROM inward_entries
+       WHERE posting_status = 'POSTED'
+         AND COALESCE(payment_mode, 'Credit') <> 'Cash'
+         AND COALESCE(due_amount, 0) > 0.01
+         AND DATE(created_at) <= ?
+       ORDER BY COALESCE(due_date, supplier_invoice_date, DATE(created_at)) ASC, supplier_name ASC`,
+      [to]
+    );
+
     const supplierNames = Array.from(new Set(purchases.filter((row) => row.payment_mode !== 'Cash').map((row) => String(row.supplier_name || '').trim()).filter(Boolean)));
     const customerNames = Array.from(new Set(sales.map((row) => String(row.customer_name || 'Walk-in Customer').trim()).filter(Boolean)));
     const sum = (rows, field) => rows.reduce((total, row) => total + Number(row[field] || 0), 0);
@@ -254,6 +343,7 @@ router.get('/accounting', async (req, res) => {
     const cashCr = sum(cashLedger.filter((row) => row.direction === 'CR'), 'amount');
     const cashVoucherPayments = sum(vouchers.filter((row) => row.voucher_type === 'CREDITOR_PAYMENT' && row.payment_mode === 'Cash'), 'amount');
     const cashVoucherReceipts = sum(vouchers.filter((row) => row.voucher_type === 'DEBTOR_RECEIPT' && row.payment_mode === 'Cash'), 'amount');
+    const cashSupplierPayments = sum(supplierPayments.filter((row) => row.payment_mode === 'Cash'), 'amount');
     const stockValue = Number(stockRows[0]?.stock_value || 0);
     const grossProfit = salesTotal - purchaseTotal;
     const cashSalesTotal = sum(cashSales, 'grand_total');
@@ -262,7 +352,7 @@ router.get('/accounting', async (req, res) => {
     const cashPurchases = purchases.filter((row) => row.payment_mode === 'Cash');
     const declaredCounterCash = sum(handoverSheets, 'cash_balance');
     const cashPurchaseTotal = sum(cashPurchases, 'grand_total');
-    const counterCashBalance = handoverSheets.length ? declaredCounterCash : cashSalesTotal + cashDr + cashVoucherReceipts - cashCr - cashPurchaseTotal - cashVoucherPayments;
+    const counterCashBalance = handoverSheets.length ? declaredCounterCash : cashSalesTotal + cashDr + cashVoucherReceipts - cashCr - cashPurchaseTotal - cashVoucherPayments - cashSupplierPayments;
 
     const dayBookRows = [
       ...sales.map((row) => ({
@@ -306,6 +396,17 @@ router.get('/accounting', async (req, res) => {
         Credit: row.voucher_type === 'CREDITOR_PAYMENT' ? Number(row.amount || 0) : 0,
         Amount: Number(row.amount || 0),
         Details: row.remarks || row.reference_no || ''
+      })),
+      ...supplierPayments.map((row) => ({
+        Date: row.created_at || row.payment_date,
+        Voucher: `SP-${row.id}`,
+        Particulars: row.supplier_name,
+        Type: 'Supplier Payment',
+        Mode: row.payment_mode,
+        Debit: 0,
+        Credit: Number(row.amount || 0),
+        Amount: Number(row.amount || 0),
+        Details: `${row.inward_no}${row.reference_no ? ` - ${row.reference_no}` : ''}${row.notes ? ` - ${row.notes}` : ''}`
       }))
     ].sort((a, b) => new Date(a.Date) - new Date(b.Date));
 
@@ -339,6 +440,17 @@ router.get('/accounting', async (req, res) => {
           Account: row.account_name,
           Voucher: row.voucher_no,
           Particulars: `Payment by ${row.payment_mode}${row.reference_no ? ` - ${row.reference_no}` : ''}`,
+          Debit: Number(row.amount || 0),
+          Credit: 0,
+          Balance: Number(row.amount || 0),
+          'Balance Type': 'Dr'
+        })),
+      ...supplierPayments
+        .map((row) => ({
+          Date: row.created_at || row.payment_date,
+          Account: row.supplier_name,
+          Voucher: `SP-${row.id}`,
+          Particulars: `Payment for ${row.inward_no} by ${row.payment_mode}${row.reference_no ? ` - ${row.reference_no}` : ''}`,
           Debit: Number(row.amount || 0),
           Credit: 0,
           Balance: Number(row.amount || 0),
@@ -401,6 +513,72 @@ router.get('/accounting', async (req, res) => {
     ].sort((a, b) => String(a.Account).localeCompare(String(b.Account)) || new Date(a.Date) - new Date(b.Date));
     const debtorBalance = sundryDebtorRows.reduce((total, row) => total + Number(row.Debit || 0) - Number(row.Credit || 0), 0);
 
+    const payableAgingRows = openPayables.map((row) => {
+      const dueDate = row.due_date || row.supplier_invoice_date || row.created_at;
+      const overdueDays = Math.max(daysBetween(dueDate, to), 0);
+      const bucket = agingBucket(overdueDays);
+      return {
+        Supplier: row.supplier_name,
+        'Inward No': row.inward_no,
+        'Supplier Invoice': row.supplier_invoice_no || '',
+        'Bill Date': row.supplier_invoice_date || row.created_at,
+        'Due Date': row.due_date || '',
+        'Bill Total': Number(row.grand_total || 0),
+        Paid: Number(row.paid_amount || 0),
+        Due: Number(row.due_amount || 0),
+        'Overdue Days': overdueDays,
+        Bucket: bucket,
+        Status: row.payment_status || 'DUE'
+      };
+    });
+    const payableAgingSummary = emptyAgingSummary();
+    payableAgingSummary.accounts = new Set(payableAgingRows.map((row) => row.Supplier)).size;
+    payableAgingSummary.bills = payableAgingRows.length;
+    payableAgingRows.forEach((row) => addAgingAmount(payableAgingSummary, row.Bucket, Number(row.Due || 0)));
+
+    const receivableBalances = sundryDebtorRows.reduce((acc, row) => {
+      const account = String(row.Account || '').trim();
+      if (!account || account === 'Walk-in Customer') return acc;
+      acc[account] = (acc[account] || 0) + Number(row.Debit || 0) - Number(row.Credit || 0);
+      return acc;
+    }, {});
+    const receivableAgingRows = Object.entries(receivableBalances)
+      .filter(([, balance]) => balance > 0.01)
+      .map(([account, balance]) => ({
+        Customer: account,
+        'Reference Date': to,
+        'Due Date': to,
+        'Bill Total': balance,
+        Received: 0,
+        Due: balance,
+        'Overdue Days': 0,
+        Bucket: 'Not Due',
+        Status: 'OPEN'
+      }));
+    const receivableAgingSummary = emptyAgingSummary();
+    receivableAgingSummary.accounts = receivableAgingRows.length;
+    receivableAgingSummary.bills = receivableAgingRows.length;
+    receivableAgingRows.forEach((row) => addAgingAmount(receivableAgingSummary, row.Bucket, Number(row.Due || 0)));
+
+    const bankSettlementRows = digitalSettlementRows.map((row) => ({
+      Date: row.settlement_date,
+      Counter: row.billing_counter || '-',
+      Mode: row.payment_mode,
+      Bills: Number(row.bills || 0),
+      'Expected Bank Credit': Number(row.amount || 0),
+      'Matched Bank Credit': 0,
+      Difference: Number(row.amount || 0),
+      Status: 'To Reconcile'
+    }));
+    const bankSettlementSummary = {
+      entries: bankSettlementRows.length,
+      upi: bankSettlementRows.filter((row) => row.Mode === 'UPI').reduce((sum, row) => sum + Number(row['Expected Bank Credit'] || 0), 0),
+      card: bankSettlementRows.filter((row) => row.Mode === 'Card').reduce((sum, row) => sum + Number(row['Expected Bank Credit'] || 0), 0),
+      expected: bankSettlementRows.reduce((sum, row) => sum + Number(row['Expected Bank Credit'] || 0), 0),
+      matched: 0,
+      pending: bankSettlementRows.reduce((sum, row) => sum + Number(row.Difference || 0), 0)
+    };
+
     res.json({
       from,
       to,
@@ -413,7 +591,7 @@ router.get('/accounting', async (req, res) => {
         },
         cashBook: {
           title: 'Cash Book',
-          summary: { cash: cashSalesTotal, upi: upiSalesTotal, card: cardSalesTotal, cashDr: cashDr + cashVoucherReceipts, cashCr: cashCr + cashPurchaseTotal + cashVoucherPayments, closing: cashSalesTotal + cashDr + cashVoucherReceipts - cashCr - cashPurchaseTotal - cashVoucherPayments },
+          summary: { cash: cashSalesTotal, upi: upiSalesTotal, card: cardSalesTotal, cashDr: cashDr + cashVoucherReceipts, cashCr: cashCr + cashPurchaseTotal + cashVoucherPayments + cashSupplierPayments, closing: cashSalesTotal + cashDr + cashVoucherReceipts - cashCr - cashPurchaseTotal - cashVoucherPayments - cashSupplierPayments },
           columns: ['Date', 'Voucher', 'Particulars', 'Cash', 'UPI', 'Card', 'Receipts', 'Payments', 'Balance Type'],
           rows: [
             ...sales.map((row) => ({
@@ -439,6 +617,17 @@ router.get('/accounting', async (req, res) => {
               Card: 0,
               Receipts: row.voucher_type === 'DEBTOR_RECEIPT' ? Number(row.amount || 0) : 0,
               Payments: row.voucher_type === 'CREDITOR_PAYMENT' ? Number(row.amount || 0) : 0,
+              'Balance Type': row.payment_mode
+            })),
+            ...supplierPayments.map((row) => ({
+              Date: row.created_at || row.payment_date,
+              Voucher: `SP-${row.id}`,
+              Particulars: `Supplier Payment - ${row.supplier_name}`,
+              Cash: row.payment_mode === 'Cash' ? Number(row.amount || 0) : 0,
+              UPI: row.payment_mode === 'UPI' ? Number(row.amount || 0) : 0,
+              Card: 0,
+              Receipts: 0,
+              Payments: Number(row.amount || 0),
               'Balance Type': row.payment_mode
             }))
           ].sort((a, b) => new Date(a.Date) - new Date(b.Date))
@@ -515,6 +704,24 @@ router.get('/accounting', async (req, res) => {
           },
           columns: ['Date', 'Account', 'Voucher', 'Particulars', 'Debit', 'Credit', 'Balance', 'Balance Type'],
           rows: sundryDebtorRows
+        },
+        accountsPayableAging: {
+          title: 'Payables Aging',
+          summary: payableAgingSummary,
+          columns: ['Supplier', 'Inward No', 'Supplier Invoice', 'Bill Date', 'Due Date', 'Bill Total', 'Paid', 'Due', 'Overdue Days', 'Bucket', 'Status'],
+          rows: payableAgingRows
+        },
+        accountsReceivableAging: {
+          title: 'Receivables Aging',
+          summary: receivableAgingSummary,
+          columns: ['Customer', 'Reference Date', 'Due Date', 'Bill Total', 'Received', 'Due', 'Overdue Days', 'Bucket', 'Status'],
+          rows: receivableAgingRows
+        },
+        bankSettlement: {
+          title: 'Bank / UPI / Card Settlement',
+          summary: bankSettlementSummary,
+          columns: ['Date', 'Counter', 'Mode', 'Bills', 'Expected Bank Credit', 'Matched Bank Credit', 'Difference', 'Status'],
+          rows: bankSettlementRows
         },
         taxBook: {
           title: 'Tax Book',
