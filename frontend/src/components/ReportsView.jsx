@@ -14,7 +14,8 @@ import {
   fetchReprintReport,
   fetchStockReport,
   fetchTaxSummaryReport,
-  fetchTopProductsReport
+  fetchTopProductsReport,
+  searchProducts
 } from '../api/client';
 import { todayIso } from '../utils/date';
 import { formatMoney } from '../utils/money';
@@ -112,6 +113,8 @@ export default function ReportsView({ isActive = true, onClose }) {
   const [hsnProductDetails, setHsnProductDetails] = useState({ rows: [], totals: { quantity: 0, gross: 0, cgst: 0, sgst: 0, igst: 0 } });
   const [hsnProductDetailError, setHsnProductDetailError] = useState('');
   const [hsnProductDetailLoading, setHsnProductDetailLoading] = useState(false);
+  const [hsnProductSuggestions, setHsnProductSuggestions] = useState([]);
+  const [isHsnProductSuggestionOpen, setIsHsnProductSuggestionOpen] = useState(false);
   const [monthlyReport, setMonthlyReport] = useState({ rows: [] });
   const [stockReport, setStockReport] = useState([]);
   const [topProducts, setTopProducts] = useState({ rows: [] });
@@ -176,6 +179,61 @@ export default function ReportsView({ isActive = true, onClose }) {
     sgst: totals.sgst + Number(row.sgst || 0),
     igst: totals.igst + Number(row.igst || 0)
   }), { gross: 0, cgst: 0, sgst: 0, igst: 0 }), [filteredHsnRows]);
+
+  useEffect(() => {
+    if (activeReport !== 'hsn') {
+      setHsnProductSuggestions([]);
+      setIsHsnProductSuggestionOpen(false);
+      return undefined;
+    }
+
+    const query = hsnProductSearch.trim();
+    if (query.length < 3) {
+      setHsnProductSuggestions([]);
+      setIsHsnProductSuggestionOpen(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const rows = await searchProducts(query);
+        if (!cancelled) {
+          setHsnProductSuggestions(rows.slice(0, 6));
+          setIsHsnProductSuggestionOpen(rows.length > 0);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setHsnProductSuggestions([]);
+          setIsHsnProductSuggestionOpen(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeReport, hsnProductSearch]);
+
+  async function selectHsnProduct(product) {
+    const searchText = product.barcode || product.product_code || product.product_name || '';
+    setHsnProductSearch(searchText);
+    setHsnFilters((current) => ({ ...current, productSearch: product.product_name || product.product_code || searchText }));
+    setHsnProductSuggestions([]);
+    setIsHsnProductSuggestionOpen(false);
+    const range = getOrderedRange(fromDate, toDate);
+    setHsnProductDetailLoading(true);
+    setHsnProductDetailError('');
+    try {
+      const data = await fetchGstHsnProductDetails({ ...range, search: searchText });
+      setHsnProductDetails(data);
+    } catch (err) {
+      setHsnProductDetailError(err.response?.data?.error || 'Unable to load product sale details.');
+    } finally {
+      setHsnProductDetailLoading(false);
+    }
+  }
 
   async function handleHsnProductDetailSubmit(event) {
     event.preventDefault();
@@ -705,14 +763,30 @@ export default function ReportsView({ isActive = true, onClose }) {
               </div>
               <div className="hsn-product-detail-box">
                 <form className="report-filter-row hsn-product-detail-form" onSubmit={handleHsnProductDetailSubmit}>
-                  <label className="hsn-product-detail-search">
+                  <label className="hsn-product-detail-search supplier-lookup-field">
                     <span className="field-label">Product Sale Details</span>
                     <input
                       className="field"
                       value={hsnProductSearch}
-                      onChange={(event) => setHsnProductSearch(event.target.value)}
+                      onChange={(event) => {
+                        setHsnProductSearch(event.target.value);
+                        setIsHsnProductSuggestionOpen(event.target.value.trim().length >= 3);
+                      }}
+                      onFocus={() => {
+                        if (hsnProductSuggestions.length) setIsHsnProductSuggestionOpen(true);
+                      }}
                       placeholder="Product code / barcode / product name"
                     />
+                    {isHsnProductSuggestionOpen && hsnProductSuggestions.length > 0 && (
+                      <div className="supplier-suggestions">
+                        {hsnProductSuggestions.map((product) => (
+                          <button key={product.barcode} type="button" className="supplier-suggestion-row" onClick={() => selectHsnProduct(product)}>
+                            <strong>{product.product_name}</strong>
+                            <span>{product.barcode} | Code {product.product_code || '-'} | HSN {product.hsn_code || '-'} | GST {Number(product.gst_percent || 0)}%</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </label>
                   <button className="secondary-button" type="submit" disabled={hsnProductDetailLoading}>
                     {hsnProductDetailLoading ? 'Loading...' : 'Search'}

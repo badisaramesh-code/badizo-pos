@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { fetchAccountingBooks, saveAccountingVoucher } from '../api/client';
+import { fetchAccountingBooks, saveAccountingVoucher, searchInwardSuppliers } from '../api/client';
 import { todayIso } from '../utils/date';
 import { formatMoney } from '../utils/money';
 
@@ -140,19 +140,72 @@ function getBookCardValue(key, book) {
   return `${book?.rows?.length || 0} entries`;
 }
 
+function blankVoucherForm() {
+  return {
+    account_name: '',
+    payment_mode: 'Cash',
+    amount: '',
+    account_holder_name: '',
+    bank_name: '',
+    bank_account_no: '',
+    bank_ifsc: '',
+    upi_id: '',
+    reference_no: '',
+    remarks: ''
+  };
+}
+
 export default function BooksView() {
   const [fromDate, setFromDate] = useState(financialYearStartIso());
   const [toDate, setToDate] = useState(todayIso());
   const [booksData, setBooksData] = useState(null);
   const [activeBook, setActiveBook] = useState('dayBook');
   const [accountSearch, setAccountSearch] = useState('');
-  const [voucherForm, setVoucherForm] = useState({ account_name: '', payment_mode: 'Cash', amount: '', reference_no: '', remarks: '' });
+  const [accountSuggestions, setAccountSuggestions] = useState([]);
+  const [isAccountSuggestionOpen, setIsAccountSuggestionOpen] = useState(false);
+  const [voucherForm, setVoucherForm] = useState(blankVoucherForm());
   const [errorMessage, setErrorMessage] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
 
   useEffect(() => {
     loadBooks();
   }, []);
+
+  useEffect(() => {
+    if (activeBook !== 'sundryCreditors') {
+      setAccountSuggestions([]);
+      setIsAccountSuggestionOpen(false);
+      return undefined;
+    }
+
+    const query = accountSearch.trim();
+    if (query.length < 3) {
+      setAccountSuggestions([]);
+      setIsAccountSuggestionOpen(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const rows = await searchInwardSuppliers(query);
+        if (!cancelled) {
+          setAccountSuggestions(rows.slice(0, 8));
+          setIsAccountSuggestionOpen(rows.length > 0);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setAccountSuggestions([]);
+          setIsAccountSuggestionOpen(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [accountSearch, activeBook]);
 
   const activeReport = booksData?.books?.[activeBook] || DEFAULT_BOOKS[activeBook];
   const isAccountSearchBook = ['sundryCreditors', 'sundryDebtors'].includes(activeBook);
@@ -198,6 +251,22 @@ export default function BooksView() {
     setVoucherForm((current) => ({ ...current, [field]: value }));
   }
 
+  function selectCreditorAccount(match) {
+    const accountName = match.name || '';
+    setAccountSearch(accountName);
+    setVoucherForm((current) => ({
+      ...current,
+      account_name: accountName,
+      account_holder_name: match.account_holder_name || current.account_holder_name || accountName,
+      bank_name: match.bank_name || current.bank_name || '',
+      bank_account_no: match.bank_account_no || current.bank_account_no || '',
+      bank_ifsc: String(match.bank_ifsc || current.bank_ifsc || '').toUpperCase(),
+      upi_id: match.upi_id || current.upi_id || ''
+    }));
+    setAccountSuggestions([]);
+    setIsAccountSuggestionOpen(false);
+  }
+
   async function submitVoucher(event) {
     event.preventDefault();
     setErrorMessage('');
@@ -210,7 +279,7 @@ export default function BooksView() {
         voucher_type: voucherType
       });
       setStatusMessage(`${result.voucher_no} saved for ${result.account_name}.`);
-      setVoucherForm({ account_name: '', payment_mode: 'Cash', amount: '', reference_no: '', remarks: '' });
+      setVoucherForm(blankVoucherForm());
       await loadBooks();
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save voucher.');
@@ -310,19 +379,43 @@ export default function BooksView() {
               </div>
               {isAccountSearchBook && (
                 <div className="books-account-tools">
-                  <label>
+                  <label className="supplier-lookup-field">
                     <span className="field-label">{activeBook === 'sundryCreditors' ? 'Creditor Search' : 'Debtor Search'}</span>
                     <input
                       className="field"
                       value={accountSearch}
-                      onChange={(event) => setAccountSearch(event.target.value)}
+                      onChange={(event) => {
+                        setAccountSearch(event.target.value);
+                        if (activeBook === 'sundryCreditors') setIsAccountSuggestionOpen(event.target.value.trim().length >= 3);
+                      }}
+                      onFocus={() => {
+                        if (activeBook === 'sundryCreditors' && accountSuggestions.length) setIsAccountSuggestionOpen(true);
+                      }}
                       placeholder={activeBook === 'sundryCreditors' ? 'Search supplier / creditor account' : 'Search customer / debtor account'}
                     />
+                    {activeBook === 'sundryCreditors' && isAccountSuggestionOpen && accountSuggestions.length > 0 && (
+                      <div className="supplier-suggestions">
+                        {accountSuggestions.map((match) => (
+                          <button key={`${match.name}-${match.gstin}`} type="button" className="supplier-suggestion-row" onClick={() => selectCreditorAccount(match)}>
+                            <strong>{match.name}</strong>
+                            <span>{match.phone || '-'} | GSTIN {match.gstin || '-'} | A/C {match.bank_account_no || '-'}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </label>
                   <form className="voucher-entry-row" onSubmit={submitVoucher}>
-                    <label>
+                    <label className="supplier-lookup-field">
                       <span className="field-label">{activeBook === 'sundryCreditors' ? 'Creditor Payment Account' : 'Debtor Receipt Account'}</span>
-                      <input className="field" value={voucherForm.account_name} onChange={(event) => updateVoucher('account_name', event.target.value)} required />
+                      <input
+                        className="field"
+                        value={voucherForm.account_name}
+                        onChange={(event) => {
+                          updateVoucher('account_name', event.target.value);
+                          if (activeBook === 'sundryCreditors') setAccountSearch(event.target.value);
+                        }}
+                        required
+                      />
                     </label>
                     <label>
                       <span className="field-label">Mode</span>
@@ -335,6 +428,30 @@ export default function BooksView() {
                       <span className="field-label">Amount</span>
                       <input className="field" type="number" min="0" step="0.01" value={voucherForm.amount} onChange={(event) => updateVoucher('amount', event.target.value)} required />
                     </label>
+                    {activeBook === 'sundryCreditors' && (
+                      <>
+                        <label>
+                          <span className="field-label">Account Holder</span>
+                          <input className="field" value={voucherForm.account_holder_name} onChange={(event) => updateVoucher('account_holder_name', event.target.value)} />
+                        </label>
+                        <label>
+                          <span className="field-label">Bank</span>
+                          <input className="field" value={voucherForm.bank_name} onChange={(event) => updateVoucher('bank_name', event.target.value)} />
+                        </label>
+                        <label>
+                          <span className="field-label">Account No</span>
+                          <input className="field" value={voucherForm.bank_account_no} onChange={(event) => updateVoucher('bank_account_no', event.target.value)} />
+                        </label>
+                        <label>
+                          <span className="field-label">IFSC</span>
+                          <input className="field" value={voucherForm.bank_ifsc} onChange={(event) => updateVoucher('bank_ifsc', event.target.value.toUpperCase())} />
+                        </label>
+                        <label>
+                          <span className="field-label">UPI ID</span>
+                          <input className="field" value={voucherForm.upi_id} onChange={(event) => updateVoucher('upi_id', event.target.value)} />
+                        </label>
+                      </>
+                    )}
                     <label>
                       <span className="field-label">Ref No</span>
                       <input className="field" value={voucherForm.reference_no} onChange={(event) => updateVoucher('reference_no', event.target.value)} />

@@ -1999,6 +1999,7 @@ export default function InwardEntryView() {
   const [supplierSuggestions, setSupplierSuggestions] = useState([]);
   const [isSupplierLookupOpen, setIsSupplierLookupOpen] = useState(false);
   const [isSupplierLookupLoading, setIsSupplierLookupLoading] = useState(false);
+  const [inwardProductSuggestions, setInwardProductSuggestions] = useState({});
   const [supplierMasterSearch, setSupplierMasterSearch] = useState('');
   const [supplierMasterRows, setSupplierMasterRows] = useState([]);
   const [supplierMasterForm, setSupplierMasterForm] = useState(blankSupplierMasterForm);
@@ -2274,14 +2275,38 @@ export default function InwardEntryView() {
       ...line,
       product: normalizeOcrProductName(product.product_name || line.product),
       barcode: product.barcode || line.barcode,
-      hsn_code: line.hsn_code || product.hsn_code || '',
-      gst_percent: normalizeGstPercent(line.gst_percent || product.gst_percent || 0),
-      mrp: line.mrp || String(product.mrp || 0),
-      price: line.price || String(product.sale_price || product.mrp || 0),
+      hsn_code: product.hsn_code || line.hsn_code || '',
+      gst_percent: normalizeGstPercent(product.gst_percent ?? line.gst_percent ?? 0),
+      mrp: String(product.mrp ?? line.mrp ?? 0),
+      price: String(product.purchase_price ?? line.price ?? 0),
       purchase_unit_type: product.purchase_unit_type || line.purchase_unit_type || 'Loose',
       purchase_unit_size: String(product.purchase_unit_size || line.purchase_unit_size || 1),
-      stock_conversion_factor: String(line.stock_conversion_factor || product.purchase_unit_size || 1)
+      stock_conversion_factor: String(product.purchase_unit_size || line.stock_conversion_factor || 1)
     };
+  }
+
+  async function searchInwardLineProduct(index, field, value) {
+    updateLine(index, field, field === 'barcode' ? value.toUpperCase() : value);
+    const query = String(value || '').trim();
+    if (query.length < 3) {
+      setInwardProductSuggestions((current) => ({ ...current, [index]: [] }));
+      return;
+    }
+
+    try {
+      const rows = await searchProducts(query);
+      setInwardProductSuggestions((current) => ({ ...current, [index]: rows.slice(0, 5) }));
+    } catch (err) {
+      setInwardProductSuggestions((current) => ({ ...current, [index]: [] }));
+    }
+  }
+
+  function selectInwardLineProduct(index, product) {
+    setLines((current) => current.map((line, lineIndex) => (
+      lineIndex === index ? mergeProductIntoLine(line, product) : line
+    )));
+    setInwardProductSuggestions((current) => ({ ...current, [index]: [] }));
+    setErrorMessage('');
   }
 
   function getProductSearchQueries(line) {
@@ -3062,13 +3087,35 @@ export default function InwardEntryView() {
                   return (
                     <tr key={index}>
                       <td>{index + 1}</td>
-                      <td>
+                      <td className="supplier-lookup-field">
                         <div className="inline-field-action">
-                          <input className="field" value={line.barcode} onChange={(event) => updateLine(index, 'barcode', event.target.value.toUpperCase())} />
+                          <input className="field" value={line.barcode} onChange={(event) => searchInwardLineProduct(index, 'barcode', event.target.value)} />
                           <button className="secondary-button" type="button" onClick={() => fillProduct(index)}>Find</button>
                         </div>
+                        {Array.isArray(inwardProductSuggestions[index]) && inwardProductSuggestions[index].length > 0 && (
+                          <div className="supplier-suggestions">
+                            {inwardProductSuggestions[index].map((product) => (
+                              <button key={product.barcode} type="button" className="supplier-suggestion-row" onClick={() => selectInwardLineProduct(index, product)}>
+                                <strong>{product.product_name}</strong>
+                                <span>{product.barcode} | HSN {product.hsn_code || '-'} | GST {Number(product.gst_percent || 0)}% | Cost {formatMoney(product.purchase_price)}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </td>
-                      <td><input className="field" value={line.product} onChange={(event) => updateLine(index, 'product', event.target.value)} /></td>
+                      <td className="supplier-lookup-field">
+                        <input className="field" value={line.product} onChange={(event) => searchInwardLineProduct(index, 'product', event.target.value)} />
+                        {Array.isArray(inwardProductSuggestions[index]) && inwardProductSuggestions[index].length > 0 && (
+                          <div className="supplier-suggestions">
+                            {inwardProductSuggestions[index].map((product) => (
+                              <button key={product.barcode} type="button" className="supplier-suggestion-row" onClick={() => selectInwardLineProduct(index, product)}>
+                                <strong>{product.product_name}</strong>
+                                <span>{product.barcode} | HSN {product.hsn_code || '-'} | GST {Number(product.gst_percent || 0)}% | Cost {formatMoney(product.purchase_price)}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td><input className="field compact-number-field" value={line.hsn_code} onChange={(event) => updateLine(index, 'hsn_code', event.target.value)} /></td>
                       <td><input className="field compact-number-field" type="number" min="0" step="0.01" value={line.mrp} onChange={(event) => updateLine(index, 'mrp', event.target.value)} /></td>
                       <td><input className="field compact-number-field" type="number" min="0" step="0.01" value={line.price} onChange={(event) => updateLine(index, 'price', event.target.value)} /></td>

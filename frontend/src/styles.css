@@ -357,6 +357,19 @@ button:disabled {
   flex: 0 0 auto;
 }
 
+.billing-sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 45;
+  display: grid;
+  gap: 6px;
+  margin: -7px -8px 6px;
+  padding: 7px 8px 6px;
+  border-bottom: 1px solid #c6ead6;
+  background: #ffffff;
+  box-shadow: 0 8px 14px rgba(15, 23, 42, 0.06);
+}
+
 .billing-main-panel {
   position: sticky;
   top: 12px;
@@ -372,7 +385,6 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
   padding: 5px 8px;
   border: 1px solid #bde5c8;
   border-radius: 9px;

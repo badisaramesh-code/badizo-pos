@@ -222,7 +222,7 @@ router.post('/handover', async (req, res) => {
   const openingCash = parseMoney(req.body?.opening_cash);
   const entries = normalizeEntries(req.body?.entries);
   const denominationRows = normalizeDenominationRows(req.body?.denominations);
-  const handedOverBy = String(req.body?.handed_over_by || req.user?.username || '').trim();
+  const handedOverBy = String(req.body?.handed_over_by || '').trim();
   const takenOverBy = String(req.body?.taken_over_by || '').trim();
   const notes = String(req.body?.notes || '').trim();
 

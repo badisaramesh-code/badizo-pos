@@ -3185,113 +3185,115 @@ export default function BillingTerminalView({ isActive = true }) {
   return (
     <div className={`billing-grid ${isSensitiveBillingMode(billingMode) ? 'sensitive-billing-active' : ''}`}>
       <section className="panel billing-main-panel">
-        <div className="panel-header billing-store-banner">
-          <div>
-            <h2 className="panel-title">{shopSettings.shop_name}</h2>
-            <div className="muted">GST: {shopSettings.gst_number} | {shopSettings.address} | Ph: {shopSettings.phone}</div>
-          </div>
-          <button className="counter-sale-button" type="button" onClick={printCounterSaleSlip}>
-            Counter Sale
-          </button>
-          <div className="billing-header-meta">
-            <span className="live-time-chip">{liveTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
-            <span className="invoice-chip">Invoice {invoiceNo}</span>
-          </div>
-        </div>
-
         <div className="panel-body billing-panel-body">
-          <div className="billing-topline">
-            <div className="mode-toggle-group">
-              <div className="mode-toggle">
-                <span className="mode-toggle-label">Sale Mode</span>
-                <div className="mode-option-group" aria-label="Sale mode">
-                  <button className={activeSaleMode === 'RETAIL' ? 'mode-option active retail-active' : 'mode-option'} onClick={() => requestBillingMode(composeBillingMode('RETAIL', activeTaxMode))}>Retail</button>
-                  <button className={activeSaleMode === 'WHOLESALE' ? 'mode-option active sensitive-active' : 'mode-option'} onClick={() => requestBillingMode(composeBillingMode('WHOLESALE', activeTaxMode))}>Wholesale</button>
-                </div>
+          <div className="billing-sticky-header">
+            <div className="panel-header billing-store-banner">
+              <div>
+                <h2 className="panel-title">{shopSettings.shop_name}</h2>
+                <div className="muted">GST: {shopSettings.gst_number} | {shopSettings.address} | Ph: {shopSettings.phone}</div>
               </div>
-              <div className="mode-toggle">
-                <span className="mode-toggle-label">Tax Mode</span>
-                <div className="mode-option-group" aria-label="Tax mode">
-                  <button className={activeTaxMode === 'GST' ? 'mode-option active retail-active' : 'mode-option'} onClick={() => requestBillingMode(composeBillingMode(activeSaleMode, 'GST'))}>GST</button>
-                  <button className={activeTaxMode === 'IGST' ? 'mode-option active sensitive-active' : 'mode-option'} onClick={() => requestBillingMode(composeBillingMode(activeSaleMode, 'IGST'))}>IGST</button>
-                </div>
-              </div>
-            </div>
-            <div className="billing-top-controls">
-              <span className={`billing-mode-pill ${isSensitiveBillingMode(billingMode) ? 'warning' : ''}`}>
-                {activeMode.shortLabel || activeMode.label}
-              </span>
-              <button className={exchangeMode ? 'mode-option active sensitive-active' : 'mode-option'} onClick={requestExchangeMode}>
-                Exchange
+              <button className="counter-sale-button" type="button" onClick={printCounterSaleSlip}>
+                Counter Sale
               </button>
-              <label className="top-control-field">
-                <span>Counter</span>
-                {canSelectCounter ? (
-                  <select aria-label="Counter" value={counterNo} onChange={(event) => setCounterNo(Number(event.target.value))}>
-                    {Array.from({ length: counterCount }, (_, index) => index + 1).map((number) => (
-                      <option key={number} value={number}>Counter {number}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <span className="locked-counter-chip">Counter {counterNo}</span>
-                )}
-              </label>
-              <label className="top-control-field print-control-field">
-                <span>Print</span>
-                <select aria-label="Print format" value={printMode} onChange={(event) => requestPrintMode(event.target.value)}>
-                  <option value="Thermal">Thermal</option>
-                  <option value="A4">A4</option>
-                </select>
-              </label>
+              <div className="billing-header-meta">
+                <span className="live-time-chip">{liveTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
+                <span className="invoice-chip">Invoice {invoiceNo}</span>
+              </div>
             </div>
-          </div>
 
-          {isSensitiveBillingMode(billingMode) && (
-            <div className="sensitive-bill-warning">
-              {activeMode.label} active for this bill only. Complete, Hold, or Reset will return to Retail.
-            </div>
-          )}
-          {exchangeMode && (
-            <div className="sensitive-bill-warning exchange-bill-warning">
-              Exchange bill active. Exchange amount will be deducted from this bill only. Complete, Hold, or Reset will return to normal Retail.
-            </div>
-          )}
-
-          <div className="scanner-row billing-scanner-row">
-            <span className="status-chip">F9 Focus Scanner</span>
-            <div className="search-wrap">
-              <input
-                ref={scannerRef}
-                className="field search-input"
-                autoFocus
-                value={query}
-                onPointerDown={closeBillingActivityPanels}
-                onChange={handleSearchChange}
-                onKeyDown={handleSearchKeyDown}
-                onPaste={handleSearchPaste}
-                placeholder="Type at least 3 letters or barcode digits"
-              />
-              {suggestions.length > 0 && (
-                <div className="suggestions">
-                  {suggestions.map((product, index) => (
-                    <button
-                      key={product.barcode}
-                      className={`suggestion-row ${index === selectedSuggestion ? 'active' : ''}`}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => addProduct(product, parseQuantitySearch(query).quantity)}
-                    >
-                      <span className="mono muted">{product.barcode}</span>
-                      <strong>{product.product_name}</strong>
-                      <span>{formatMoney(product.sale_price)}</span>
-                      <span className={toNumber(product.stock_qty) <= toNumber(product.min_stock_alert, 10) ? 'stock-low' : ''}>
-                        {product.stock_qty} in stock
-                      </span>
-                    </button>
-                  ))}
+            <div className="billing-topline">
+              <div className="mode-toggle-group">
+                <div className="mode-toggle">
+                  <span className="mode-toggle-label">Sale Mode</span>
+                  <div className="mode-option-group" aria-label="Sale mode">
+                    <button className={activeSaleMode === 'RETAIL' ? 'mode-option active retail-active' : 'mode-option'} onClick={() => requestBillingMode(composeBillingMode('RETAIL', activeTaxMode))}>Retail</button>
+                    <button className={activeSaleMode === 'WHOLESALE' ? 'mode-option active sensitive-active' : 'mode-option'} onClick={() => requestBillingMode(composeBillingMode('WHOLESALE', activeTaxMode))}>Wholesale</button>
+                  </div>
                 </div>
-              )}
+                <div className="mode-toggle">
+                  <span className="mode-toggle-label">Tax Mode</span>
+                  <div className="mode-option-group" aria-label="Tax mode">
+                    <button className={activeTaxMode === 'GST' ? 'mode-option active retail-active' : 'mode-option'} onClick={() => requestBillingMode(composeBillingMode(activeSaleMode, 'GST'))}>GST</button>
+                    <button className={activeTaxMode === 'IGST' ? 'mode-option active sensitive-active' : 'mode-option'} onClick={() => requestBillingMode(composeBillingMode(activeSaleMode, 'IGST'))}>IGST</button>
+                  </div>
+                </div>
+              </div>
+              <div className="billing-top-controls">
+                <span className={`billing-mode-pill ${isSensitiveBillingMode(billingMode) ? 'warning' : ''}`}>
+                  {activeMode.shortLabel || activeMode.label}
+                </span>
+                <button className={exchangeMode ? 'mode-option active sensitive-active' : 'mode-option'} onClick={requestExchangeMode}>
+                  Exchange
+                </button>
+                <label className="top-control-field">
+                  <span>Counter</span>
+                  {canSelectCounter ? (
+                    <select aria-label="Counter" value={counterNo} onChange={(event) => setCounterNo(Number(event.target.value))}>
+                      {Array.from({ length: counterCount }, (_, index) => index + 1).map((number) => (
+                        <option key={number} value={number}>Counter {number}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="locked-counter-chip">Counter {counterNo}</span>
+                  )}
+                </label>
+                <label className="top-control-field print-control-field">
+                  <span>Print</span>
+                  <select aria-label="Print format" value={printMode} onChange={(event) => requestPrintMode(event.target.value)}>
+                    <option value="Thermal">Thermal</option>
+                    <option value="A4">A4</option>
+                  </select>
+                </label>
+              </div>
             </div>
-            <button className="secondary-button price-check-button" type="button" onClick={openPriceCheck}>Price Check</button>
+
+            {isSensitiveBillingMode(billingMode) && (
+              <div className="sensitive-bill-warning">
+                {activeMode.label} active for this bill only. Complete, Hold, or Reset will return to Retail.
+              </div>
+            )}
+            {exchangeMode && (
+              <div className="sensitive-bill-warning exchange-bill-warning">
+                Exchange bill active. Exchange amount will be deducted from this bill only. Complete, Hold, or Reset will return to normal Retail.
+              </div>
+            )}
+
+            <div className="scanner-row billing-scanner-row">
+              <span className="status-chip">F9 Focus Scanner</span>
+              <div className="search-wrap">
+                <input
+                  ref={scannerRef}
+                  className="field search-input"
+                  autoFocus
+                  value={query}
+                  onPointerDown={closeBillingActivityPanels}
+                  onChange={handleSearchChange}
+                  onKeyDown={handleSearchKeyDown}
+                  onPaste={handleSearchPaste}
+                  placeholder="Type at least 3 letters or barcode digits"
+                />
+                {suggestions.length > 0 && (
+                  <div className="suggestions">
+                    {suggestions.map((product, index) => (
+                      <button
+                        key={product.barcode}
+                        className={`suggestion-row ${index === selectedSuggestion ? 'active' : ''}`}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => addProduct(product, parseQuantitySearch(query).quantity)}
+                      >
+                        <span className="mono muted">{product.barcode}</span>
+                        <strong>{product.product_name}</strong>
+                        <span>{formatMoney(product.sale_price)}</span>
+                        <span className={toNumber(product.stock_qty) <= toNumber(product.min_stock_alert, 10) ? 'stock-low' : ''}>
+                          {product.stock_qty} in stock
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button className="secondary-button price-check-button" type="button" onClick={openPriceCheck}>Price Check</button>
+            </div>
           </div>
 
           {exchangeMode && (

@@ -100,7 +100,7 @@ export default function CounterClosingView() {
   const [entries, setEntries] = useState([blankEntry()]);
   const [activeEntryIndex, setActiveEntryIndex] = useState(0);
   const [isExistingSheet, setIsExistingSheet] = useState(false);
-  const [handedOverBy, setHandedOverBy] = useState(currentUser?.username || '');
+  const [handedOverBy, setHandedOverBy] = useState('');
   const [takenOverBy, setTakenOverBy] = useState('');
   const [notes, setNotes] = useState('');
   const [history, setHistory] = useState({ rows: [] });
@@ -201,7 +201,7 @@ export default function CounterClosingView() {
           ...emptyDenominations(nextDenominations),
           ...(savedSheet.denominations || []).reduce((acc, row) => ({ ...acc, [Number(row.denomination_value)]: String(toNumber(row.quantity)) }), {})
         });
-        setHandedOverBy(savedSheet.handed_over_by || currentUser?.username || '');
+        setHandedOverBy(savedSheet.handed_over_by || '');
         setTakenOverBy(savedSheet.taken_over_by || '');
         setNotes(savedSheet.notes || '');
         setStatusMessage('Existing handover sheet loaded for this counter and date.');
@@ -211,7 +211,7 @@ export default function CounterClosingView() {
         setActiveEntryIndex(0);
         setIsExistingSheet(false);
         setDenominations(emptyDenominations(nextDenominations));
-        setHandedOverBy(currentUser?.username || '');
+        setHandedOverBy('');
         setTakenOverBy('');
         setNotes('');
       }

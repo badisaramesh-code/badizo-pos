@@ -757,6 +757,11 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         account_name VARCHAR(180) NOT NULL,
         payment_mode ENUM('Cash', 'Bank') NOT NULL DEFAULT 'Cash',
         amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        account_holder_name VARCHAR(150) DEFAULT '',
+        bank_name VARCHAR(150) DEFAULT '',
+        bank_account_no VARCHAR(80) DEFAULT '',
+        bank_ifsc VARCHAR(20) DEFAULT '',
+        upi_id VARCHAR(120) DEFAULT '',
         reference_no VARCHAR(120) DEFAULT '',
         remarks VARCHAR(255) DEFAULT '',
         created_by VARCHAR(100) DEFAULT '',
@@ -905,6 +910,11 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'suppliers', 'bank_account_no', "VARCHAR(80) DEFAULT '' AFTER bank_branch");
     await ensureColumn(connection, 'suppliers', 'bank_ifsc', "VARCHAR(20) DEFAULT '' AFTER bank_account_no");
     await ensureColumn(connection, 'suppliers', 'upi_id', "VARCHAR(120) DEFAULT '' AFTER bank_ifsc");
+    await ensureColumn(connection, 'accounting_vouchers', 'account_holder_name', "VARCHAR(150) DEFAULT '' AFTER amount");
+    await ensureColumn(connection, 'accounting_vouchers', 'bank_name', "VARCHAR(150) DEFAULT '' AFTER account_holder_name");
+    await ensureColumn(connection, 'accounting_vouchers', 'bank_account_no', "VARCHAR(80) DEFAULT '' AFTER bank_name");
+    await ensureColumn(connection, 'accounting_vouchers', 'bank_ifsc', "VARCHAR(20) DEFAULT '' AFTER bank_account_no");
+    await ensureColumn(connection, 'accounting_vouchers', 'upi_id', "VARCHAR(120) DEFAULT '' AFTER bank_ifsc");
     await ensureColumn(connection, 'inward_items', 'discount_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER discount_percent");
     await ensureColumn(connection, 'inward_items', 'discount_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER discount_type');
     await ensureColumn(connection, 'inward_items', 'scheme_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER scheme");

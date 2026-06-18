@@ -1007,7 +1007,9 @@ router.get('/suppliers/search', async (req, res) => {
 
   try {
     const [masterRows] = await db.query(
-      `SELECT supplier_name, supplier_address, supplier_gstin, supplier_phone, updated_at
+      `SELECT supplier_name, supplier_address, supplier_gstin, supplier_phone,
+              contact_person, payment_terms, account_holder_name, bank_name, bank_branch,
+              bank_account_no, bank_ifsc, upi_id, updated_at
        FROM suppliers
        WHERE is_active = 1
          AND (supplier_name LIKE ? OR supplier_gstin LIKE ? OR supplier_phone LIKE ?)
@@ -1039,6 +1041,14 @@ router.get('/suppliers/search', async (req, res) => {
         address: row.supplier_address || '',
         gstin: row.supplier_gstin || '',
         phone: row.supplier_phone || '',
+        contact_person: row.contact_person || '',
+        payment_terms: row.payment_terms || '',
+        account_holder_name: row.account_holder_name || '',
+        bank_name: row.bank_name || '',
+        bank_branch: row.bank_branch || '',
+        bank_account_no: row.bank_account_no || '',
+        bank_ifsc: row.bank_ifsc || '',
+        upi_id: row.upi_id || '',
         last_invoice_no: '',
         last_invoice_date: '',
         last_used_at: row.updated_at || '',
@@ -1062,6 +1072,14 @@ router.get('/suppliers/search', async (req, res) => {
         address: row.supplier_address || '',
         gstin: row.supplier_gstin || '',
         phone: row.supplier_phone || '',
+        contact_person: '',
+        payment_terms: '',
+        account_holder_name: '',
+        bank_name: '',
+        bank_branch: '',
+        bank_account_no: '',
+        bank_ifsc: '',
+        upi_id: '',
         last_invoice_no: row.supplier_invoice_no || '',
         last_invoice_date: row.supplier_invoice_date || '',
         last_used_at: row.created_at || '',
