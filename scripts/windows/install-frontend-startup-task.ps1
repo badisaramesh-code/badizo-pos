@@ -6,8 +6,8 @@ $ErrorActionPreference = 'Stop'
 
 $taskName = 'Badizo POS Frontend'
 $appRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$frontendDir = Join-Path $appRoot 'frontend'
-$npmCmd = 'C:\Program Files\nodejs\npm.cmd'
+$frontendBuild = Join-Path $appRoot 'frontend\build\index.html'
+$scriptPath = Join-Path $PSScriptRoot 'start-frontend.ps1'
 $powerShell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 function Get-ServerIp {
@@ -30,22 +30,18 @@ if ([string]::IsNullOrWhiteSpace($ServerIp)) {
   $ServerIp = Get-ServerIp
 }
 
-if (!(Test-Path $npmCmd)) {
-  $command = Get-Command npm.cmd -ErrorAction SilentlyContinue
-  if (!$command) {
-    throw 'npm.cmd was not found. Install Node.js first.'
-  }
-  $npmCmd = $command.Source
+if (!(Test-Path $scriptPath)) {
+  throw "Cannot find $scriptPath"
 }
 
-$taskCommand = "Set-Location '$frontendDir'; `$env:REACT_APP_API_BASE_URL='http://$ServerIp`:5000/api'; & '$npmCmd' start"
+if (!(Test-Path $frontendBuild)) {
+  throw "Frontend production build was not found: $frontendBuild. Run update-server-app.ps1 or setup-server-lan-one-click.ps1 first."
+}
 
 $action = New-ScheduledTaskAction `
   -Execute $powerShell `
-  -Argument "-NoProfile -ExecutionPolicy Bypass -Command `"$taskCommand`""
+  -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
 
-$trigger = New-ScheduledTaskTrigger -AtStartup
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries `
@@ -53,14 +49,39 @@ $settings = New-ScheduledTaskSettingsSet `
   -RestartCount 3 `
   -RestartInterval (New-TimeSpan -Minutes 1)
 
-Register-ScheduledTask `
-  -TaskName $taskName `
-  -Action $action `
-  -Trigger $trigger `
-  -Principal $principal `
-  -Settings $settings `
-  -Description 'Starts the Badizo POS frontend automatically after Windows starts.' `
-  -Force | Out-Null
+function Register-FrontendTask {
+  param(
+    [Microsoft.Management.Infrastructure.CimInstance]$Trigger,
+    [Microsoft.Management.Infrastructure.CimInstance]$Principal,
+    [string]$Description
+  )
+
+  Register-ScheduledTask `
+    -TaskName $taskName `
+    -Action $action `
+    -Trigger $Trigger `
+    -Principal $Principal `
+    -Settings $settings `
+    -Description $Description `
+    -Force | Out-Null
+}
+
+try {
+  $startupTrigger = New-ScheduledTaskTrigger -AtStartup
+  $startupPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
+  Register-FrontendTask `
+    -Trigger $startupTrigger `
+    -Principal $startupPrincipal `
+    -Description 'Serves the Badizo POS production frontend automatically after Windows starts.'
+} catch {
+  Write-Host 'Administrator permission was not available for a startup task. Creating a login task for the current Windows user instead.' -ForegroundColor Yellow
+  $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+  $logonPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+  Register-FrontendTask `
+    -Trigger $logonTrigger `
+    -Principal $logonPrincipal `
+    -Description 'Serves the Badizo POS production frontend when the server user logs in.'
+}
 
 Start-ScheduledTask -TaskName $taskName
 Write-Host "Installed and started scheduled task: $taskName"

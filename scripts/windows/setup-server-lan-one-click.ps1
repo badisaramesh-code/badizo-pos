@@ -40,6 +40,44 @@ function Add-FirewallRuleIfMissing {
   Write-Host "Firewall rule added: $DisplayName" -ForegroundColor Green
 }
 
+function Resolve-Npm {
+  $npmCmd = 'C:\Program Files\nodejs\npm.cmd'
+  if (Test-Path $npmCmd) {
+    return $npmCmd
+  }
+
+  $command = Get-Command npm.cmd -ErrorAction SilentlyContinue
+  if (!$command) {
+    throw 'npm.cmd was not found. Install Node.js first.'
+  }
+
+  return $command.Source
+}
+
+function Build-Frontend {
+  param(
+    [string]$AppRoot,
+    [string]$ServerIp
+  )
+
+  Write-Step 'Building production frontend'
+  $frontendDir = Join-Path $AppRoot 'frontend'
+  $npm = Resolve-Npm
+  if (!(Test-Path (Join-Path $frontendDir 'package.json'))) {
+    throw "Missing frontend package.json: $frontendDir"
+  }
+
+  Push-Location $frontendDir
+  $env:REACT_APP_API_BASE_URL = "http://$ServerIp`:5000/api"
+  & $npm run build
+  $exitCode = $LASTEXITCODE
+  Pop-Location
+
+  if ($exitCode -ne 0) {
+    throw 'Frontend build failed.'
+  }
+}
+
 function Test-Port {
   param(
     [string]$HostName,
@@ -81,6 +119,8 @@ $frontendTaskScript = Join-Path $scriptRoot 'install-frontend-startup-task.ps1'
 Write-Host 'Badizo POS server LAN one-click setup' -ForegroundColor Green
 Write-Host "App folder: $appRoot"
 Write-Host "Server IP: $ServerIp"
+
+Build-Frontend -AppRoot $appRoot -ServerIp $ServerIp
 
 Write-Step 'Installing backend startup task'
 & $backendTaskScript

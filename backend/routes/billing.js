@@ -11,7 +11,9 @@ const {
   getFinancialYear,
   normalizeCounterNo
 } = require('../services/invoiceNumberService');
+const { normalizePaymentMode, normalizePaymentSplits } = require('../services/paymentService');
 const { normalizePhone, parseMoney } = require('../utils/formatters');
+const { moneyToPaise, paiseToMoney, parseCurrency } = require('../utils/money');
 
 function formatReturnNo() {
   const now = new Date();
@@ -24,18 +26,6 @@ function formatReturnNo() {
     String(now.getSeconds()).padStart(2, '0')
   ].join('');
   return `SR-${stamp}`;
-}
-
-function moneyToPaise(value) {
-  return Math.round(parseMoney(value) * 100);
-}
-
-function paiseToMoney(value) {
-  return value / 100;
-}
-
-function parseCurrency(value) {
-  return paiseToMoney(moneyToPaise(value));
 }
 
 async function awardLoyaltyPoints(connection, invoiceNo, customerName, customerPhone, grandTotal, user) {
@@ -87,42 +77,6 @@ function requestedCounterForUser(user, requestedCounterNo) {
 function enforceSavedStateCounter(user, savedState, counterNo) {
   if (user?.role !== 'COUNTER') return savedState;
   return { ...savedState, counterNo };
-}
-
-function normalizePaymentSplits(paymentMode, paymentSplits, grandTotal, cashReceived, paymentReference) {
-  const mode = ['Cash', 'UPI', 'Card', 'Mixed'].includes(paymentMode) ? paymentMode : 'Cash';
-  const totalPaise = moneyToPaise(grandTotal);
-  const total = paiseToMoney(totalPaise);
-  if (mode !== 'Mixed') {
-    return [{
-      payment_mode: mode,
-      amount: total,
-      payment_reference: mode === 'Cash' ? null : paymentReference || null
-    }].filter((row) => row.amount > 0);
-  }
-
-  const source = paymentSplits && typeof paymentSplits === 'object' ? paymentSplits : {};
-  const rows = [
-    { payment_mode: 'Cash', amount: parseCurrency(source.cash), payment_reference: null },
-    { payment_mode: 'UPI', amount: parseCurrency(source.upi), payment_reference: source.upi_reference || source.reference || paymentReference || null },
-    { payment_mode: 'Card', amount: parseCurrency(source.card), payment_reference: source.card_reference || source.reference || paymentReference || null }
-  ].filter((row) => row.amount > 0);
-
-  if (rows.length < 2) {
-    throw new Error('Enter amounts in any two payment modes for Mixed payment.');
-  }
-
-  const paidPaise = rows.reduce((sum, row) => sum + moneyToPaise(row.amount), 0);
-  if (paidPaise < totalPaise) {
-    throw new Error('Mixed payment total must be equal to or greater than bill amount.');
-  }
-  const excessPaise = paidPaise - totalPaise;
-  if (excessPaise > 0) {
-    const cashRow = rows.find((row) => row.payment_mode === 'Cash' && row.amount > 0);
-    const adjustmentRow = cashRow || rows[rows.length - 1];
-    adjustmentRow.amount = paiseToMoney(Math.max(moneyToPaise(adjustmentRow.amount) - excessPaise, 0));
-  }
-  return rows.filter((row) => row.amount > 0);
 }
 
 async function consumeBatchStock(connection, invoiceItemId, invoiceNo, barcode, quantity) {
@@ -444,9 +398,9 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         .filter((item) => item.barcode && item.quantity > 0)
       : [];
     const exchangeTotal = normalizedExchangeItems.reduce((total, item) => total + item.line_total, 0) || parseMoney(exchange_total);
-    const normalizedPaymentMode = ['Cash', 'UPI', 'Card', 'Mixed'].includes(payment_mode) ? payment_mode : 'Cash';
+    const normalizedPaymentMode = normalizePaymentMode(payment_mode);
     const grandTotal = parseCurrency(grand_total);
-    const paymentSplits = normalizePaymentSplits(normalizedPaymentMode, payment_splits, grandTotal, cash_received, payment_reference);
+    const paymentSplits = normalizePaymentSplits(normalizedPaymentMode, payment_splits, grandTotal, payment_reference);
     const paidTotalPaise = paymentSplits.reduce((sum, row) => sum + moneyToPaise(row.amount), 0);
     const tenderTotalPaise = normalizedPaymentMode === 'Mixed' ? moneyToPaise(cash_received || paiseToMoney(paidTotalPaise)) : paidTotalPaise;
     const grandTotalPaise = moneyToPaise(grandTotal);

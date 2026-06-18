@@ -130,7 +130,7 @@ if ($RestartFrontendTask) {
     Start-Sleep -Seconds 2
     Start-ScheduledTask -TaskName 'Badizo POS Frontend'
   } else {
-    Write-Host 'Frontend task not found. Run install-frontend-startup-task.ps1 if you use npm-start frontend hosting.' -ForegroundColor Yellow
+    Write-Host 'Frontend task not found. Run install-frontend-startup-task.ps1 to serve the production frontend automatically.' -ForegroundColor Yellow
   }
 }
 

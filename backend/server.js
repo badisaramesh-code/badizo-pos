@@ -6,8 +6,29 @@ const { logError, logInfo } = require('./services/logger');
 
 const app = express();
 
-app.use(cors());
-app.use(express.json({ limit: '250mb' }));
+function getCorsOptions() {
+  const allowedOrigins = String(process.env.BADIZO_CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  if (!allowedOrigins.length) {
+    return undefined;
+  }
+
+  return {
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error('Origin is not allowed by Badizo CORS policy.'));
+    }
+  };
+}
+
+app.use(cors(getCorsOptions()));
+app.use(express.json({ limit: process.env.BADIZO_JSON_LIMIT || '250mb' }));
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
