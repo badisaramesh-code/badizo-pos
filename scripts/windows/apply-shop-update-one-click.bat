@@ -2,7 +2,7 @@
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
-set "SERVER_IP=192.168.1.12"
+set "SERVER_IP=192.168.1.7"
 set "UPDATE_PS1=%SCRIPT_DIR%apply-shop-update-one-click.ps1"
 
 if not exist "%UPDATE_PS1%" (

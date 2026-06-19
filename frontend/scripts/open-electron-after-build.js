@@ -1,6 +1,11 @@
 const { spawn } = require('child_process');
 const path = require('path');
 
+if (process.env.BADIZO_SKIP_OPEN_AFTER_BUILD === '1') {
+  console.log('Skipping desktop app launch after build.');
+  process.exit(0);
+}
+
 const electronDir = path.resolve(__dirname, '..', '..', 'electron');
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const launchCommand = process.platform === 'win32' ? 'cmd.exe' : npmCommand;

@@ -1,5 +1,5 @@
 param(
-  [string]$ServerIp = '192.168.1.12',
+  [string]$ServerIp = '192.168.1.7',
   [string]$DatabaseName = 'badizo_pos',
   [string]$MySqlUser = 'root',
   [string]$MySqlPassword = '1234',

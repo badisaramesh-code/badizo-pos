@@ -94,9 +94,17 @@ if ($OpenElectron -and !(Test-Path (Join-Path $electronDir 'node_modules'))) {
 
 Write-Step 'Building frontend once for packaged/static Electron checks'
 Push-Location $frontendDir
-$env:REACT_APP_API_BASE_URL = 'http://localhost:5000/api'
-& $npm run build
-Pop-Location
+$previousApiBaseUrl = $env:REACT_APP_API_BASE_URL
+$previousSkipOpenAfterBuild = $env:BADIZO_SKIP_OPEN_AFTER_BUILD
+try {
+  $env:REACT_APP_API_BASE_URL = 'http://localhost:5000/api'
+  $env:BADIZO_SKIP_OPEN_AFTER_BUILD = '1'
+  & $npm run build
+} finally {
+  $env:REACT_APP_API_BASE_URL = $previousApiBaseUrl
+  $env:BADIZO_SKIP_OPEN_AFTER_BUILD = $previousSkipOpenAfterBuild
+  Pop-Location
+}
 
 Write-Step 'Stopping old local backend/frontend processes'
 Stop-PortProcess -Port 3000

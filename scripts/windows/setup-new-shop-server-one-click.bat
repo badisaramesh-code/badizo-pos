@@ -2,8 +2,9 @@
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
-set "SERVER_IP=192.168.1.12"
+set "SERVER_IP=192.168.1.7"
 set "SETUP_PS1=%SCRIPT_DIR%setup-new-shop-server-one-click.ps1"
+set "BADIZO_SKIP_OPEN_AFTER_BUILD=1"
 
 if not exist "%SETUP_PS1%" (
   set "SETUP_PS1=%SCRIPT_DIR%scripts\windows\setup-new-shop-server-one-click.ps1"

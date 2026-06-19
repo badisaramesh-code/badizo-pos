@@ -1,5 +1,5 @@
 param(
-  [string]$ServerIp = '192.168.1.12'
+  [string]$ServerIp = '192.168.1.7'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -68,10 +68,18 @@ function Build-Frontend {
   }
 
   Push-Location $frontendDir
-  $env:REACT_APP_API_BASE_URL = "http://$ServerIp`:5000/api"
-  & $npm run build
-  $exitCode = $LASTEXITCODE
-  Pop-Location
+  $previousApiBaseUrl = $env:REACT_APP_API_BASE_URL
+  $previousSkipOpenAfterBuild = $env:BADIZO_SKIP_OPEN_AFTER_BUILD
+  try {
+    $env:REACT_APP_API_BASE_URL = "http://$ServerIp`:5000/api"
+    $env:BADIZO_SKIP_OPEN_AFTER_BUILD = '1'
+    & $npm run build
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $env:REACT_APP_API_BASE_URL = $previousApiBaseUrl
+    $env:BADIZO_SKIP_OPEN_AFTER_BUILD = $previousSkipOpenAfterBuild
+    Pop-Location
+  }
 
   if ($exitCode -ne 0) {
     throw 'Frontend build failed.'
