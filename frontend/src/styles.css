@@ -238,7 +238,7 @@ button:disabled {
   grid-template-columns: minmax(720px, 1fr) 390px;
   gap: 18px;
   align-items: start;
-  min-height: calc(100vh - 40px);
+  min-height: calc(100vh - 112px);
 }
 
 .panel {
@@ -350,7 +350,7 @@ button:disabled {
   flex: 1 1 auto;
   min-height: 0;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .billing-panel-body > :not(.billing-table-wrap) {
@@ -358,8 +358,8 @@ button:disabled {
 }
 
 .billing-sticky-header {
-  position: sticky;
-  top: 0;
+  position: relative;
+  flex: 0 0 auto;
   z-index: 45;
   display: grid;
   gap: 6px;
@@ -372,10 +372,11 @@ button:disabled {
 
 .billing-main-panel {
   position: sticky;
-  top: 12px;
+  top: 92px;
   display: flex;
-  max-height: calc(100vh - 24px);
-  min-height: calc(100vh - 40px);
+  height: calc(100vh - 112px);
+  max-height: calc(100vh - 112px);
+  min-height: 620px;
   flex-direction: column;
   overflow: hidden;
 }
@@ -5572,6 +5573,7 @@ button:disabled {
 
   .billing-main-panel {
     position: static;
+    height: auto;
     max-height: none;
     min-height: 0;
     overflow: visible;
