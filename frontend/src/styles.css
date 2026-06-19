@@ -352,7 +352,7 @@ button:disabled {
   flex: 1 1 auto;
   min-height: 0;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .billing-panel-body > :not(.billing-table-wrap) {
@@ -360,8 +360,8 @@ button:disabled {
 }
 
 .billing-sticky-header {
-  position: sticky;
-  top: 0;
+  position: relative;
+  flex: 0 0 auto;
   z-index: 45;
   display: grid;
   gap: 6px;
