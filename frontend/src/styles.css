@@ -238,7 +238,9 @@ button:disabled {
   grid-template-columns: minmax(720px, 1fr) 390px;
   gap: 18px;
   align-items: start;
-  min-height: calc(100vh - 40px);
+  height: calc(100vh - 112px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .panel {
@@ -372,10 +374,11 @@ button:disabled {
 
 .billing-main-panel {
   position: sticky;
-  top: 12px;
+  top: 0;
   display: flex;
-  max-height: calc(100vh - 24px);
-  min-height: calc(100vh - 40px);
+  height: calc(100vh - 112px);
+  max-height: calc(100vh - 112px);
+  min-height: 0;
   flex-direction: column;
   overflow: hidden;
 }
@@ -1229,7 +1232,7 @@ button:disabled {
 
 .history-search-row {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 170px auto auto;
+  grid-template-columns: minmax(220px, 1fr) 155px 155px auto auto auto;
   gap: 10px;
   align-items: end;
   margin-bottom: 12px;
@@ -1241,6 +1244,53 @@ button:disabled {
 
 .history-search-row .secondary-button {
   padding: 9px 12px;
+}
+
+.reprint-preview-box {
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.reprint-preview-header,
+.reprint-preview-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.reprint-preview-header {
+  background: #f8fcf9;
+  border-bottom: 1px solid var(--line);
+}
+
+.reprint-preview-header > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.reprint-preview-meta {
+  color: var(--muted);
+  font-size: 13px;
+  border-bottom: 1px solid var(--line);
+}
+
+.reprint-preview-scroll {
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  background: #f5f7f9;
+}
+
+.reprint-preview-scroll .print-invoice {
+  width: 80mm;
+  max-width: 100%;
+  margin: 0 auto;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
 }
 
 .supplier-master-form {
@@ -1321,6 +1371,8 @@ button:disabled {
 .billing-product-table {
   min-width: 760px;
   table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 .billing-product-table th {
@@ -1330,7 +1382,8 @@ button:disabled {
   font-weight: 400;
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 5;
+  box-shadow: 0 1px 0 var(--line);
 }
 
 .billing-product-table th,
@@ -1439,6 +1492,11 @@ button:disabled {
   flex-direction: column;
   gap: 14px;
   align-self: start;
+  height: calc(100vh - 112px);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
 }
 
 .sale-type-panel .panel-body {
@@ -1456,9 +1514,6 @@ button:disabled {
 }
 
 .payment-panel {
-  position: sticky;
-  top: 14px;
-  z-index: 20;
   box-shadow: 0 10px 26px rgba(15, 23, 42, 0.1);
 }
 
@@ -5567,23 +5622,33 @@ button:disabled {
   }
 
   .billing-grid {
+    height: calc(100vh - 112px);
     min-height: 0;
+    overflow: hidden;
   }
 
   .billing-main-panel {
-    position: static;
-    max-height: none;
+    position: sticky;
+    top: 0;
+    height: calc(100vh - 112px);
+    max-height: calc(100vh - 112px);
     min-height: 0;
-    overflow: visible;
+    overflow: hidden;
   }
 
   .billing-panel-body {
-    overflow: visible;
+    overflow: hidden;
   }
 
   .billing-table-wrap {
-    flex: none;
-    max-height: 62vh;
+    flex: 1 1 auto;
+    max-height: none;
+  }
+
+  .sidebar {
+    height: calc(100vh - 112px);
+    min-height: 0;
+    overflow-y: auto;
   }
 
   .product-list-panel,
@@ -5613,9 +5678,6 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .payment-panel {
-    position: static;
-  }
 }
 
 @media (max-width: 720px) {

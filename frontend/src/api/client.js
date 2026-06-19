@@ -286,6 +286,16 @@ export async function fetchGstr1Report({ from, to } = {}) {
   return data;
 }
 
+export async function fetchGstr2Report({ from, to } = {}) {
+  const { data } = await api.get('/reports/gstr2', { params: { from, to } });
+  return data;
+}
+
+export async function fetchGstr3Report({ from, to } = {}) {
+  const { data } = await api.get('/reports/gstr3', { params: { from, to } });
+  return data;
+}
+
 export async function fetchCounterHandoverReport({ from, to, counter = '' } = {}) {
   const { data } = await api.get('/reports/counter-handover', { params: { from, to, counter } });
   return data;
@@ -374,8 +384,10 @@ export async function restoreBackup(file, confirmation) {
   return data;
 }
 
-export async function fetchInvoiceHistory() {
-  const { data } = await api.get('/billing/hold/list');
+export async function fetchInvoiceHistory({ from, to, search } = {}) {
+  const { data } = await api.get('/billing/hold/list', {
+    params: { from, to, search }
+  });
   return Array.isArray(data) ? data : [];
 }
 

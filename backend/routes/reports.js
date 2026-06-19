@@ -972,6 +972,262 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
   }
 });
 
+router.get('/gstr2', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const from = normalizeDate(req.query.from, todayIso());
+    const to = normalizeDate(req.query.to, from);
+
+    const [b2b] = await db.query(
+      `SELECT
+         ie.supplier_gstin,
+         ie.supplier_name,
+         ie.supplier_invoice_no,
+         DATE_FORMAT(COALESCE(ie.supplier_invoice_date, ie.created_at), '%d-%m-%Y') AS invoice_date,
+         ie.inward_no,
+         ie.tax_type,
+         ii.gst_percent,
+         SUM(ii.taxable_amount) AS taxable_value,
+         SUM(ii.cgst_amount) AS cgst,
+         SUM(ii.sgst_amount) AS sgst,
+         SUM(ii.igst_amount) AS igst,
+         SUM(ii.total_amount) AS invoice_value
+       FROM inward_entries ie
+       INNER JOIN inward_items ii ON ii.inward_no = ie.inward_no
+       WHERE DATE(ie.created_at) BETWEEN ? AND ?
+       GROUP BY ie.supplier_gstin, ie.supplier_name, ie.supplier_invoice_no,
+                COALESCE(ie.supplier_invoice_date, DATE(ie.created_at)), ie.inward_no, ie.tax_type, ii.gst_percent
+       ORDER BY COALESCE(ie.supplier_invoice_date, DATE(ie.created_at)) ASC, ie.inward_no ASC, ii.gst_percent ASC`,
+      [from, to]
+    );
+
+    const [hsn] = await db.query(
+      `SELECT
+         COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), '') AS hsn_code,
+         ii.gst_percent,
+         SUM(ii.quantity) AS quantity,
+         SUM(ii.taxable_amount) AS taxable_value,
+         SUM(ii.cgst_amount) AS cgst,
+         SUM(ii.sgst_amount) AS sgst,
+         SUM(ii.igst_amount) AS igst,
+         SUM(ii.total_amount) AS total_value
+       FROM inward_items ii
+       INNER JOIN inward_entries ie ON ie.inward_no = ii.inward_no
+       LEFT JOIN products p ON p.barcode = ii.barcode
+       WHERE DATE(ie.created_at) BETWEEN ? AND ?
+       GROUP BY COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), ''), ii.gst_percent
+       ORDER BY hsn_code ASC, ii.gst_percent ASC`,
+      [from, to]
+    );
+
+    const totals = b2b.reduce((acc, row) => ({
+      taxable: acc.taxable + Number(row.taxable_value || 0),
+      cgst: acc.cgst + Number(row.cgst || 0),
+      sgst: acc.sgst + Number(row.sgst || 0),
+      igst: acc.igst + Number(row.igst || 0),
+      total: acc.total + Number(row.invoice_value || 0)
+    }), { taxable: 0, cgst: 0, sgst: 0, igst: 0, total: 0 });
+
+    res.json({ from, to, b2b, hsn, totals });
+  } catch (err) {
+    console.error('GSTR-2 report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load GSTR-2 report.' });
+  }
+});
+
+router.get('/gstr3', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const from = normalizeDate(req.query.from, todayIso());
+    const to = normalizeDate(req.query.to, from);
+
+    const [outward] = await db.query(
+      `SELECT
+         ii.gst_percent,
+         SUM((ii.sale_price * ii.quantity) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable,
+         SUM(ii.cgst_amount) AS cgst,
+         SUM(ii.sgst_amount) AS sgst,
+         SUM(ii.igst_amount) AS igst,
+         SUM(ii.cgst_amount + ii.sgst_amount + ii.igst_amount) AS tax,
+         SUM(ii.sale_price * ii.quantity) AS total
+       FROM invoice_items ii
+       INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ? AND i.invoice_status <> 'CANCELLED'
+       GROUP BY ii.gst_percent
+       ORDER BY ii.gst_percent ASC`,
+      [from, to]
+    );
+
+    const [inward] = await db.query(
+      `SELECT
+         ii.gst_percent,
+         SUM(ii.taxable_amount) AS taxable,
+         SUM(ii.cgst_amount) AS cgst,
+         SUM(ii.sgst_amount) AS sgst,
+         SUM(ii.igst_amount) AS igst,
+         SUM(ii.gst_amount) AS tax,
+         SUM(ii.total_amount) AS total
+       FROM inward_items ii
+       INNER JOIN inward_entries ie ON ie.inward_no = ii.inward_no
+       WHERE DATE(ie.created_at) BETWEEN ? AND ?
+       GROUP BY ii.gst_percent
+       ORDER BY ii.gst_percent ASC`,
+      [from, to]
+    );
+
+    const [threeBOutward] = await db.query(
+      `SELECT
+         CASE
+           WHEN ii.gst_percent = 0 THEN '3.1(c) Nil rated / exempted outward supplies'
+           ELSE '3.1(a) Outward taxable supplies'
+         END AS section,
+         SUM((ii.sale_price * ii.quantity) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable,
+         SUM(ii.igst_amount) AS igst,
+         SUM(ii.cgst_amount) AS cgst,
+         SUM(ii.sgst_amount) AS sgst,
+         0 AS cess
+       FROM invoice_items ii
+       INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ? AND i.invoice_status <> 'CANCELLED'
+       GROUP BY section
+       ORDER BY section ASC`,
+      [from, to]
+    );
+
+    const [itcSummary] = await db.query(
+      `SELECT
+         '4(A)(5) All other ITC' AS section,
+         SUM(ii.igst_amount) AS igst,
+         SUM(ii.cgst_amount) AS cgst,
+         SUM(ii.sgst_amount) AS sgst,
+         0 AS cess
+       FROM inward_items ii
+       INNER JOIN inward_entries ie ON ie.inward_no = ii.inward_no
+       WHERE DATE(ie.created_at) BETWEEN ? AND ?`,
+      [from, to]
+    );
+
+    const [missingSalesHsn] = await db.query(
+      `SELECT i.invoice_no, ii.barcode, ii.product_name, ii.gst_percent, ii.quantity
+       FROM invoice_items ii
+       INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
+         AND COALESCE(ii.hsn_code, '') = ''
+       ORDER BY i.created_at ASC, i.invoice_no ASC
+       LIMIT 200`,
+      [from, to]
+    );
+
+    const [missingPurchaseHsn] = await db.query(
+      `SELECT ie.inward_no, ii.barcode, ii.product_name, ii.gst_percent, ii.quantity
+       FROM inward_items ii
+       INNER JOIN inward_entries ie ON ie.inward_no = ii.inward_no
+       WHERE DATE(ie.created_at) BETWEEN ? AND ?
+         AND COALESCE(ii.hsn_code, '') = ''
+       ORDER BY ie.created_at ASC, ie.inward_no ASC
+       LIMIT 200`,
+      [from, to]
+    );
+
+    const [missingB2bGstin] = await db.query(
+      `SELECT invoice_no, COALESCE(customer_company_name, customer_name, 'Customer') AS party_name, grand_total, created_at
+       FROM invoices
+       WHERE DATE(created_at) BETWEEN ? AND ?
+         AND invoice_status <> 'CANCELLED'
+         AND transaction_type = 'B2B'
+         AND COALESCE(customer_gstin, '') = ''
+       ORDER BY created_at ASC
+       LIMIT 200`,
+      [from, to]
+    );
+
+    const [missingSupplierGstin] = await db.query(
+      `SELECT inward_no, supplier_name, supplier_invoice_no, grand_total, created_at
+       FROM inward_entries
+       WHERE DATE(created_at) BETWEEN ? AND ?
+         AND COALESCE(supplier_gstin, '') = ''
+       ORDER BY created_at ASC
+       LIMIT 200`,
+      [from, to]
+    );
+
+    const [salesMismatch] = await db.query(
+      `SELECT i.invoice_no, i.sub_total, i.gst_total, i.grand_total,
+              SUM((ii.sale_price * ii.quantity) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS item_taxable,
+              SUM(ii.cgst_amount + ii.sgst_amount + ii.igst_amount) AS item_gst,
+              SUM(ii.sale_price * ii.quantity) AS item_total
+       FROM invoices i
+       INNER JOIN invoice_items ii ON ii.invoice_no = i.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ? AND i.invoice_status <> 'CANCELLED'
+       GROUP BY i.invoice_no, i.sub_total, i.gst_total, i.grand_total
+       HAVING ABS(i.sub_total - item_taxable) > 1 OR ABS(i.gst_total - item_gst) > 1 OR ABS(i.grand_total - item_total) > 1
+       ORDER BY i.invoice_no ASC
+       LIMIT 200`,
+      [from, to]
+    );
+
+    const [purchaseMismatch] = await db.query(
+      `SELECT ie.inward_no, ie.taxable_total, ie.gst_total, ie.grand_total,
+              SUM(ii.taxable_amount) AS item_taxable,
+              SUM(ii.gst_amount) AS item_gst,
+              SUM(ii.total_amount) AS item_total
+       FROM inward_entries ie
+       INNER JOIN inward_items ii ON ii.inward_no = ie.inward_no
+       WHERE DATE(ie.created_at) BETWEEN ? AND ?
+       GROUP BY ie.inward_no, ie.taxable_total, ie.gst_total, ie.grand_total
+       HAVING ABS(ie.taxable_total - item_taxable) > 1 OR ABS(ie.gst_total - item_gst) > 1 OR ABS(ie.grand_total - item_total) > 1
+       ORDER BY ie.inward_no ASC
+       LIMIT 200`,
+      [from, to]
+    );
+
+    const outputTax = outward.reduce((sum, row) => sum + Number(row.tax || 0), 0);
+    const inputTax = inward.reduce((sum, row) => sum + Number(row.tax || 0), 0);
+    const itc = itcSummary[0] || {};
+    const totals = {
+      outwardTaxable: outward.reduce((sum, row) => sum + Number(row.taxable || 0), 0),
+      outwardTax: outputTax,
+      inwardTaxable: inward.reduce((sum, row) => sum + Number(row.taxable || 0), 0),
+      inputTax,
+      payable: outputTax - inputTax
+    };
+
+    res.json({
+      from,
+      to,
+      outward,
+      inward,
+      threeB: {
+        outward: threeBOutward,
+        itc: [{
+          section: itc.section || '4(A)(5) All other ITC',
+          igst: Number(itc.igst || 0),
+          cgst: Number(itc.cgst || 0),
+          sgst: Number(itc.sgst || 0),
+          cess: Number(itc.cess || 0)
+        }],
+        payment: [{
+          description: 'Output tax minus input tax credit',
+          outputTax,
+          inputTax,
+          payable: outputTax - inputTax
+        }]
+      },
+      checks: {
+        missingSalesHsn,
+        missingPurchaseHsn,
+        missingB2bGstin,
+        missingSupplierGstin,
+        salesMismatch,
+        purchaseMismatch
+      },
+      totals
+    });
+  } catch (err) {
+    console.error('GSTR-3 report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load GSTR-3 report.' });
+  }
+});
+
 router.get('/exceptions', authorize('SERVER', 'ADMIN'), async (req, res) => {
   try {
     const from = normalizeDate(req.query.from, todayIso());

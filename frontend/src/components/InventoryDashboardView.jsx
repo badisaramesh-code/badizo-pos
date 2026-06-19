@@ -14,6 +14,7 @@ import {
   getStoredUser,
   importProducts,
   fetchReorderSuggestions,
+  lookupExactProduct,
   saveProduct,
   saveStockAdjustment,
   searchProducts
@@ -54,6 +55,7 @@ const GST_OPTIONS = ['0', '3', '5', '12', '18', '28', '40'];
 const UNIT_OPTIONS = ['Nos', 'Gm', 'Kg', 'Ml', 'Ltr', 'Pack'];
 const PURCHASE_UNIT_OPTIONS = ['Loose', 'Carton', 'Bag', 'Box', 'Case', 'Bundle', 'Pack'];
 const PRODUCT_DROPBOX_DAYS = 365;
+const ENABLE_BULK_EDIT = false;
 const ACTIVE_IMPORT_STATUSES = new Set(['QUEUED', 'RUNNING']);
 const PRODUCT_SECTIONS = {
   LIST: 'list',
@@ -370,6 +372,8 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   const [bulkPatch, setBulkPatch] = useState({ hsn_code: '', gst_percent: '', unit_type: '' });
   const [isBulkLoading, setIsBulkLoading] = useState(false);
   const [isBulkSaving, setIsBulkSaving] = useState(false);
+  const [bulkStatus, setBulkStatus] = useState('');
+  const [bulkFocusVersion, setBulkFocusVersion] = useState(0);
   const [isDropboxOpen, setIsDropboxOpen] = useState(false);
   const [dropboxSearch, setDropboxSearch] = useState('');
   const [dropboxRows, setDropboxRows] = useState([]);
@@ -405,6 +409,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   const productNameRef = useRef(null);
   const aliasNamesRef = useRef(null);
   const hsnRef = useRef(null);
+  const bulkSearchRef = useRef(null);
   const gstRef = useRef(null);
   const unitRef = useRef(null);
   const purchaseUnitRef = useRef(null);
@@ -486,6 +491,22 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     };
   }, [activeImportId]);
 
+  useEffect(() => {
+    if (activeProductSection === PRODUCT_SECTIONS.BULK) {
+      if (!ENABLE_BULK_EDIT) {
+        setActiveProductSection(PRODUCT_SECTIONS.LIST);
+        return;
+      }
+      focusBulkSearch();
+    }
+  }, [activeProductSection]);
+
+  useEffect(() => {
+    if (ENABLE_BULK_EDIT && activeProductSection === PRODUCT_SECTIONS.BULK && bulkFocusVersion > 0 && !isBulkSaving) {
+      focusBulkSearch(4);
+    }
+  }, [activeProductSection, bulkFocusVersion, isBulkSaving]);
+
   async function loadProducts(targetPage = page) {
     setErrorMessage('');
     setIsLoading(true);
@@ -516,10 +537,57 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     }, 0);
   }
 
+  function focusBulkSearch(attempts = 1) {
+    const focusAttempt = (remaining) => {
+      const input = bulkSearchRef.current;
+      if (!input) return;
+      input.disabled = false;
+      input.readOnly = false;
+      input.focus();
+      input.select?.();
+      if (remaining > 1 && document.activeElement !== input) {
+        window.setTimeout(() => focusAttempt(remaining - 1), 60);
+      }
+    };
+
+    window.requestAnimationFrame(() => {
+      focusAttempt(attempts);
+    });
+  }
+
   function moveOnEnter(event, nextRef) {
     if (event.key !== 'Enter') return;
     event.preventDefault();
     focusProductField(nextRef);
+  }
+
+  async function loadProductByBarcodeForEdit(nextRef = productNameRef) {
+    const barcode = String(form.barcode || '').trim();
+    if (!barcode || barcode === String(form.original_barcode || '').trim()) {
+      focusProductField(nextRef);
+      return;
+    }
+
+    try {
+      const product = await lookupExactProduct(barcode);
+      if (product) {
+        editProduct(product);
+        setStatusMessage(`${product.product_name} loaded for edit.`);
+        focusProductField(productNameRef);
+        return;
+      }
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load barcode product details.');
+      return;
+    }
+
+    focusProductField(nextRef);
+  }
+
+  function barcodeLookupOnEnter(event) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    loadProductByBarcodeForEdit(productNameRef);
   }
 
   function resetProductForm() {
@@ -730,13 +798,17 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     }
   }
 
-  async function searchBulkProducts() {
-    const cleaned = bulkSearch.trim();
+  async function searchBulkProducts(searchValue = bulkSearchRef.current?.value ?? bulkSearch) {
+    const cleaned = String(searchValue || '').trim();
+    setBulkSearch(cleaned);
     setStatusMessage('');
     setErrorMessage('');
+    setBulkStatus('');
+    setBulkRows([]);
 
     if (cleaned.length < 3) {
       setErrorMessage('Enter at least 3 letters or two words to search products for bulk edit.');
+      focusProductField(bulkSearchRef);
       return;
     }
 
@@ -749,6 +821,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
         unit_type: row.unit_type || 'Nos'
       })));
       setStatusMessage(`${rows.length} products loaded for bulk edit.`);
+      setBulkStatus(rows.length ? '' : 'No products found. Type another product name/barcode.');
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to load products for bulk edit.');
     } finally {
@@ -788,8 +861,13 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       const result = await bulkUpdateProducts(bulkRows);
       const syncedText = result.taxSynced ? ` HSN/GST synced for ${result.taxSynced} matching products.` : '';
       setStatusMessage(`${result.updated} products updated.${syncedText}`);
+      setBulkStatus('Continue.. next product edit');
+      setBulkRows([]);
+      setBulkPatch({ hsn_code: '', gst_percent: '', unit_type: '' });
+      setBulkSearch('');
       await loadProducts(1);
       setPage(1);
+      setBulkFocusVersion((current) => current + 1);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save bulk product edit.');
     } finally {
@@ -1096,7 +1174,15 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
           <label>
             <span className="field-label">Barcode 128 (0-9, A-Z)</span>
-            <input ref={barcodeRef} className="field" value={form.barcode} onChange={(event) => updateField('barcode', event.target.value.toUpperCase())} onKeyDown={(event) => moveOnEnter(event, productNameRef)} required />
+            <input
+              ref={barcodeRef}
+              className="field"
+              value={form.barcode}
+              onChange={(event) => updateField('barcode', event.target.value.toUpperCase())}
+              onBlur={() => loadProductByBarcodeForEdit(productNameRef)}
+              onKeyDown={barcodeLookupOnEnter}
+              required
+            />
           </label>
 
           <label>
@@ -1257,7 +1343,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             <button className="secondary-button" type="button" onClick={exportProducts} disabled={!canManageProducts}>Export</button>
             <button className="secondary-button" type="button" onClick={() => { setActiveProductSection(PRODUCT_SECTIONS.EXPIRY); loadExpiryDashboard(); }} disabled={!canManageProducts}>Expiry</button>
             <button className="secondary-button" type="button" onClick={() => { setActiveProductSection(PRODUCT_SECTIONS.REORDER); loadReorderSuggestions(); }} disabled={!canManageProducts}>Reorder</button>
-            <button className="secondary-button" type="button" onClick={() => setActiveProductSection(PRODUCT_SECTIONS.BULK)} disabled={!canManageProducts}>Bulk Edit</button>
+            {ENABLE_BULK_EDIT && (
+              <button className="secondary-button" type="button" onClick={() => setActiveProductSection(PRODUCT_SECTIONS.BULK)} disabled={!canManageProducts}>Bulk Edit</button>
+            )}
             <button className="secondary-button" type="button" onClick={() => setActiveProductSection(PRODUCT_SECTIONS.MAINTENANCE)} disabled={!canManageProducts}>Tools</button>
             <button className="secondary-button" type="button" onClick={() => setActiveWorkspace?.('importHistory')}>Import History</button>
             <button className="secondary-button" onClick={() => loadProducts()}>Refresh</button>
@@ -1272,7 +1360,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                 <button type="button" className={activeProductSection === PRODUCT_SECTIONS.EXPIRY ? 'active' : ''} onClick={() => { setActiveProductSection(PRODUCT_SECTIONS.EXPIRY); loadExpiryDashboard(); }}>Expiry Dashboard</button>
                 <button type="button" className={activeProductSection === PRODUCT_SECTIONS.ADJUSTMENT ? 'active' : ''} onClick={() => setActiveProductSection(PRODUCT_SECTIONS.ADJUSTMENT)}>Stock Adjustment</button>
                 <button type="button" className={activeProductSection === PRODUCT_SECTIONS.REORDER ? 'active' : ''} onClick={() => { setActiveProductSection(PRODUCT_SECTIONS.REORDER); loadReorderSuggestions(); }}>Reorder Suggestions</button>
-                <button type="button" className={activeProductSection === PRODUCT_SECTIONS.BULK ? 'active' : ''} onClick={() => setActiveProductSection(PRODUCT_SECTIONS.BULK)}>Bulk Edit</button>
+                {ENABLE_BULK_EDIT && (
+                  <button type="button" className={activeProductSection === PRODUCT_SECTIONS.BULK ? 'active' : ''} onClick={() => setActiveProductSection(PRODUCT_SECTIONS.BULK)}>Bulk Edit</button>
+                )}
                 <button type="button" className={activeProductSection === PRODUCT_SECTIONS.MAINTENANCE ? 'active' : ''} onClick={() => setActiveProductSection(PRODUCT_SECTIONS.MAINTENANCE)}>Maintenance</button>
               </div>
               {activeProductSection === PRODUCT_SECTIONS.IMPORT && (
@@ -1650,22 +1740,32 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                 </>
               )}
 
-              {activeProductSection === PRODUCT_SECTIONS.BULK && (
+              {ENABLE_BULK_EDIT && activeProductSection === PRODUCT_SECTIONS.BULK && (
               <section className="bulk-edit-box">
                 <div className="bulk-edit-toolbar">
                   <input
+                    key={bulkFocusVersion}
+                    ref={bulkSearchRef}
                     className="field"
+                    autoFocus
                     value={bulkSearch}
                     onChange={(event) => setBulkSearch(event.target.value)}
                     onKeyDown={(event) => {
-                      if (event.key === 'Enter') searchBulkProducts();
-                    }}
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        searchBulkProducts(event.currentTarget.value);
+      }
+    }}
                     placeholder="Bulk edit search: rice 500, atta 1kg, oil..."
                   />
-                  <button className="secondary-button" onClick={searchBulkProducts} disabled={isBulkLoading}>
+                  <button className="secondary-button" onClick={() => searchBulkProducts()} disabled={isBulkLoading || isBulkSaving}>
                     {isBulkLoading ? 'Searching...' : 'Search'}
                   </button>
                 </div>
+
+                {bulkStatus && (
+                  <div className="change-box">{bulkStatus}</div>
+                )}
 
                 {bulkRows.length > 0 && (
                   <>
@@ -1685,7 +1785,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                         {UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
                       </select>
                       <button className="secondary-button" onClick={applyBulkPatch}>Apply To Table</button>
-                      <button className="primary-button compact-primary" onClick={saveBulkRows} disabled={isBulkSaving}>
+                      <button className="primary-button compact-primary" onClick={(event) => { event.currentTarget.blur(); saveBulkRows(); }} disabled={isBulkSaving}>
                         {isBulkSaving ? 'Saving...' : 'Save Bulk Edit'}
                       </button>
                     </div>
@@ -1699,7 +1799,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                           {bulkRows.map((row, index) => (
                             <tr key={row.barcode}>
                               <td>{index + 1}</td>
-                              <td className="mono muted">{row.barcode}</td>
+                              <td><input className="field mono" value={row.barcode} readOnly tabIndex={-1} /></td>
                               <td>
                                 <input
                                   className="field"

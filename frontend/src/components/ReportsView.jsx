@@ -10,6 +10,8 @@ import {
   fetchGstHsnReport,
   fetchGstHsnProductDetails,
   fetchGstr1Report,
+  fetchGstr2Report,
+  fetchGstr3Report,
   fetchMonthlySalesReport,
   fetchReprintReport,
   fetchStockReport,
@@ -29,6 +31,11 @@ function formatCompactMoney(value) {
 
 function getOrderedRange(fromDate, toDate) {
   return fromDate <= toDate ? { from: fromDate, to: toDate } : { from: toDate, to: fromDate };
+}
+
+function currentMonthStartIso() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
 }
 
 function exportWorkbook(filename, sheets) {
@@ -120,6 +127,8 @@ export default function ReportsView({ isActive = true, onClose }) {
   const [topProducts, setTopProducts] = useState({ rows: [] });
   const [taxSummary, setTaxSummary] = useState({ rows: [] });
   const [gstr1Report, setGstr1Report] = useState({ b2b: [], b2cl: [], b2c: [], hsn: [], hsnB2b: [], hsnB2c: [], nilExempt: [], documents: {}, totals: {} });
+  const [gstr2Report, setGstr2Report] = useState({ b2b: [], hsn: [], totals: {} });
+  const [gstr3Report, setGstr3Report] = useState({ outward: [], inward: [], threeB: { outward: [], itc: [], payment: [] }, checks: {}, totals: {} });
   const [counterHandoverReport, setCounterHandoverReport] = useState({ rows: [], totals: {} });
   const [exceptionReport, setExceptionReport] = useState({ cancelled: [], returns: [] });
   const [exchangeReport, setExchangeReport] = useState({ rows: [], totals: {} });
@@ -172,6 +181,10 @@ export default function ReportsView({ isActive = true, onClose }) {
   }, [deferredHsnProductSearch, hsnFilters.gstPercent, hsnFilters.hsnRange, hsnFilters.qtySort, hsnReport.rows]);
 
   const visibleHsnRows = useMemo(() => filteredHsnRows.slice(0, HSN_VISIBLE_ROW_LIMIT), [filteredHsnRows]);
+
+  const gstCheckIssueCount = useMemo(() => Object.values(gstr3Report.checks || {}).reduce((total, rows) => (
+    total + (Array.isArray(rows) ? rows.length : 0)
+  ), 0), [gstr3Report.checks]);
 
   const filteredHsnTotals = useMemo(() => filteredHsnRows.reduce((totals, row) => ({
     gross: totals.gross + Number(row.gross_total || 0),
@@ -288,9 +301,16 @@ export default function ReportsView({ isActive = true, onClose }) {
         setTaxSummary(tax);
         return;
       }
+      case 'gstr':
       case 'gstr1': {
-        const gstr1 = await fetchGstr1Report({ from, to });
+        const [gstr1, gstr2, gstr3] = await Promise.all([
+          fetchGstr1Report({ from, to }),
+          fetchGstr2Report({ from, to }),
+          fetchGstr3Report({ from, to })
+        ]);
         setGstr1Report(gstr1);
+        setGstr2Report(gstr2);
+        setGstr3Report(gstr3);
         return;
       }
       case 'handover': {
@@ -387,7 +407,7 @@ export default function ReportsView({ isActive = true, onClose }) {
     { key: 'stock', title: 'Stock Report', note: `${stockReport.length} products` },
     { key: 'top', title: 'Top Products', note: `${topProducts.rows.length} products` },
     { key: 'tax', title: 'Tax Summary', note: `${taxSummary.rows.length} GST slabs` },
-    { key: 'gstr1', title: 'GSTR-1 / GST Returns', note: `${(gstr1Report.b2b?.length || 0) + (gstr1Report.b2cl?.length || 0) + (gstr1Report.b2c?.length || 0)} rows` },
+    { key: 'gstr', title: 'GSTR-1, 2, 3B Returns', note: `${(gstr1Report.b2b?.length || 0) + (gstr1Report.b2cl?.length || 0) + (gstr1Report.b2c?.length || 0) + (gstr2Report.b2b?.length || 0) + (gstr3Report.outward?.length || 0) + (gstr3Report.inward?.length || 0)} rows${gstCheckIssueCount ? `, ${gstCheckIssueCount} checks` : ''}` },
     { key: 'handover', title: 'Counter Handover', note: `${counterHandoverReport.totals?.sheets || 0} sheets` },
     { key: 'exchange', title: 'Exchange Bills', note: `${exchangeReport.totals?.billCount || 0} bills` },
     { key: 'reprints', title: 'Reprints', note: `${reprintReport.totals?.count || 0} prints` },
@@ -519,11 +539,11 @@ export default function ReportsView({ isActive = true, onClose }) {
     })));
   }
 
-  function exportGstr1Excel() {
+  function exportGstrReturnsExcel() {
     const { from, to } = getOrderedRange(fromDate, toDate);
-    exportWorkbook(reportFileName('gstr1_gst_returns', from, to), [
+    exportWorkbook(reportFileName('gstr_1_2_3_returns', from, to), [
       {
-        name: '4A B2B',
+        name: 'GSTR1 4A B2B',
         rows: (gstr1Report.b2b || []).map((row) => ({
           'GSTIN/UIN of Recipient': row.customer_gstin || '',
           'Receiver Name': row.customer_name || '',
@@ -541,7 +561,7 @@ export default function ReportsView({ isActive = true, onClose }) {
         }))
       },
       {
-        name: '5A B2CL',
+        name: 'GSTR1 5A B2CL',
         rows: (gstr1Report.b2cl || []).map((row) => ({
           'Invoice No': row.invoice_no,
           'Invoice Date': row.invoice_date,
@@ -554,7 +574,7 @@ export default function ReportsView({ isActive = true, onClose }) {
         }))
       },
       {
-        name: '7 B2CS',
+        name: 'GSTR1 7 B2CS',
         rows: (gstr1Report.b2c || []).map((row) => ({
           Type: row.supply_type,
           'Place Of Supply': row.supply_type === 'B2CS-LOCAL' ? '36-Telangana' : 'Interstate',
@@ -568,7 +588,7 @@ export default function ReportsView({ isActive = true, onClose }) {
         }))
       },
       {
-        name: '12 HSN B2B',
+        name: 'GSTR1 HSN B2B',
         rows: (gstr1Report.hsnB2b || []).map((row) => ({
           'HSN Code': row.hsn_code || '-',
           Description: '',
@@ -584,7 +604,7 @@ export default function ReportsView({ isActive = true, onClose }) {
         }))
       },
       {
-        name: '12 HSN B2C',
+        name: 'GSTR1 HSN B2C',
         rows: (gstr1Report.hsnB2c || []).map((row) => ({
           'HSN Code': row.hsn_code || '-',
           Description: '',
@@ -600,7 +620,7 @@ export default function ReportsView({ isActive = true, onClose }) {
         }))
       },
       {
-        name: '8 Nil Exempt',
+        name: 'GSTR1 Nil Exempt',
         rows: (gstr1Report.nilExempt || []).map((row) => ({
           'Description': row.supply_type,
           'Nil Rated Supplies': Number(row.nil_rated_value || 0),
@@ -609,7 +629,7 @@ export default function ReportsView({ isActive = true, onClose }) {
         }))
       },
       {
-        name: '13 Documents',
+        name: 'GSTR1 Documents',
         rows: [{
           'Nature of Document': 'Invoices for outward supply',
           SrNoFrom: gstr1Report.documents?.from_invoice || '',
@@ -620,6 +640,122 @@ export default function ReportsView({ isActive = true, onClose }) {
           'From Invoice': gstr1Report.documents?.from_invoice || '',
           'To Invoice': gstr1Report.documents?.to_invoice || '',
         }]
+      },
+      {
+        name: 'GSTR2 B2B Purchases',
+        rows: (gstr2Report.b2b || []).map((row) => ({
+          'GSTIN/UIN of Supplier': row.supplier_gstin || '',
+          'Supplier Name': row.supplier_name || '',
+          'Supplier Invoice No': row.supplier_invoice_no || row.inward_no,
+          'Invoice Date': row.invoice_date || '',
+          'Inward No': row.inward_no || '',
+          'Invoice Value': Number(row.invoice_value || 0),
+          'Place Of Supply': row.supplier_gstin ? `${String(row.supplier_gstin).slice(0, 2)}-State` : '',
+          Rate: Number(row.gst_percent || 0),
+          'Taxable Value': Number(row.taxable_value || 0),
+          CGST: Number(row.cgst || 0),
+          SGST: Number(row.sgst || 0),
+          IGST: Number(row.igst || 0),
+          'ITC Eligible': 'Y'
+        }))
+      },
+      {
+        name: 'GSTR2 HSN Input',
+        rows: (gstr2Report.hsn || []).map((row) => ({
+          'HSN Code': row.hsn_code || '-',
+          UQC: 'NOS',
+          'Total Quantity': Number(row.quantity || 0),
+          'Total Value': Number(row.total_value || 0),
+          Rate: Number(row.gst_percent || 0),
+          'Taxable Value': Number(row.taxable_value || 0),
+          CGST: Number(row.cgst || 0),
+          SGST: Number(row.sgst || 0),
+          IGST: Number(row.igst || 0)
+        }))
+      },
+      {
+        name: 'GSTR3 Output Tax',
+        rows: (gstr3Report.outward || []).map((row) => ({
+          Type: 'Outward Supplies',
+          'GST %': Number(row.gst_percent || 0),
+          Taxable: Number(row.taxable || 0),
+          CGST: Number(row.cgst || 0),
+          SGST: Number(row.sgst || 0),
+          IGST: Number(row.igst || 0),
+          Tax: Number(row.tax || 0),
+          Total: Number(row.total || 0)
+        }))
+      },
+      {
+        name: 'GSTR3 Input Tax',
+        rows: (gstr3Report.inward || []).map((row) => ({
+          Type: 'Inward Supplies',
+          'GST %': Number(row.gst_percent || 0),
+          Taxable: Number(row.taxable || 0),
+          CGST: Number(row.cgst || 0),
+          SGST: Number(row.sgst || 0),
+          IGST: Number(row.igst || 0),
+          Tax: Number(row.tax || 0),
+          Total: Number(row.total || 0)
+        }))
+      },
+      {
+        name: 'GSTR3 Payable Summary',
+        rows: [{
+          'Output Taxable': Number(gstr3Report.totals?.outwardTaxable || 0),
+          'Output Tax': Number(gstr3Report.totals?.outwardTax || 0),
+          'Input Taxable': Number(gstr3Report.totals?.inwardTaxable || 0),
+          'Input Tax Credit': Number(gstr3Report.totals?.inputTax || 0),
+          'GST Payable': Number(gstr3Report.totals?.payable || 0),
+          Status: Number(gstr3Report.totals?.payable || 0) >= 0 ? 'Payable' : 'Input Credit'
+        }]
+      },
+      {
+        name: 'GSTR3B Outward',
+        rows: (gstr3Report.threeB?.outward || []).map((row) => ({
+          Section: row.section,
+          Taxable: Number(row.taxable || 0),
+          IGST: Number(row.igst || 0),
+          CGST: Number(row.cgst || 0),
+          SGST: Number(row.sgst || 0),
+          Cess: Number(row.cess || 0)
+        }))
+      },
+      {
+        name: 'GSTR3B ITC',
+        rows: (gstr3Report.threeB?.itc || []).map((row) => ({
+          Section: row.section,
+          IGST: Number(row.igst || 0),
+          CGST: Number(row.cgst || 0),
+          SGST: Number(row.sgst || 0),
+          Cess: Number(row.cess || 0)
+        }))
+      },
+      {
+        name: 'GST Filing Checks',
+        rows: [
+          { Check: 'Sales items missing HSN', Count: (gstr3Report.checks?.missingSalesHsn || []).length },
+          { Check: 'Purchase items missing HSN', Count: (gstr3Report.checks?.missingPurchaseHsn || []).length },
+          { Check: 'B2B sales missing customer GSTIN', Count: (gstr3Report.checks?.missingB2bGstin || []).length },
+          { Check: 'Purchases missing supplier GSTIN', Count: (gstr3Report.checks?.missingSupplierGstin || []).length },
+          { Check: 'Sales total mismatch', Count: (gstr3Report.checks?.salesMismatch || []).length },
+          { Check: 'Purchase total mismatch', Count: (gstr3Report.checks?.purchaseMismatch || []).length }
+        ]
+      },
+      {
+        name: 'Missing Sales HSN',
+        rows: gstr3Report.checks?.missingSalesHsn || []
+      },
+      {
+        name: 'Missing Purchase HSN',
+        rows: gstr3Report.checks?.missingPurchaseHsn || []
+      },
+      {
+        name: 'Missing GSTIN',
+        rows: [
+          ...(gstr3Report.checks?.missingB2bGstin || []).map((row) => ({ Type: 'B2B Sale', ...row })),
+          ...(gstr3Report.checks?.missingSupplierGstin || []).map((row) => ({ Type: 'Purchase', ...row }))
+        ]
       }
     ]);
   }
@@ -911,14 +1047,18 @@ export default function ReportsView({ isActive = true, onClose }) {
             </div>
           </section>
         );
+      case 'gstr':
       case 'gstr1':
         return (
           <section className="panel">
-            <ReportHeader title="GSTR-1 / GST Returns" onExcel={exportGstr1Excel} onPdf={exportPdf} />
+            <ReportHeader title="GSTR-1, GSTR-2, GSTR-3B Returns" onExcel={exportGstrReturnsExcel} onPdf={exportPdf} />
             <div className="panel-body form-stack">
               <div className="alert-box">
-                GST filing review format: verify GSTIN, place of supply, HSN/UQC and nil-rated values before uploading to GST portal/offline utility.
+                GST filing review format: verify GSTIN, supplier invoices, place of supply, HSN/UQC, input tax credit and payable values before uploading to GST portal/offline utility.
               </div>
+              <section>
+                <h3 className="panel-title">GSTR-1 - Outward Supplies</h3>
+              </section>
               <section>
                 <h3 className="panel-title">4A, 4B, 4C, 6B, 6C - B2B Invoices</h3>
                 <table className="history-table">
@@ -999,6 +1139,99 @@ export default function ReportsView({ isActive = true, onClose }) {
                 <span>Taxable: <strong>{formatMoney(gstr1Report.totals?.taxable || 0)}</strong></span>
                 <span>Total Tax: <strong>{formatMoney(Number(gstr1Report.totals?.cgst || 0) + Number(gstr1Report.totals?.sgst || 0) + Number(gstr1Report.totals?.igst || 0))}</strong></span>
                 <span>Total: <strong>{formatMoney(gstr1Report.totals?.total || 0)}</strong></span>
+              </section>
+
+              <section>
+                <h3 className="panel-title">GSTR-2 - B2B Purchase / Input GST</h3>
+                <table className="history-table">
+                  <thead><tr><th>Supplier GSTIN</th><th>Supplier</th><th>Supplier Invoice</th><th>Date</th><th>Inward No</th><th>Rate</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Invoice Value</th></tr></thead>
+                  <tbody>
+                    {(gstr2Report.b2b || []).length === 0 ? <tr><td colSpan="11">No purchase/input GST data found.</td></tr> : gstr2Report.b2b.map((row, index) => (
+                      <tr key={`${row.inward_no}-${row.gst_percent}-${index}`}><td>{row.supplier_gstin || '-'}</td><td>{row.supplier_name || '-'}</td><td>{row.supplier_invoice_no || '-'}</td><td>{row.invoice_date || '-'}</td><td>{row.inward_no || '-'}</td><td>{Number(row.gst_percent || 0)}%</td><td>{formatMoney(row.taxable_value)}</td><td>{formatMoney(row.cgst)}</td><td>{formatMoney(row.sgst)}</td><td>{formatMoney(row.igst)}</td><td>{formatMoney(row.invoice_value)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+
+              <section>
+                <h3 className="panel-title">GSTR-2 - HSN Input Summary</h3>
+                <table className="history-table">
+                  <thead><tr><th>HSN</th><th>UQC</th><th>Rate</th><th>Qty</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th></tr></thead>
+                  <tbody>
+                    {(gstr2Report.hsn || []).length === 0 ? <tr><td colSpan="9">No purchase HSN data found.</td></tr> : gstr2Report.hsn.map((row) => (
+                      <tr key={`${row.hsn_code}-${row.gst_percent}`}><td>{row.hsn_code || '-'}</td><td>NOS</td><td>{Number(row.gst_percent || 0)}%</td><td>{Number(row.quantity || 0)}</td><td>{formatMoney(row.taxable_value)}</td><td>{formatMoney(row.cgst)}</td><td>{formatMoney(row.sgst)}</td><td>{formatMoney(row.igst)}</td><td>{formatMoney(row.total_value)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+
+              <section>
+                <h3 className="panel-title">GSTR-3B Payable Summary - Output vs Input GST</h3>
+                <table className="history-table">
+                  <thead><tr><th>Book</th><th>GST %</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Tax</th><th>Total</th></tr></thead>
+                  <tbody>
+                    {[...(gstr3Report.outward || []).map((row) => ({ ...row, book: 'Outward Supplies' })), ...(gstr3Report.inward || []).map((row) => ({ ...row, book: 'Input Tax Credit' }))].length === 0 ? <tr><td colSpan="8">No GSTR-3B summary data found.</td></tr> : [...(gstr3Report.outward || []).map((row) => ({ ...row, book: 'Outward Supplies' })), ...(gstr3Report.inward || []).map((row) => ({ ...row, book: 'Input Tax Credit' }))].map((row, index) => (
+                      <tr key={`${row.book}-${row.gst_percent}-${index}`}><td>{row.book}</td><td>{Number(row.gst_percent || 0)}%</td><td>{formatMoney(row.taxable)}</td><td>{formatMoney(row.cgst)}</td><td>{formatMoney(row.sgst)}</td><td>{formatMoney(row.igst)}</td><td>{formatMoney(row.tax)}</td><td>{formatMoney(row.total)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+
+              <section className="report-summary-strip">
+                <span>Output Tax: <strong>{formatMoney(gstr3Report.totals?.outwardTax || 0)}</strong></span>
+                <span>Input Tax Credit: <strong>{formatMoney(gstr3Report.totals?.inputTax || 0)}</strong></span>
+                <span>{Number(gstr3Report.totals?.payable || 0) >= 0 ? 'GST Payable' : 'Input Credit'}: <strong>{formatMoney(Math.abs(Number(gstr3Report.totals?.payable || 0)))}</strong></span>
+              </section>
+
+              <section>
+                <h3 className="panel-title">GSTR-3B - 3.1 Outward Supplies</h3>
+                <table className="history-table">
+                  <thead><tr><th>Section</th><th>Taxable</th><th>IGST</th><th>CGST</th><th>SGST</th><th>Cess</th></tr></thead>
+                  <tbody>
+                    {(gstr3Report.threeB?.outward || []).length === 0 ? <tr><td colSpan="6">No GSTR-3B outward data found.</td></tr> : gstr3Report.threeB.outward.map((row) => (
+                      <tr key={row.section}><td>{row.section}</td><td>{formatMoney(row.taxable)}</td><td>{formatMoney(row.igst)}</td><td>{formatMoney(row.cgst)}</td><td>{formatMoney(row.sgst)}</td><td>{formatMoney(row.cess)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+
+              <section>
+                <h3 className="panel-title">GSTR-3B - 4 Eligible ITC</h3>
+                <table className="history-table">
+                  <thead><tr><th>Section</th><th>IGST</th><th>CGST</th><th>SGST</th><th>Cess</th></tr></thead>
+                  <tbody>
+                    {(gstr3Report.threeB?.itc || []).length === 0 ? <tr><td colSpan="5">No ITC data found.</td></tr> : gstr3Report.threeB.itc.map((row) => (
+                      <tr key={row.section}><td>{row.section}</td><td>{formatMoney(row.igst)}</td><td>{formatMoney(row.cgst)}</td><td>{formatMoney(row.sgst)}</td><td>{formatMoney(row.cess)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+
+              <section className="report-summary-strip">
+                <span>Missing Sales HSN: <strong>{(gstr3Report.checks?.missingSalesHsn || []).length}</strong></span>
+                <span>Missing Purchase HSN: <strong>{(gstr3Report.checks?.missingPurchaseHsn || []).length}</strong></span>
+                <span>B2B GSTIN Missing: <strong>{(gstr3Report.checks?.missingB2bGstin || []).length}</strong></span>
+                <span>Supplier GSTIN Missing: <strong>{(gstr3Report.checks?.missingSupplierGstin || []).length}</strong></span>
+                <span>Total Mismatch: <strong>{(gstr3Report.checks?.salesMismatch || []).length + (gstr3Report.checks?.purchaseMismatch || []).length}</strong></span>
+              </section>
+
+              <section>
+                <h3 className="panel-title">GST Filing Checks</h3>
+                <table className="history-table">
+                  <thead><tr><th>Check</th><th>Count</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {[
+                      ['Sales items missing HSN', (gstr3Report.checks?.missingSalesHsn || []).length, 'Update product HSN before filing GSTR-1.'],
+                      ['Purchase items missing HSN', (gstr3Report.checks?.missingPurchaseHsn || []).length, 'Update inward/product HSN before claiming ITC.'],
+                      ['B2B sales missing customer GSTIN', (gstr3Report.checks?.missingB2bGstin || []).length, 'Add customer GSTIN or move invoice to B2C.'],
+                      ['Purchases missing supplier GSTIN', (gstr3Report.checks?.missingSupplierGstin || []).length, 'Add supplier GSTIN for input-credit review.'],
+                      ['Sales total mismatch', (gstr3Report.checks?.salesMismatch || []).length, 'Verify invoice item totals against bill total.'],
+                      ['Purchase total mismatch', (gstr3Report.checks?.purchaseMismatch || []).length, 'Verify inward item totals against purchase total.']
+                    ].map(([label, count, action]) => (
+                      <tr key={label}><td>{label}</td><td>{count}</td><td>{action}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
               </section>
             </div>
           </section>
@@ -1297,7 +1530,13 @@ export default function ReportsView({ isActive = true, onClose }) {
                 key={report.key}
                 className={`report-select-card ${activeReport === report.key ? 'active' : ''}`}
                 type="button"
-                onClick={() => setActiveReport(report.key)}
+                onClick={() => {
+                  if (report.key === 'gstr') {
+                    setFromDate(currentMonthStartIso());
+                    setToDate(todayIso());
+                  }
+                  setActiveReport(report.key);
+                }}
               >
                 <strong>{report.title}</strong>
                 <span>{report.note}</span>

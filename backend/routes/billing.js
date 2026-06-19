@@ -939,13 +939,40 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
 
 router.get('/hold/list', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
+    const from = String(req.query.from || '').trim();
+    const to = String(req.query.to || '').trim();
+    const search = String(req.query.search || '').trim();
+    const hasDateRange = from && to;
+    const where = [];
+    const params = [];
+
+    if (hasDateRange) {
+      where.push('DATE(created_at) BETWEEN ? AND ?');
+      params.push(from <= to ? from : to, from <= to ? to : from);
+    }
+
+    if (search) {
+      where.push(`(
+        invoice_no LIKE ?
+        OR customer_name LIKE ?
+        OR customer_phone LIKE ?
+        OR payment_mode LIKE ?
+      )`);
+      const searchLike = `%${search}%`;
+      params.push(searchLike, searchLike, searchLike, searchLike);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const limitSql = hasDateRange ? '' : 'LIMIT 25';
     const [rows] = await db.query(
       `SELECT invoice_no, customer_name, customer_phone, grand_total, cash_received, change_returned, billing_counter,
               payment_status, payment_reference,
               payment_mode, transaction_type, billing_tier, tax_type, invoice_status, reprint_count, created_at
        FROM invoices
+       ${whereSql}
        ORDER BY created_at DESC
-       LIMIT 25`
+       ${limitSql}`,
+      params
     );
     res.json(rows);
   } catch (err) {

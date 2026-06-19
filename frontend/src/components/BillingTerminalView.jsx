@@ -270,7 +270,11 @@ export default function BillingTerminalView({ isActive = true }) {
   const [errorMessage, setErrorMessage] = useState('');
   const [invoiceHistory, setInvoiceHistory] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
-  const [historyDate, setHistoryDate] = useState('');
+  const [historyFromDate, setHistoryFromDate] = useState(localIsoDate());
+  const [historyToDate, setHistoryToDate] = useState(localIsoDate());
+  const [selectedHistoryInvoice, setSelectedHistoryInvoice] = useState(null);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [isHistoryInvoiceLoading, setIsHistoryInvoiceLoading] = useState(false);
   const [heldBills, setHeldBills] = useState([]);
   const [isLastBillOpen, setIsLastBillOpen] = useState(false);
   const [isHeldBillsOpen, setIsHeldBillsOpen] = useState(false);
@@ -776,7 +780,6 @@ export default function BillingTerminalView({ isActive = true }) {
     return invoiceHistory.filter((invoice) => {
       const createdAt = invoice.created_at ? new Date(invoice.created_at) : null;
       const hasValidDate = createdAt && !Number.isNaN(createdAt.getTime());
-      const isoDate = hasValidDate ? createdAt.toISOString().slice(0, 10) : '';
       const displayDate = hasValidDate ? createdAt.toLocaleString().toLowerCase() : '';
       const searchableText = [
         invoice.invoice_no,
@@ -786,9 +789,9 @@ export default function BillingTerminalView({ isActive = true }) {
         displayDate
       ].filter(Boolean).join(' ').toLowerCase();
 
-      return (!search || searchableText.includes(search)) && (!historyDate || isoDate === historyDate);
+      return !search || searchableText.includes(search);
     });
-  }, [historyDate, historySearch, invoiceHistory]);
+  }, [historySearch, invoiceHistory]);
   const invoiceDate = useMemo(() => {
     const now = new Date();
     return {
@@ -2809,13 +2812,25 @@ export default function BillingTerminalView({ isActive = true }) {
     }, 50);
   }
 
-  async function refreshHistory(openModal) {
+  async function refreshHistory(openModal, filters = {}) {
+    const nextFromDate = filters.from ?? historyFromDate;
+    const nextToDate = filters.to ?? historyToDate;
+    const nextSearch = filters.search ?? historySearch.trim();
+    setIsHistoryLoading(true);
     try {
-      const rows = await fetchInvoiceHistory();
+      const rows = await fetchInvoiceHistory({
+        from: nextFromDate,
+        to: nextToDate,
+        search: nextSearch
+      });
       setInvoiceHistory(rows);
+      setSelectedHistoryInvoice(null);
       if (openModal) setShowHistory(true);
     } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to load old bills.');
       if (openModal) setShowHistory(true);
+    } finally {
+      setIsHistoryLoading(false);
     }
   }
 
@@ -2927,6 +2942,19 @@ export default function BillingTerminalView({ isActive = true }) {
       setStatusMessage(`${invoiceNoForReprint} duplicate bill printing in ${reprintMode} format.`);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to reprint invoice.');
+    }
+  }
+
+  async function handleViewHistoryInvoice(invoiceNoForView) {
+    setIsHistoryInvoiceLoading(true);
+    try {
+      const details = await fetchInvoiceDetails(invoiceNoForView);
+      setSelectedHistoryInvoice(invoiceDetailsToPrintable(details, false));
+      setStatusMessage(`${invoiceNoForView} loaded for view / reprint.`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to view invoice.');
+    } finally {
+      setIsHistoryInvoiceLoading(false);
     }
   }
 
@@ -3294,7 +3322,6 @@ export default function BillingTerminalView({ isActive = true }) {
               </div>
               <button className="secondary-button price-check-button" type="button" onClick={openPriceCheck}>Price Check</button>
             </div>
-          </div>
 
           {exchangeMode && (
             <section className="exchange-panel">
@@ -3360,7 +3387,10 @@ export default function BillingTerminalView({ isActive = true }) {
                 onClick={() => {
                   setIsLastBillOpen(false);
                   setIsHeldBillsOpen(false);
-                  refreshHistory(true);
+                  const today = localIsoDate();
+                  setHistoryFromDate(today);
+                  setHistoryToDate(today);
+                  refreshHistory(true, { from: today, to: today });
                 }}
               >
                 Old Bills / Reprint (F8)
@@ -3424,6 +3454,7 @@ export default function BillingTerminalView({ isActive = true }) {
             </div>
             {errorMessage && <div className="alert-box">{errorMessage}</div>}
             </div>
+          </div>
 
           <div className={`billing-table-wrap ${cart.length === 0 ? 'empty-cart' : ''}`} ref={billingTableRef}>
             <table className="product-table billing-product-table">
@@ -3944,16 +3975,31 @@ export default function BillingTerminalView({ isActive = true }) {
         <div
           className="modal-backdrop"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setShowHistory(false);
+            if (event.target === event.currentTarget) {
+              setShowHistory(false);
+              setSelectedHistoryInvoice(null);
+            }
           }}
         >
           <div className="modal">
             <div className="panel-header">
-              <h2 className="panel-title">Recent Invoices</h2>
-              <button className="close-action-button" type="button" onClick={() => setShowHistory(false)}>Close</button>
+              <h2 className="panel-title">Old Bills / Reprint</h2>
+              <button
+                className="close-action-button"
+                type="button"
+                onClick={() => {
+                  setShowHistory(false);
+                  setSelectedHistoryInvoice(null);
+                }}
+              >
+                Close
+              </button>
             </div>
             <div className="panel-body">
-              <div className="history-search-row">
+              <form className="history-search-row" onSubmit={(event) => {
+                event.preventDefault();
+                refreshHistory(false);
+              }}>
                 <label>
                   <span className="field-label">Bill number / customer</span>
                   <input
@@ -3965,20 +4011,69 @@ export default function BillingTerminalView({ isActive = true }) {
                   />
                 </label>
                 <label>
-                  <span className="field-label">Bill date</span>
+                  <span className="field-label">From Date</span>
                   <input
                     className="field"
                     type="date"
-                    value={historyDate}
-                    onChange={(event) => setHistoryDate(event.target.value)}
+                    value={historyFromDate}
+                    onChange={(event) => setHistoryFromDate(event.target.value)}
                   />
                 </label>
+                <label>
+                  <span className="field-label">To Date</span>
+                  <input
+                    className="field"
+                    type="date"
+                    value={historyToDate}
+                    onChange={(event) => setHistoryToDate(event.target.value)}
+                  />
+                </label>
+                <button className="secondary-button" type="submit" disabled={isHistoryLoading}>
+                  {isHistoryLoading ? 'Loading...' : 'View'}
+                </button>
                 <button className="secondary-button" onClick={() => {
                   setHistorySearch('');
-                  setHistoryDate('');
-                }}>Clear</button>
+                  setHistoryFromDate(localIsoDate());
+                  setHistoryToDate(localIsoDate());
+                  setSelectedHistoryInvoice(null);
+                }} type="button">Clear</button>
                 <span className="status-chip">{filteredInvoiceHistory.length} bills</span>
-              </div>
+              </form>
+              {selectedHistoryInvoice && (
+                <div className="reprint-preview-box">
+                  <div className="reprint-preview-header">
+                    <div>
+                      <span className="field-label">Selected Bill</span>
+                      <strong className="mono">{selectedHistoryInvoice.invoiceNo}</strong>
+                    </div>
+                    <div className="table-actions">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => handleReprint(selectedHistoryInvoice.invoiceNo, 'Thermal')}
+                      >
+                        Reprint
+                      </button>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => handleReprint(selectedHistoryInvoice.invoiceNo, 'A4')}
+                      >
+                        A4 Reprint
+                      </button>
+                      <button className="close-action-button" type="button" onClick={() => setSelectedHistoryInvoice(null)}>Hide</button>
+                    </div>
+                  </div>
+                  <div className="reprint-preview-meta">
+                    <span>{selectedHistoryInvoice.customerName || 'Walk-in Customer'}</span>
+                    <span>{selectedHistoryInvoice.date || '-'} {selectedHistoryInvoice.time || ''}</span>
+                    <strong>{formatMoney(selectedHistoryInvoice.totals?.grand || 0)}</strong>
+                  </div>
+                  <div className="reprint-preview-scroll">
+                    <PrintableInvoice invoice={selectedHistoryInvoice} mode="Thermal" />
+                  </div>
+                </div>
+              )}
               <table className="history-table">
                 <thead>
                   <tr>
@@ -4005,6 +4100,14 @@ export default function BillingTerminalView({ isActive = true }) {
                         <td>{invoice.created_at ? new Date(invoice.created_at).toLocaleString() : '-'}</td>
                         <td>
                           <div className="table-actions">
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              disabled={isHistoryInvoiceLoading}
+                              onClick={() => handleViewHistoryInvoice(invoice.invoice_no)}
+                            >
+                              View
+                            </button>
                             <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no, 'Thermal')}>Reprint</button>
                             <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no, 'A4')}>A4 Reprint</button>
                             {canManageInvoice && invoice.invoice_status !== 'CANCELLED' && invoice.invoice_status !== 'RETURNED' && (
