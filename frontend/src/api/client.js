@@ -102,6 +102,49 @@ export async function fetchBulkEditableProducts(search = '') {
   return Array.isArray(data) ? data : [];
 }
 
+export async function fetchPriceListGroups() {
+  const { data } = await api.get('/products/price-list/groups');
+  return Array.isArray(data.groups) ? data.groups : ['ALL PRODUCTS'];
+}
+
+export async function fetchPriceListProducts({ group = 'ALL PRODUCTS', description = '', updatedBefore = '', page = 1, limit = 500 } = {}) {
+  const { data } = await api.get('/products/price-list/search', {
+    params: { group, description, updatedBefore, page, limit }
+  });
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  const rawSummary = data.summary || {};
+  const total = Number(rawSummary.total ?? data.total ?? rawSummary.matchingTotal ?? rawSummary.count ?? rows.length);
+  const pageNumber = Number(rawSummary.page ?? page) || 1;
+  const pageLimit = Number(rawSummary.limit ?? limit) || limit;
+  return {
+    rows,
+    summary: {
+      ...rawSummary,
+      count: Number(rawSummary.count ?? rows.length),
+      total,
+      page: pageNumber,
+      limit: pageLimit,
+      totalPages: Number(rawSummary.totalPages ?? Math.max(Math.ceil(total / pageLimit), 1))
+    },
+    groups: Array.isArray(data.groups) ? data.groups : []
+  };
+}
+
+export async function updatePriceListProducts(payload) {
+  const { data } = await api.post('/products/price-list/update', payload, { timeout: 30000 });
+  return data;
+}
+
+export async function startPriceListUpdateJob(payload) {
+  const { data } = await api.post('/products/price-list/jobs', payload, { timeout: 30000 });
+  return data.job;
+}
+
+export async function fetchPriceListUpdateJob(jobId) {
+  const { data } = await api.get(`/products/price-list/jobs/${encodeURIComponent(jobId)}`);
+  return data.job;
+}
+
 export async function fetchProductDropbox({ search = '', ageDays = 365, limit = 500 } = {}) {
   const { data } = await api.get('/products/dropbox', {
     params: { search, ageDays, limit }

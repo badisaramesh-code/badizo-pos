@@ -88,6 +88,7 @@ export default function SystemView() {
     thermal_feed_margin_mm: 4,
     thermal_bill_logo_enabled: true,
     thermal_bill_logo_data_url: '',
+    gst_slabs: '0,3,5,12,18,28,40',
     backup_daily_time: '09:00',
     barcode_printer_templates: DEFAULT_BARCODE_PRINTER_TEMPLATES
   });
@@ -645,6 +646,15 @@ export default function SystemView() {
                   max="30"
                   value={settings.thermal_feed_margin_mm ?? 4}
                   onChange={(event) => updateSetting('thermal_feed_margin_mm', event.target.value)}
+                />
+              </label>
+              <label>
+                <span className="field-label">GST Slabs</span>
+                <input
+                  className="field"
+                  value={settings.gst_slabs || ''}
+                  onChange={(event) => updateSetting('gst_slabs', event.target.value)}
+                  placeholder="0,3,5,12,18,28,40"
                 />
               </label>
             </div>

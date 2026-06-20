@@ -8,6 +8,7 @@ import InwardEntryView from './components/InwardEntryView';
 import InventoryDashboardView from './components/InventoryDashboardView';
 import LoginView from './components/LoginView';
 import OrdersView from './components/OrdersView';
+import PriceListView from './components/PriceListView';
 import ProductImportHistoryView from './components/ProductImportHistoryView';
 import ReportsView from './components/ReportsView';
 import SystemView from './components/SystemView';
@@ -54,6 +55,7 @@ export default function App() {
     ),
     importHistory: <ProductImportHistoryView onClose={() => setActiveWorkspace('inventory')} />,
     orders: <OrdersView />,
+    priceList: <PriceListView />,
     barcode: <BarcodeStickersView />,
     inward: <InwardEntryView />,
     reports: <ReportsView isActive={activeWorkspace === 'reports'} onClose={() => setActiveWorkspace('billing')} />,

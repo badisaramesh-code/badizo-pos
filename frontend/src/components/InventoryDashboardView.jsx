@@ -865,8 +865,6 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       setBulkRows([]);
       setBulkPatch({ hsn_code: '', gst_percent: '', unit_type: '' });
       setBulkSearch('');
-      await loadProducts(1);
-      setPage(1);
       setBulkFocusVersion((current) => current + 1);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save bulk product edit.');

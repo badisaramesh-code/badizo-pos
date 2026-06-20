@@ -21,6 +21,7 @@ const ALLOWED_SETTINGS = new Set([
   'thermal_feed_margin_mm',
   'thermal_bill_logo_enabled',
   'thermal_bill_logo_data_url',
+  'gst_slabs',
   'backup_daily_time',
   'barcode_printer_templates'
 ]);
@@ -103,6 +104,12 @@ function normalizeBarcodePrinterTemplates(rawValue) {
 
 function publicSettings(settings) {
   const logoDataUrl = String(settings.thermal_bill_logo_data_url || '').trim();
+  const gstSlabs = String(settings.gst_slabs || '0,3,5,12,18,28,40')
+    .split(/[,;\s]+/)
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value >= 0 && value <= 100)
+    .filter((value, index, list) => list.indexOf(value) === index)
+    .sort((a, b) => a - b);
   return {
     shop_name: settings.shop_name || 'Hyper Fresh Mart LLP',
     gst_number: settings.gst_number || '36AAJFH7790R1ZB',
@@ -123,6 +130,7 @@ function publicSettings(settings) {
       : 4,
     thermal_bill_logo_enabled: String(settings.thermal_bill_logo_enabled || '1') !== '0',
     thermal_bill_logo_data_url: /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(logoDataUrl) ? logoDataUrl : '',
+    gst_slabs: gstSlabs.length ? gstSlabs.join(',') : '0,3,5,12,18,28,40',
     backup_daily_time: /^\d{2}:\d{2}$/.test(settings.backup_daily_time || '')
       ? settings.backup_daily_time
       : (process.env.BACKUP_DAILY_TIME || '09:00'),
@@ -224,6 +232,16 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
         if (value.length > 700000) {
           return res.status(400).json({ error: 'Thermal bill logo is too large. Use a small 22mm x 22mm image.' });
         }
+      }
+
+      if (key === 'gst_slabs') {
+        const slabs = String(rawValue || '')
+          .split(/[,;\s]+/)
+          .map((item) => Number(item))
+          .filter((item) => Number.isFinite(item) && item >= 0 && item <= 100)
+          .filter((item, index, list) => list.indexOf(item) === index)
+          .sort((a, b) => a - b);
+        value = slabs.length ? slabs.join(',') : '0,3,5,12,18,28,40';
       }
 
       if (key === 'backup_daily_time') {

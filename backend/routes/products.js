@@ -12,7 +12,23 @@ const PRODUCT_IMPORT_BATCH_SIZE = 1000;
 const PRODUCT_IMPORT_LINE_LIMIT = 5000;
 const PRODUCT_IMPORT_TAX_SYNC_LIMIT = 200;
 const PRODUCT_IMPORT_HISTORY_INSERT_SIZE = 250;
+const PRICE_LIST_SEARCH_LIMIT = 500;
+const PRICE_LIST_UPDATE_LIMIT = 5000;
+const PRICE_LIST_UPDATE_BATCH_SIZE = 100;
+const PRICE_LIST_BACKGROUND_BATCH_SIZE = 100;
+const DEFAULT_GST_SLABS = [0, 3, 5, 12, 18, 28, 40];
 const PRODUCT_IMPORT_ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING']);
+const PRICE_LIST_JOB_ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING']);
+const priceListRunningJobs = new Set();
+const PRICE_LIST_ALLOWED_PROPERTIES = {
+  hsn_code: 'HSN Code',
+  gst_percent: 'GST Slab',
+  product_group: 'Product Group',
+  sale_price: 'Sales Rate',
+  discount_value: 'Discount',
+  discount_type: 'Discount Type',
+  unit_type: 'Unit'
+};
 const PRODUCT_IMPORT_COLUMNS = [
   'product_code',
   'barcode',
@@ -60,6 +76,7 @@ function toProduct(row) {
     barcode: row.barcode,
     product_name: row.product_name,
     alias_names: row.alias_names || '',
+    product_group: row.product_group || 'GENERAL',
     hsn_code: row.hsn_code || '',
     gst_percent: Number(row.gst_percent || 0),
     sales_sgst_percent: Number(row.sales_sgst_percent || 0),
@@ -95,6 +112,7 @@ function productSnapshot(row) {
     barcode: row.barcode,
     product_name: row.product_name,
     alias_names: row.alias_names || '',
+    product_group: row.product_group || 'GENERAL',
     hsn_code: row.hsn_code || '',
     gst_percent: Number(row.gst_percent || 0),
     sales_sgst_percent: Number(row.sales_sgst_percent || 0),
@@ -537,6 +555,11 @@ function normalizeUnitType(value) {
   return unit ? unit.slice(0, 30) : 'Nos';
 }
 
+function normalizeProductGroup(value) {
+  const group = normalizeProductName(value || 'GENERAL');
+  return group ? group.slice(0, 80) : 'GENERAL';
+}
+
 function normalizePurchaseUnitType(value) {
   const unit = String(value || 'Loose').trim();
   const allowed = ['Loose', 'Carton', 'Bag', 'Box', 'Case', 'Bundle', 'Pack'];
@@ -587,6 +610,376 @@ function applyProductSearch(where, values, search) {
     where.push('(product_name LIKE ? OR alias_names LIKE ? OR barcode LIKE ? OR product_code LIKE ?)');
     values.push(`%${token}%`, `%${token}%`, `%${token}%`, `%${token}%`);
   });
+}
+
+function priceListProduct(row) {
+  return {
+    id: row.id,
+    selected: true,
+    product_group: row.product_group || 'GENERAL',
+    product_code: row.product_code || '',
+    barcode: row.barcode,
+    description: row.product_name,
+    hsn_code: row.hsn_code || '',
+    unit: row.unit_type || 'Nos',
+    gst_slab: Number(row.gst_percent || 0),
+    mrp: Number(row.mrp || 0),
+    sales_rate: Number(row.sale_price || 0),
+    discount: Number(row.discount_value || 0),
+    discount_type: row.discount_type || 'PERCENT',
+    net_sales_rate: Number(row.sale_price || 0),
+    new_sales_rate: Number(row.sale_price || 0),
+    new_discount: Number(row.discount_value || 0),
+    new_discount_type: row.discount_type || 'PERCENT',
+    new_gst_slab: Number(row.gst_percent || 0),
+    updated_at: row.updated_at
+  };
+}
+
+function chunkList(items, size) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function parseGstSlabs(value) {
+  const slabs = String(value || '')
+    .split(/[,;\s]+/)
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item) && item >= 0 && item <= 100)
+    .filter((item, index, list) => list.indexOf(item) === index)
+    .sort((a, b) => a - b);
+  return slabs.length ? slabs : DEFAULT_GST_SLABS;
+}
+
+async function getConfiguredGstSlabs() {
+  try {
+    const [rows] = await db.query(
+      `SELECT setting_value
+       FROM app_settings
+       WHERE setting_key = 'gst_slabs'
+       LIMIT 1`
+    );
+    return parseGstSlabs(rows[0]?.setting_value);
+  } catch (_err) {
+    return DEFAULT_GST_SLABS;
+  }
+}
+
+function normalizePriceListValue(property, rawValue, gstSlabs = DEFAULT_GST_SLABS) {
+  if (!PRICE_LIST_ALLOWED_PROPERTIES[property]) return { error: 'Select a valid property to change.' };
+
+  if (property === 'gst_percent') {
+    const value = Number(rawValue);
+    return Number.isFinite(value) && value >= 0 && value <= 100
+      ? { value }
+      : { error: 'GST percent must be between 0 and 100.' };
+  }
+
+  if (property === 'sale_price' || property === 'discount_value') {
+    const value = Number(rawValue);
+    return Number.isFinite(value) && value >= 0
+      ? { value }
+      : { error: `${PRICE_LIST_ALLOWED_PROPERTIES[property]} must be zero or more.` };
+  }
+
+  if (property === 'discount_type') {
+    const value = String(rawValue || '').trim().toUpperCase();
+    return ['PERCENT', 'VALUE'].includes(value)
+      ? { value }
+      : { error: 'Select Percent or Value discount type.' };
+  }
+
+  if (property === 'unit_type') return { value: normalizeUnitType(rawValue) };
+  if (property === 'product_group') return { value: normalizeProductGroup(rawValue) };
+
+  const value = String(rawValue || '').trim().slice(0, 80);
+  return value ? { value } : { error: 'Enter a valid change property value.' };
+}
+
+function buildPriceListWhere({ group = 'ALL PRODUCTS', description = '', updatedBefore = '', minId = 0 } = {}) {
+  const where = [];
+  const values = [];
+  const cleanedGroup = String(group || 'ALL PRODUCTS').trim();
+  const cleanedDescription = String(description || '').trim();
+  const cleanedUpdatedBefore = String(updatedBefore || '').trim();
+
+  if (cleanedGroup && cleanedGroup.toUpperCase() !== 'ALL PRODUCTS') {
+    where.push("COALESCE(NULLIF(TRIM(product_group), ''), 'GENERAL') = ?");
+    values.push(normalizeProductGroup(cleanedGroup));
+  }
+
+  if (cleanedDescription) {
+    applyProductSearch(where, values, cleanedDescription);
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(cleanedUpdatedBefore)) {
+    where.push('DATE(updated_at) <= ?');
+    values.push(cleanedUpdatedBefore);
+  }
+
+  if (minId > 0) {
+    where.push('id > ?');
+    values.push(Number(minId));
+  }
+
+  return {
+    whereSql: where.length ? `WHERE ${where.join(' AND ')}` : '',
+    values,
+    group: cleanedGroup || 'ALL PRODUCTS',
+    description: cleanedDescription,
+    updatedBefore: /^\d{4}-\d{2}-\d{2}$/.test(cleanedUpdatedBefore) ? cleanedUpdatedBefore : ''
+  };
+}
+
+function priceListUpdateSqlForIds(property, value, ids) {
+  const placeholders = ids.map(() => '?').join(',');
+  if (property === 'gst_percent') {
+    return {
+      sql: `UPDATE products
+            SET gst_percent = ?,
+                sales_sgst_percent = ?,
+                sales_cgst_percent = ?,
+                sales_igst_percent = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id IN (${placeholders})`,
+      values: [value, Number(value) / 2, Number(value) / 2, Number(value), ...ids]
+    };
+  }
+
+  return {
+    sql: `UPDATE products SET ${property} = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`,
+    values: [value, ...ids]
+  };
+}
+
+async function insertPriceListUpdateLines(connection, jobId, beforeRows = [], afterRows = []) {
+  if (!beforeRows.length) return;
+  const afterById = new Map(afterRows.map((row) => [row.id, row]));
+  const placeholders = beforeRows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+  const values = beforeRows.flatMap((row) => {
+    const afterRow = afterById.get(row.id);
+    return [
+      jobId,
+      row.barcode,
+      row.product_code || '',
+      row.product_name || '',
+      afterRow ? 'UPDATED' : 'ERROR',
+      afterRow ? null : 'Product was not found after update.',
+      JSON.stringify(productSnapshot(row)),
+      afterRow ? JSON.stringify(productSnapshot(afterRow)) : null
+    ];
+  });
+
+  await connection.query(
+    `INSERT INTO price_list_update_lines
+     (job_id, barcode, product_code, product_name, action_status, error_message, previous_product_json, updated_product_json)
+     VALUES ${placeholders}`,
+    values
+  );
+}
+
+async function processPriceListUpdateJob(jobId) {
+  if (priceListRunningJobs.has(jobId)) return;
+  priceListRunningJobs.add(jobId);
+
+  try {
+    const [jobRows] = await db.query(
+      `SELECT *
+       FROM price_list_update_jobs
+       WHERE id = ?
+       LIMIT 1`,
+      [jobId]
+    );
+    const job = jobRows[0];
+    if (!job || !PRICE_LIST_JOB_ACTIVE_STATUSES.has(job.status)) return;
+
+    const gstSlabs = await getConfiguredGstSlabs();
+    const normalized = normalizePriceListValue(job.property_name, job.property_value, gstSlabs);
+    if (normalized.error) {
+      await db.query(
+        `UPDATE price_list_update_jobs
+         SET status = 'FAILED', failure_message = ?, completed_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [normalized.error, jobId]
+      );
+      return;
+    }
+
+    await db.query(
+      `UPDATE price_list_update_jobs
+       SET status = 'RUNNING', started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
+       WHERE id = ?`,
+      [jobId]
+    );
+
+    let processedCount = Number(job.processed_count || 0);
+    let updatedCount = Number(job.updated_count || 0);
+    let failedCount = Number(job.failed_count || 0);
+    let selectedBarcodes = [];
+
+    try {
+      const payload = JSON.parse(job.property_value_json || '{}');
+      selectedBarcodes = Array.isArray(payload.barcodes)
+        ? [...new Set(payload.barcodes.map((barcode) => String(barcode || '').trim().toUpperCase()).filter(Boolean))]
+        : [];
+    } catch (_err) {
+      selectedBarcodes = [];
+    }
+
+    if (selectedBarcodes.length) {
+      for (const barcodeBatch of chunkList(selectedBarcodes, PRICE_LIST_BACKGROUND_BATCH_SIZE)) {
+        const [batchRows] = await db.query(
+          `SELECT *
+           FROM products
+           WHERE barcode IN (${barcodeBatch.map(() => '?').join(',')})
+           ORDER BY product_group ASC, product_name ASC, id ASC`,
+          barcodeBatch
+        );
+
+        if (!batchRows.length) {
+          failedCount += barcodeBatch.length;
+        } else {
+          const connection = await db.getConnection();
+          try {
+            await connection.beginTransaction();
+            const ids = batchRows.map((row) => row.id);
+            const update = priceListUpdateSqlForIds(job.property_name, normalized.value, ids);
+            const [updateResult] = await connection.query(update.sql, update.values);
+            const [afterRows] = await connection.query(
+              `SELECT *
+               FROM products
+               WHERE id IN (${ids.map(() => '?').join(',')})
+               ORDER BY id ASC`,
+              ids
+            );
+            await insertPriceListUpdateLines(connection, jobId, batchRows, afterRows);
+            await connection.commit();
+
+            processedCount += batchRows.length;
+            updatedCount += Number(updateResult?.affectedRows || 0);
+            failedCount += barcodeBatch.length - batchRows.length;
+          } catch (err) {
+            try {
+              await connection.rollback();
+            } catch (_rollbackErr) {
+              // Ignore rollback failure.
+            }
+            failedCount += barcodeBatch.length;
+          } finally {
+            connection.release();
+          }
+        }
+
+        await db.query(
+          `UPDATE price_list_update_jobs
+           SET processed_count = ?, updated_count = ?, failed_count = ?
+           WHERE id = ?`,
+          [processedCount, updatedCount, failedCount, jobId]
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    } else {
+      let lastId = 0;
+
+      while (true) {
+        const filter = buildPriceListWhere({
+          group: job.filter_group,
+          description: job.filter_description,
+          updatedBefore: job.filter_updated_before,
+          minId: lastId
+        });
+        const [batchRows] = await db.query(
+          `SELECT *
+           FROM products
+           ${filter.whereSql}
+           ORDER BY id ASC
+           LIMIT ?`,
+          [...filter.values, PRICE_LIST_BACKGROUND_BATCH_SIZE]
+        );
+
+        if (!batchRows.length) break;
+        lastId = Number(batchRows[batchRows.length - 1].id || lastId);
+
+        const connection = await db.getConnection();
+        try {
+          await connection.beginTransaction();
+          const ids = batchRows.map((row) => row.id);
+          const update = priceListUpdateSqlForIds(job.property_name, normalized.value, ids);
+          const [updateResult] = await connection.query(update.sql, update.values);
+          const [afterRows] = await connection.query(
+            `SELECT *
+             FROM products
+             WHERE id IN (${ids.map(() => '?').join(',')})
+             ORDER BY id ASC`,
+            ids
+          );
+          await insertPriceListUpdateLines(connection, jobId, batchRows, afterRows);
+          await connection.commit();
+
+          processedCount += batchRows.length;
+          updatedCount += Number(updateResult?.affectedRows || 0);
+        } catch (err) {
+          try {
+            await connection.rollback();
+          } catch (_rollbackErr) {
+            // Ignore rollback failure.
+          }
+          failedCount += batchRows.length;
+        } finally {
+          connection.release();
+        }
+
+        await db.query(
+          `UPDATE price_list_update_jobs
+           SET processed_count = ?, updated_count = ?, failed_count = ?
+           WHERE id = ?`,
+          [processedCount, updatedCount, failedCount, jobId]
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+
+    await writeAuditLog({
+      user: { username: job.created_by || 'system' },
+      action: 'PRICE_LIST_BACKGROUND_UPDATE_COMPLETED',
+      entityType: 'PRODUCT',
+      entityId: jobId,
+      details: {
+        job_id: jobId,
+        property: job.property_name,
+        value: normalized.value,
+        filter_group: job.filter_group,
+        filter_description: job.filter_description,
+        filter_updated_before: job.filter_updated_before,
+        selected_barcodes: selectedBarcodes.length,
+        total_count: Number(job.total_count || 0),
+        processed_count: processedCount,
+        updated_count: updatedCount,
+        failed_count: failedCount
+      }
+    });
+
+    await db.query(
+      `UPDATE price_list_update_jobs
+       SET status = ?, processed_count = ?, updated_count = ?, failed_count = ?, completed_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [failedCount > 0 ? 'PARTIAL SUCCESS' : 'SUCCESS', processedCount, updatedCount, failedCount, jobId]
+    );
+  } catch (err) {
+    await db.query(
+      `UPDATE price_list_update_jobs
+       SET status = 'FAILED', failure_message = ?, completed_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [String(err.message || err).slice(0, 2000), jobId]
+    );
+  } finally {
+    priceListRunningJobs.delete(jobId);
+  }
 }
 
 function normalizeDropboxDays(value) {
@@ -2231,6 +2624,310 @@ router.get('/bulk-edit/search', authenticate, authorize('SERVER', 'ADMIN'), asyn
   }
 });
 
+router.get('/price-list/groups', authenticate, authorize('SERVER', 'ADMIN'), async (_req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT DISTINCT COALESCE(NULLIF(TRIM(product_group), ''), 'GENERAL') AS product_group
+       FROM products
+       ORDER BY product_group ASC`
+    );
+
+    const groups = ['ALL PRODUCTS', ...rows.map((row) => row.product_group).filter(Boolean)];
+    res.json({ groups: [...new Set(groups)] });
+  } catch (err) {
+    console.error('Price list groups failed:', err.message);
+    res.status(500).json({ error: 'Unable to load product groups.' });
+  }
+});
+
+router.get('/price-list/search', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const group = String(req.query.group || 'ALL PRODUCTS').trim();
+    const description = String(req.query.description || '').trim();
+    const updatedBefore = String(req.query.updatedBefore || '').trim();
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || PRICE_LIST_SEARCH_LIMIT, 20), PRICE_LIST_SEARCH_LIMIT);
+    const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
+    const offset = (page - 1) * limit;
+    const filter = buildPriceListWhere({ group, description, updatedBefore });
+    const [countRows] = await db.query(
+      `SELECT COUNT(*) AS total
+       FROM products
+       ${filter.whereSql}`,
+      filter.values
+    );
+    const total = Number(countRows[0]?.total || 0);
+    const [rows] = await db.query(
+      `SELECT *
+       FROM products
+       ${filter.whereSql}
+       ORDER BY product_group ASC, product_name ASC, id DESC
+       LIMIT ? OFFSET ?`,
+      [...filter.values, limit, offset]
+    );
+    const totalPages = Math.max(Math.ceil(total / limit), 1);
+
+    res.json({
+      rows: (rows || []).map(priceListProduct),
+      summary: { count: rows.length, total, page, totalPages, limit, offset, limited: total > rows.length },
+      groups: [...new Set((rows || []).map((row) => row.product_group || 'GENERAL'))]
+    });
+  } catch (err) {
+    console.error('Price list search failed:', err.message);
+    res.status(500).json({ error: 'Unable to load price list products.' });
+  }
+});
+
+router.post('/price-list/jobs', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  const group = String(req.body?.group || 'ALL PRODUCTS').trim();
+  const description = String(req.body?.description || '').trim();
+  const updatedBefore = String(req.body?.updatedBefore || '').trim();
+  const requestedBarcodes = Array.isArray(req.body?.barcodes)
+    ? req.body.barcodes
+    : (Array.isArray(req.body?.selectedBarcodes) ? req.body.selectedBarcodes : []);
+  const barcodes = Array.isArray(requestedBarcodes)
+    ? [...new Set(requestedBarcodes.map((barcode) => String(barcode || '').trim().toUpperCase()).filter(Boolean))]
+    : [];
+  const property = String(req.body?.property || '').trim();
+  const updateDate = String(req.body?.update_date || '').trim() || null;
+  const gstSlabs = await getConfiguredGstSlabs();
+  const normalized = normalizePriceListValue(property, req.body?.value, gstSlabs);
+
+  if (!barcodes.length && group.toUpperCase() === 'ALL PRODUCTS' && description.length < 2) {
+    return res.status(400).json({ error: 'Selected product barcodes were not received. Reload Price List and select products again.' });
+  }
+
+  if (barcodes.length > PRICE_LIST_UPDATE_LIMIT) {
+    return res.status(400).json({ error: `Update maximum ${PRICE_LIST_UPDATE_LIMIT} selected products at a time.` });
+  }
+
+  if (normalized.error) {
+    return res.status(400).json({ error: normalized.error });
+  }
+
+  try {
+    const filter = barcodes.length
+      ? { group: 'SELECTED PRODUCTS', description: `${barcodes.length} selected`, updatedBefore: '' }
+      : buildPriceListWhere({ group, description, updatedBefore });
+    const [countRows] = barcodes.length
+      ? await db.query(
+        `SELECT COUNT(*) AS total
+         FROM products
+         WHERE barcode IN (${barcodes.map(() => '?').join(',')})`,
+        barcodes
+      )
+      : await db.query(
+        `SELECT COUNT(*) AS total
+         FROM products
+         ${filter.whereSql}`,
+        filter.values
+      );
+    const total = Number(countRows[0]?.total || 0);
+    if (!total) {
+      return res.status(400).json({ error: 'No matching products found for background update.' });
+    }
+
+    if (property === 'sale_price') {
+      const [invalidRows] = barcodes.length
+        ? await db.query(
+          `SELECT product_name
+           FROM products
+           WHERE barcode IN (${barcodes.map(() => '?').join(',')})
+             AND mrp > 0 AND ? > mrp
+           LIMIT 1`,
+          [...barcodes, normalized.value]
+        )
+        : await db.query(
+          `SELECT product_name
+           FROM products
+           ${filter.whereSql}
+             ${filter.whereSql ? 'AND' : 'WHERE'} mrp > 0 AND ? > mrp
+           LIMIT 1`,
+          [...filter.values, normalized.value]
+        );
+      if (invalidRows.length) {
+        return res.status(400).json({ error: `Sales rate cannot be greater than MRP for ${invalidRows[0].product_name}.` });
+      }
+    }
+
+    const jobId = crypto.randomUUID();
+    await db.query(
+      `INSERT INTO price_list_update_jobs
+       (id, status, filter_group, filter_description, filter_updated_before, property_name, property_label, property_value, property_value_json, update_date, total_count, created_by)
+       VALUES (?, 'QUEUED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        jobId,
+        filter.group,
+        filter.description,
+        filter.updatedBefore || null,
+        property,
+        PRICE_LIST_ALLOWED_PROPERTIES[property],
+        String(normalized.value),
+        JSON.stringify({ value: normalized.value, barcodes }),
+        updateDate,
+        total,
+        req.user?.username || ''
+      ]
+    );
+
+    setImmediate(() => {
+      processPriceListUpdateJob(jobId).catch((err) => {
+        console.error('Price list background job failed:', err.message);
+      });
+    });
+
+    res.json({
+      success: true,
+      job: {
+        id: jobId,
+        status: 'QUEUED',
+        total_count: total,
+        processed_count: 0,
+        updated_count: 0,
+        failed_count: 0
+      }
+    });
+  } catch (err) {
+    console.error('Price list job create failed:', err.message);
+    res.status(500).json({ error: 'Unable to start background price list update.' });
+  }
+});
+
+router.get('/price-list/jobs/:id', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const jobId = String(req.params.id || '').trim();
+    const [rows] = await db.query(
+      `SELECT id, status, filter_group, filter_description, filter_updated_before, property_name, property_label, property_value,
+              update_date, total_count, processed_count, updated_count, failed_count, failure_message,
+              created_by, created_at, started_at, completed_at
+       FROM price_list_update_jobs
+       WHERE id = ?
+       LIMIT 1`,
+      [jobId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Price list update job was not found.' });
+    }
+
+    res.json({ job: rows[0] });
+  } catch (err) {
+    console.error('Price list job status failed:', err.message);
+    res.status(500).json({ error: 'Unable to load price list update job.' });
+  }
+});
+
+router.post('/price-list/update', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
+  const barcodes = Array.isArray(req.body?.barcodes)
+    ? [...new Set(req.body.barcodes.map((barcode) => String(barcode || '').trim().toUpperCase()).filter(Boolean))]
+    : [];
+  const property = String(req.body?.property || '').trim();
+  const rawValue = req.body?.value;
+  const updateDate = String(req.body?.update_date || '').trim();
+
+  if (!barcodes.length) {
+    return res.status(400).json({ error: 'Load and select products before updating.' });
+  }
+
+  if (barcodes.length > PRICE_LIST_UPDATE_LIMIT) {
+    return res.status(400).json({ error: `Update maximum ${PRICE_LIST_UPDATE_LIMIT} products at a time. Narrow the group/search and try again.` });
+  }
+
+  if (!PRICE_LIST_ALLOWED_PROPERTIES[property]) {
+    return res.status(400).json({ error: 'Select a valid property to change.' });
+  }
+
+  const gstSlabs = await getConfiguredGstSlabs();
+  const normalized = normalizePriceListValue(property, rawValue, gstSlabs);
+  if (normalized.error) {
+    return res.status(400).json({ error: normalized.error });
+  }
+
+  try {
+    const placeholders = barcodes.map(() => '?').join(',');
+    const [beforeRows] = await db.query(
+      `SELECT *
+       FROM products
+       WHERE barcode IN (${placeholders})`,
+      barcodes
+    );
+
+    if (!beforeRows.length) {
+      return res.status(404).json({ error: 'Selected products were not found.' });
+    }
+
+    if (property === 'sale_price') {
+      const invalidPriceRow = beforeRows.find((row) => Number(row.mrp || 0) > 0 && Number(normalized.value) > Number(row.mrp || 0));
+      if (invalidPriceRow) {
+        return res.status(400).json({ error: `Sales rate cannot be greater than MRP for ${invalidPriceRow.product_name}.` });
+      }
+    }
+
+    const beforeByBarcode = new Map(beforeRows.map((row) => [row.barcode, productSnapshot(row)]));
+    let updatedCount = 0;
+    const existingBarcodes = beforeRows.map((row) => row.barcode);
+
+    for (const batch of chunkList(existingBarcodes, PRICE_LIST_UPDATE_BATCH_SIZE)) {
+      const connection = await db.getConnection();
+      const batchRows = beforeRows.filter((row) => batch.includes(row.barcode));
+      try {
+        await connection.beginTransaction();
+        const update = priceListUpdateSqlForIds(property, normalized.value, batchRows.map((row) => row.id));
+        const [batchResult] = await connection.query(update.sql, update.values);
+        await connection.commit();
+        updatedCount += Number(batchResult?.affectedRows || 0);
+      } catch (err) {
+        try {
+          await connection.rollback();
+        } catch (_rollbackErr) {
+          // Ignore rollback failure.
+        }
+        throw err;
+      } finally {
+        connection.release();
+      }
+    }
+
+    const [afterRows] = await db.query(
+      `SELECT *
+       FROM products
+       WHERE barcode IN (${placeholders})
+       ORDER BY product_group ASC, product_name ASC`,
+      beforeRows.map((row) => row.barcode)
+    );
+
+    await writeAuditLog({
+      user: req.user,
+      action: 'PRICE_LIST_PRODUCTS_UPDATED',
+      entityType: 'PRODUCT',
+      entityId: `${updatedCount} products`,
+      details: {
+        property,
+        property_label: PRICE_LIST_ALLOWED_PROPERTIES[property],
+        value: normalized.value,
+        update_date: updateDate,
+        count: updatedCount,
+        batch_size: PRICE_LIST_UPDATE_BATCH_SIZE,
+        products: afterRows.slice(0, 200).map((row) => ({
+          barcode: row.barcode,
+          product_code: row.product_code,
+          product_name: row.product_name,
+          before: beforeByBarcode.get(row.barcode),
+          after: productSnapshot(row)
+        }))
+      },
+    });
+
+    res.json({
+      success: true,
+      updated: updatedCount,
+      rows: afterRows.map(priceListProduct)
+    });
+  } catch (err) {
+    console.error('Price list update failed:', err.message);
+    res.status(500).json({ error: 'Unable to update price list products.' });
+  }
+});
+
 router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     const q = decodeURIComponent(req.params.query || '').trim();
@@ -2578,24 +3275,50 @@ router.post('/bulk-update', authenticate, authorize('SERVER', 'ADMIN'), async (r
     return res.status(400).json({ error: 'Every row needs product name and GST must be 0, 3, 5, 12, 18, 28, or 40.' });
   }
 
-  const connection = await db.getConnection();
   try {
-    await connection.beginTransaction();
+    let updated = 0;
 
-    let taxSynced = 0;
-    for (const row of normalizedRows) {
-      await connection.query(
-        `UPDATE products
-         SET product_name = ?, hsn_code = ?, gst_percent = ?, unit_type = ?
-         WHERE barcode = ?`,
-        [row.product_name, row.hsn_code, row.gst_percent, row.unit_type, row.barcode]
-      );
-      taxSynced += await syncProductTaxByName(connection, {
-        productName: row.product_name,
-        aliasNames: '',
-        hsnCode: row.hsn_code,
-        gstPercent: row.gst_percent
-      });
+    for (const batch of chunkList(normalizedRows, 25)) {
+      const connection = await db.getConnection();
+      try {
+        await connection.beginTransaction();
+        for (const row of batch) {
+          const [result] = await connection.query(
+            `UPDATE products
+             SET product_name = ?,
+                 hsn_code = ?,
+                 gst_percent = ?,
+                 sales_sgst_percent = ?,
+                 sales_cgst_percent = ?,
+                 sales_igst_percent = ?,
+                 unit_type = ?,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE barcode = ?
+             LIMIT 1`,
+            [
+              row.product_name,
+              row.hsn_code,
+              row.gst_percent,
+              row.gst_percent / 2,
+              row.gst_percent / 2,
+              row.gst_percent,
+              row.unit_type,
+              row.barcode
+            ]
+          );
+          updated += Number(result?.affectedRows || 0);
+        }
+        await connection.commit();
+      } catch (err) {
+        try {
+          await connection.rollback();
+        } catch (_rollbackErr) {
+          // Ignore rollback failure; original error is more useful.
+        }
+        throw err;
+      } finally {
+        connection.release();
+      }
     }
 
     await writeAuditLog({
@@ -2605,20 +3328,17 @@ router.post('/bulk-update', authenticate, authorize('SERVER', 'ADMIN'), async (r
       entityId: `${normalizedRows.length} products`,
       details: {
         count: normalizedRows.length,
-        tax_synced_products: taxSynced,
+        updated,
+        batch_size: 25,
+        tax_sync_mode: 'exact_selected_rows_only',
         fields: ['product_name', 'hsn_code', 'gst_percent', 'unit_type']
-      },
-      connection
+      }
     });
 
-    await connection.commit();
-    res.json({ success: true, updated: normalizedRows.length, taxSynced });
+    res.json({ success: true, updated, taxSynced: 0 });
   } catch (err) {
-    await connection.rollback();
     console.error('Product bulk update failed:', err.message);
     res.status(500).json({ error: 'Unable to bulk update products.' });
-  } finally {
-    connection.release();
   }
 });
 

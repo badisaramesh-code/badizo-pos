@@ -23,6 +23,7 @@ CREATE TABLE products (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     barcode VARCHAR(120) NOT NULL UNIQUE,
     product_name VARCHAR(255) NOT NULL,
+    product_group VARCHAR(80) NOT NULL DEFAULT 'GENERAL',
     hsn_code VARCHAR(20) DEFAULT NULL,
     gst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
     sales_sgst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
@@ -38,6 +39,7 @@ CREATE TABLE products (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_barcode (barcode),
+    INDEX idx_product_group (product_group),
     INDEX idx_product_name (product_name)
 ) ENGINE=InnoDB;
 

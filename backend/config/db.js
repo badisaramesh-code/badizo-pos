@@ -26,6 +26,20 @@ async function ensureColumn(connection, tableName, columnName, definition) {
   }
 }
 
+async function ensureIndex(connection, tableName, indexName, definition) {
+  const [rows] = await connection.query(
+    `SELECT INDEX_NAME
+     FROM INFORMATION_SCHEMA.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?
+     LIMIT 1`,
+    [tableName, indexName]
+  );
+
+  if (rows.length === 0) {
+    await connection.query(`ALTER TABLE ${tableName} ADD INDEX ${indexName} ${definition}`);
+  }
+}
+
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
   return `${salt}:${hash}`;
@@ -132,6 +146,52 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         INDEX idx_product_import_lines_status (action_status),
         INDEX idx_product_import_lines_barcode (barcode),
         CONSTRAINT fk_product_import_lines_job FOREIGN KEY (import_id) REFERENCES product_import_jobs(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS price_list_update_jobs (
+        id CHAR(36) PRIMARY KEY,
+        status ENUM('QUEUED', 'RUNNING', 'SUCCESS', 'FAILED', 'PARTIAL SUCCESS') NOT NULL DEFAULT 'QUEUED',
+        filter_group VARCHAR(80) DEFAULT 'ALL PRODUCTS',
+        filter_description VARCHAR(255) DEFAULT '',
+        filter_updated_before DATE DEFAULT NULL,
+        property_name VARCHAR(60) NOT NULL,
+        property_label VARCHAR(120) NOT NULL,
+        property_value VARCHAR(255) NOT NULL,
+        property_value_json JSON DEFAULT NULL,
+        update_date DATE DEFAULT NULL,
+        total_count INT NOT NULL DEFAULT 0,
+        processed_count INT NOT NULL DEFAULT 0,
+        updated_count INT NOT NULL DEFAULT 0,
+        failed_count INT NOT NULL DEFAULT 0,
+        failure_message TEXT DEFAULT NULL,
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        started_at TIMESTAMP NULL DEFAULT NULL,
+        completed_at TIMESTAMP NULL DEFAULT NULL,
+        INDEX idx_price_list_jobs_status (status),
+        INDEX idx_price_list_jobs_created (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await ensureColumn(connection, 'price_list_update_jobs', 'filter_updated_before', 'DATE DEFAULT NULL AFTER filter_description');
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS price_list_update_lines (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        job_id CHAR(36) NOT NULL,
+        barcode VARCHAR(120) NOT NULL,
+        product_code VARCHAR(60) DEFAULT '',
+        product_name VARCHAR(255) DEFAULT '',
+        action_status ENUM('UPDATED', 'ERROR') NOT NULL DEFAULT 'UPDATED',
+        error_message TEXT DEFAULT NULL,
+        previous_product_json JSON DEFAULT NULL,
+        updated_product_json JSON DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_price_list_lines_job (job_id),
+        INDEX idx_price_list_lines_status (action_status),
+        INDEX idx_price_list_lines_barcode (barcode),
+        CONSTRAINT fk_price_list_update_lines_job FOREIGN KEY (job_id) REFERENCES price_list_update_jobs(id) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
@@ -808,6 +868,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         ('default_print_mode', 'Thermal'),
         ('thermal_receipt_width_mm', '80'),
         ('thermal_feed_margin_mm', '4'),
+        ('gst_slabs', '0,3,5,12,18,28,40'),
         ('backup_daily_time', '09:00'),
         ('barcode_printer_templates', '{"tsc-244-pro-50x50-two-up.prn":{"label":"50 x 50 mm Two-Up","printer":"TSC TTP-244 Pro","shares":["\\\\\\\\localhost\\\\TSC TTP-244 Pro","\\\\\\\\localhost\\\\TSC-244-Pro"]},"tsc-244-1-33x25-single.prn":{"label":"33 x 25 mm Two-Up","printer":"TSC TTP-244 -1","shares":["\\\\\\\\localhost\\\\TSC TTP-244 -1","\\\\\\\\localhost\\\\TSC 244-1"]},"tsc-244-2-jewellery-100x15-tail.prn":{"label":"100 x 15 mm Jewellery Tail","printer":"TSC 244-2","shares":["\\\\\\\\localhost\\\\TSC 244-2"]}}')
     `);
@@ -817,6 +878,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'products', 'wholesale_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER sale_price');
     await ensureColumn(connection, 'products', 'product_code', 'VARCHAR(60) DEFAULT NULL UNIQUE AFTER id');
     await ensureColumn(connection, 'products', 'alias_names', 'TEXT DEFAULT NULL AFTER product_name');
+    await ensureColumn(connection, 'products', 'product_group', "VARCHAR(80) NOT NULL DEFAULT 'GENERAL' AFTER alias_names");
+    await ensureIndex(connection, 'products', 'idx_product_group', '(product_group)');
     await ensureColumn(connection, 'products', 'sales_sgst_percent', 'DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER gst_percent');
     await ensureColumn(connection, 'products', 'sales_cgst_percent', 'DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER sales_sgst_percent');
     await ensureColumn(connection, 'products', 'sales_igst_percent', 'DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER sales_cgst_percent');
