@@ -654,6 +654,16 @@ function parseGstSlabs(value) {
   return slabs.length ? slabs : DEFAULT_GST_SLABS;
 }
 
+function parseJsonPayload(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch (_err) {
+    return {};
+  }
+}
+
 async function getConfiguredGstSlabs() {
   try {
     const [rows] = await db.query(
@@ -820,13 +830,19 @@ async function processPriceListUpdateJob(jobId) {
     let failedCount = Number(job.failed_count || 0);
     let selectedBarcodes = [];
 
-    try {
-      const payload = JSON.parse(job.property_value_json || '{}');
-      selectedBarcodes = Array.isArray(payload.barcodes)
-        ? [...new Set(payload.barcodes.map((barcode) => String(barcode || '').trim().toUpperCase()).filter(Boolean))]
-        : [];
-    } catch (_err) {
-      selectedBarcodes = [];
+    const payload = parseJsonPayload(job.property_value_json);
+    selectedBarcodes = Array.isArray(payload.barcodes)
+      ? [...new Set(payload.barcodes.map((barcode) => String(barcode || '').trim().toUpperCase()).filter(Boolean))]
+      : [];
+
+    if (String(job.filter_group || '').toUpperCase() === 'SELECTED PRODUCTS' && !selectedBarcodes.length) {
+      await db.query(
+        `UPDATE price_list_update_jobs
+         SET status = 'FAILED', failure_message = 'Selected product barcode payload could not be read.', completed_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [jobId]
+      );
+      return;
     }
 
     if (selectedBarcodes.length) {
