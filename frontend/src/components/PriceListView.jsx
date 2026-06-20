@@ -351,7 +351,7 @@ export default function PriceListView() {
       <section className="panel price-list-panel">
         <div className="panel-header green">
           <div>
-            <h2 className="panel-title">Price List</h2>
+            <h2 className="panel-title">Mass Update</h2>
             <div className="inventory-stats">
               <span className="status-chip">Total Products {lastQuery.total}</span>
               <span className="status-chip">Page {lastQuery.page} of {totalPages}</span>
@@ -395,7 +395,7 @@ export default function PriceListView() {
                 {renderValueInput()}
               </label>
               <label>
-                <span className="field-label">Price List Update Date</span>
+                <span className="field-label">Mass Update Date</span>
                 <input className="field" type="date" value={priceListDate} onChange={(event) => setPriceListDate(event.target.value)} />
               </label>
               <div className="price-list-action-stack">

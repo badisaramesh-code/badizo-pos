@@ -2709,7 +2709,7 @@ router.post('/price-list/jobs', authenticate, authorize('SERVER', 'ADMIN'), asyn
   const normalized = normalizePriceListValue(property, req.body?.value, gstSlabs);
 
   if (!barcodes.length && group.toUpperCase() === 'ALL PRODUCTS' && description.length < 2) {
-    return res.status(400).json({ error: 'Selected product barcodes were not received. Reload Price List and select products again.' });
+    return res.status(400).json({ error: 'Selected product barcodes were not received. Reload Mass Update and select products again.' });
   }
 
   if (barcodes.length > PRICE_LIST_UPDATE_LIMIT) {
