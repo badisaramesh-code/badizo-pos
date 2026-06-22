@@ -7,12 +7,13 @@ import {
   getStoredUser,
   saveCounterHandover
 } from '../api/client';
-import { todayIso } from '../utils/date';
+import { formatDisplayDate, normalizeDateInput, todayIso } from '../utils/date';
 import { formatMoney, toNumber } from '../utils/money';
 
 const DEFAULT_DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
 const HANDOVER_TRANSACTION_ROWS = 30;
 const AUTO_ENTRY_DETAILS = new Set(['Counter Closing Cash', 'Today Sale']);
+const EMPTY_SNAPSHOT = { counter_sales: 0, all_counter_sales: 0, cash_sales: 0, upi_sales: 0, card_sales: 0, other_sales: 0 };
 
 function emptyDenominations(denominations) {
   return denominations.reduce((acc, value) => ({ ...acc, [value]: '' }), {});
@@ -75,10 +76,43 @@ function makeDefaultEntries() {
   return normalizeEntryCount([]);
 }
 
+function normalizeSnapshot(source) {
+  const counterSales = toNumber(source?.counter_sales);
+  const cashSales = toNumber(source?.cash_sales);
+  const upiSales = toNumber(source?.upi_sales);
+  const cardSales = toNumber(source?.card_sales);
+  const explicitOther = source?.other_sales === undefined || source?.other_sales === null
+    ? counterSales - cashSales - upiSales - cardSales
+    : toNumber(source.other_sales);
+
+  return {
+    counter_sales: counterSales,
+    all_counter_sales: toNumber(source?.all_counter_sales),
+    cash_sales: cashSales,
+    upi_sales: upiSales,
+    card_sales: cardSales,
+    other_sales: Math.max(explicitOther, 0)
+  };
+}
+
 function moneyWords(amount) {
   const value = Math.round(Number(amount || 0));
   if (!value) return 'Zero Rupees Only';
   return `${new Intl.NumberFormat('en-IN').format(value)} Rupees Only`;
+}
+
+function formatDateTime(value) {
+  if (!value) return '-';
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
 }
 
 export default function CounterClosingView() {
@@ -93,7 +127,8 @@ export default function CounterClosingView() {
   const [counterCount, setCounterCount] = useState(6);
   const [shopName, setShopName] = useState('Hyper Fresh Mart LLP');
   const [sheetNo, setSheetNo] = useState('');
-  const [snapshot, setSnapshot] = useState({ counter_sales: 0, all_counter_sales: 0, cash_sales: 0, upi_sales: 0, card_sales: 0 });
+  const [sheetMeta, setSheetMeta] = useState({ created_at: '', updated_at: '' });
+  const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT);
   const [denominationList, setDenominationList] = useState(DEFAULT_DENOMINATIONS);
   const [denominations, setDenominations] = useState(emptyDenominations(DEFAULT_DENOMINATIONS));
   const [openingCash, setOpeningCash] = useState('');
@@ -106,6 +141,7 @@ export default function CounterClosingView() {
   const [history, setHistory] = useState({ rows: [] });
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [isHandoverLoading, setIsHandoverLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const entryDetailRefs = useRef([]);
   const historySectionRef = useRef(null);
@@ -180,16 +216,21 @@ export default function CounterClosingView() {
     }
   }
 
-  async function loadHandover() {
+  async function loadHandover(options = {}) {
+    const { manual = false } = options;
+    const saleDate = normalizeDateInput(date);
+    if (saleDate !== date) setDate(saleDate);
     setStatusMessage('');
     setErrorMessage('');
+    setIsHandoverLoading(true);
     try {
-      const result = await fetchCounterHandover(date, counterNo);
-      const nextSnapshot = result.snapshot || {};
+      const result = await fetchCounterHandover(saleDate, counterNo);
+      const nextSnapshot = normalizeSnapshot(result.snapshot);
       const nextDenominations = result.denominations || DEFAULT_DENOMINATIONS;
       const savedSheet = result.sheet;
       setSheetNo(savedSheet?.sheet_no || result.sheet_no || '');
-      setSnapshot(nextSnapshot);
+      setSheetMeta(savedSheet ? { created_at: savedSheet.created_at || '', updated_at: savedSheet.updated_at || '' } : { created_at: '', updated_at: '' });
+      setSnapshot(savedSheet ? normalizeSnapshot(savedSheet) : nextSnapshot);
       setDenominationList(nextDenominations);
 
       if (savedSheet) {
@@ -214,14 +255,28 @@ export default function CounterClosingView() {
         setHandedOverBy('');
         setTakenOverBy('');
         setNotes('');
+        if (manual) {
+          if (nextSnapshot.counter_sales > 0) {
+            setStatusMessage('Sales details loaded for selected sale date and counter.');
+          } else if (nextSnapshot.all_counter_sales > 0) {
+            setStatusMessage(`No bills found for Counter ${counterNo} on ${formatDisplayDate(saleDate)}. All counters have sales for this date.`);
+          } else {
+            const latestBillDate = nextSnapshot.latest_invoice_date
+              ? ` Latest bill date in this database is ${formatDisplayDate(nextSnapshot.latest_invoice_date)}.`
+              : '';
+            setStatusMessage(`No bills found for selected sale date ${formatDisplayDate(saleDate)}.${latestBillDate}`);
+          }
+        }
       }
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to load counter handover sheet.');
+    } finally {
+      setIsHandoverLoading(false);
     }
   }
 
   async function loadHistory() {
-    const range = getOrderedRange(historyFrom, historyTo);
+    const range = getOrderedRange(normalizeDateInput(historyFrom), normalizeDateInput(historyTo));
     try {
       setHistory(await fetchCounterHandoverHistory({ ...range, counterNo: counterNo || '' }));
     } catch (err) {
@@ -230,7 +285,7 @@ export default function CounterClosingView() {
   }
 
   async function viewSavedSheet(row) {
-    setDate(row.closing_date);
+    setDate(normalizeDateInput(row.closing_date));
     setCounterNo(Number(row.counter_no));
     setStatusMessage(`Viewing sheet ${row.sheet_no}.`);
     window.setTimeout(() => {
@@ -288,6 +343,21 @@ export default function CounterClosingView() {
     setIsExistingSheet(false);
   }
 
+  function startCashEntry(direction, details) {
+    const nextDetails = details || (direction === 'DR' ? 'Cash Outgoing' : 'Cash Incoming');
+    const emptyIndex = entries.findIndex((entry) => !isEntryFilled(entry));
+    const targetIndex = emptyIndex >= 0 ? emptyIndex : Math.min(activeEntryIndex + 1, HANDOVER_TRANSACTION_ROWS - 1);
+
+    setEntries((current) => current.map((entry, rowIndex) => (
+      rowIndex === targetIndex
+        ? { ...entry, details: entry.details || nextDetails, direction, amount: entry.amount || '' }
+        : entry
+    )));
+    setActiveEntryIndex(targetIndex);
+    setIsExistingSheet(false);
+    focusEntryDetails(targetIndex);
+  }
+
   async function handleSave() {
     setStatusMessage('');
     setErrorMessage('');
@@ -300,7 +370,7 @@ export default function CounterClosingView() {
     setIsSaving(true);
     try {
       const result = await saveCounterHandover({
-        date,
+        date: normalizeDateInput(date),
         counter_no: counterNo,
         opening_cash: openingCash,
         entries: [...enteredEntries, ...autoLedgerRows].map((entry, index) => ({ ...entry, line_no: index + 1 })),
@@ -320,7 +390,8 @@ export default function CounterClosingView() {
   }
 
   function exportHandoverExcel() {
-    exportWorkbook(`badizo_counter_handover_${date}_C${counterNo}.xlsx`, [
+    const saleDate = normalizeDateInput(date);
+    exportWorkbook(`badizo_counter_handover_${saleDate}_C${counterNo}.xlsx`, [
       {
         name: 'Handover Sheet',
         rows: printableEntries.map((entry, index) => ({
@@ -344,12 +415,12 @@ export default function CounterClosingView() {
   }
 
   function exportHistoryExcel() {
-    const range = getOrderedRange(historyFrom, historyTo);
+    const range = getOrderedRange(normalizeDateInput(historyFrom), normalizeDateInput(historyTo));
     exportWorkbook(`badizo_counter_handover_history_${range.from}_to_${range.to}.xlsx`, [
       {
         name: 'Handover History',
         rows: (history.rows || []).map((row) => ({
-          Date: row.closing_date,
+          Date: formatDisplayDate(row.closing_date),
           Counter: row.counter_no,
           Sheet: row.sheet_no,
           'Counter Sale': Number(row.counter_sales || 0),
@@ -359,7 +430,9 @@ export default function CounterClosingView() {
           'Cash Notes Balance': Number(row.cash_balance || 0),
           Difference: Number(row.variance_amount || 0),
           Handover: row.handed_over_by,
-          Checked: row.taken_over_by
+          Checked: row.taken_over_by,
+          'Added At': formatDateTime(row.created_at),
+          'Edited At': formatDateTime(row.updated_at)
         }))
       }
     ]);
@@ -391,7 +464,7 @@ export default function CounterClosingView() {
             {!isCounterUser && <button className="secondary-button" type="button" onClick={showOldSheets}>Old Sheets</button>}
             <label className="date-range-field">
               <span className="field-label">Date</span>
-              <input className="field report-date-input" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+              <input className="field report-date-input" type="date" value={normalizeDateInput(date)} onChange={(event) => setDate(normalizeDateInput(event.target.value))} />
             </label>
             <label>
               <span className="field-label">Counter</span>
@@ -399,7 +472,7 @@ export default function CounterClosingView() {
                 {counterOptions.map((value) => <option key={value} value={value}>Counter {value}</option>)}
               </select>
             </label>
-            <button className="secondary-button" type="button" onClick={loadHandover}>Refresh</button>
+            <button className="secondary-button" type="button" onClick={() => loadHandover({ manual: true })} disabled={isHandoverLoading}>{isHandoverLoading ? 'Viewing...' : 'View'}</button>
           </div>
         </div>
 
@@ -407,17 +480,20 @@ export default function CounterClosingView() {
           <div className="handover-heading">
             <strong>{shopName}</strong>
             <span className="handover-heading-title">Accounting DR / CR Transactions</span>
-            <span className="handover-heading-chip">Date: {date}</span>
+            <span className="handover-heading-chip">Sale Date: {formatDisplayDate(date)}</span>
             <span className="handover-heading-chip">Sheet: {sheetNo || '-'}</span>
             <span className="handover-heading-chip">Counter: {counterNo}</span>
+            <span className="handover-heading-chip">Added: {formatDateTime(sheetMeta.created_at)}</span>
+            <span className="handover-heading-chip">Edited: {formatDateTime(sheetMeta.updated_at)}</span>
           </div>
 
           <div className="handover-sales-strip">
-            <div><span>Counter {counterNo} Sale</span><strong>{formatMoney(snapshot.counter_sales)}</strong></div>
+            <div><span>Total Sale</span><strong>{formatMoney(snapshot.counter_sales)}</strong></div>
+            <div><span>Cash Sale</span><strong>{formatMoney(snapshot.cash_sales)}</strong></div>
+            <div><span>UPI Sale</span><strong>{formatMoney(snapshot.upi_sales)}</strong></div>
+            <div><span>Card Sale</span><strong>{formatMoney(snapshot.card_sales)}</strong></div>
+            <div><span>Other Sale</span><strong>{formatMoney(snapshot.other_sales)}</strong></div>
             <div><span>All Counters Sale</span><strong>{formatMoney(snapshot.all_counter_sales)}</strong></div>
-            <div><span>Cash</span><strong>{formatMoney(snapshot.cash_sales)}</strong></div>
-            <div><span>UPI</span><strong>{formatMoney(snapshot.upi_sales)}</strong></div>
-            <div><span>Card</span><strong>{formatMoney(snapshot.card_sales)}</strong></div>
           </div>
 
           <div className="handover-actions-row">
@@ -433,6 +509,9 @@ export default function CounterClosingView() {
               <span className="field-label">Checked / Taken By</span>
               <input className="field" value={takenOverBy} onChange={(event) => setTakenOverBy(event.target.value)} />
             </label>
+            <button className="secondary-button" type="button" onClick={() => startCashEntry('CR')}>Cash In</button>
+            <button className="secondary-button" type="button" onClick={() => startCashEntry('DR')}>Cash Out</button>
+            <button className="secondary-button" type="button" onClick={() => startCashEntry('DR', 'Charges')}>Charges</button>
             <button className="secondary-button" type="button" onClick={resetAccountingRows}>Reset Rows From Sales</button>
           </div>
 
@@ -584,21 +663,21 @@ export default function CounterClosingView() {
           <div className="panel-header green">
             <h2 className="panel-title">Daily Handover Sheets Ledger</h2>
             <form className="report-filter-row" onSubmit={(event) => { event.preventDefault(); loadHistory(); }}>
-              <label className="date-range-field"><span className="field-label">From</span><input className="field report-date-input" type="date" value={historyFrom} onChange={(event) => setHistoryFrom(event.target.value)} /></label>
-              <label className="date-range-field"><span className="field-label">To</span><input className="field report-date-input" type="date" value={historyTo} onChange={(event) => setHistoryTo(event.target.value)} /></label>
+              <label className="date-range-field"><span className="field-label">From</span><input className="field report-date-input" type="date" value={normalizeDateInput(historyFrom)} onChange={(event) => setHistoryFrom(normalizeDateInput(event.target.value))} /></label>
+              <label className="date-range-field"><span className="field-label">To</span><input className="field report-date-input" type="date" value={normalizeDateInput(historyTo)} onChange={(event) => setHistoryTo(normalizeDateInput(event.target.value))} /></label>
               <button className="secondary-button" type="submit">Load</button>
               <button className="secondary-button" type="button" onClick={exportHistoryExcel}>Export Excel</button>
             </form>
           </div>
           <div className="panel-body table-scroll">
             <table className="history-table">
-              <thead><tr><th>Date</th><th>Counter</th><th>Sheet</th><th>Sale</th><th>DR</th><th>CR</th><th>Cash Notes Balance</th><th>Difference</th><th>Handover</th><th>Action</th></tr></thead>
+              <thead><tr><th>Sale Date</th><th>Counter</th><th>Sheet</th><th>Sale</th><th>DR</th><th>CR</th><th>Cash Notes Balance</th><th>Difference</th><th>Handover</th><th>Added</th><th>Edited</th><th>Action</th></tr></thead>
               <tbody>
                 {(history.rows || []).length === 0 ? (
-                  <tr><td colSpan="10">No handover sheets saved for selected date range.</td></tr>
+                  <tr><td colSpan="12">No handover sheets saved for selected date range.</td></tr>
                 ) : history.rows.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.closing_date}</td>
+                    <td>{formatDisplayDate(row.closing_date)}</td>
                     <td>Counter {row.counter_no}</td>
                     <td className="mono">{row.sheet_no}</td>
                     <td>{formatMoney(row.counter_sales)}</td>
@@ -607,6 +686,8 @@ export default function CounterClosingView() {
                     <td><strong>{formatMoney(row.cash_balance)}</strong></td>
                     <td className={Math.abs(toNumber(row.variance_amount)) > 0.01 ? 'stock-low' : ''}>{formatMoney(row.variance_amount)}</td>
                     <td>{row.handed_over_by} to {row.taken_over_by}</td>
+                    <td>{formatDateTime(row.created_at)}</td>
+                    <td>{formatDateTime(row.updated_at)}</td>
                     <td><button className="secondary-button" type="button" onClick={() => viewSavedSheet(row)}>View</button></td>
                   </tr>
                 ))}
@@ -620,12 +701,18 @@ export default function CounterClosingView() {
         <div className="handover-print-sheet">
           <h1>{shopName}</h1>
           <div className="handover-print-meta">
-            <span>Date: {date}</span>
+            <span>Sale Date: {formatDisplayDate(date)}</span>
             <strong>Counter Handover Daily Sheet</strong>
             <span>Counter: {counterNo}</span>
+            <span>Added: {formatDateTime(sheetMeta.created_at)}</span>
+            <span>Edited: {formatDateTime(sheetMeta.updated_at)}</span>
           </div>
           <div className="handover-print-sale-row">
             <strong>Counter {counterNo} sale Rs: {normalizeAmount(snapshot.counter_sales).toFixed(2)}</strong>
+            <span>Cash Rs: {normalizeAmount(snapshot.cash_sales).toFixed(2)}</span>
+            <span>UPI Rs: {normalizeAmount(snapshot.upi_sales).toFixed(2)}</span>
+            <span>Card Rs: {normalizeAmount(snapshot.card_sales).toFixed(2)}</span>
+            <span>Other Rs: {normalizeAmount(snapshot.other_sales).toFixed(2)}</span>
             <strong>All Counters sale Rs: {normalizeAmount(snapshot.all_counter_sales).toFixed(2)}</strong>
           </div>
           <table>

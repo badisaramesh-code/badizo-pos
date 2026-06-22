@@ -3229,7 +3229,7 @@ button:disabled {
 }
 
 .handover-heading {
-  grid-template-columns: minmax(180px, 1fr) minmax(230px, auto) minmax(120px, auto) minmax(130px, auto) minmax(100px, auto);
+  grid-template-columns: minmax(160px, 1fr) minmax(210px, auto) repeat(5, minmax(92px, auto));
   gap: 8px;
   align-items: center;
   padding: 6px 9px;
@@ -3264,11 +3264,12 @@ button:disabled {
   color: var(--brand-dark);
   font-size: 12px;
   font-weight: 800;
-  white-space: nowrap;
+  white-space: normal;
+  text-align: center;
 }
 
 .handover-sales-strip {
-  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
 }
 
 .handover-total-strip {
@@ -3303,9 +3304,15 @@ button:disabled {
 
 .handover-actions-row {
   display: grid;
-  grid-template-columns: 160px minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  grid-template-columns: 145px minmax(160px, 1fr) minmax(160px, 1fr) auto auto auto auto;
   gap: 10px;
   align-items: end;
+}
+
+.handover-actions-row .secondary-button {
+  min-height: 36px;
+  padding-inline: 10px;
+  white-space: nowrap;
 }
 
 .counter-handover-card > .panel-header.green {
@@ -3591,13 +3598,16 @@ button:disabled {
 .handover-print-meta,
 .handover-print-sale-row {
   display: grid;
-  grid-template-columns: 1fr 2fr 1fr;
   border: 1px solid #111;
   border-bottom: 0;
 }
 
+.handover-print-meta {
+  grid-template-columns: 1fr 2fr 1fr 1fr 1fr;
+}
+
 .handover-print-sale-row {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(6, 1fr);
 }
 
 .handover-print-meta > *,

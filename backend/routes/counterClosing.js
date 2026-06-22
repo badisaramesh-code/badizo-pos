@@ -68,31 +68,49 @@ async function getSalesSnapshot(date, counterNo) {
        COALESCE(SUM(amount), 0) AS total,
        COALESCE(SUM(CASE WHEN payment_mode = 'Cash' THEN amount ELSE 0 END), 0) AS cash,
        COALESCE(SUM(CASE WHEN payment_mode = 'UPI' THEN amount ELSE 0 END), 0) AS upi,
-       COALESCE(SUM(CASE WHEN payment_mode = 'Card' THEN amount ELSE 0 END), 0) AS card
+       COALESCE(SUM(CASE WHEN payment_mode = 'Card' THEN amount ELSE 0 END), 0) AS card,
+       COALESCE(SUM(CASE WHEN payment_mode NOT IN ('Cash', 'UPI', 'Card') OR payment_mode IS NULL THEN amount ELSE 0 END), 0) AS other
      FROM (
        SELECT ip.payment_mode, ip.amount
        FROM invoice_payments ip
        INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
-       WHERE DATE(i.created_at) = ?
+       WHERE (DATE_FORMAT(i.created_at, '%Y-%m-%d') = ? OR DATE_FORMAT(ip.created_at, '%Y-%m-%d') = ?)
          AND i.billing_counter = ?
          AND i.invoice_status <> 'CANCELLED'
        UNION ALL
        SELECT i.payment_mode, i.grand_total AS amount
        FROM invoices i
        LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
-       WHERE DATE(i.created_at) = ?
+       WHERE DATE_FORMAT(i.created_at, '%Y-%m-%d') = ?
          AND i.billing_counter = ?
          AND i.invoice_status <> 'CANCELLED'
          AND ip.id IS NULL
      ) payments`,
-    [date, `Counter ${counterNo}`, date, `Counter ${counterNo}`]
+    [date, date, `Counter ${counterNo}`, date, `Counter ${counterNo}`]
   );
   const [allRows] = await db.query(
-    `SELECT COALESCE(SUM(grand_total), 0) AS total
+    `SELECT COALESCE(SUM(amount), 0) AS total
+     FROM (
+       SELECT ip.amount
+       FROM invoice_payments ip
+       INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
+       WHERE (DATE_FORMAT(i.created_at, '%Y-%m-%d') = ? OR DATE_FORMAT(ip.created_at, '%Y-%m-%d') = ?)
+         AND i.invoice_status <> 'CANCELLED'
+       UNION ALL
+       SELECT i.grand_total AS amount
+       FROM invoices i
+       LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
+       WHERE DATE_FORMAT(i.created_at, '%Y-%m-%d') = ?
+         AND i.invoice_status <> 'CANCELLED'
+         AND ip.id IS NULL
+     ) payments`,
+    [date, date, date]
+  );
+  const [latestRows] = await db.query(
+    `SELECT DATE_FORMAT(MAX(created_at), '%Y-%m-%d') AS latest_invoice_date,
+            COUNT(*) AS invoice_count
      FROM invoices
-     WHERE DATE(created_at) = ?
-       AND invoice_status <> 'CANCELLED'`,
-    [date]
+     WHERE invoice_status <> 'CANCELLED'`
   );
 
   return {
@@ -100,13 +118,19 @@ async function getSalesSnapshot(date, counterNo) {
     all_counter_sales: Number(allRows[0]?.total || 0),
     cash_sales: Number(counterRows[0]?.cash || 0),
     upi_sales: Number(counterRows[0]?.upi || 0),
-    card_sales: Number(counterRows[0]?.card || 0)
+    card_sales: Number(counterRows[0]?.card || 0),
+    other_sales: Number(counterRows[0]?.other || 0),
+    latest_invoice_date: latestRows[0]?.latest_invoice_date || null,
+    invoice_count: Number(latestRows[0]?.invoice_count || 0)
   };
 }
 
 async function loadHandoverSheet(date, counterNo) {
   const [sheetRows] = await db.query(
-    `SELECT *
+    `SELECT id, DATE_FORMAT(closing_date, '%Y-%m-%d') AS closing_date, counter_no, sheet_no,
+            opening_cash, counter_sales, all_counter_sales, cash_sales, upi_sales, card_sales,
+            dr_total, cr_total, notes_total, cash_balance, variance_amount,
+            handed_over_by, taken_over_by, notes, created_by, created_at, updated_at
      FROM counter_handover_sheets
      WHERE closing_date = ? AND counter_no = ?
      LIMIT 1`,
@@ -140,20 +164,20 @@ async function getExpectedTotals(date, counterNo) {
        SELECT ip.payment_mode, ip.amount
        FROM invoice_payments ip
        INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
-       WHERE DATE(i.created_at) = ?
+       WHERE (DATE_FORMAT(i.created_at, '%Y-%m-%d') = ? OR DATE_FORMAT(ip.created_at, '%Y-%m-%d') = ?)
          AND i.billing_counter = ?
          AND i.invoice_status <> 'CANCELLED'
        UNION ALL
        SELECT i.payment_mode, i.grand_total AS amount
        FROM invoices i
        LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
-       WHERE DATE(i.created_at) = ?
+       WHERE DATE_FORMAT(i.created_at, '%Y-%m-%d') = ?
          AND i.billing_counter = ?
          AND i.invoice_status <> 'CANCELLED'
          AND ip.id IS NULL
      ) payments
      GROUP BY payment_mode`,
-    [date, `Counter ${counterNo}`, date, `Counter ${counterNo}`]
+    [date, date, `Counter ${counterNo}`, date, `Counter ${counterNo}`]
   );
 
   const totals = { Cash: 0, UPI: 0, Card: 0 };
@@ -201,9 +225,9 @@ router.get('/handover/history', authorize('SERVER', 'ADMIN'), async (req, res) =
     }
 
     const [rows] = await db.query(
-      `SELECT id, closing_date, counter_no, sheet_no, counter_sales, all_counter_sales,
+      `SELECT id, DATE_FORMAT(closing_date, '%Y-%m-%d') AS closing_date, counter_no, sheet_no, counter_sales, all_counter_sales,
               dr_total, cr_total, notes_total, cash_balance, variance_amount,
-              handed_over_by, taken_over_by, updated_at
+              handed_over_by, taken_over_by, created_at, updated_at
        FROM counter_handover_sheets
        WHERE closing_date BETWEEN ? AND ?${counterClause}
        ORDER BY closing_date DESC, counter_no ASC`,
