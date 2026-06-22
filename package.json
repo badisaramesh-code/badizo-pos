@@ -1,0 +1,10 @@
+{
+  "name": "badizo-pos-main",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "START_BADIZO_SERVER.bat",
+    "start:backend": "cd backend && node server.js",
+    "start:frontend": "node scripts/windows/serve-frontend-build.js"
+  }
+}

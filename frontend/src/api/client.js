@@ -1,7 +1,17 @@
 import axios from 'axios';
 
+function getDefaultApiBaseUrl() {
+  if (typeof window === 'undefined') {
+    return ['http://', 'localhost', ':5000/api'].join('');
+  }
+
+  const protocol = window.location.protocol || 'http:';
+  const hostname = window.location.hostname || 'localhost';
+  return `${protocol}//${hostname}:5000/api`;
+}
+
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000/api',
+  baseURL: process.env.REACT_APP_API_BASE_URL || getDefaultApiBaseUrl(),
   timeout: 10000
 });
 
