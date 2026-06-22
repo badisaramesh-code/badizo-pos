@@ -1,6 +1,8 @@
 param(
   [Parameter(Mandatory = $true)]
   [string]$ServerIp,
+  [ValidateSet('counter', 'admin', 'server', 'all')]
+  [string]$LoginMode = 'counter',
   [string]$InstallerPath = '',
   [switch]$Kiosk,
   [switch]$SkipInstall,
@@ -87,6 +89,7 @@ function Write-AppConfig {
     frontendPort = 3000
     startBackend = $false
     startFrontend = $false
+    loginMode = $LoginMode
     kiosk = [bool]$Kiosk
     devTools = $false
   }
@@ -137,6 +140,7 @@ function Launch-App {
 try {
   Write-Host 'Badizo POS slave setup' -ForegroundColor Green
   Write-Host "Server IP: $ServerIp"
+  Write-Host "Login mode: $LoginMode"
   Test-Server
   Write-AppConfig
   Install-App

@@ -25,9 +25,12 @@ function publicUser(row) {
 
 function loginOption(row) {
   const counterNo = Number(row.counter_no || 0);
+  const adminMatch = String(row.username || '').match(/^admin([1-9]\d*)$/i);
   const label = row.role === 'COUNTER' && counterNo > 0
     ? `Counter ${counterNo}`
-    : String(row.role || row.username).toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
+    : adminMatch
+      ? `Admin ${adminMatch[1]}`
+      : String(row.role || row.username).toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
 
   return {
     username: row.username,

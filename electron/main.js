@@ -47,9 +47,24 @@ function getConfig() {
     frontendPort: Number(process.env.BADIZO_FRONTEND_PORT || config.frontendPort || DEFAULT_FRONTEND_PORT),
     startBackend: config.startBackend !== false,
     startFrontend: config.startFrontend !== false,
+    loginMode: ['server', 'admin', 'counter', 'all'].includes(String(config.loginMode || '').toLowerCase())
+      ? String(config.loginMode).toLowerCase()
+      : '',
     kiosk: Boolean(config.kiosk),
     devTools: Boolean(config.devTools)
   };
+}
+
+function withLoginMode(appUrl, loginMode) {
+  if (!loginMode) return appUrl;
+  try {
+    const url = new URL(appUrl);
+    url.searchParams.set('loginMode', loginMode);
+    return url.toString();
+  } catch (_err) {
+    const separator = String(appUrl || '').includes('?') ? '&' : '?';
+    return `${appUrl}${separator}loginMode=${encodeURIComponent(loginMode)}`;
+  }
 }
 
 function resolveResourcePath(...parts) {
@@ -143,7 +158,8 @@ function showStartupError(error, appUrl) {
 }
 
 function createWindow(config) {
-  logMessage(`Creating window for ${config.appUrl}`);
+  const appUrl = withLoginMode(config.appUrl, config.loginMode);
+  logMessage(`Creating window for ${appUrl}`);
   const iconPath = resolveResourcePath('assets', 'badizo.ico');
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -183,12 +199,12 @@ function createWindow(config) {
 
   mainWindow.webContents.on('did-fail-load', (_event, _errorCode, errorDescription) => {
     logMessage(`Window failed load: ${errorDescription}`);
-    showStartupError(new Error(errorDescription), config.appUrl);
+    showStartupError(new Error(errorDescription), appUrl);
   });
 
-  mainWindow.loadURL(config.appUrl).catch((error) => {
+  mainWindow.loadURL(appUrl).catch((error) => {
     logMessage(`loadURL failed: ${error.message || error}`);
-    showStartupError(error, config.appUrl);
+    showStartupError(error, appUrl);
   });
 }
 
