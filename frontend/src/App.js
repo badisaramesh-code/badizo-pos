@@ -12,6 +12,7 @@ import OrdersView from './components/OrdersView';
 import PriceListView from './components/PriceListView';
 import ProductImportHistoryView from './components/ProductImportHistoryView';
 import ReportsView from './components/ReportsView';
+import StaffPayrollView from './components/StaffPayrollView';
 import SystemView from './components/SystemView';
 import { clearAuthSession, getStoredUser, logout as recordLogout, recordLogoutOnExit } from './api/client';
 import { APP_TABS, canAccessTab } from './config/navigation';
@@ -94,6 +95,7 @@ export default function App() {
     priceList: <PriceListView />,
     barcode: <BarcodeStickersView />,
     inward: <InwardEntryView />,
+    staffPayroll: <StaffPayrollView />,
     reports: <ReportsView isActive={activeWorkspace === 'reports'} onClose={() => setActiveWorkspace('billing')} />,
     books: <BooksView />,
     system: <SystemView />

@@ -16,6 +16,7 @@ export const APP_TABS = [
   { key: 'priceList', label: 'Mass Update', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'barcode', label: 'Barcode', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN, USER_ROLES.COUNTER] },
   { key: 'inward', label: 'Inward', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
+  { key: 'staffPayroll', label: 'Staff Payroll', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'reports', label: 'Reports', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'books', label: 'Ledger Books', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'system', label: 'System', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] }

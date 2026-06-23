@@ -403,6 +403,30 @@ button:disabled {
   vertical-align: top;
 }
 
+.staff-payroll-view .panel-body {
+  gap: 12px;
+}
+
+.staff-payroll-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(170px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.staff-payroll-wide {
+  grid-column: span 2;
+}
+
+.staff-payroll-table {
+  min-width: 1180px;
+  font-size: 12px;
+}
+
+.staff-payroll-table td {
+  vertical-align: top;
+}
+
 .panel {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -6198,7 +6222,8 @@ button:disabled {
   .price-list-controls,
   .price-list-workflow,
   .price-list-search-box,
-  .price-list-change-box {
+  .price-list-change-box,
+  .staff-payroll-grid {
     grid-template-columns: 1fr;
   }
 
@@ -6333,11 +6358,16 @@ button:disabled {
   .product-dropbox-toolbar,
   .product-dropbox-approval,
   .settings-inline-section,
-  .gate-pass-grid {
+  .gate-pass-grid,
+  .staff-payroll-grid {
     grid-template-columns: 1fr;
   }
 
   .gate-pass-wide {
+    grid-column: auto;
+  }
+
+  .staff-payroll-wide {
     grid-column: auto;
   }
 

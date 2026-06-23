@@ -897,6 +897,95 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
 
     await connection.query(`
+      CREATE TABLE IF NOT EXISTS staff_workers (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        staff_code VARCHAR(40) DEFAULT NULL UNIQUE,
+        staff_name VARCHAR(160) NOT NULL,
+        job_title VARCHAR(120) DEFAULT '',
+        department VARCHAR(120) DEFAULT '',
+        phone VARCHAR(20) DEFAULT '',
+        alternate_phone VARCHAR(20) DEFAULT '',
+        address VARCHAR(255) DEFAULT '',
+        id_proof_type VARCHAR(40) DEFAULT '',
+        id_proof_no VARCHAR(80) DEFAULT '',
+        joining_date DATE DEFAULT NULL,
+        salary_type ENUM('MONTHLY', 'DAILY', 'HOURLY') NOT NULL DEFAULT 'MONTHLY',
+        monthly_salary DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        daily_wage DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        hourly_wage DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        bank_account_name VARCHAR(150) DEFAULT '',
+        bank_name VARCHAR(150) DEFAULT '',
+        bank_account_no VARCHAR(80) DEFAULT '',
+        bank_ifsc VARCHAR(20) DEFAULT '',
+        upi_id VARCHAR(120) DEFAULT '',
+        emergency_contact_name VARCHAR(120) DEFAULT '',
+        emergency_contact_phone VARCHAR(20) DEFAULT '',
+        notes VARCHAR(255) DEFAULT '',
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_staff_name (staff_name),
+        INDEX idx_staff_phone (phone),
+        INDEX idx_staff_department (department),
+        INDEX idx_staff_active (is_active)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS staff_attendance (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        staff_id BIGINT NOT NULL,
+        attendance_date DATE NOT NULL,
+        status ENUM('PRESENT', 'HALF_DAY', 'ABSENT', 'PAID_LEAVE', 'WEEK_OFF') NOT NULL DEFAULT 'PRESENT',
+        in_time TIME DEFAULT NULL,
+        out_time TIME DEFAULT NULL,
+        overtime_hours DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+        daily_wage_override DECIMAL(12,2) DEFAULT NULL,
+        remarks VARCHAR(255) DEFAULT '',
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_staff_attendance_day (staff_id, attendance_date),
+        INDEX idx_staff_attendance_date (attendance_date),
+        INDEX idx_staff_attendance_status (status),
+        CONSTRAINT fk_staff_attendance_worker FOREIGN KEY (staff_id) REFERENCES staff_workers(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS staff_salary_sheets (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        staff_id BIGINT NOT NULL,
+        salary_month CHAR(7) NOT NULL,
+        working_days DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+        present_days DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+        paid_leave_days DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+        absent_days DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+        overtime_hours DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+        base_salary DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        overtime_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        bonus_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        advance_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        deduction_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        net_salary DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        payment_status ENUM('PENDING', 'PAID') NOT NULL DEFAULT 'PENDING',
+        payment_date DATE DEFAULT NULL,
+        payment_mode ENUM('Cash', 'UPI', 'Bank', 'Other') NOT NULL DEFAULT 'Cash',
+        reference_no VARCHAR(120) DEFAULT '',
+        remarks VARCHAR(255) DEFAULT '',
+        posted_to_cash_ledger TINYINT(1) NOT NULL DEFAULT 0,
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_staff_salary_month (staff_id, salary_month),
+        INDEX idx_staff_salary_month (salary_month),
+        INDEX idx_staff_salary_status (payment_status),
+        CONSTRAINT fk_staff_salary_worker FOREIGN KEY (staff_id) REFERENCES staff_workers(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
       CREATE TABLE IF NOT EXISTS counter_cash_ledger_entries (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         entry_date DATE NOT NULL,

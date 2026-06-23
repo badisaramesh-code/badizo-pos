@@ -708,6 +708,42 @@ export async function saveAccountingVoucher(payload) {
   return data;
 }
 
+export async function fetchStaffWorkers({ search = '', activeOnly = true } = {}) {
+  const { data } = await api.get('/staff-payroll/staff', {
+    params: { search, active_only: activeOnly ? '1' : '0' }
+  });
+  return Array.isArray(data.rows) ? data.rows : [];
+}
+
+export async function saveStaffWorker(payload) {
+  const { data } = await api.post('/staff-payroll/staff', payload);
+  return data;
+}
+
+export async function fetchStaffAttendance({ from, to, staffId = '', search = '' } = {}) {
+  const { data } = await api.get('/staff-payroll/attendance', {
+    params: { from, to, staff_id: staffId, search }
+  });
+  return Array.isArray(data.rows) ? data.rows : [];
+}
+
+export async function saveStaffAttendance(payload) {
+  const { data } = await api.post('/staff-payroll/attendance', payload);
+  return data;
+}
+
+export async function fetchStaffMonthlySheet({ month, search = '' } = {}) {
+  const { data } = await api.get('/staff-payroll/monthly-sheet', {
+    params: { month, search }
+  });
+  return data;
+}
+
+export async function saveStaffSalarySheet(payload) {
+  const { data } = await api.post('/staff-payroll/salary-sheet', payload);
+  return data;
+}
+
 export async function fetchCounterExpected(date, counterNo) {
   const { data } = await api.get('/counter-closing/expected', {
     params: { date, counter_no: counterNo }
