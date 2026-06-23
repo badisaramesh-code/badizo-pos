@@ -71,6 +71,22 @@ button:disabled {
   box-shadow: var(--shadow);
 }
 
+.security-login-screen {
+  align-items: stretch;
+}
+
+.security-login-screen .login-card {
+  width: min(420px, calc(100vw - 28px));
+  max-width: calc(100vw - 28px);
+  border-top: 4px solid var(--brand);
+  overflow: hidden;
+}
+
+.security-login-screen .muted {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .topbar {
   position: sticky;
   top: 0;
@@ -6226,6 +6242,36 @@ button:disabled {
 }
 
 @media (max-width: 720px) {
+  .login-screen {
+    align-items: start;
+    place-items: start stretch;
+    padding: 14px;
+  }
+
+  .login-card {
+    width: 100%;
+    min-height: calc(100vh - 28px);
+    justify-content: center;
+    padding: 22px 16px;
+    border-radius: 8px;
+  }
+
+  .login-brand-image {
+    width: 170px;
+    height: 62px;
+  }
+
+  .login-card .field,
+  .login-card .primary-button {
+    min-height: 48px;
+    font-size: 16px;
+  }
+
+  .security-login-screen .login-card {
+    justify-content: flex-start;
+    padding-top: 34px;
+  }
+
   .topbar {
     height: auto;
     padding: 14px;
@@ -6286,8 +6332,38 @@ button:disabled {
   .product-dropbox-header,
   .product-dropbox-toolbar,
   .product-dropbox-approval,
-  .settings-inline-section {
+  .settings-inline-section,
+  .gate-pass-grid {
     grid-template-columns: 1fr;
+  }
+
+  .gate-pass-wide {
+    grid-column: auto;
+  }
+
+  .gate-pass-mode-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .gate-pass-number {
+    grid-column: 1 / -1;
+  }
+
+  .gate-pass-view .panel-header.green,
+  .gate-pass-view .report-filter-row {
+    grid-template-columns: 1fr;
+    justify-content: stretch;
+  }
+
+  .gate-pass-summary {
+    justify-content: flex-start;
+  }
+
+  .gate-pass-save-button,
+  .gate-pass-view .report-action-row button {
+    width: 100%;
+    min-height: 46px;
   }
 }
 .status-chip.success {

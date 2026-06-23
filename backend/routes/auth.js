@@ -155,23 +155,54 @@ router.post('/logout-beacon', async (req, res) => {
 
 router.get('/session-events', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
   const limit = Math.min(Number.parseInt(req.query.limit, 10) || 200, 500);
+  const from = String(req.query.from || '').trim();
+  const to = String(req.query.to || '').trim();
+  const search = String(req.query.search || '').trim().slice(0, 120);
+  const where = [];
+  const params = [];
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+    where.push('created_at >= ?');
+    params.push(`${from} 00:00:00`);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    where.push('created_at <= ?');
+    params.push(`${to} 23:59:59`);
+  }
+  if (search) {
+    where.push(`(
+      username LIKE ?
+      OR person_name LIKE ?
+      OR role LIKE ?
+      OR CAST(counter_no AS CHAR) LIKE ?
+      OR event_type LIKE ?
+      OR ip_address LIKE ?
+      OR user_agent LIKE ?
+    )`);
+    const like = `%${search}%`;
+    params.push(like, like, like, like, like, like, like);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   try {
     const [rows] = await db.query(
       `SELECT id, session_id, user_id, username, person_name, role, counter_no, event_type, ip_address, user_agent, created_at
        FROM user_session_events
+       ${whereSql}
        ORDER BY created_at DESC, id DESC
        LIMIT ?`,
-      [limit]
+      [...params, limit]
     );
     const [summary] = await db.query(
       `SELECT username, person_name, role, counter_no, event_type, COUNT(*) AS event_count, MAX(created_at) AS last_at
        FROM user_session_events
+       ${whereSql}
        GROUP BY username, person_name, role, counter_no, event_type
-       ORDER BY username, event_type`
+       ORDER BY username, event_type`,
+      params
     );
 
-    res.json({ rows, summary });
+    res.json({ rows, summary, filters: { from, to, search } });
   } catch (err) {
     console.error('Session events failed:', err.message);
     res.status(500).json({ error: 'Unable to load login/logout history.' });

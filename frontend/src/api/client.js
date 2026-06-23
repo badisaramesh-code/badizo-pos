@@ -99,8 +99,9 @@ export async function fetchLoginOptions() {
   return Array.isArray(data.options) ? data.options : [];
 }
 
-export async function fetchSessionEvents(limit = 200) {
-  const { data } = await api.get('/auth/session-events', { params: { limit } });
+export async function fetchSessionEvents(options = 200) {
+  const params = typeof options === 'object' ? options : { limit: options };
+  const { data } = await api.get('/auth/session-events', { params });
   return {
     rows: Array.isArray(data.rows) ? data.rows : [],
     summary: Array.isArray(data.summary) ? data.summary : []

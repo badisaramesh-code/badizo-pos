@@ -48,6 +48,7 @@ function mergeLoginOptions(options) {
 
 export default function LoginView({ onLogin }) {
   const loginMode = loginModeFromUrl();
+  const isSecurityLogin = loginMode === 'security';
   const initialOptions = useMemo(() => filterLoginOptions(FALLBACK_LOGIN_OPTIONS, loginMode), [loginMode]);
   const [username, setUsername] = useState(initialOptions[0]?.username || 'admin1');
   const [personName, setPersonName] = useState('');
@@ -106,13 +107,15 @@ export default function LoginView({ onLogin }) {
   }
 
   return (
-    <div className="login-screen">
+    <div className={`login-screen ${isSecurityLogin ? 'security-login-screen' : ''}`}>
       <form className="login-card" onSubmit={handleSubmit}>
         <div className="login-logo-wrap">
           <img className="login-brand-image" src="/badizo-logo-transparent.png" alt="Badizo" />
         </div>
-        <h1 className="brand-title" style={{ color: 'var(--brand-dark)', textAlign: 'center' }}>POS</h1>
-        <p className="muted" style={{ textAlign: 'center' }}>Login to continue billing</p>
+        <h1 className="brand-title" style={{ color: 'var(--brand-dark)', textAlign: 'center' }}>{isSecurityLogin ? 'Gate Pass' : 'POS'}</h1>
+        <p className="muted" style={{ textAlign: 'center' }}>
+          {isSecurityLogin ? 'Security login for inward and outward stock' : 'Login to continue billing'}
+        </p>
 
         {errorMessage && <div className="alert-box">{errorMessage}</div>}
 
@@ -144,9 +147,11 @@ export default function LoginView({ onLogin }) {
           {isLoading ? 'Logging in...' : 'Login'}
         </button>
 
-        <div className="change-box">
-          Default passwords: Server server123, Admin admin123, Counters counter123, Security security123.
-        </div>
+        {!isSecurityLogin && (
+          <div className="change-box">
+            Default passwords: Server server123, Admin admin123, Counters counter123, Security security123.
+          </div>
+        )}
       </form>
     </div>
   );

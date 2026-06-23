@@ -101,7 +101,7 @@ export default function SystemView() {
   const [isHealthLoading, setIsHealthLoading] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
   const [sessionEvents, setSessionEvents] = useState({ rows: [], summary: [] });
-  const [sessionSearch, setSessionSearch] = useState('');
+  const [sessionFilters, setSessionFilters] = useState({ from: '', to: '', search: '' });
   const [users, setUsers] = useState([]);
   const [userForm, setUserForm] = useState(emptyUserForm);
   const [isBackingUp, setIsBackingUp] = useState(false);
@@ -135,25 +135,6 @@ export default function SystemView() {
     ];
   }, [settings.counter_count]);
 
-  const filteredSessionRows = useMemo(() => {
-    const term = sessionSearch.trim().toLowerCase();
-    if (!term) return sessionEvents.rows;
-
-    return sessionEvents.rows.filter((event) => {
-      const displayTime = event.created_at ? new Date(event.created_at).toLocaleString() : '';
-      return [
-        displayTime,
-        event.username,
-        event.person_name,
-        event.role,
-        event.counter_no,
-        event.event_type,
-        event.ip_address,
-        event.user_agent
-      ].some((value) => String(value || '').toLowerCase().includes(term));
-    });
-  }, [sessionEvents.rows, sessionSearch]);
-
   async function loadSettings() {
     try {
       setSettings(await fetchSettings());
@@ -178,9 +159,16 @@ export default function SystemView() {
     }
   }
 
-  async function loadSessionEvents() {
+  async function loadSessionEvents(event, overrideFilters = null) {
+    event?.preventDefault?.();
+    const activeFilters = overrideFilters || sessionFilters;
     try {
-      setSessionEvents(await fetchSessionEvents(500));
+      setSessionEvents(await fetchSessionEvents({
+        limit: 500,
+        from: activeFilters.from,
+        to: activeFilters.to,
+        search: activeFilters.search
+      }));
     } catch (err) {
       setSessionEvents({ rows: [], summary: [] });
     }
@@ -973,20 +961,50 @@ export default function SystemView() {
           <button className="secondary-button" onClick={loadSessionEvents}>Refresh</button>
         </div>
         <div className="panel-body form-stack">
-          <div className="settings-section settings-inline-section">
+          <form className="settings-section settings-inline-section" onSubmit={loadSessionEvents}>
+            <label>
+              <span className="field-label">From Date</span>
+              <input
+                className="field"
+                type="date"
+                value={sessionFilters.from}
+                onChange={(event) => setSessionFilters((current) => ({ ...current, from: event.target.value }))}
+              />
+            </label>
+            <label>
+              <span className="field-label">To Date</span>
+              <input
+                className="field"
+                type="date"
+                value={sessionFilters.to}
+                onChange={(event) => setSessionFilters((current) => ({ ...current, to: event.target.value }))}
+              />
+            </label>
             <label>
               <span className="field-label">Search Login Records</span>
               <input
                 className="field"
-                value={sessionSearch}
-                onChange={(event) => setSessionSearch(event.target.value)}
+                value={sessionFilters.search}
+                onChange={(event) => setSessionFilters((current) => ({ ...current, search: event.target.value }))}
                 placeholder="Search person, user, role, counter, login/logout, IP or time"
               />
             </label>
+            <button className="secondary-button" type="submit">Search</button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                const clearedFilters = { from: '', to: '', search: '' };
+                setSessionFilters(clearedFilters);
+                loadSessionEvents(null, clearedFilters);
+              }}
+            >
+              Clear
+            </button>
             <div className="change-box">
-              Showing <strong>{filteredSessionRows.length}</strong> of <strong>{sessionEvents.rows.length}</strong> latest records.
+              Showing <strong>{sessionEvents.rows.length}</strong> latest matching records.
             </div>
-          </div>
+          </form>
 
           <div className="table-scroll">
             <table className="history-table">
@@ -994,10 +1012,8 @@ export default function SystemView() {
               <tbody>
                 {sessionEvents.rows.length === 0 ? (
                   <tr><td colSpan="8">No login/logout records yet.</td></tr>
-                ) : filteredSessionRows.length === 0 ? (
-                  <tr><td colSpan="8">No login/logout records match this search.</td></tr>
                 ) : (
-                  filteredSessionRows.map((event) => (
+                  sessionEvents.rows.map((event) => (
                     <tr key={event.id}>
                       <td>{event.created_at ? new Date(event.created_at).toLocaleString() : '-'}</td>
                       <td>{event.username}</td>
