@@ -101,6 +101,7 @@ export default function SystemView() {
   const [isHealthLoading, setIsHealthLoading] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
   const [sessionEvents, setSessionEvents] = useState({ rows: [], summary: [] });
+  const [sessionSearch, setSessionSearch] = useState('');
   const [users, setUsers] = useState([]);
   const [userForm, setUserForm] = useState(emptyUserForm);
   const [isBackingUp, setIsBackingUp] = useState(false);
@@ -134,31 +135,24 @@ export default function SystemView() {
     ];
   }, [settings.counter_count]);
 
-  const sessionSummaryRows = useMemo(() => {
-    const grouped = new Map();
-    (sessionEvents.summary || []).forEach((row) => {
-      const key = `${row.username}|${row.person_name || ''}|${row.role}|${row.counter_no || ''}`;
-      const current = grouped.get(key) || {
-        username: row.username,
-        person_name: row.person_name,
-        role: row.role,
-        counter_no: row.counter_no,
-        login_count: 0,
-        logout_count: 0,
-        last_at: row.last_at
-      };
-      if (row.event_type === 'LOGIN') {
-        current.login_count = Number(row.event_count || 0);
-      } else if (row.event_type === 'LOGOUT') {
-        current.logout_count = Number(row.event_count || 0);
-      }
-      if (row.last_at && (!current.last_at || new Date(row.last_at) > new Date(current.last_at))) {
-        current.last_at = row.last_at;
-      }
-      grouped.set(key, current);
+  const filteredSessionRows = useMemo(() => {
+    const term = sessionSearch.trim().toLowerCase();
+    if (!term) return sessionEvents.rows;
+
+    return sessionEvents.rows.filter((event) => {
+      const displayTime = event.created_at ? new Date(event.created_at).toLocaleString() : '';
+      return [
+        displayTime,
+        event.username,
+        event.person_name,
+        event.role,
+        event.counter_no,
+        event.event_type,
+        event.ip_address,
+        event.user_agent
+      ].some((value) => String(value || '').toLowerCase().includes(term));
     });
-    return Array.from(grouped.values()).sort((a, b) => String(a.username).localeCompare(String(b.username)));
-  }, [sessionEvents.summary]);
+  }, [sessionEvents.rows, sessionSearch]);
 
   async function loadSettings() {
     try {
@@ -186,7 +180,7 @@ export default function SystemView() {
 
   async function loadSessionEvents() {
     try {
-      setSessionEvents(await fetchSessionEvents(200));
+      setSessionEvents(await fetchSessionEvents(500));
     } catch (err) {
       setSessionEvents({ rows: [], summary: [] });
     }
@@ -973,33 +967,25 @@ export default function SystemView() {
       <section className="panel">
         <div className="panel-header green">
           <div>
-            <h2 className="panel-title">Login / Logout History</h2>
-            <span className="panel-subtitle">Admin, counter and security access recorded on server</span>
+            <h2 className="panel-title">Login Records Folder</h2>
+            <span className="panel-subtitle">Every admin, counter and security login/logout record with date and time</span>
           </div>
           <button className="secondary-button" onClick={loadSessionEvents}>Refresh</button>
         </div>
         <div className="panel-body form-stack">
-          <div className="table-scroll">
-            <table className="history-table">
-              <thead><tr><th>User</th><th>Person Name</th><th>Role</th><th>Counter</th><th>Login Count</th><th>Logout Count</th><th>Last Activity</th></tr></thead>
-              <tbody>
-                {sessionSummaryRows.length === 0 ? (
-                  <tr><td colSpan="7">No login/logout activity recorded yet.</td></tr>
-                ) : (
-                  sessionSummaryRows.map((row) => (
-                    <tr key={`${row.username}-${row.person_name || 'unknown'}-${row.role}-${row.counter_no || 'none'}`}>
-                      <td>{row.username}</td>
-                      <td>{row.person_name || '-'}</td>
-                      <td>{row.role}</td>
-                      <td>{row.counter_no || '-'}</td>
-                      <td>{row.login_count}</td>
-                      <td>{row.logout_count}</td>
-                      <td>{row.last_at ? new Date(row.last_at).toLocaleString() : '-'}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+          <div className="settings-section settings-inline-section">
+            <label>
+              <span className="field-label">Search Login Records</span>
+              <input
+                className="field"
+                value={sessionSearch}
+                onChange={(event) => setSessionSearch(event.target.value)}
+                placeholder="Search person, user, role, counter, login/logout, IP or time"
+              />
+            </label>
+            <div className="change-box">
+              Showing <strong>{filteredSessionRows.length}</strong> of <strong>{sessionEvents.rows.length}</strong> latest records.
+            </div>
           </div>
 
           <div className="table-scroll">
@@ -1007,9 +993,11 @@ export default function SystemView() {
               <thead><tr><th>Time</th><th>User</th><th>Person Name</th><th>Role</th><th>Counter</th><th>Event</th><th>IP Address</th><th>Device</th></tr></thead>
               <tbody>
                 {sessionEvents.rows.length === 0 ? (
-                  <tr><td colSpan="8">No recent session details.</td></tr>
+                  <tr><td colSpan="8">No login/logout records yet.</td></tr>
+                ) : filteredSessionRows.length === 0 ? (
+                  <tr><td colSpan="8">No login/logout records match this search.</td></tr>
                 ) : (
-                  sessionEvents.rows.map((event) => (
+                  filteredSessionRows.map((event) => (
                     <tr key={event.id}>
                       <td>{event.created_at ? new Date(event.created_at).toLocaleString() : '-'}</td>
                       <td>{event.username}</td>

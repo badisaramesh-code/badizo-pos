@@ -175,6 +175,18 @@ button:disabled {
   border-bottom: 3px solid var(--accent);
 }
 
+.logout-button {
+  background: #fff7e6;
+  border-color: #f0b35f;
+  color: #9a5b00;
+}
+
+.logout-button:hover {
+  background: #ffe8bf;
+  border-color: #d86f00;
+  color: #7a4500;
+}
+
 .primary-button {
   width: 100%;
   padding: 14px 16px;

@@ -137,6 +137,22 @@ router.post('/logout', authenticate, async (req, res) => {
   }
 });
 
+router.post('/logout-beacon', async (req, res) => {
+  const token = String(req.body?.token || '').trim();
+  if (!token) {
+    return res.status(204).end();
+  }
+
+  try {
+    const user = jwt.verify(token, JWT_SECRET);
+    const sessionId = String(user.session_id || crypto.randomUUID()).slice(0, 80);
+    await recordSessionEvent(req, user, sessionId, 'LOGOUT');
+    res.status(204).end();
+  } catch (err) {
+    res.status(204).end();
+  }
+});
+
 router.get('/session-events', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
   const limit = Math.min(Number.parseInt(req.query.limit, 10) || 200, 500);
 

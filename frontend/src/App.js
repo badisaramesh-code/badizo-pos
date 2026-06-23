@@ -13,7 +13,7 @@ import PriceListView from './components/PriceListView';
 import ProductImportHistoryView from './components/ProductImportHistoryView';
 import ReportsView from './components/ReportsView';
 import SystemView from './components/SystemView';
-import { clearAuthSession, getStoredUser, logout as recordLogout } from './api/client';
+import { clearAuthSession, getStoredUser, logout as recordLogout, recordLogoutOnExit } from './api/client';
 import { APP_TABS, canAccessTab } from './config/navigation';
 import './styles.css';
 
@@ -38,6 +38,22 @@ export default function App() {
     if (allowedTabs.some((tab) => tab.key === activeWorkspace) || !allowedTabs[0]) return;
     setActiveWorkspace(allowedTabs[0].key);
   }, [activeWorkspace, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return undefined;
+
+    const handlePageExit = () => {
+      recordLogoutOnExit();
+    };
+
+    window.addEventListener('pagehide', handlePageExit);
+    window.addEventListener('beforeunload', handlePageExit);
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageExit);
+      window.removeEventListener('beforeunload', handlePageExit);
+    };
+  }, [currentUser]);
 
   if (!currentUser) {
     return <LoginView onLogin={setCurrentUser} />;
@@ -101,7 +117,7 @@ export default function App() {
             </button>
           ))}
           <button
-            className="tab-button"
+            className="tab-button logout-button"
             onClick={handleLogout}
           >
             Logout ({currentUser.username})

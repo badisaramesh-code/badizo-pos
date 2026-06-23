@@ -17,6 +17,7 @@ const api = axios.create({
 
 const AUTH_TOKEN_KEY = 'badizo_token';
 const AUTH_USER_KEY = 'badizo_user';
+let exitLogoutSent = false;
 
 function getAuthStorage() {
   return window.sessionStorage;
@@ -61,12 +62,36 @@ export function getStoredUser() {
 
 export async function login(username, password, personName = '') {
   const { data } = await api.post('/auth/login', { username, password, person_name: personName });
+  exitLogoutSent = false;
   setAuthSession(data.token, data.user);
   return data.user;
 }
 
 export async function logout() {
   await api.post('/auth/logout');
+}
+
+export function recordLogoutOnExit() {
+  const token = getAuthStorage().getItem(AUTH_TOKEN_KEY);
+  if (!token || exitLogoutSent) return;
+
+  exitLogoutSent = true;
+  const url = `${api.defaults.baseURL}/auth/logout-beacon`;
+  const payload = JSON.stringify({ token });
+
+  if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+    const blob = new Blob([payload], { type: 'application/json' });
+    navigator.sendBeacon(url, blob);
+  } else if (typeof fetch === 'function') {
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      keepalive: true
+    }).catch(() => {});
+  }
+
+  clearAuthSession();
 }
 
 export async function fetchLoginOptions() {
