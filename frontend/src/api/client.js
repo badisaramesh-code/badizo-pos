@@ -59,15 +59,39 @@ export function getStoredUser() {
   }
 }
 
-export async function login(username, password) {
-  const { data } = await api.post('/auth/login', { username, password });
+export async function login(username, password, personName = '') {
+  const { data } = await api.post('/auth/login', { username, password, person_name: personName });
   setAuthSession(data.token, data.user);
   return data.user;
+}
+
+export async function logout() {
+  await api.post('/auth/logout');
 }
 
 export async function fetchLoginOptions() {
   const { data } = await api.get('/auth/login-options');
   return Array.isArray(data.options) ? data.options : [];
+}
+
+export async function fetchSessionEvents(limit = 200) {
+  const { data } = await api.get('/auth/session-events', { params: { limit } });
+  return {
+    rows: Array.isArray(data.rows) ? data.rows : [],
+    summary: Array.isArray(data.summary) ? data.summary : []
+  };
+}
+
+export async function fetchGatePassEntries({ from, to, movementType = '', status = '', search = '' } = {}) {
+  const { data } = await api.get('/gate-pass', {
+    params: { from, to, movement_type: movementType, status, search }
+  });
+  return data;
+}
+
+export async function saveGatePassEntry(payload) {
+  const { data } = await api.post('/gate-pass', payload);
+  return data;
 }
 
 export async function approveSensitiveBillingMode({ username, password, reason }) {

@@ -243,6 +243,138 @@ button:disabled {
   overflow: hidden;
 }
 
+.gate-pass-view .panel-body {
+  gap: 12px;
+}
+
+.gate-pass-summary {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.gate-pass-summary span,
+.gate-pass-number {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--brand-dark);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.gate-pass-summary strong {
+  margin-left: 6px;
+  font-size: 15px;
+}
+
+.gate-pass-mode-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.mode-pill {
+  min-height: 34px;
+  padding: 7px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--brand-dark);
+  font-weight: 900;
+}
+
+.mode-pill.active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.mode-pill.inward {
+  border-color: #9bd4a7;
+  background: #f3fbf5;
+  color: var(--brand-dark);
+}
+
+.mode-pill.inward.active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.mode-pill.outward {
+  border-color: #ffd099;
+  background: #fff7e6;
+  color: #8a4d00;
+}
+
+.mode-pill.outward.active {
+  background: var(--accent);
+  border-color: #d86f00;
+  color: #fff;
+}
+
+.movement-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.movement-badge.inward {
+  border: 1px solid #9bd4a7;
+  background: #f3fbf5;
+  color: var(--brand-dark);
+}
+
+.movement-badge.outward {
+  border: 1px solid #ffd099;
+  background: #fff7e6;
+  color: #8a4d00;
+}
+
+.gate-pass-save-button.inward {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.gate-pass-save-button.outward {
+  background: var(--accent);
+  border-color: #d86f00;
+  color: #fff;
+}
+
+.gate-pass-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(170px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.gate-pass-wide {
+  grid-column: span 2;
+}
+
+.gate-pass-table {
+  min-width: 1720px;
+  font-size: 12px;
+}
+
+.gate-pass-table td {
+  vertical-align: top;
+}
+
 .panel {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -6002,8 +6134,13 @@ button:disabled {
   .closing-layout,
   .handover-actions-row,
   .handover-sales-strip,
+  .gate-pass-grid,
   .handover-total-strip {
     grid-template-columns: 1fr;
+  }
+
+  .gate-pass-wide {
+    grid-column: span 1;
   }
 
   .billing-grid {

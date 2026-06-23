@@ -42,7 +42,7 @@ router.post('/', async (req, res) => {
   const id = req.body?.id ? Number.parseInt(req.body.id, 10) : null;
   const username = String(req.body?.username || '').trim();
   const password = String(req.body?.password || '');
-  const role = ['SERVER', 'ADMIN', 'COUNTER'].includes(req.body?.role) ? req.body.role : 'COUNTER';
+  const role = ['SERVER', 'ADMIN', 'COUNTER', 'SECURITY'].includes(req.body?.role) ? req.body.role : 'COUNTER';
   const counterNo = role === 'COUNTER' ? Number.parseInt(req.body?.counter_no, 10) || 1 : null;
   const isActive = req.body?.is_active === false ? 0 : 1;
 

@@ -57,7 +57,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         username VARCHAR(100) NOT NULL UNIQUE,
         password_hash VARCHAR(255) NOT NULL,
-        role ENUM('SERVER', 'ADMIN', 'COUNTER') NOT NULL DEFAULT 'COUNTER',
+        role ENUM('SERVER', 'ADMIN', 'COUNTER', 'SECURITY') NOT NULL DEFAULT 'COUNTER',
         counter_no INT DEFAULT NULL,
         is_active TINYINT(1) NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -576,6 +576,62 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
 
     await connection.query(`
+      CREATE TABLE IF NOT EXISTS user_session_events (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        session_id VARCHAR(80) NOT NULL,
+        user_id BIGINT DEFAULT NULL,
+        username VARCHAR(100) NOT NULL,
+        person_name VARCHAR(120) DEFAULT '',
+        role VARCHAR(30) NOT NULL,
+        counter_no INT DEFAULT NULL,
+        event_type ENUM('LOGIN', 'LOGOUT') NOT NULL,
+        ip_address VARCHAR(80) DEFAULT '',
+        user_agent VARCHAR(255) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_user_session_created (created_at),
+        INDEX idx_user_session_user (username),
+        INDEX idx_user_session_event (event_type),
+        INDEX idx_user_session_id (session_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await ensureColumn(connection, 'user_session_events', 'person_name', "VARCHAR(120) DEFAULT '' AFTER username");
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS gate_pass_entries (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        pass_no VARCHAR(80) NOT NULL UNIQUE,
+        movement_type ENUM('IN', 'OUT') NOT NULL,
+        movement_date DATE NOT NULL,
+        movement_time TIME NOT NULL,
+        transport_mode ENUM('TRANSPORT', 'AUTO', 'TROLLEY', 'RIKSHA', 'HUMAN', 'OTHER') NOT NULL DEFAULT 'TRANSPORT',
+        source_location VARCHAR(180) DEFAULT '',
+        destination_location VARCHAR(180) DEFAULT '',
+        party_name VARCHAR(180) DEFAULT '',
+        party_phone VARCHAR(20) DEFAULT '',
+        vehicle_no VARCHAR(60) DEFAULT '',
+        driver_name VARCHAR(120) DEFAULT '',
+        driver_phone VARCHAR(20) DEFAULT '',
+        supervisor_name VARCHAR(120) DEFAULT '',
+        supervisor_phone VARCHAR(20) DEFAULT '',
+        security_person_name VARCHAR(120) DEFAULT '',
+        security_person_phone VARCHAR(20) DEFAULT '',
+        document_no VARCHAR(120) DEFAULT '',
+        item_summary VARCHAR(255) DEFAULT '',
+        package_count INT NOT NULL DEFAULT 0,
+        remarks VARCHAR(255) DEFAULT '',
+        status ENUM('OPEN', 'VERIFIED', 'CANCELLED') NOT NULL DEFAULT 'OPEN',
+        created_by VARCHAR(100) DEFAULT '',
+        updated_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_gate_pass_date (movement_date),
+        INDEX idx_gate_pass_type (movement_type),
+        INDEX idx_gate_pass_status (status),
+        INDEX idx_gate_pass_party (party_name)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
       CREATE TABLE IF NOT EXISTS stock_adjustments (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         barcode VARCHAR(120) NOT NULL,
@@ -1028,7 +1084,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
       await connection.query('ALTER TABLE password_vault ADD UNIQUE KEY uniq_password_vault_category_slot (category, slot_no)');
     }
     await ensureColumn(connection, 'users', 'password_hash', 'VARCHAR(255) NOT NULL AFTER username');
-    await ensureColumn(connection, 'users', 'role', "ENUM('SERVER', 'ADMIN', 'COUNTER') NOT NULL DEFAULT 'COUNTER' AFTER password_hash");
+    await ensureColumn(connection, 'users', 'role', "ENUM('SERVER', 'ADMIN', 'COUNTER', 'SECURITY') NOT NULL DEFAULT 'COUNTER' AFTER password_hash");
+    await connection.query("ALTER TABLE users MODIFY role ENUM('SERVER', 'ADMIN', 'COUNTER', 'SECURITY') NOT NULL DEFAULT 'COUNTER'");
     await ensureColumn(connection, 'users', 'counter_no', 'INT DEFAULT NULL AFTER role');
     await ensureColumn(connection, 'users', 'is_active', 'TINYINT(1) NOT NULL DEFAULT 1 AFTER counter_no');
 
@@ -1048,7 +1105,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
       ['counter3', 'counter123', 'COUNTER', 3],
       ['counter4', 'counter123', 'COUNTER', 4],
       ['counter5', 'counter123', 'COUNTER', 5],
-      ['counter6', 'counter123', 'COUNTER', 6]
+      ['counter6', 'counter123', 'COUNTER', 6],
+      ['security', 'security123', 'SECURITY', null]
     ];
 
     for (const [username, password, role, counterNo] of defaultUsers) {

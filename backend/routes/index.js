@@ -9,6 +9,7 @@ const routes = [
   ['/api/billing', require('./billing')],
   ['/api/counter-closing', require('./counterClosing')],
   ['/api/customers', require('./customers')],
+  ['/api/gate-pass', require('./gatePass')],
   ['/api/inward', require('./inward')],
   ['/api/settings', require('./settings')],
   ['/api/system-health', require('./health')],

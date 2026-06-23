@@ -4,6 +4,7 @@ import BillingTerminalView from './components/BillingTerminalView';
 import BooksView from './components/BooksView';
 import CounterClosingView from './components/CounterClosingView';
 import DashboardView from './components/DashboardView';
+import GatePassView from './components/GatePassView';
 import InwardEntryView from './components/InwardEntryView';
 import InventoryDashboardView from './components/InventoryDashboardView';
 import LoginView from './components/LoginView';
@@ -12,7 +13,7 @@ import PriceListView from './components/PriceListView';
 import ProductImportHistoryView from './components/ProductImportHistoryView';
 import ReportsView from './components/ReportsView';
 import SystemView from './components/SystemView';
-import { clearAuthSession, getStoredUser } from './api/client';
+import { clearAuthSession, getStoredUser, logout as recordLogout } from './api/client';
 import { APP_TABS, canAccessTab } from './config/navigation';
 import './styles.css';
 
@@ -31,6 +32,13 @@ export default function App() {
     });
   }, [activeWorkspace]);
 
+  useEffect(() => {
+    if (!currentUser) return;
+    const allowedTabs = APP_TABS.filter((tab) => canAccessTab(tab, currentUser));
+    if (allowedTabs.some((tab) => tab.key === activeWorkspace) || !allowedTabs[0]) return;
+    setActiveWorkspace(allowedTabs[0].key);
+  }, [activeWorkspace, currentUser]);
+
   if (!currentUser) {
     return <LoginView onLogin={setCurrentUser} />;
   }
@@ -42,10 +50,22 @@ export default function App() {
     setWorkspaceNavigationKey((current) => current + 1);
   };
 
+  const handleLogout = async () => {
+    try {
+      await recordLogout();
+    } catch (err) {
+      // Local logout must still work if the server is temporarily unreachable.
+    } finally {
+      clearAuthSession();
+      setCurrentUser(null);
+    }
+  };
+
   const views = {
     dashboard: <DashboardView setActiveWorkspace={setActiveWorkspace} />,
     billing: <BillingTerminalView isActive={activeWorkspace === 'billing'} />,
     closing: <CounterClosingView />,
+    gatePass: <GatePassView />,
     inventory: (
       <InventoryDashboardView
         isActive={activeWorkspace === 'inventory'}
@@ -82,10 +102,7 @@ export default function App() {
           ))}
           <button
             className="tab-button"
-            onClick={() => {
-              clearAuthSession();
-              setCurrentUser(null);
-            }}
+            onClick={handleLogout}
           >
             Logout ({currentUser.username})
           </button>

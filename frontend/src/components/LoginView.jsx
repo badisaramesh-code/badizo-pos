@@ -10,13 +10,14 @@ const FALLBACK_LOGIN_OPTIONS = [
   { label: 'Counter 3', username: 'counter3' },
   { label: 'Counter 4', username: 'counter4' },
   { label: 'Counter 5', username: 'counter5' },
-  { label: 'Counter 6', username: 'counter6' }
+  { label: 'Counter 6', username: 'counter6' },
+  { label: 'Security', username: 'security' }
 ];
 
 function loginModeFromUrl() {
   const params = new URLSearchParams(window.location.search || '');
   const mode = String(params.get('loginMode') || params.get('login') || params.get('mode') || '').trim().toLowerCase();
-  return ['server', 'admin', 'counter', 'all'].includes(mode) ? mode : 'all';
+  return ['server', 'admin', 'counter', 'security', 'all'].includes(mode) ? mode : 'all';
 }
 
 function filterLoginOptions(options, mode) {
@@ -29,14 +30,28 @@ function filterLoginOptions(options, mode) {
   if (mode === 'server') {
     return options.filter((option) => String(option.username || '').toLowerCase() === 'server');
   }
+  if (mode === 'security') {
+    return options.filter((option) => option.role === 'SECURITY' || String(option.username || '').toLowerCase() === 'security');
+  }
   return options;
+}
+
+function mergeLoginOptions(options) {
+  const merged = [...(Array.isArray(options) ? options : [])];
+  FALLBACK_LOGIN_OPTIONS.forEach((fallback) => {
+    if (!merged.some((option) => option.username === fallback.username)) {
+      merged.push(fallback);
+    }
+  });
+  return merged;
 }
 
 export default function LoginView({ onLogin }) {
   const loginMode = loginModeFromUrl();
   const initialOptions = useMemo(() => filterLoginOptions(FALLBACK_LOGIN_OPTIONS, loginMode), [loginMode]);
   const [username, setUsername] = useState(initialOptions[0]?.username || 'admin1');
-  const [password, setPassword] = useState(loginMode === 'counter' ? 'counter123' : loginMode === 'server' ? 'server123' : 'admin123');
+  const [personName, setPersonName] = useState('');
+  const [password, setPassword] = useState(loginMode === 'counter' ? 'counter123' : loginMode === 'server' ? 'server123' : loginMode === 'security' ? 'security123' : 'admin123');
   const [loginOptions, setLoginOptions] = useState(initialOptions.length ? initialOptions : FALLBACK_LOGIN_OPTIONS);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -49,8 +64,9 @@ export default function LoginView({ onLogin }) {
         const options = await fetchLoginOptions();
         if (!isMounted || options.length === 0) return;
 
-        const filteredOptions = filterLoginOptions(options, loginMode);
-        const visibleOptions = filteredOptions.length ? filteredOptions : options;
+        const mergedOptions = mergeLoginOptions(options);
+        const filteredOptions = filterLoginOptions(mergedOptions, loginMode);
+        const visibleOptions = filteredOptions.length ? filteredOptions : mergedOptions;
         setLoginOptions(visibleOptions);
         setUsername((currentUsername) => (
           visibleOptions.some((option) => option.username === currentUsername)
@@ -73,10 +89,14 @@ export default function LoginView({ onLogin }) {
   async function handleSubmit(event) {
     event.preventDefault();
     setErrorMessage('');
+    if (!personName.trim()) {
+      setErrorMessage('Person name is required.');
+      return;
+    }
     setIsLoading(true);
 
     try {
-      const user = await login(username, password);
+      const user = await login(username, password, personName);
       onLogin(user);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to login.');
@@ -106,6 +126,16 @@ export default function LoginView({ onLogin }) {
         </label>
 
         <label>
+          <span className="field-label">Person Name</span>
+          <input
+            className="field"
+            value={personName}
+            onChange={(event) => setPersonName(event.target.value)}
+            placeholder="Enter duty person name"
+          />
+        </label>
+
+        <label>
           <span className="field-label">Password</span>
           <input className="field" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>
@@ -115,7 +145,7 @@ export default function LoginView({ onLogin }) {
         </button>
 
         <div className="change-box">
-          Default passwords: Server server123, Admin admin123, Counters counter123.
+          Default passwords: Server server123, Admin admin123, Counters counter123, Security security123.
         </div>
       </form>
     </div>
