@@ -3576,13 +3576,13 @@ button:disabled {
 }
 
 .handover-print-sheet {
-  width: 190mm;
+  width: 180mm;
   min-height: 260mm;
-  padding: 6mm;
+  padding: 5mm;
   color: #111;
   background: #fff;
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .handover-print-sheet h1 {
@@ -3603,16 +3603,16 @@ button:disabled {
 }
 
 .handover-print-meta {
-  grid-template-columns: 1fr 2fr 1fr 1fr 1fr;
+  grid-template-columns: 1fr 2.2fr 0.8fr;
 }
 
 .handover-print-sale-row {
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: 1fr 1fr;
 }
 
 .handover-print-meta > *,
 .handover-print-sale-row > * {
-  padding: 5px 6px;
+  padding: 3px 5px;
   border-right: 1px solid #111;
   text-align: center;
 }
@@ -3629,8 +3629,8 @@ button:disabled {
 
 .handover-print-sheet th,
 .handover-print-sheet td {
-  height: 23px;
-  padding: 3px 5px;
+  height: 18px;
+  padding: 2px 4px;
   border: 1px solid #111;
   vertical-align: middle;
 }
@@ -3645,7 +3645,7 @@ button:disabled {
 .handover-print-sheet th:nth-child(5),
 .handover-print-sheet td:nth-child(4),
 .handover-print-sheet td:nth-child(5) {
-  width: 27mm;
+  width: 25mm;
   text-align: right;
 }
 
@@ -5375,6 +5375,13 @@ button:disabled {
     overflow: hidden !important;
   }
 
+  body.printing-handover.printing-thermal {
+    width: 80mm !important;
+    min-width: 80mm !important;
+    max-width: 80mm !important;
+    overflow: visible !important;
+  }
+
   body.printing-inward {
     width: 190mm !important;
     min-width: 190mm !important;
@@ -5627,6 +5634,16 @@ button:disabled {
     overflow: visible !important;
   }
 
+  body.printing-handover.printing-thermal #root,
+  body.printing-handover.printing-thermal .app-shell,
+  body.printing-handover.printing-thermal .workspace,
+  body.printing-handover.printing-thermal .counter-handover-view {
+    width: 80mm !important;
+    min-width: 80mm !important;
+    max-width: 80mm !important;
+    overflow: visible !important;
+  }
+
   body.printing-handover .topbar,
   body.printing-handover .counter-handover-view > :not(.handover-print-area) {
     display: none !important;
@@ -5652,25 +5669,101 @@ button:disabled {
     break-inside: avoid !important;
   }
 
+  body.printing-handover.printing-thermal .handover-print-area {
+    width: 80mm !important;
+    min-width: 80mm !important;
+    max-width: 80mm !important;
+    overflow: visible !important;
+  }
+
   body.printing-handover .handover-print-area * {
     visibility: visible !important;
   }
 
   .handover-print-area {
-    width: 190mm;
-    min-width: 190mm;
-    max-width: 190mm;
+    width: 180mm;
+    min-width: 180mm;
+    max-width: 180mm;
     page-break-after: avoid;
     break-after: avoid;
   }
 
   .handover-print-sheet {
-    width: 190mm;
+    width: 180mm;
     min-height: 260mm;
     max-height: 260mm;
     overflow: hidden;
     page-break-inside: avoid;
     break-inside: avoid;
+  }
+
+  body.printing-handover.printing-thermal .handover-print-sheet {
+    width: 80mm !important;
+    min-width: 80mm !important;
+    max-width: 80mm !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    padding: 2mm !important;
+    overflow: visible !important;
+    page: thermal-receipt;
+    font-size: 9px !important;
+    line-height: 1.2 !important;
+  }
+
+  body.printing-handover.printing-thermal .handover-print-sheet h1 {
+    font-size: 12px !important;
+    line-height: 1.25 !important;
+  }
+
+  body.printing-handover.printing-thermal .handover-print-meta,
+  body.printing-handover.printing-thermal .handover-print-sale-row {
+    display: block !important;
+  }
+
+  body.printing-handover.printing-thermal .handover-print-meta > *,
+  body.printing-handover.printing-thermal .handover-print-sale-row > * {
+    display: block !important;
+    padding: 2px 3px !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid #111 !important;
+    text-align: left !important;
+  }
+
+  body.printing-handover.printing-thermal .handover-print-meta > *:last-child,
+  body.printing-handover.printing-thermal .handover-print-sale-row > *:last-child {
+    border-bottom: 0 !important;
+  }
+
+  body.printing-handover.printing-thermal .handover-print-sheet th,
+  body.printing-handover.printing-thermal .handover-print-sheet td {
+    height: auto !important;
+    padding: 2px !important;
+    font-size: 8px !important;
+    word-break: break-word;
+  }
+
+  body.printing-handover.printing-thermal .handover-print-sheet th:nth-child(1),
+  body.printing-handover.printing-thermal .handover-print-sheet td:nth-child(1) {
+    width: 7mm !important;
+  }
+
+  body.printing-handover.printing-thermal .handover-print-sheet th:nth-child(4),
+  body.printing-handover.printing-thermal .handover-print-sheet th:nth-child(5),
+  body.printing-handover.printing-thermal .handover-print-sheet td:nth-child(4),
+  body.printing-handover.printing-thermal .handover-print-sheet td:nth-child(5) {
+    width: 13mm !important;
+  }
+
+  body.printing-handover.printing-thermal .handover-print-balance {
+    gap: 3px !important;
+    padding: 6px 2px !important;
+    font-size: 10px !important;
+  }
+
+  body.printing-handover.printing-thermal .handover-signatures {
+    margin-top: 8mm !important;
+    gap: 3px !important;
+    font-size: 8px !important;
   }
 
   .print-area.print-thermal {

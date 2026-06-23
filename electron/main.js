@@ -250,7 +250,7 @@ async function printThermalHtml({ html, widthMm, heightMm, printerName, feedMarg
 
     const measuredHeightPx = await printWindow.webContents.executeJavaScript(`
       (() => {
-        const receipt = document.querySelector('.thermal-paper, .counter-sale-slip');
+        const receipt = document.querySelector('.thermal-paper, .counter-sale-slip, .handover-print-sheet');
         const values = [
           receipt?.scrollHeight || 0,
           receipt?.offsetHeight || 0,
@@ -350,6 +350,61 @@ async function printThermalHtml({ html, widthMm, heightMm, printerName, feedMarg
 
 ipcMain.handle('badizo:print-thermal-html', async (_event, payload) => {
   return printThermalHtml(payload || {});
+});
+
+async function printHtml({ html, mode, widthMm, heightMm, printerName, silent }) {
+  if (!html || typeof html !== 'string') {
+    throw new Error('Print HTML is empty.');
+  }
+
+  const normalizedMode = mode === 'Thermal' ? 'Thermal' : 'A4';
+  const printWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+
+  try {
+    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    await printWindow.webContents.executeJavaScript('document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true');
+
+    const printers = await printWindow.webContents.getPrintersAsync();
+    const selectedPrinter = printerName
+      || printers.find((printer) => printer.isDefault)?.name
+      || '';
+
+    const options = {
+      silent: Boolean(silent),
+      printBackground: true,
+      deviceName: selectedPrinter || undefined,
+      margins: { marginType: 'none' },
+      pageSize: normalizedMode === 'A4'
+        ? 'A4'
+        : {
+          width: Math.ceil(clampNumber(widthMm, 80, 40, 100) * 1000),
+          height: Math.ceil(clampNumber(heightMm, 297, 40, 3276) * 1000)
+        }
+    };
+
+    logMessage(`Native HTML print: mode=${normalizedMode} printer=${selectedPrinter || '(dialog/default)'}`);
+    const result = await new Promise((resolve, reject) => {
+      printWindow.webContents.print(options, (success, failureReason) => {
+        if (success) resolve({ ok: true });
+        else reject(new Error(failureReason || 'Print was cancelled or failed.'));
+      });
+    });
+
+    return { ...result, printerName: selectedPrinter || null, method: 'electron-print' };
+  } finally {
+    if (!printWindow.isDestroyed()) printWindow.destroy();
+  }
+}
+
+ipcMain.handle('badizo:print-html', async (_event, payload) => {
+  return printHtml(payload || {});
 });
 
 app.whenReady().then(async () => {
