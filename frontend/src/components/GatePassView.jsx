@@ -22,6 +22,25 @@ function nowTime() {
   return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 }
 
+function formatTimeAmPm(value) {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  const match = text.match(/^([01]?\d|2[0-3]):([0-5]\d)/);
+  if (!match) return text;
+  const hour = Number(match[1]);
+  const minute = match[2];
+  const suffix = hour >= 12 ? 'PM' : 'AM';
+  const displayHour = hour % 12 || 12;
+  return `${String(displayHour).padStart(2, '0')}:${minute} ${suffix}`;
+}
+
+function formatTimeRange(startValue, endValue, startDisplay, endDisplay) {
+  const start = startDisplay || formatTimeAmPm(startValue);
+  const end = endDisplay || formatTimeAmPm(endValue);
+  if (start === '-' && end === '-') return 'Not recorded';
+  return `${start} to ${end}`;
+}
+
 function emptyForm(username = '') {
   return {
     id: null,
@@ -29,6 +48,10 @@ function emptyForm(username = '') {
     movement_type: 'IN',
     movement_date: todayIso(),
     movement_time: nowTime(),
+    unload_start_time: '',
+    unload_end_time: '',
+    loading_start_time: '',
+    loading_end_time: '',
     transport_mode: 'TRANSPORT',
     source_location: '',
     destination_location: '',
@@ -104,6 +127,10 @@ export default function GatePassView() {
       ...entry,
       movement_date: normalizeDateInput(entry.movement_date),
       movement_time: String(entry.movement_time || nowTime()).slice(0, 5),
+      unload_start_time: String(entry.unload_start_time || '').slice(0, 5),
+      unload_end_time: String(entry.unload_end_time || '').slice(0, 5),
+      loading_start_time: String(entry.loading_start_time || '').slice(0, 5),
+      loading_end_time: String(entry.loading_end_time || '').slice(0, 5),
       package_count: entry.package_count ? String(entry.package_count) : ''
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -132,7 +159,11 @@ export default function GatePassView() {
       const saved = await saveGatePassEntry({
         ...form,
         movement_date: normalizeDateInput(form.movement_date),
-        movement_time: form.movement_time || nowTime()
+        movement_time: form.movement_time || nowTime(),
+        unload_start_time: form.movement_type === 'IN' ? form.unload_start_time : '',
+        unload_end_time: form.movement_type === 'IN' ? form.unload_end_time : '',
+        loading_start_time: form.movement_type === 'OUT' ? form.loading_start_time : '',
+        loading_end_time: form.movement_type === 'OUT' ? form.loading_end_time : ''
       });
       setStatusMessage(`${saved.pass_no} saved successfully.`);
       setForm(emptyForm(currentUser?.username));
@@ -179,7 +210,18 @@ export default function GatePassView() {
 
           <div className="gate-pass-grid">
             <label><span className="field-label">Date</span><input className="field" type="date" value={normalizeDateInput(form.movement_date)} onChange={(event) => updateForm('movement_date', event.target.value)} /></label>
-            <label><span className="field-label">Time</span><input className="field" type="time" value={form.movement_time} onChange={(event) => updateForm('movement_time', event.target.value)} /></label>
+            <label><span className="field-label">Time</span><input className="field" type="time" value={form.movement_time} onChange={(event) => updateForm('movement_time', event.target.value)} /><span className="muted">{formatTimeAmPm(form.movement_time)}</span></label>
+            {form.movement_type === 'IN' ? (
+              <>
+                <label><span className="field-label">Unload Start Time</span><input className="field" type="time" value={form.unload_start_time} onChange={(event) => updateForm('unload_start_time', event.target.value)} /><span className="muted">{formatTimeAmPm(form.unload_start_time)}</span></label>
+                <label><span className="field-label">Unload End Time</span><input className="field" type="time" value={form.unload_end_time} onChange={(event) => updateForm('unload_end_time', event.target.value)} /><span className="muted">{formatTimeAmPm(form.unload_end_time)}</span></label>
+              </>
+            ) : (
+              <>
+                <label><span className="field-label">Loading Start Time</span><input className="field" type="time" value={form.loading_start_time} onChange={(event) => updateForm('loading_start_time', event.target.value)} /><span className="muted">{formatTimeAmPm(form.loading_start_time)}</span></label>
+                <label><span className="field-label">Loading End Time</span><input className="field" type="time" value={form.loading_end_time} onChange={(event) => updateForm('loading_end_time', event.target.value)} /><span className="muted">{formatTimeAmPm(form.loading_end_time)}</span></label>
+              </>
+            )}
             <label><span className="field-label">Mode</span><select className="select" value={form.transport_mode} onChange={(event) => updateForm('transport_mode', event.target.value)}>{TRANSPORT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label><span className="field-label">Status</span><select className="select" value={form.status} onChange={(event) => updateForm('status', event.target.value)}>{STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label><span className="field-label">From / Source</span><input className="field" value={form.source_location} onChange={(event) => updateForm('source_location', event.target.value)} placeholder="Supplier, godown, hub, store" /></label>
@@ -221,16 +263,29 @@ export default function GatePassView() {
         <div className="panel-body table-scroll">
           <table className="history-table gate-pass-table">
             <thead>
-              <tr><th>Pass</th><th>Movement Date</th><th>Movement Time</th><th>Type</th><th>Mode</th><th>Party</th><th>Vehicle/Driver</th><th>Supervisor</th><th>Security</th><th>Stock</th><th>Added Date</th><th>Added Time</th><th>Edited Date</th><th>Edited Time</th><th>Status</th><th>Action</th></tr>
+              <tr><th>Pass</th><th>Movement Date</th><th>Movement Time</th><th>Unload / Loading Time</th><th>Type</th><th>Mode</th><th>Party</th><th>Vehicle/Driver</th><th>Supervisor</th><th>Security</th><th>Stock</th><th>Added Date</th><th>Added Time</th><th>Edited Date</th><th>Edited Time</th><th>Status</th><th>Action</th></tr>
             </thead>
             <tbody>
               {entries.length === 0 ? (
-                <tr><td colSpan="16">No gate pass entries for selected filters.</td></tr>
+                <tr><td colSpan="17">No gate pass entries for selected filters.</td></tr>
               ) : entries.map((entry) => (
                 <tr key={entry.id}>
                   <td className="mono">{entry.pass_no}</td>
                   <td>{formatDisplayDate(entry.movement_date)}</td>
-                  <td>{entry.movement_time}</td>
+                  <td>{entry.movement_time_display || formatTimeAmPm(entry.movement_time)}</td>
+                  <td>
+                    {entry.movement_type === 'IN' ? (
+                      <>
+                        <strong>Unload</strong><br />
+                        <span className="muted">{formatTimeRange(entry.unload_start_time, entry.unload_end_time, entry.unload_start_time_display, entry.unload_end_time_display)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <strong>Loading</strong><br />
+                        <span className="muted">{formatTimeRange(entry.loading_start_time, entry.loading_end_time, entry.loading_start_time_display, entry.loading_end_time_display)}</span>
+                      </>
+                    )}
+                  </td>
                   <td><span className={`movement-badge ${entry.movement_type === 'OUT' ? 'outward' : 'inward'}`}>{movementLabel(entry.movement_type)}</span></td>
                   <td>{entry.transport_mode}</td>
                   <td>{entry.party_name}<br /><span className="muted">{entry.party_phone}</span></td>

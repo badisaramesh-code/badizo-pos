@@ -603,6 +603,10 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         movement_type ENUM('IN', 'OUT') NOT NULL,
         movement_date DATE NOT NULL,
         movement_time TIME NOT NULL,
+        unload_start_time TIME DEFAULT NULL,
+        unload_end_time TIME DEFAULT NULL,
+        loading_start_time TIME DEFAULT NULL,
+        loading_end_time TIME DEFAULT NULL,
         transport_mode ENUM('TRANSPORT', 'AUTO', 'TROLLEY', 'RIKSHA', 'HUMAN', 'OTHER') NOT NULL DEFAULT 'TRANSPORT',
         source_location VARCHAR(180) DEFAULT '',
         destination_location VARCHAR(180) DEFAULT '',
@@ -630,6 +634,10 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         INDEX idx_gate_pass_party (party_name)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+    await ensureColumn(connection, 'gate_pass_entries', 'unload_start_time', 'TIME DEFAULT NULL AFTER movement_time');
+    await ensureColumn(connection, 'gate_pass_entries', 'unload_end_time', 'TIME DEFAULT NULL AFTER unload_start_time');
+    await ensureColumn(connection, 'gate_pass_entries', 'loading_start_time', 'TIME DEFAULT NULL AFTER unload_end_time');
+    await ensureColumn(connection, 'gate_pass_entries', 'loading_end_time', 'TIME DEFAULT NULL AFTER loading_start_time');
 
     await connection.query(`
       CREATE TABLE IF NOT EXISTS stock_adjustments (

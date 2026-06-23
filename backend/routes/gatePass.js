@@ -27,6 +27,12 @@ function normalizeTime(value) {
   return `${String(Number(match[1])).padStart(2, '0')}:${match[2]}:${match[3] || '00'}`;
 }
 
+function normalizeOptionalTime(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  return normalizeTime(text);
+}
+
 function normalizeMovementType(value) {
   return String(value || '').toUpperCase() === 'OUT' ? 'OUT' : 'IN';
 }
@@ -100,7 +106,17 @@ router.get('/', async (req, res) => {
   try {
     const [rows] = await db.query(
       `SELECT id, pass_no, movement_type, DATE_FORMAT(movement_date, '%Y-%m-%d') AS movement_date,
-              TIME_FORMAT(movement_time, '%H:%i') AS movement_time, transport_mode,
+              TIME_FORMAT(movement_time, '%H:%i') AS movement_time,
+              TIME_FORMAT(movement_time, '%h:%i %p') AS movement_time_display,
+              TIME_FORMAT(unload_start_time, '%H:%i') AS unload_start_time,
+              TIME_FORMAT(unload_start_time, '%h:%i %p') AS unload_start_time_display,
+              TIME_FORMAT(unload_end_time, '%H:%i') AS unload_end_time,
+              TIME_FORMAT(unload_end_time, '%h:%i %p') AS unload_end_time_display,
+              TIME_FORMAT(loading_start_time, '%H:%i') AS loading_start_time,
+              TIME_FORMAT(loading_start_time, '%h:%i %p') AS loading_start_time_display,
+              TIME_FORMAT(loading_end_time, '%H:%i') AS loading_end_time,
+              TIME_FORMAT(loading_end_time, '%h:%i %p') AS loading_end_time_display,
+              transport_mode,
               source_location, destination_location, party_name, party_phone, vehicle_no,
               driver_name, driver_phone, supervisor_name, supervisor_phone,
               security_person_name, security_person_phone, document_no, item_summary,
@@ -128,6 +144,10 @@ router.post('/', async (req, res) => {
   const movementType = normalizeMovementType(req.body?.movement_type);
   const movementDate = normalizeDate(req.body?.movement_date || req.body?.date, todayIso());
   const movementTime = normalizeTime(req.body?.movement_time);
+  const unloadStartTime = movementType === 'IN' ? normalizeOptionalTime(req.body?.unload_start_time) : null;
+  const unloadEndTime = movementType === 'IN' ? normalizeOptionalTime(req.body?.unload_end_time) : null;
+  const loadingStartTime = movementType === 'OUT' ? normalizeOptionalTime(req.body?.loading_start_time) : null;
+  const loadingEndTime = movementType === 'OUT' ? normalizeOptionalTime(req.body?.loading_end_time) : null;
   const transportMode = normalizeTransportMode(req.body?.transport_mode);
   const status = normalizeStatus(req.body?.status);
 
@@ -171,14 +191,18 @@ router.post('/', async (req, res) => {
     if (id) {
       await connection.query(
         `UPDATE gate_pass_entries
-         SET movement_type = ?, movement_date = ?, movement_time = ?, transport_mode = ?,
+         SET movement_type = ?, movement_date = ?, movement_time = ?,
+             unload_start_time = ?, unload_end_time = ?, loading_start_time = ?, loading_end_time = ?,
+             transport_mode = ?,
              source_location = ?, destination_location = ?, party_name = ?, party_phone = ?,
              vehicle_no = ?, driver_name = ?, driver_phone = ?, supervisor_name = ?, supervisor_phone = ?,
              security_person_name = ?, security_person_phone = ?, document_no = ?, item_summary = ?,
              package_count = ?, remarks = ?, status = ?, updated_by = ?
          WHERE id = ?`,
         [
-          movementType, movementDate, movementTime, transportMode,
+          movementType, movementDate, movementTime,
+          unloadStartTime, unloadEndTime, loadingStartTime, loadingEndTime,
+          transportMode,
           payload.source_location, payload.destination_location, payload.party_name, payload.party_phone,
           payload.vehicle_no, payload.driver_name, payload.driver_phone, payload.supervisor_name, payload.supervisor_phone,
           payload.security_person_name, payload.security_person_phone, payload.document_no, payload.item_summary,
@@ -188,14 +212,16 @@ router.post('/', async (req, res) => {
     } else {
       await connection.query(
         `INSERT INTO gate_pass_entries
-         (pass_no, movement_type, movement_date, movement_time, transport_mode,
+         (pass_no, movement_type, movement_date, movement_time,
+          unload_start_time, unload_end_time, loading_start_time, loading_end_time, transport_mode,
           source_location, destination_location, party_name, party_phone, vehicle_no,
           driver_name, driver_phone, supervisor_name, supervisor_phone,
           security_person_name, security_person_phone, document_no, item_summary,
           package_count, remarks, status, created_by, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          passNo, movementType, movementDate, movementTime, transportMode,
+          passNo, movementType, movementDate, movementTime,
+          unloadStartTime, unloadEndTime, loadingStartTime, loadingEndTime, transportMode,
           payload.source_location, payload.destination_location, payload.party_name, payload.party_phone,
           payload.vehicle_no, payload.driver_name, payload.driver_phone, payload.supervisor_name, payload.supervisor_phone,
           payload.security_person_name, payload.security_person_phone, payload.document_no, payload.item_summary,
@@ -216,7 +242,17 @@ router.post('/', async (req, res) => {
 
     const [rows] = await db.query(
       `SELECT id, pass_no, movement_type, DATE_FORMAT(movement_date, '%Y-%m-%d') AS movement_date,
-              TIME_FORMAT(movement_time, '%H:%i') AS movement_time, transport_mode,
+              TIME_FORMAT(movement_time, '%H:%i') AS movement_time,
+              TIME_FORMAT(movement_time, '%h:%i %p') AS movement_time_display,
+              TIME_FORMAT(unload_start_time, '%H:%i') AS unload_start_time,
+              TIME_FORMAT(unload_start_time, '%h:%i %p') AS unload_start_time_display,
+              TIME_FORMAT(unload_end_time, '%H:%i') AS unload_end_time,
+              TIME_FORMAT(unload_end_time, '%h:%i %p') AS unload_end_time_display,
+              TIME_FORMAT(loading_start_time, '%H:%i') AS loading_start_time,
+              TIME_FORMAT(loading_start_time, '%h:%i %p') AS loading_start_time_display,
+              TIME_FORMAT(loading_end_time, '%H:%i') AS loading_end_time,
+              TIME_FORMAT(loading_end_time, '%h:%i %p') AS loading_end_time_display,
+              transport_mode,
               source_location, destination_location, party_name, party_phone, vehicle_no,
               driver_name, driver_phone, supervisor_name, supervisor_phone,
               security_person_name, security_person_phone, document_no, item_summary,
