@@ -1818,6 +1818,70 @@ button:disabled {
   font-size: 20px;
 }
 
+.sale-report-action {
+  border-color: #1f7a4d;
+  background: #eaf7ef;
+  color: #165c3a;
+  font-weight: 900;
+}
+
+.sale-report-modal {
+  max-width: 760px;
+}
+
+.sale-report-pos-form {
+  display: grid;
+  gap: 10px;
+}
+
+.sale-report-form-line {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.sale-report-title-line {
+  display: block;
+  padding: 9px 10px;
+  border: 1px solid #bde5c8;
+  border-radius: 7px;
+  background: #eef8f2;
+  color: var(--brand-dark);
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.sale-report-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.sale-report-preview {
+  display: grid;
+  gap: 10px;
+}
+
+.sale-report-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+}
+
+.sale-report-preview-grid .summary-line {
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.sale-report-gst-table td:not(:first-child),
+.sale-report-gst-table th:not(:first-child) {
+  text-align: right;
+}
+
 .exchange-panel {
   display: grid;
   gap: 8px;

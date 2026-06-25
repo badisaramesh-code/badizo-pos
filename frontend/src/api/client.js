@@ -341,6 +341,74 @@ export async function fetchCounterSaleSlip({ date, counterNo } = {}) {
   return data;
 }
 
+export async function fetchPosSaleReport({ from, to, reportType = 'ALL', counterNo = '' } = {}) {
+  try {
+    const { data } = await api.get('/reports/pos-sale-report', {
+      params: { from, to, report_type: reportType, counter_no: counterNo }
+    });
+    return data;
+  } catch (err) {
+    if (err.response?.status !== 404) throw err;
+  }
+
+  const counter = counterNo ? `Counter ${counterNo}` : '';
+  const [{ data: daily }, { data: tax }] = await Promise.all([
+    api.get('/reports/daily-sales', { params: { from, to, counter } }),
+    api.get('/reports/tax-summary', { params: { from, to } })
+  ]);
+  const paymentTotals = { cash: 0, upi: 0, card: 0, other: 0, total: 0 };
+
+  (daily.rows || []).forEach((row) => {
+    const amount = Number(row.grand_total || 0);
+    const mode = String(row.payment_mode || '').toUpperCase();
+    if (mode === 'UPI') paymentTotals.upi += amount;
+    else if (mode === 'CARD') paymentTotals.card += amount;
+    else if (mode === 'CASH') paymentTotals.cash += amount;
+    else paymentTotals.other += amount;
+    paymentTotals.total += amount;
+  });
+
+  const taxRowsByRate = new Map((tax.rows || []).map((row) => [Number(row.gst_percent || 0), row]));
+  const baseGstSlabs = [0, 3, 5, 12, 18, 28, 40];
+  const allRates = [...new Set([...baseGstSlabs, ...(tax.rows || []).map((row) => Number(row.gst_percent || 0))])]
+    .sort((a, b) => a - b);
+  const gst = allRates.map((rate) => {
+    const row = taxRowsByRate.get(rate) || {};
+    const cgst = Number(row.cgst || 0);
+    const sgst = Number(row.sgst || 0);
+    const igst = Number(row.igst || 0);
+    const gross = Number(row.gross_total || 0);
+    return {
+      gstPercent: rate,
+      billCount: 0,
+      quantity: 0,
+      taxable: gross - cgst - sgst - igst,
+      cgst,
+      sgst,
+      igst,
+      gst: cgst + sgst + igst,
+      total: gross
+    };
+  });
+
+  return {
+    from: daily.from || from,
+    to: daily.to || to,
+    reportType,
+    counter: daily.counter || counter || 'ALL',
+    paymentTotals,
+    gst,
+    totals: {
+      billCount: Number(daily.totals?.billCount || 0),
+      taxable: Number(daily.totals?.taxable || 0),
+      gst: Number(daily.totals?.gst || 0),
+      saleTotal: Number(daily.totals?.saleTotal || 0),
+      exchangeTotal: Number(daily.totals?.exchangeLess || 0),
+      netTotal: Number(daily.totals?.total || 0)
+    }
+  };
+}
+
 export async function exportDailySalesReport({ date, from, to, counter = '' } = {}) {
   const { data } = await api.get('/reports/daily-sales/export', {
     params: { date, from, to, counter },

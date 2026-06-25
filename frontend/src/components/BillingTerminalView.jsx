@@ -10,6 +10,7 @@ import {
   fetchInvoiceDetails,
   fetchInvoiceHistory,
   fetchNextInvoice,
+  fetchPosSaleReport,
   fetchCustomers,
   fetchSettings,
   getStoredUser,
@@ -209,6 +210,57 @@ function CounterSaleSlip({ slip, shop, printedAt }) {
   );
 }
 
+function SaleReportSlip({ report, shop, printedAt }) {
+  const printedDate = printedAt.toLocaleDateString('en-IN');
+  const printedTime = printedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  const payments = report?.paymentTotals || {};
+  const totals = report?.totals || {};
+  const gstRows = Array.isArray(report?.gst) ? report.gst : [];
+  const showGstDetail = report?.reportType === 'GST';
+
+  return (
+    <div className="counter-sale-slip sale-report-slip">
+      <div className="counter-sale-slip-title">
+        <strong>{shop.shop_name}</strong>
+        <span>{printedDate} | {printedTime}</span>
+      </div>
+      <div className="counter-sale-slip-rule" />
+      <div className="counter-sale-slip-heading">SALE REPORT</div>
+      <div className="counter-sale-slip-line"><span>Date</span><strong>{report?.from || '-'} to {report?.to || '-'}</strong></div>
+      <div className="counter-sale-slip-line"><span>Report</span><strong>{report?.reportType || 'ALL'} | {report?.counter || 'ALL'}</strong></div>
+      <div className="counter-sale-slip-rule" />
+      <div className="counter-sale-slip-line"><span>Bills</span><strong>{Number(totals.billCount || 0)}</strong></div>
+      <div className="counter-sale-slip-line"><span>UPI Sales</span><strong>{formatSlipAmount(payments.upi)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Card Sales</span><strong>{formatSlipAmount(payments.card)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Other Sales</span><strong>{formatSlipAmount(payments.other)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Cash Sales</span><strong>{formatSlipAmount(payments.cash)}</strong></div>
+      <div className="counter-sale-slip-total"><span>Total Sale</span><strong>{formatSlipAmount(payments.total || totals.netTotal)}</strong></div>
+      {showGstDetail && (
+        <>
+          <div className="counter-sale-slip-rule" />
+          <div className="counter-sale-slip-heading">GST SALE REPORT</div>
+          <div className="sale-report-gst-head"><span>GST</span><span>Taxable</span><span>Tax</span><span>Total</span></div>
+          {gstRows.map((row) => (
+            <div className="sale-report-gst-row" key={row.gstPercent}>
+              <span>{Number(row.gstPercent || 0).toFixed(0)}%</span>
+              <span>{formatSlipAmount(row.taxable)}</span>
+              <span>{formatSlipAmount(row.gst)}</span>
+              <span>{formatSlipAmount(row.total)}</span>
+            </div>
+          ))}
+          <div className="counter-sale-slip-total"><span>GST Total Sale</span><strong>{formatSlipAmount(totals.saleTotal)}</strong></div>
+        </>
+      )}
+      <div className="counter-sale-slip-rule" />
+      <div className="counter-sale-slip-line"><span>Taxable</span><strong>{formatSlipAmount(totals.taxable)}</strong></div>
+      <div className="counter-sale-slip-line"><span>GST</span><strong>{formatSlipAmount(totals.gst)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Exchange Less</span><strong>{formatSlipAmount(totals.exchangeTotal)}</strong></div>
+      <div className="counter-sale-slip-total"><span>Net Sale</span><strong>{formatSlipAmount(totals.netTotal)}</strong></div>
+      <div className="counter-sale-slip-footer">POS sale report</div>
+    </div>
+  );
+}
+
 export default function BillingTerminalView({ isActive = true }) {
   const currentUser = getStoredUser();
   const initialDraft = readActivePosDraft(currentUser?.username);
@@ -280,6 +332,14 @@ export default function BillingTerminalView({ isActive = true }) {
   const [isHeldBillsOpen, setIsHeldBillsOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showPriceCheck, setShowPriceCheck] = useState(false);
+  const [showSaleReport, setShowSaleReport] = useState(false);
+  const [saleReportFromDate, setSaleReportFromDate] = useState(localIsoDate());
+  const [saleReportToDate, setSaleReportToDate] = useState(localIsoDate());
+  const [saleReportType, setSaleReportType] = useState('ALL');
+  const [saleReportScope, setSaleReportScope] = useState('CURRENT');
+  const [saleReport, setSaleReport] = useState(null);
+  const [isSaleReportLoading, setIsSaleReportLoading] = useState(false);
+  const [saleReportError, setSaleReportError] = useState('');
   const [priceCheckQuery, setPriceCheckQuery] = useState('');
   const [priceCheckProduct, setPriceCheckProduct] = useState(null);
   const [priceCheckError, setPriceCheckError] = useState('');
@@ -363,6 +423,7 @@ export default function BillingTerminalView({ isActive = true }) {
       || holdBillDialogOpen
       || showHistory
       || showPriceCheck
+      || showSaleReport
       || Boolean(returnInvoice)
     );
 
@@ -401,7 +462,7 @@ export default function BillingTerminalView({ isActive = true }) {
       window.removeEventListener('focus', focusSearchInput);
       document.removeEventListener('focusin', delayedFocus);
     };
-  }, [approvalDialog, digitalContactModal, holdBillDialogOpen, isActive, returnInvoice, showHistory, showPriceCheck]);
+  }, [approvalDialog, digitalContactModal, holdBillDialogOpen, isActive, returnInvoice, showHistory, showPriceCheck, showSaleReport]);
 
   useEffect(() => {
     const wasExchangeMode = previousExchangeModeRef.current;
@@ -2096,6 +2157,228 @@ export default function BillingTerminalView({ isActive = true }) {
       setStatusMessage(`Counter ${counterNo} sale slip ready.`);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to print counter sale slip.');
+    }
+  }
+
+  function getSaleReportRequest() {
+    return {
+      from: saleReportFromDate || localIsoDate(),
+      to: saleReportToDate || saleReportFromDate || localIsoDate(),
+      reportType: saleReportType,
+      counterNo: saleReportScope === 'CURRENT' ? counterNo : ''
+    };
+  }
+
+  async function loadSaleReportForPos() {
+    setIsSaleReportLoading(true);
+    setSaleReportError('');
+    setErrorMessage('');
+    try {
+      const report = await fetchPosSaleReport(getSaleReportRequest());
+      setSaleReport(report);
+      setStatusMessage(`Sale report loaded: ${report.from} to ${report.to}.`);
+      return report;
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Unable to load sale report.';
+      setSaleReportError(message);
+      setErrorMessage(message);
+      return null;
+    } finally {
+      setIsSaleReportLoading(false);
+    }
+  }
+
+  async function handleViewSaleReport(event) {
+    event?.preventDefault?.();
+    await loadSaleReportForPos();
+  }
+
+  async function handlePrintSaleReport(event) {
+    event?.preventDefault?.();
+    const report = await loadSaleReportForPos();
+    if (report) await printSaleReportSlip(report);
+  }
+
+  async function printSaleReportSlip(reportToPrint = saleReport) {
+    if (!reportToPrint) {
+      await handlePrintSaleReport();
+      return;
+    }
+
+    try {
+      const printedAt = new Date();
+      const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
+      const defaultSlipHeightMm = reportToPrint.reportType === 'GST' ? 150 : 105;
+      const thermalFeedMarginMm = getThermalFeedMarginMm(shopSettings);
+      const slipMarkup = renderToStaticMarkup(<SaleReportSlip report={reportToPrint} shop={shopSettings} printedAt={printedAt} />);
+      const slipPrintHtml = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Sale Report</title>
+  <style>
+    html, body {
+      width: ${thermalWidthMm}mm;
+      min-width: ${thermalWidthMm}mm;
+      max-width: ${thermalWidthMm}mm;
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      color: #000;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    .counter-sale-slip {
+      width: ${thermalWidthMm}mm;
+      box-sizing: border-box;
+      padding: 3mm 5mm ${thermalFeedMarginMm}mm;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .counter-sale-slip-title,
+    .counter-sale-slip-heading,
+    .counter-sale-slip-footer {
+      text-align: center;
+    }
+    .counter-sale-slip-title strong {
+      display: block;
+      font-size: 15px;
+      text-transform: uppercase;
+    }
+    .counter-sale-slip-title span {
+      display: block;
+      margin-top: 2px;
+      font-size: 11px;
+    }
+    .counter-sale-slip-heading {
+      margin: 4px 0;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .counter-sale-slip-rule {
+      border-top: 1px dashed #000;
+      margin: 5px 0;
+    }
+    .counter-sale-slip-line,
+    .counter-sale-slip-total,
+    .sale-report-gst-head,
+    .sale-report-gst-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 3px 0;
+      font-size: 12px;
+    }
+    .counter-sale-slip-line strong,
+    .counter-sale-slip-total strong {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .counter-sale-slip-total {
+      border-top: 1px solid #000;
+      margin-top: 3px;
+      padding-top: 5px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .sale-report-gst-head {
+      border-bottom: 1px solid #000;
+      font-weight: 800;
+    }
+    .sale-report-gst-head span,
+    .sale-report-gst-row span {
+      width: 25%;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .sale-report-gst-head span:first-child,
+    .sale-report-gst-row span:first-child {
+      text-align: left;
+    }
+    .counter-sale-slip-footer {
+      padding-top: 4px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    @media print {
+      @page { size: ${thermalWidthMm}mm ${defaultSlipHeightMm}mm; margin: 0; }
+      html, body {
+        width: ${thermalWidthMm}mm !important;
+        min-width: ${thermalWidthMm}mm !important;
+        max-width: ${thermalWidthMm}mm !important;
+        height: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+      }
+    }
+  </style>
+</head>
+<body>${slipMarkup}</body>
+</html>`;
+
+      const printFrame = document.createElement('iframe');
+      printFrame.title = 'Sale report print frame';
+      printFrame.style.position = 'fixed';
+      printFrame.style.left = '-10000px';
+      printFrame.style.top = '0';
+      printFrame.style.width = `${thermalWidthMm}mm`;
+      printFrame.style.height = `${defaultSlipHeightMm}mm`;
+      printFrame.style.border = '0';
+      printFrame.style.visibility = 'hidden';
+      document.body.appendChild(printFrame);
+
+      const frameDocument = printFrame.contentDocument || printFrame.contentWindow?.document;
+      if (!frameDocument) {
+        printFrame.remove();
+        return;
+      }
+
+      frameDocument.open();
+      frameDocument.write(slipPrintHtml);
+      frameDocument.close();
+
+      const cleanup = () => window.setTimeout(() => printFrame.remove(), 300);
+      const frameWindow = printFrame.contentWindow;
+      frameWindow?.addEventListener('afterprint', cleanup, { once: true });
+      window.setTimeout(async () => {
+        try {
+          const slipElement = frameDocument.querySelector('.sale-report-slip');
+          const contentHeightPx = Math.max(
+            slipElement?.scrollHeight || 0,
+            slipElement?.getBoundingClientRect?.().height || 0,
+            frameDocument.body?.scrollHeight || 0
+          );
+          const contentHeightMm = Math.max(55, Math.ceil((contentHeightPx * 25.4) / 96) + thermalFeedMarginMm);
+          const dynamicStyle = frameDocument.createElement('style');
+          dynamicStyle.textContent = `@media print { @page { size: ${thermalWidthMm}mm ${contentHeightMm}mm; margin: 0; } }`;
+          frameDocument.head.appendChild(dynamicStyle);
+          printFrame.style.height = `${contentHeightMm}mm`;
+
+          if (window.badizoDesktop?.printThermalHtml) {
+            await window.badizoDesktop.printThermalHtml({
+              html: frameDocument.documentElement.outerHTML,
+              widthMm: thermalWidthMm,
+              heightMm: contentHeightMm,
+              feedMarginMm: 0
+            });
+            cleanup();
+            setStatusMessage('Sale report printed.');
+            return;
+          }
+
+          frameWindow?.focus();
+          frameWindow?.print();
+          window.setTimeout(() => {
+            if (document.body.contains(printFrame)) printFrame.remove();
+          }, 120000);
+          setStatusMessage('Sale report ready to print.');
+        } catch (err) {
+          cleanup();
+          setErrorMessage(err.response?.data?.error || err.message || 'Unable to print sale report.');
+        }
+      }, 250);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to print sale report.');
     }
   }
 
@@ -3817,12 +4100,118 @@ export default function BillingTerminalView({ isActive = true }) {
                   refreshHeldBills(counterNo);
                 }}>F6 Held Bills</button>
                 <button className="secondary-button" onClick={() => printBill(printableInvoice || printableDraft)}>Print</button>
+                <button
+                  className="secondary-button sale-report-action"
+                  type="button"
+                  onClick={() => {
+                    setSaleReport(null);
+                    setSaleReportError('');
+                    setShowSaleReport(true);
+                  }}
+                >
+                  Sale Report
+                </button>
               </div>
             </div>
           </div>
         </section>
 
       </aside>
+
+      {showSaleReport && (
+        <div className="modal-backdrop">
+          <div className="modal sale-report-modal">
+            <div className="panel-header">
+              <h2 className="panel-title">Sale Report</h2>
+              <button
+                className="close-action-button"
+                type="button"
+                onClick={() => {
+                  setShowSaleReport(false);
+                  scannerRef.current?.focus();
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <div className="panel-body form-stack">
+              <form
+                className="sale-report-pos-form"
+                onSubmit={handleViewSaleReport}
+              >
+                <div className="sale-report-form-line sale-report-title-line">Sale Report</div>
+                <div className="sale-report-form-line">
+                  <label>
+                    <span className="field-label">From Date</span>
+                    <input className="field" type="date" value={saleReportFromDate} onChange={(event) => setSaleReportFromDate(event.target.value)} />
+                  </label>
+                  <label>
+                    <span className="field-label">To Date</span>
+                    <input className="field" type="date" value={saleReportToDate} onChange={(event) => setSaleReportToDate(event.target.value)} />
+                  </label>
+                </div>
+                <div className="sale-report-form-line">
+                  <label>
+                    <span className="field-label">All / GST</span>
+                    <select className="select" value={saleReportType} onChange={(event) => setSaleReportType(event.target.value)}>
+                      <option value="ALL">All Sales</option>
+                      <option value="GST">GST Sale Report</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span className="field-label">Counter</span>
+                    <select className="select" value={saleReportScope} onChange={(event) => setSaleReportScope(event.target.value)}>
+                      <option value="CURRENT">Current Counter</option>
+                      <option value="ALL">All Counters</option>
+                    </select>
+                  </label>
+                  <div className="sale-report-actions">
+                    <button className="secondary-button" type="button" disabled={isSaleReportLoading} onClick={handleViewSaleReport}>
+                      {isSaleReportLoading ? 'Loading...' : 'View'}
+                    </button>
+                    <button className="primary-button" type="button" disabled={isSaleReportLoading} onClick={handlePrintSaleReport}>
+                      Print
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              {saleReportError && <div className="alert-box">{saleReportError}</div>}
+
+              {saleReport && (
+                <div className="sale-report-preview">
+                  <div className="report-summary-strip">
+                    <span>Bills: <strong>{Number(saleReport.totals?.billCount || 0)}</strong></span>
+                    <span>Total: <strong>{formatMoney(saleReport.paymentTotals?.total || saleReport.totals?.netTotal || 0)}</strong></span>
+                    <span>GST: <strong>{formatMoney(saleReport.totals?.gst || 0)}</strong></span>
+                  </div>
+                  <div className="sale-report-preview-grid">
+                    <div className="summary-line"><span>UPI Sales</span><strong>{formatMoney(saleReport.paymentTotals?.upi || 0)}</strong></div>
+                    <div className="summary-line"><span>Card Sales</span><strong>{formatMoney(saleReport.paymentTotals?.card || 0)}</strong></div>
+                    <div className="summary-line"><span>Other Sales</span><strong>{formatMoney(saleReport.paymentTotals?.other || 0)}</strong></div>
+                    <div className="summary-line"><span>Cash Sales</span><strong>{formatMoney(saleReport.paymentTotals?.cash || 0)}</strong></div>
+                  </div>
+                  <table className="history-table sale-report-gst-table">
+                    <thead><tr><th>GST</th><th>Bills</th><th>Qty</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                    <tbody>
+                      {(saleReport.gst || []).map((row) => (
+                        <tr key={row.gstPercent}>
+                          <td>{Number(row.gstPercent || 0).toFixed(0)}%</td>
+                          <td>{Number(row.billCount || 0)}</td>
+                          <td>{Number(row.quantity || 0).toFixed(2)}</td>
+                          <td>{formatMoney(row.taxable || 0)}</td>
+                          <td>{formatMoney(row.gst || 0)}</td>
+                          <td><strong>{formatMoney(row.total || 0)}</strong></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showPriceCheck && (
         <div className="modal-backdrop">

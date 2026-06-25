@@ -404,6 +404,150 @@ router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async 
   }
 });
 
+router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
+  try {
+    const from = normalizeDate(req.query.from || req.query.date, todayIso());
+    const to = normalizeDate(req.query.to || from, from);
+    const reportType = String(req.query.report_type || 'ALL').toUpperCase() === 'GST' ? 'GST' : 'ALL';
+    const requestedCounter = normalizeCounterNoFromLabel(req.query.counter) || Number.parseInt(req.query.counter_no, 10) || 0;
+    const userCounter = Number.parseInt(req.user?.counter_no, 10) || 0;
+    const counterNo = req.user?.role === 'COUNTER' && userCounter > 0
+      ? userCounter
+      : requestedCounter;
+    const counter = counterNo > 0 ? `Counter ${counterNo}` : '';
+    const paymentValues = [from, to];
+    const invoiceValues = [from, to];
+    const gstValues = [from, to];
+    let counterSql = '';
+
+    if (counter) {
+      counterSql = 'AND i.billing_counter = ?';
+      paymentValues.push(counter);
+      invoiceValues.push(counter);
+      gstValues.push(counter);
+    }
+
+    const [paymentRows] = await db.query(
+      `SELECT payment_mode, COALESCE(SUM(amount), 0) AS total
+       FROM (
+         SELECT ip.invoice_no, ip.payment_mode, ip.amount
+         FROM invoice_payments ip
+         INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
+         WHERE DATE(i.created_at) BETWEEN ? AND ?
+           AND i.invoice_status <> 'CANCELLED'
+           ${counterSql}
+         UNION ALL
+         SELECT i.invoice_no, i.payment_mode, i.grand_total AS amount
+         FROM invoices i
+         LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
+         WHERE DATE(i.created_at) BETWEEN ? AND ?
+           AND i.invoice_status <> 'CANCELLED'
+           AND ip.id IS NULL
+           ${counterSql}
+       ) payments
+       GROUP BY payment_mode`,
+      counter ? [...paymentValues, ...paymentValues] : [from, to, from, to]
+    );
+
+    const [invoiceRows] = await db.query(
+      `SELECT
+         COUNT(*) AS bill_count,
+         COALESCE(SUM(sub_total), 0) AS taxable_total,
+         COALESCE(SUM(gst_total), 0) AS gst_total,
+         COALESCE(SUM(sub_total + gst_total), 0) AS sale_total,
+         COALESCE(SUM(exchange_total), 0) AS exchange_total,
+         COALESCE(SUM(grand_total), 0) AS net_total
+       FROM invoices i
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
+         ${counterSql}`,
+      invoiceValues
+    );
+
+    const [gstRows] = await db.query(
+      `SELECT
+         ii.gst_percent,
+         COUNT(DISTINCT i.invoice_no) AS bill_count,
+         COALESCE(SUM(ii.quantity), 0) AS quantity,
+         COALESCE(SUM((ii.sale_price * ii.quantity) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount), 0) AS taxable,
+         COALESCE(SUM(ii.cgst_amount), 0) AS cgst,
+         COALESCE(SUM(ii.sgst_amount), 0) AS sgst,
+         COALESCE(SUM(ii.igst_amount), 0) AS igst,
+         COALESCE(SUM(ii.sale_price * ii.quantity), 0) AS total
+       FROM invoice_items ii
+       INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
+         ${counterSql}
+       GROUP BY ii.gst_percent
+       ORDER BY ii.gst_percent ASC`,
+      gstValues
+    );
+
+    const paymentTotals = {
+      cash: 0,
+      upi: 0,
+      card: 0,
+      other: 0,
+      total: 0
+    };
+
+    paymentRows.forEach((row) => {
+      const mode = String(row.payment_mode || '').toUpperCase();
+      const total = Number(row.total || 0);
+      if (mode === 'UPI') paymentTotals.upi += total;
+      else if (mode === 'CARD') paymentTotals.card += total;
+      else if (mode === 'CASH') paymentTotals.cash += total;
+      else paymentTotals.other += total;
+      paymentTotals.total += total;
+    });
+
+    const baseGstSlabs = [0, 3, 5, 12, 18, 28, 40];
+    const rowsByRate = new Map(gstRows.map((row) => [Number(row.gst_percent || 0), row]));
+    const allRates = [...new Set([...baseGstSlabs, ...gstRows.map((row) => Number(row.gst_percent || 0))])]
+      .sort((a, b) => a - b);
+    const gst = allRates.map((rate) => {
+      const row = rowsByRate.get(rate) || {};
+      const cgst = Number(row.cgst || 0);
+      const sgst = Number(row.sgst || 0);
+      const igst = Number(row.igst || 0);
+      return {
+        gstPercent: rate,
+        billCount: Number(row.bill_count || 0),
+        quantity: Number(row.quantity || 0),
+        taxable: Number(row.taxable || 0),
+        cgst,
+        sgst,
+        igst,
+        gst: cgst + sgst + igst,
+        total: Number(row.total || 0)
+      };
+    });
+
+    const totals = {
+      billCount: Number(invoiceRows[0]?.bill_count || 0),
+      taxable: Number(invoiceRows[0]?.taxable_total || 0),
+      gst: Number(invoiceRows[0]?.gst_total || 0),
+      saleTotal: Number(invoiceRows[0]?.sale_total || 0),
+      exchangeTotal: Number(invoiceRows[0]?.exchange_total || 0),
+      netTotal: Number(invoiceRows[0]?.net_total || 0)
+    };
+
+    res.json({
+      from,
+      to,
+      reportType,
+      counter: counter || 'ALL',
+      paymentTotals,
+      gst,
+      totals
+    });
+  } catch (err) {
+    console.error('POS sale report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load POS sale report.' });
+  }
+});
+
 router.get('/counter-handover', authorize('SERVER', 'ADMIN'), async (req, res) => {
   try {
     const from = normalizeDate(req.query.from || req.query.date);

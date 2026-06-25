@@ -73,6 +73,14 @@ function resolveResourcePath(...parts) {
   return path.join(__dirname, '..', ...parts);
 }
 
+function resolveFrontendBuildPath() {
+  const candidates = [
+    resolveResourcePath('frontend'),
+    resolveResourcePath('frontend', 'build')
+  ];
+  return candidates.find((candidate) => fs.existsSync(path.join(candidate, 'index.html'))) || candidates[1];
+}
+
 async function isReachable(url) {
   try {
     const response = await fetch(url, { cache: 'no-store' });
@@ -123,7 +131,7 @@ async function startFrontendIfNeeded(config) {
   logMessage(`Checking frontend ${config.appUrl}`);
   if (!config.startFrontend || await isReachable(config.appUrl)) return;
 
-  const frontendPath = resolveResourcePath('frontend');
+  const frontendPath = resolveFrontendBuildPath();
   const indexPath = path.join(frontendPath, 'index.html');
   if (!fs.existsSync(indexPath)) {
     throw new Error(`Frontend build was not found: ${frontendPath}. Run npm run build in frontend before packaging.`);
