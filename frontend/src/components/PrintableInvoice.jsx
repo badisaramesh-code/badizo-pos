@@ -72,6 +72,8 @@ function getChangeAmount(invoice) {
 function buildBillQrPayload(invoice) {
   const billingTotal = toNumber(invoice?.totals?.grand);
   const exchangeTotal = toNumber(invoice?.totals?.exchangeTotal);
+  const loyaltyRedeemAmount = toNumber(invoice?.totals?.loyaltyRedeemAmount);
+  const loyaltyRedeemPoints = toNumber(invoice?.totals?.loyaltyRedeemPoints);
   const received = getReceivedAmount(invoice);
   const change = getChangeAmount(invoice);
   const lines = [
@@ -89,6 +91,9 @@ function buildBillQrPayload(invoice) {
     lines.push(`${sanitizeQrText(payment.mode, 8)}: Rs. ${formatPlainMoney(payment.amount)}`);
   });
   if (exchangeTotal > 0) lines.splice(6, 0, `Exchange Less: Rs. ${formatPlainMoney(exchangeTotal)}`);
+  if (loyaltyRedeemAmount > 0) {
+    lines.splice(7, 0, `Less Loyalty Amount: Rs. ${formatPlainMoney(loyaltyRedeemAmount)} (${formatPlainMoney(loyaltyRedeemPoints)} pts)`);
+  }
   const customerName = sanitizeQrText(invoice.customerName, 24);
   const customerPhone = sanitizeQrText(invoice.customerPhone, 16);
   const customerGstin = sanitizeQrText(invoice.customerGstin, 18);
@@ -302,6 +307,8 @@ function ThermalFreeProducts({ invoice, title }) {
 function ThermalTotals({ invoice }) {
   const saleTotal = toNumber(invoice.totals.saleGrand || invoice.totals.grand);
   const exchangeTotal = toNumber(invoice.totals.exchangeTotal);
+  const loyaltyRedeemAmount = toNumber(invoice.totals.loyaltyRedeemAmount);
+  const loyaltyRedeemPoints = toNumber(invoice.totals.loyaltyRedeemPoints);
   const paymentSplits = getPaymentSplits(invoice);
   const receivedAmount = getReceivedAmount(invoice);
   const changeAmount = getChangeAmount(invoice);
@@ -309,6 +316,9 @@ function ThermalTotals({ invoice }) {
     <div className="thermal-total-box">
       <div><span>Billing Total</span><span /><strong>{formatPlainMoney(saleTotal)}</strong></div>
       {exchangeTotal > 0 && <div><span>Exchange Less</span><span /><strong>-{formatPlainMoney(exchangeTotal)}</strong></div>}
+      {loyaltyRedeemAmount > 0 && (
+        <div><span>Less Loyalty Amount ({formatPlainMoney(loyaltyRedeemPoints)} pts)</span><span /><strong>-{formatPlainMoney(loyaltyRedeemAmount)}</strong></div>
+      )}
       <div><span>Bill Amount</span><span /><strong>{formatPlainMoney(invoice.totals.grand)}</strong></div>
       {invoice.paymentMode === 'Mixed' && paymentSplits.map((payment) => (
         <div key={payment.mode}><span>{payment.mode} Paid</span><span /><strong>{formatPlainMoney(payment.amount)}</strong></div>
@@ -838,6 +848,8 @@ function A4OnePageInvoice({ invoice, template }) {
   const billingTotal = toNumber(invoice.totals.grand);
   const saleTotal = toNumber(invoice.totals.saleGrand || invoice.totals.grand);
   const exchangeTotal = toNumber(invoice.totals.exchangeTotal);
+  const loyaltyRedeemAmount = toNumber(invoice.totals.loyaltyRedeemAmount);
+  const loyaltyRedeemPoints = toNumber(invoice.totals.loyaltyRedeemPoints);
   const receivedAmount = getReceivedAmount(invoice);
   const changeAmount = getChangeAmount(invoice);
   const taxableTotal = gstRows.reduce((sum, row) => sum + row.taxable, 0);
@@ -870,6 +882,9 @@ function A4OnePageInvoice({ invoice, template }) {
           <div className="a4-store-payment-summary">
             <div><span>Billing Total</span><strong>{formatPlainMoney(saleTotal)}</strong></div>
             {exchangeTotal > 0 && <div><span>Exchange Less</span><strong>-{formatPlainMoney(exchangeTotal)}</strong></div>}
+            {loyaltyRedeemAmount > 0 && (
+              <div><span>Less Loyalty Amount ({formatPlainMoney(loyaltyRedeemPoints)} pts)</span><strong>-{formatPlainMoney(loyaltyRedeemAmount)}</strong></div>
+            )}
             <div><span>Bill Amount</span><strong>{formatPlainMoney(billingTotal)}</strong></div>
             <div><span>Qty Total</span><strong>{formatPlainMoney(qtyTotal)}</strong></div>
             {invoice.paymentMode === 'Mixed' && getPaymentSplits(invoice).map((payment) => (

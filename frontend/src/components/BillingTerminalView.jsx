@@ -351,6 +351,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [isCheckingPrice, setIsCheckingPrice] = useState(false);
   const [printableInvoice, setPrintableInvoice] = useState(null);
   const [loyaltyCustomer, setLoyaltyCustomer] = useState(null);
+  const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
   const [loyaltyRedeemPoints, setLoyaltyRedeemPoints] = useState('');
   const [returnInvoice, setReturnInvoice] = useState(null);
   const [returnQuantities, setReturnQuantities] = useState({});
@@ -814,7 +815,7 @@ export default function BillingTerminalView({ isActive = true }) {
     const redeemRulePoints = loyaltyEnabled ? Math.max(toNumber(shopSettings.loyalty_redeem_points || 10), 0) : 0;
     const redeemRuleAmount = Math.max(toNumber(shopSettings.loyalty_redeem_amount || 0.5), 0);
     const availablePoints = Math.floor(toNumber(loyaltyCustomer?.loyalty_points || 0));
-    const requestedRedeemPoints = Math.min(Math.floor(toNumber(loyaltyRedeemPoints)), availablePoints);
+    const requestedRedeemPoints = useLoyaltyPoints ? Math.min(Math.floor(toNumber(loyaltyRedeemPoints)), availablePoints) : 0;
     const loyaltyRedeemAmount = redeemRulePoints > 0 && redeemRuleAmount > 0 && requestedRedeemPoints > 0
       ? Math.min((requestedRedeemPoints / redeemRulePoints) * redeemRuleAmount, netGrand)
       : 0;
@@ -833,7 +834,7 @@ export default function BillingTerminalView({ isActive = true }) {
       sgst: isInterstate ? 0 : tax / 2,
       igst: isInterstate ? tax : 0
     };
-  }, [cart, billingMode, exchangeItems, loyaltyCustomer, loyaltyRedeemPoints, shopSettings]);
+  }, [cart, billingMode, exchangeItems, loyaltyCustomer, loyaltyRedeemPoints, shopSettings, useLoyaltyPoints]);
 
   const mixedPaidTotal = toNumber(mixedPayment.cash) + toNumber(mixedPayment.upi) + toNumber(mixedPayment.card);
   const mixedPaymentModeCount = [mixedPayment.cash, mixedPayment.upi, mixedPayment.card]
@@ -1008,6 +1009,8 @@ export default function BillingTerminalView({ isActive = true }) {
         discount: 0,
         saleGrand: toNumber(invoice.sub_total) + toNumber(invoice.gst_total),
         exchangeTotal: toNumber(invoice.exchange_total),
+        loyaltyRedeemPoints: toNumber(invoice.loyalty_redeemed_points),
+        loyaltyRedeemAmount: toNumber(invoice.loyalty_redeemed_amount),
         grand: Math.round(toNumber(invoice.grand_total)),
         roundOff: Math.round(toNumber(invoice.grand_total)) - toNumber(invoice.grand_total),
         cgst: isInterstate ? 0 : toNumber(invoice.gst_total) / 2,
@@ -1080,6 +1083,38 @@ export default function BillingTerminalView({ isActive = true }) {
     };
   }, [billingMode, companyName, customerName]);
 
+  useEffect(() => {
+    const phoneText = String(customerPhone || '').trim();
+    const digits = phoneText.replace(/\D/g, '');
+    if (phoneText.toUpperCase() === 'NO' || digits.length < 10) {
+      setLoyaltyCustomer(null);
+      setUseLoyaltyPoints(false);
+      setLoyaltyRedeemPoints('');
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const customer = await lookupCustomer(phoneText);
+        if (cancelled) return;
+        setLoyaltyCustomer(customer);
+        setUseLoyaltyPoints(false);
+        setLoyaltyRedeemPoints('');
+      } catch (err) {
+        if (cancelled) return;
+        setLoyaltyCustomer(null);
+        setUseLoyaltyPoints(false);
+        setLoyaltyRedeemPoints('');
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [customerPhone]);
+
   async function loadSettings() {
     try {
       const settings = await fetchSettings();
@@ -1110,9 +1145,12 @@ export default function BillingTerminalView({ isActive = true }) {
       setCustomerName(customer.customer_name || customerName);
       setCustomerAddress(customer.address || customerAddress);
       setCustomerGstin(customer.gstin || customerGstin);
-      setStatusMessage(`Loyalty customer loaded. Points: ${customer.loyalty_points}`);
+      setUseLoyaltyPoints(false);
+      setLoyaltyRedeemPoints('');
+      setStatusMessage(`Customer loaded. Bills: ${customer.billing_count || customer.visit_count || 0}. Points: ${customer.loyalty_points || 0}`);
     } catch (err) {
       setLoyaltyCustomer(null);
+      setUseLoyaltyPoints(false);
       setLoyaltyRedeemPoints('');
       setStatusMessage('New loyalty customer. Complete bill or save customer to start points.');
     }
@@ -1129,6 +1167,8 @@ export default function BillingTerminalView({ isActive = true }) {
     setCustomerAddress(customer.address || '');
     setCustomerGstin(String(customer.gstin || '').toUpperCase());
     setLoyaltyCustomer(customer);
+    setUseLoyaltyPoints(false);
+    setLoyaltyRedeemPoints('');
     setCustomerSuggestions([]);
     setIsCustomerLookupOpen(false);
     setStatusMessage(`${nextName || 'Customer'} loaded from customer master.`);
@@ -1148,6 +1188,8 @@ export default function BillingTerminalView({ isActive = true }) {
         address: customerAddress
       });
       setLoyaltyCustomer(customer);
+      setUseLoyaltyPoints(false);
+      setLoyaltyRedeemPoints('');
       setStatusMessage(`Customer saved. Loyalty points: ${customer.loyalty_points}`);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save customer.');
@@ -3503,6 +3545,8 @@ export default function BillingTerminalView({ isActive = true }) {
       setMixedPayment(EMPTY_MIXED_PAYMENT);
       setPaymentReference('');
       setPaymentConfirmed(false);
+      setUseLoyaltyPoints(false);
+      setLoyaltyRedeemPoints('');
       resetBill();
       schedulePrint(printMode, () => {
         refreshHistory(false);
@@ -3825,23 +3869,39 @@ export default function BillingTerminalView({ isActive = true }) {
         <section className="panel customer-side-panel">
           <div className="panel-header compact-panel-header">
             <h2 className="panel-title">Customer</h2>
-            <span className="status-chip">{shopSettings.loyalty_enabled ? (loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} pts` : 'Walk-in') : 'Visits'}</span>
+            <span className="status-chip">
+              {loyaltyCustomer
+                ? `${loyaltyCustomer.billing_count || loyaltyCustomer.visit_count || 0} bills`
+                : shopSettings.loyalty_enabled ? 'Walk-in' : 'Visits'}
+            </span>
           </div>
           <div className="customer-grid billing-customer-grid">
             <div className="billing-loyalty-inline">
-              <span>Loyalty: {shopSettings.loyalty_enabled ? (loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} pts` : 'None') : 'Off'}</span>
+              <span>
+                {loyaltyCustomer
+                  ? `Visits: ${loyaltyCustomer.billing_count || loyaltyCustomer.visit_count || 0} | Loyalty: ${shopSettings.loyalty_enabled ? `${loyaltyCustomer.loyalty_points} pts` : 'Off'}`
+                  : `Loyalty: ${shopSettings.loyalty_enabled ? 'None' : 'Off'}`}
+              </span>
               <button className="secondary-button" onClick={handleCustomerLookup}>Lookup</button>
               <button className="secondary-button" onClick={handleCustomerSave}>Save</button>
             </div>
-            {shopSettings.loyalty_enabled && loyaltyCustomer && (
+            {loyaltyCustomer && (
               <div className="customer-loyalty-summary">
                 <span>Bills: <strong>{loyaltyCustomer.billing_count || loyaltyCustomer.visit_count || 0}</strong></span>
                 <span>Spent: <strong>{formatMoney(loyaltyCustomer.total_spent || 0)}</strong></span>
                 <span>Last: <strong>{loyaltyCustomer.last_invoice_at ? new Date(loyaltyCustomer.last_invoice_at).toLocaleDateString('en-IN') : '-'}</strong></span>
               </div>
             )}
-            {loyaltyCustomer && (
+            {shopSettings.loyalty_enabled && loyaltyCustomer && (
               <div className="loyalty-redeem-box">
+                <label className="loyalty-use-check">
+                  <input
+                    type="checkbox"
+                    checked={useLoyaltyPoints}
+                    onChange={(event) => setUseLoyaltyPoints(event.target.checked)}
+                  />
+                  <span>Use loyalty points</span>
+                </label>
                 <label>
                   <span className="field-label">Redeem Points</span>
                   <input
@@ -3851,6 +3911,7 @@ export default function BillingTerminalView({ isActive = true }) {
                     max={Math.floor(toNumber(loyaltyCustomer.loyalty_points || 0))}
                     value={loyaltyRedeemPoints}
                     onChange={(event) => setLoyaltyRedeemPoints(event.target.value)}
+                    disabled={!useLoyaltyPoints}
                     placeholder="0"
                   />
                 </label>
