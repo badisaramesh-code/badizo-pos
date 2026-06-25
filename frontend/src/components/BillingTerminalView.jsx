@@ -279,7 +279,12 @@ export default function BillingTerminalView({ isActive = true }) {
     bank_ifsc: 'HDFC0004047',
     bank_branch: 'Sathupally',
     thermal_receipt_width_mm: 80,
-    thermal_feed_margin_mm: 4
+    thermal_feed_margin_mm: 4,
+    loyalty_enabled: false,
+    loyalty_earn_sale_amount: 100,
+    loyalty_earn_points: 10,
+    loyalty_redeem_points: 10,
+    loyalty_redeem_amount: 0.5
   });
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
@@ -346,6 +351,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [isCheckingPrice, setIsCheckingPrice] = useState(false);
   const [printableInvoice, setPrintableInvoice] = useState(null);
   const [loyaltyCustomer, setLoyaltyCustomer] = useState(null);
+  const [loyaltyRedeemPoints, setLoyaltyRedeemPoints] = useState('');
   const [returnInvoice, setReturnInvoice] = useState(null);
   const [returnQuantities, setReturnQuantities] = useState({});
   const [returnReason, setReturnReason] = useState('');
@@ -804,6 +810,14 @@ export default function BillingTerminalView({ isActive = true }) {
       return sum + toNumber(item.unitPrice || item.sale_price || item.mrp) * quantity;
     }, 0);
     const netGrand = Math.max(saleGrand - exchangeTotal, 0);
+    const loyaltyEnabled = shopSettings.loyalty_enabled === true || shopSettings.loyalty_enabled === '1';
+    const redeemRulePoints = loyaltyEnabled ? Math.max(toNumber(shopSettings.loyalty_redeem_points || 10), 0) : 0;
+    const redeemRuleAmount = Math.max(toNumber(shopSettings.loyalty_redeem_amount || 0.5), 0);
+    const availablePoints = Math.floor(toNumber(loyaltyCustomer?.loyalty_points || 0));
+    const requestedRedeemPoints = Math.min(Math.floor(toNumber(loyaltyRedeemPoints)), availablePoints);
+    const loyaltyRedeemAmount = redeemRulePoints > 0 && redeemRuleAmount > 0 && requestedRedeemPoints > 0
+      ? Math.min((requestedRedeemPoints / redeemRulePoints) * redeemRuleAmount, netGrand)
+      : 0;
     const isInterstate = BILLING_MODES[billingMode].taxType === 'INTERSTATE';
     return {
       taxable,
@@ -811,12 +825,15 @@ export default function BillingTerminalView({ isActive = true }) {
       discount,
       saleGrand,
       exchangeTotal,
-      grand: netGrand,
+      loyaltyBaseTotal: netGrand,
+      loyaltyRedeemPoints: loyaltyRedeemAmount > 0 ? requestedRedeemPoints : 0,
+      loyaltyRedeemAmount,
+      grand: Math.max(netGrand - loyaltyRedeemAmount, 0),
       cgst: isInterstate ? 0 : tax / 2,
       sgst: isInterstate ? 0 : tax / 2,
       igst: isInterstate ? tax : 0
     };
-  }, [cart, billingMode, exchangeItems]);
+  }, [cart, billingMode, exchangeItems, loyaltyCustomer, loyaltyRedeemPoints, shopSettings]);
 
   const mixedPaidTotal = toNumber(mixedPayment.cash) + toNumber(mixedPayment.upi) + toNumber(mixedPayment.card);
   const mixedPaymentModeCount = [mixedPayment.cash, mixedPayment.upi, mixedPayment.card]
@@ -1096,6 +1113,7 @@ export default function BillingTerminalView({ isActive = true }) {
       setStatusMessage(`Loyalty customer loaded. Points: ${customer.loyalty_points}`);
     } catch (err) {
       setLoyaltyCustomer(null);
+      setLoyaltyRedeemPoints('');
       setStatusMessage('New loyalty customer. Complete bill or save customer to start points.');
     }
   }
@@ -1970,6 +1988,8 @@ export default function BillingTerminalView({ isActive = true }) {
     setCustomerPhone('');
     setCompanyName('');
     setCustomerGstin('');
+    setLoyaltyCustomer(null);
+    setLoyaltyRedeemPoints('');
     setCashReceived('');
     setPaymentMode('Cash');
     setMixedPayment(EMPTY_MIXED_PAYMENT);
@@ -3399,6 +3419,8 @@ export default function BillingTerminalView({ isActive = true }) {
         sub_total: totals.taxable.toFixed(2),
         gst_total: totals.tax.toFixed(2),
         grand_total: totals.grand.toFixed(2),
+        loyalty_base_total: totals.loyaltyBaseTotal.toFixed(2),
+        loyalty_redeem_points: totals.loyaltyRedeemPoints,
         payment_mode: activePaymentMode,
         payment_status: 'PAID',
         payment_reference: activePaymentMode === 'Cash'
@@ -3533,7 +3555,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 <span className={`billing-mode-pill ${isSensitiveBillingMode(billingMode) ? 'warning' : ''}`}>
                   {activeMode.shortLabel || activeMode.label}
                 </span>
-                <button className={exchangeMode ? 'mode-option active sensitive-active' : 'mode-option'} onClick={requestExchangeMode}>
+                <button className={exchangeMode ? 'mode-option active exchange-action' : 'mode-option exchange-action'} onClick={requestExchangeMode}>
                   Exchange
                 </button>
                 <label className="top-control-field">
@@ -3803,14 +3825,41 @@ export default function BillingTerminalView({ isActive = true }) {
         <section className="panel customer-side-panel">
           <div className="panel-header compact-panel-header">
             <h2 className="panel-title">Customer</h2>
-            <span className="status-chip">{loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} pts` : 'Walk-in'}</span>
+            <span className="status-chip">{shopSettings.loyalty_enabled ? (loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} pts` : 'Walk-in') : 'Visits'}</span>
           </div>
           <div className="customer-grid billing-customer-grid">
             <div className="billing-loyalty-inline">
-              <span>Loyalty: {loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} pts` : 'None'}</span>
+              <span>Loyalty: {shopSettings.loyalty_enabled ? (loyaltyCustomer ? `${loyaltyCustomer.loyalty_points} pts` : 'None') : 'Off'}</span>
               <button className="secondary-button" onClick={handleCustomerLookup}>Lookup</button>
               <button className="secondary-button" onClick={handleCustomerSave}>Save</button>
             </div>
+            {shopSettings.loyalty_enabled && loyaltyCustomer && (
+              <div className="customer-loyalty-summary">
+                <span>Bills: <strong>{loyaltyCustomer.billing_count || loyaltyCustomer.visit_count || 0}</strong></span>
+                <span>Spent: <strong>{formatMoney(loyaltyCustomer.total_spent || 0)}</strong></span>
+                <span>Last: <strong>{loyaltyCustomer.last_invoice_at ? new Date(loyaltyCustomer.last_invoice_at).toLocaleDateString('en-IN') : '-'}</strong></span>
+              </div>
+            )}
+            {loyaltyCustomer && (
+              <div className="loyalty-redeem-box">
+                <label>
+                  <span className="field-label">Redeem Points</span>
+                  <input
+                    className="field"
+                    type="number"
+                    min="0"
+                    max={Math.floor(toNumber(loyaltyCustomer.loyalty_points || 0))}
+                    value={loyaltyRedeemPoints}
+                    onChange={(event) => setLoyaltyRedeemPoints(event.target.value)}
+                    placeholder="0"
+                  />
+                </label>
+                <div>
+                  <span>Value</span>
+                  <strong>{formatMoney(totals.loyaltyRedeemAmount || 0)}</strong>
+                </div>
+              </div>
+            )}
             <label className="supplier-lookup-field">
               <span className="field-label">{isBusinessBillingMode(billingMode) ? 'Company name' : 'Customer name'}</span>
               <input
@@ -3892,6 +3941,9 @@ export default function BillingTerminalView({ isActive = true }) {
                   <div className="summary-line"><span>Sale total</span><strong>{formatMoney(totals.saleGrand)}</strong></div>
                   <div className="summary-line exchange-less-line"><span>Exchange less</span><strong>- {formatMoney(totals.exchangeTotal)}</strong></div>
                 </>
+              )}
+              {totals.loyaltyRedeemAmount > 0 && (
+                <div className="summary-line exchange-less-line"><span>Loyalty less ({totals.loyaltyRedeemPoints} pts)</span><strong>- {formatMoney(totals.loyaltyRedeemAmount)}</strong></div>
               )}
               <span className="total-label">Net payable</span>
               <span className="total-value">{formatMoney(totals.grand)}</span>

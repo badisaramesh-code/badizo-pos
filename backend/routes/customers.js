@@ -15,6 +15,8 @@ function toCustomer(row) {
     loyalty_points: Number(row.loyalty_points || 0),
     total_spent: Number(row.total_spent || 0),
     visit_count: Number(row.visit_count || 0),
+    billing_count: Number(row.billing_count || row.visit_count || 0),
+    last_invoice_at: row.last_invoice_at || null,
     last_visit_at: row.last_visit_at,
     created_at: row.created_at
   };
@@ -30,7 +32,16 @@ router.get('/lookup/:phone', async (req, res) => {
 
   try {
     const [rows] = await db.query(
-      `SELECT * FROM customers WHERE phone = ? LIMIT 1`,
+      `SELECT c.*,
+              COUNT(i.invoice_no) AS billing_count,
+              MAX(i.created_at) AS last_invoice_at
+       FROM customers c
+       LEFT JOIN invoices i
+         ON i.customer_phone = c.phone
+        AND i.invoice_status <> 'CANCELLED'
+       WHERE c.phone = ?
+       GROUP BY c.id
+       LIMIT 1`,
       [phone]
     );
     if (!rows.length) return res.status(404).json({ error: 'Customer not found.' });
@@ -52,7 +63,17 @@ router.get('/', authorize('SERVER', 'ADMIN'), async (req, res) => {
     }
 
     const [rows] = await db.query(
-      `SELECT * FROM customers ${whereSql} ORDER BY updated_at DESC LIMIT 100`,
+      `SELECT c.*,
+              COUNT(i.invoice_no) AS billing_count,
+              MAX(i.created_at) AS last_invoice_at
+       FROM customers c
+       LEFT JOIN invoices i
+         ON i.customer_phone = c.phone
+        AND i.invoice_status <> 'CANCELLED'
+       ${whereSql}
+       GROUP BY c.id
+       ORDER BY c.updated_at DESC
+       LIMIT 100`,
       values
     );
     res.json(rows.map(toCustomer));
@@ -91,7 +112,19 @@ router.post('/', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
       details: { customerName, gstin }
     });
 
-    const [rows] = await db.query(`SELECT * FROM customers WHERE phone = ? LIMIT 1`, [phone]);
+    const [rows] = await db.query(
+      `SELECT c.*,
+              COUNT(i.invoice_no) AS billing_count,
+              MAX(i.created_at) AS last_invoice_at
+       FROM customers c
+       LEFT JOIN invoices i
+         ON i.customer_phone = c.phone
+        AND i.invoice_status <> 'CANCELLED'
+       WHERE c.phone = ?
+       GROUP BY c.id
+       LIMIT 1`,
+      [phone]
+    );
     res.json(toCustomer(rows[0]));
   } catch (err) {
     console.error('Customer save failed:', err.message);

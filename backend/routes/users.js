@@ -22,15 +22,34 @@ function publicUser(row) {
   };
 }
 
-router.use(authenticate, authorize('SERVER', 'ADMIN'));
-
-router.get('/', async (_req, res) => {
+async function listUsers(whereSql = '', params = []) {
   try {
     const [rows] = await db.query(
       `SELECT id, username, role, counter_no, is_active, created_at, updated_at
        FROM users
-       ORDER BY role ASC, username ASC`
+       ${whereSql}
+       ORDER BY role ASC, username ASC`,
+      params
     );
+    return rows;
+  } catch (err) {
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    const [rows] = await db.query(
+      `SELECT id, username, role, counter_no, is_active
+       FROM users
+       ${whereSql}
+       ORDER BY role ASC, username ASC`,
+      params
+    );
+    return rows.map((row) => ({ ...row, created_at: null, updated_at: null }));
+  }
+}
+
+router.use(authenticate, authorize('SERVER', 'ADMIN'));
+
+router.get('/', async (_req, res) => {
+  try {
+    const rows = await listUsers();
     res.json(rows.map(publicUser));
   } catch (err) {
     console.error('User list failed:', err.message);
@@ -98,13 +117,7 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const [rows] = await db.query(
-      `SELECT id, username, role, counter_no, is_active, created_at, updated_at
-       FROM users
-       WHERE username = ?
-       LIMIT 1`,
-      [username]
-    );
+    const rows = await listUsers('WHERE username = ?', [username]);
     res.json(publicUser(rows[0]));
   } catch (err) {
     console.error('User save failed:', err.message);

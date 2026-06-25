@@ -222,6 +222,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         total_igst DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         exchange_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         exchange_items_json JSON DEFAULT NULL,
+        loyalty_redeemed_points DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        loyalty_redeemed_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         invoice_status VARCHAR(20) NOT NULL DEFAULT 'PAID',
         cancel_reason VARCHAR(255) DEFAULT NULL,
         cancelled_by VARCHAR(100) DEFAULT NULL,
@@ -1022,6 +1024,11 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         ('thermal_receipt_width_mm', '80'),
         ('thermal_feed_margin_mm', '4'),
         ('gst_slabs', '0,3,5,12,18,28,40'),
+        ('loyalty_enabled', '0'),
+        ('loyalty_earn_sale_amount', '100'),
+        ('loyalty_earn_points', '10'),
+        ('loyalty_redeem_points', '10'),
+        ('loyalty_redeem_amount', '0.5'),
         ('backup_daily_time', '09:00'),
         ('barcode_printer_templates', '{"tsc-244-pro-50x50-two-up.prn":{"label":"50 x 50 mm Two-Up","printer":"TSC TTP-244 Pro","shares":["\\\\\\\\localhost\\\\TSC TTP-244 Pro","\\\\\\\\localhost\\\\TSC-244-Pro"]},"tsc-244-1-33x25-single.prn":{"label":"33 x 25 mm Two-Up","printer":"TSC TTP-244 -1","shares":["\\\\\\\\localhost\\\\TSC TTP-244 -1","\\\\\\\\localhost\\\\TSC 244-1"]},"tsc-244-2-jewellery-100x15-tail.prn":{"label":"100 x 15 mm Jewellery Tail","printer":"TSC 244-2","shares":["\\\\\\\\localhost\\\\TSC 244-2"]}}')
     `);
@@ -1067,7 +1074,9 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'invoices', 'total_igst', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER total_sgst');
     await ensureColumn(connection, 'invoices', 'exchange_total', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER total_igst');
     await ensureColumn(connection, 'invoices', 'exchange_items_json', 'JSON DEFAULT NULL AFTER exchange_total');
-    await ensureColumn(connection, 'invoices', 'invoice_status', "VARCHAR(20) NOT NULL DEFAULT 'PAID' AFTER exchange_items_json");
+    await ensureColumn(connection, 'invoices', 'loyalty_redeemed_points', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER exchange_items_json');
+    await ensureColumn(connection, 'invoices', 'loyalty_redeemed_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER loyalty_redeemed_points');
+    await ensureColumn(connection, 'invoices', 'invoice_status', "VARCHAR(20) NOT NULL DEFAULT 'PAID' AFTER loyalty_redeemed_amount");
     await ensureColumn(connection, 'invoices', 'cancel_reason', 'VARCHAR(255) DEFAULT NULL AFTER invoice_status');
     await ensureColumn(connection, 'invoices', 'cancelled_by', 'VARCHAR(100) DEFAULT NULL AFTER cancel_reason');
     await ensureColumn(connection, 'invoices', 'cancelled_at', 'TIMESTAMP NULL DEFAULT NULL AFTER cancelled_by');

@@ -90,6 +90,11 @@ export default function SystemView() {
     thermal_bill_logo_enabled: true,
     thermal_bill_logo_data_url: '',
     gst_slabs: '0,3,5,12,18,28,40',
+    loyalty_enabled: false,
+    loyalty_earn_sale_amount: 100,
+    loyalty_earn_points: 10,
+    loyalty_redeem_points: 10,
+    loyalty_redeem_amount: 0.5,
     backup_daily_time: '09:00',
     barcode_printer_templates: DEFAULT_BARCODE_PRINTER_TEMPLATES
   });
@@ -676,6 +681,64 @@ export default function SystemView() {
                   placeholder="0,3,5,12,18,28,40"
                 />
               </label>
+            </div>
+            <div className="settings-section settings-inline-section">
+              <div className="settings-section-title">Loyalty Points</div>
+              <label className="checkbox-line">
+                <input
+                  type="checkbox"
+                  checked={settings.loyalty_enabled === true || settings.loyalty_enabled === '1'}
+                  onChange={(event) => updateSetting('loyalty_enabled', event.target.checked)}
+                />
+                <span>Enable loyalty points earn/redeem</span>
+              </label>
+              <label>
+                <span className="field-label">Sale Amount</span>
+                <input
+                  className="field"
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  value={settings.loyalty_earn_sale_amount || 100}
+                  onChange={(event) => updateSetting('loyalty_earn_sale_amount', event.target.value)}
+                />
+              </label>
+              <label>
+                <span className="field-label">Earn Points</span>
+                <input
+                  className="field"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={settings.loyalty_earn_points || 10}
+                  onChange={(event) => updateSetting('loyalty_earn_points', event.target.value)}
+                />
+              </label>
+              <label>
+                <span className="field-label">Redeem Points</span>
+                <input
+                  className="field"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={settings.loyalty_redeem_points || 10}
+                  onChange={(event) => updateSetting('loyalty_redeem_points', event.target.value)}
+                />
+              </label>
+              <label>
+                <span className="field-label">Redeem Value Rs</span>
+                <input
+                  className="field"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={settings.loyalty_redeem_amount || 0.5}
+                  onChange={(event) => updateSetting('loyalty_redeem_amount', event.target.value)}
+                />
+              </label>
+              <div className="change-box">
+                Example: Sale Amount 100, Earn Points 10 means Rs.100 sale ki 10 points. Redeem Points 10, Redeem Value Rs 0.50 means 10000 points = Rs.500.
+              </div>
             </div>
             <div className="settings-section">
               <div className="settings-section-title">Barcode Sticker Printers</div>

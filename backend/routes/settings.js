@@ -22,6 +22,11 @@ const ALLOWED_SETTINGS = new Set([
   'thermal_bill_logo_enabled',
   'thermal_bill_logo_data_url',
   'gst_slabs',
+  'loyalty_enabled',
+  'loyalty_earn_sale_amount',
+  'loyalty_earn_points',
+  'loyalty_redeem_points',
+  'loyalty_redeem_amount',
   'backup_daily_time',
   'barcode_printer_templates'
 ]);
@@ -131,6 +136,11 @@ function publicSettings(settings) {
     thermal_bill_logo_enabled: String(settings.thermal_bill_logo_enabled || '1') !== '0',
     thermal_bill_logo_data_url: /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(logoDataUrl) ? logoDataUrl : '',
     gst_slabs: gstSlabs.length ? gstSlabs.join(',') : '0,3,5,12,18,28,40',
+    loyalty_enabled: String(settings.loyalty_enabled || '0') === '1',
+    loyalty_earn_sale_amount: Number(settings.loyalty_earn_sale_amount || 100) > 0 ? Number(settings.loyalty_earn_sale_amount || 100) : 100,
+    loyalty_earn_points: Number(settings.loyalty_earn_points || 10) > 0 ? Number(settings.loyalty_earn_points || 10) : 10,
+    loyalty_redeem_points: Number(settings.loyalty_redeem_points || 10) > 0 ? Number(settings.loyalty_redeem_points || 10) : 10,
+    loyalty_redeem_amount: Number(settings.loyalty_redeem_amount || 0.5) > 0 ? Number(settings.loyalty_redeem_amount || 0.5) : 0.5,
     backup_daily_time: /^\d{2}:\d{2}$/.test(settings.backup_daily_time || '')
       ? settings.backup_daily_time
       : (process.env.BACKUP_DAILY_TIME || '09:00'),
@@ -242,6 +252,21 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
           .filter((item, index, list) => list.indexOf(item) === index)
           .sort((a, b) => a - b);
         value = slabs.length ? slabs.join(',') : '0,3,5,12,18,28,40';
+      }
+
+      if ([
+        'loyalty_enabled',
+        'loyalty_earn_sale_amount',
+        'loyalty_earn_points',
+        'loyalty_redeem_points',
+        'loyalty_redeem_amount'
+      ].includes(key)) {
+        if (key === 'loyalty_enabled') {
+          value = ['1', 'true', 'yes', 'on'].includes(String(rawValue).toLowerCase()) ? '1' : '0';
+        } else {
+          const number = Number(rawValue);
+          value = String(Number.isFinite(number) && number > 0 ? number : publicSettings({})[key]);
+        }
       }
 
       if (key === 'backup_daily_time') {

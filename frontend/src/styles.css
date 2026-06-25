@@ -655,6 +655,18 @@ button:disabled {
   color: #fff;
 }
 
+.mode-option.exchange-action,
+.mode-option.exchange-action.active {
+  background: #12803c;
+  color: #fff;
+  box-shadow: 0 1px 5px rgba(18, 128, 60, 0.25);
+}
+
+.mode-option.exchange-action.active {
+  background: #f97316;
+  box-shadow: 0 1px 5px rgba(249, 115, 22, 0.3);
+}
+
 .top-control-field {
   display: grid;
   gap: 2px;
@@ -845,6 +857,34 @@ button:disabled {
 .billing-loyalty-inline .secondary-button {
   padding: 5px 6px;
   font-size: 11px;
+}
+
+.customer-loyalty-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  grid-column: 1 / -1;
+}
+
+.customer-loyalty-summary span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid #cfe8d6;
+  border-radius: 6px;
+  background: #f1fbf4;
+  color: #32613b;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.customer-loyalty-summary strong {
+  overflow: hidden;
+  color: #102a17;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .product-date-strip {

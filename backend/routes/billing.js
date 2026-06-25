@@ -12,6 +12,8 @@ const {
   normalizeCounterNo
 } = require('../services/invoiceNumberService');
 const { normalizePaymentMode, normalizePaymentSplits } = require('../services/paymentService');
+const { sendBillSms } = require('../services/smsService');
+const { sendBillWhatsApp } = require('../services/whatsappService');
 const { normalizePhone, parseMoney } = require('../utils/formatters');
 const { moneyToPaise, paiseToMoney, parseCurrency } = require('../utils/money');
 
@@ -28,11 +30,48 @@ function formatReturnNo() {
   return `SR-${stamp}`;
 }
 
-async function awardLoyaltyPoints(connection, invoiceNo, customerName, customerPhone, grandTotal, user) {
+async function getLoyaltySettings(connection) {
+  const defaults = {
+    earnSaleAmount: 100,
+    earnPoints: 10,
+    redeemPoints: 10,
+    redeemAmount: 0.5
+  };
+  const [rows] = await connection.query(
+    `SELECT setting_key, setting_value
+     FROM app_settings
+     WHERE setting_key IN ('loyalty_enabled', 'loyalty_earn_sale_amount', 'loyalty_earn_points', 'loyalty_redeem_points', 'loyalty_redeem_amount')`
+  );
+  const settings = rows.reduce((acc, row) => {
+    acc[row.setting_key] = Number(row.setting_value);
+    return acc;
+  }, {});
+  return {
+    enabled: Number(settings.loyalty_enabled || 0) === 1,
+    earnSaleAmount: settings.loyalty_earn_sale_amount > 0 ? settings.loyalty_earn_sale_amount : defaults.earnSaleAmount,
+    earnPoints: settings.loyalty_earn_points > 0 ? settings.loyalty_earn_points : defaults.earnPoints,
+    redeemPoints: settings.loyalty_redeem_points > 0 ? settings.loyalty_redeem_points : defaults.redeemPoints,
+    redeemAmount: settings.loyalty_redeem_amount > 0 ? settings.loyalty_redeem_amount : defaults.redeemAmount
+  };
+}
+
+function calculateEarnedLoyaltyPoints(grandTotal, loyaltySettings) {
+  const amount = parseMoney(grandTotal);
+  if (amount <= 0 || loyaltySettings.earnSaleAmount <= 0 || loyaltySettings.earnPoints <= 0) return 0;
+  return Math.floor(amount / loyaltySettings.earnSaleAmount) * loyaltySettings.earnPoints;
+}
+
+function calculateLoyaltyRedeemAmount(points, loyaltySettings) {
+  const redeemPoints = Math.floor(parseMoney(points));
+  if (redeemPoints <= 0 || loyaltySettings.redeemPoints <= 0 || loyaltySettings.redeemAmount <= 0) return 0;
+  return (redeemPoints / loyaltySettings.redeemPoints) * loyaltySettings.redeemAmount;
+}
+
+async function awardLoyaltyPoints(connection, invoiceNo, customerName, customerPhone, grandTotal, user, loyaltySettings) {
   const phone = normalizePhone(customerPhone);
   if (!phone || phone.length < 10) return null;
 
-  const points = Math.floor(parseMoney(grandTotal) / 100);
+  const points = loyaltySettings.enabled ? calculateEarnedLoyaltyPoints(grandTotal, loyaltySettings) : 0;
   await connection.query(
     `INSERT INTO customers (customer_name, phone, loyalty_points, total_spent, visit_count, last_visit_at)
      VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
@@ -45,7 +84,7 @@ async function awardLoyaltyPoints(connection, invoiceNo, customerName, customerP
     [customerName || 'Walk-in Customer', phone, points, parseMoney(grandTotal)]
   );
 
-  const [rows] = await connection.query(`SELECT id FROM customers WHERE phone = ? LIMIT 1`, [phone]);
+  const [rows] = await connection.query(`SELECT id, loyalty_points FROM customers WHERE phone = ? LIMIT 1`, [phone]);
   const customerId = rows[0]?.id;
   if (customerId && points > 0) {
     await connection.query(
@@ -64,7 +103,47 @@ async function awardLoyaltyPoints(connection, invoiceNo, customerName, customerP
     connection
   });
 
-  return { phone, points };
+  return { phone, points, balance: Number(rows[0]?.loyalty_points || 0) };
+}
+
+async function redeemLoyaltyPoints(connection, invoiceNo, customerPhone, requestedPoints, payableBeforeRedeem, loyaltySettings) {
+  const phone = normalizePhone(customerPhone);
+  const points = Math.floor(parseMoney(requestedPoints));
+  if (!loyaltySettings.enabled) return { phone, points: 0, amount: 0 };
+  if (!phone || phone.length < 10 || points <= 0) return { phone, points: 0, amount: 0 };
+
+  const [rows] = await connection.query(
+    `SELECT id, loyalty_points
+     FROM customers
+     WHERE phone = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [phone]
+  );
+  const customer = rows[0];
+  if (!customer) throw new Error('Customer loyalty account not found for redemption.');
+
+  const currentPoints = Math.floor(parseMoney(customer.loyalty_points));
+  if (points > currentPoints) {
+    throw new Error(`Only ${currentPoints} loyalty points available.`);
+  }
+
+  const amount = Math.min(calculateLoyaltyRedeemAmount(points, loyaltySettings), parseMoney(payableBeforeRedeem));
+  if (amount <= 0) return { phone, points: 0, amount: 0, balance: currentPoints };
+
+  await connection.query(
+    `UPDATE customers
+     SET loyalty_points = loyalty_points - ?
+     WHERE id = ? AND loyalty_points >= ?`,
+    [points, customer.id, points]
+  );
+  await connection.query(
+    `INSERT INTO loyalty_transactions (customer_id, invoice_no, points_delta, transaction_type, note)
+     VALUES (?, ?, ?, 'REDEEM', ?)`,
+    [customer.id, invoiceNo, -points, `Redeemed on invoice ${invoiceNo}`]
+  );
+
+  return { phone, points, amount, balance: currentPoints - points };
 }
 
 function requestedCounterForUser(user, requestedCounterNo) {
@@ -372,7 +451,9 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       total_sgst,
       total_igst,
       exchange_items,
-      exchange_total
+      exchange_total,
+      loyalty_base_total,
+      loyalty_redeem_points
     } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -398,8 +479,18 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         .filter((item) => item.barcode && item.quantity > 0)
       : [];
     const exchangeTotal = normalizedExchangeItems.reduce((total, item) => total + item.line_total, 0) || parseMoney(exchange_total);
+    const loyaltySettings = await getLoyaltySettings(connection);
+    const saleGrandBeforeRedeem = parseCurrency(loyalty_base_total || grand_total);
+    const loyaltyRedeemResult = await redeemLoyaltyPoints(
+      connection,
+      invoiceNo,
+      customer_phone || '',
+      loyalty_redeem_points,
+      saleGrandBeforeRedeem,
+      loyaltySettings
+    );
     const normalizedPaymentMode = normalizePaymentMode(payment_mode);
-    const grandTotal = parseCurrency(grand_total);
+    const grandTotal = parseCurrency(saleGrandBeforeRedeem - loyaltyRedeemResult.amount);
     const paymentSplits = normalizePaymentSplits(normalizedPaymentMode, payment_splits, grandTotal, payment_reference);
     const paidTotalPaise = paymentSplits.reduce((sum, row) => sum + moneyToPaise(row.amount), 0);
     const tenderTotalPaise = normalizedPaymentMode === 'Mixed' ? moneyToPaise(cash_received || paiseToMoney(paidTotalPaise)) : paidTotalPaise;
@@ -419,8 +510,9 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       `INSERT INTO invoices
        (invoice_no, customer_name, customer_address, customer_phone, sub_total, gst_total, grand_total,
         cash_received, change_returned, payment_mode, payment_status, payment_reference, billing_counter, transaction_type, billing_tier, tax_type,
-        customer_company_name, customer_gstin, total_cgst, total_sgst, total_igst, exchange_total, exchange_items_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        customer_company_name, customer_gstin, total_cgst, total_sgst, total_igst, exchange_total, exchange_items_json,
+        loyalty_redeemed_points, loyalty_redeemed_amount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         invoiceNo,
         customer_name || 'Walk-in Customer',
@@ -444,7 +536,9 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         parseCurrency(total_sgst),
         parseCurrency(total_igst),
         parseCurrency(exchangeTotal),
-        normalizedExchangeItems.length ? JSON.stringify(normalizedExchangeItems) : null
+        normalizedExchangeItems.length ? JSON.stringify(normalizedExchangeItems) : null,
+        loyaltyRedeemResult.points,
+        parseCurrency(loyaltyRedeemResult.amount)
       ]
     );
 
@@ -541,21 +635,36 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         itemCount: items.length,
         freeItemCount: freeItems.length,
         exchangeTotal,
-        exchangeItemCount: normalizedExchangeItems.length
+        exchangeItemCount: normalizedExchangeItems.length,
+        loyaltyRedeemedPoints: loyaltyRedeemResult.points,
+        loyaltyRedeemedAmount: loyaltyRedeemResult.amount
       },
       connection
     });
 
-    await awardLoyaltyPoints(
+    const loyaltyResult = await awardLoyaltyPoints(
       connection,
       invoiceNo,
       customer_name || 'Walk-in Customer',
       customer_phone || '',
-      grand_total,
-      req.user
+      grandTotal,
+      req.user,
+      loyaltySettings
     );
 
     await connection.commit();
+    const notificationDetails = {
+      invoiceNo,
+      customerName: customer_name || customer_company_name || 'Customer',
+      phone: customer_phone || '',
+      grandTotal,
+      paymentMode: normalizedPaymentMode,
+      itemCount: items.length,
+      loyalty: loyaltyResult
+    };
+    const smsResult = await sendBillSms(notificationDetails);
+    const whatsappResult = await sendBillWhatsApp(notificationDetails);
+
     res.json({
       success: true,
       message: 'Invoice committed successfully.',
@@ -563,7 +672,9 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       financial_year: allocatedInvoice.financialYear,
       counter_no: counterNo,
       sequence_no: allocatedInvoice.sequenceNo,
-      free_items: freeItems
+      free_items: freeItems,
+      sms: smsResult,
+      whatsapp: whatsappResult
     });
   } catch (err) {
     await connection.rollback();

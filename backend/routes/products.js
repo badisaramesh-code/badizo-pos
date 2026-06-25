@@ -69,6 +69,15 @@ function verifyPassword(password, storedValue) {
   return candidateBuffer.length === storedBuffer.length && crypto.timingSafeEqual(candidateBuffer, storedBuffer);
 }
 
+function safeDecodeParam(value) {
+  const raw = String(value || '');
+  try {
+    return decodeURIComponent(raw);
+  } catch (_err) {
+    return raw;
+  }
+}
+
 function toProduct(row) {
   return {
     id: row.id,
@@ -2946,7 +2955,7 @@ router.post('/price-list/update', authenticate, authorize('SERVER', 'ADMIN'), as
 
 router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
-    const q = decodeURIComponent(req.params.query || '').trim();
+    const q = safeDecodeParam(req.params.query).trim();
 
     if (!q) {
       return res.status(400).json({ error: 'Search query is required.' });
@@ -2995,7 +3004,7 @@ router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER
 router.get('/exact/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    const q = decodeURIComponent(req.params.query || '').trim().toUpperCase();
+    const q = safeDecodeParam(req.params.query).trim().toUpperCase();
     if (!q) return res.status(400).json({ error: 'Barcode or product code is required.' });
 
     const [barcodeRows] = await db.query(
