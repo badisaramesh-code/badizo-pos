@@ -256,6 +256,9 @@ function SaleReportSlip({ report, shop, printedAt }) {
       <div className="counter-sale-slip-line"><span>GST</span><strong>{formatSlipAmount(totals.gst)}</strong></div>
       <div className="counter-sale-slip-line"><span>Exchange Less</span><strong>{formatSlipAmount(totals.exchangeTotal)}</strong></div>
       <div className="counter-sale-slip-total"><span>Net Sale</span><strong>{formatSlipAmount(totals.netTotal)}</strong></div>
+      <div className="counter-sale-slip-rule" />
+      <div className="counter-sale-slip-line sale-report-bill-range"><span>Bill Starting No</span><strong>{totals.startingInvoiceNo || '-'}</strong></div>
+      <div className="counter-sale-slip-line sale-report-bill-range"><span>Bill Ending No</span><strong>{totals.endingInvoiceNo || '-'}</strong></div>
       <div className="counter-sale-slip-footer">POS sale report</div>
     </div>
   );
@@ -2123,6 +2126,16 @@ export default function BillingTerminalView({ isActive = true }) {
       text-align: right;
       white-space: nowrap;
     }
+    .sale-report-bill-range {
+      align-items: flex-start;
+      gap: 5px;
+      font-size: 10px;
+    }
+    .sale-report-bill-range strong {
+      max-width: 44mm;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
     .counter-sale-slip-total {
       border-top: 1px solid #000;
       margin-top: 3px;
@@ -2355,6 +2368,16 @@ export default function BillingTerminalView({ isActive = true }) {
     .sale-report-gst-head span:first-child,
     .sale-report-gst-row span:first-child {
       text-align: left;
+    }
+    .sale-report-bill-range {
+      align-items: flex-start;
+      gap: 5px;
+      font-size: 10px;
+    }
+    .sale-report-bill-range strong {
+      max-width: 44mm;
+      overflow-wrap: anywhere;
+      white-space: normal;
     }
     .counter-sale-slip-footer {
       padding-top: 4px;
@@ -4295,6 +4318,8 @@ export default function BillingTerminalView({ isActive = true }) {
                 <div className="sale-report-preview">
                   <div className="report-summary-strip">
                     <span>Bills: <strong>{Number(saleReport.totals?.billCount || 0)}</strong></span>
+                    <span>Start Bill: <strong>{saleReport.totals?.startingInvoiceNo || '-'}</strong></span>
+                    <span>End Bill: <strong>{saleReport.totals?.endingInvoiceNo || '-'}</strong></span>
                     <span>Total: <strong>{formatMoney(saleReport.paymentTotals?.total || saleReport.totals?.netTotal || 0)}</strong></span>
                     <span>GST: <strong>{formatMoney(saleReport.totals?.gst || 0)}</strong></span>
                   </div>

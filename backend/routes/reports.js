@@ -15,11 +15,18 @@ function normalizeCounterNoFromLabel(value) {
   return match ? Number.parseInt(match[1], 10) : 0;
 }
 
+function nextIsoDate(dateText) {
+  const date = new Date(`${dateText}T00:00:00`);
+  date.setDate(date.getDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
 router.use(authenticate);
 
 router.get('/dashboard', authorize('SERVER', 'ADMIN'), async (_req, res) => {
   try {
     const date = todayIso();
+    const nextDate = nextIsoDate(date);
     const [todayRows] = await db.query(
       `SELECT
          COUNT(*) AS bill_count,
@@ -27,9 +34,9 @@ router.get('/dashboard', authorize('SERVER', 'ADMIN'), async (_req, res) => {
          COALESCE(SUM(gst_total), 0) AS gst_total,
          COALESCE(AVG(grand_total), 0) AS average_bill
        FROM invoices
-       WHERE DATE(created_at) = ?
+       WHERE created_at >= ? AND created_at < ?
          AND invoice_status <> 'CANCELLED'`,
-      [date]
+      [date, nextDate]
     );
 
     const [productRows] = await db.query(
@@ -42,11 +49,11 @@ router.get('/dashboard', authorize('SERVER', 'ADMIN'), async (_req, res) => {
     const [counterRows] = await db.query(
       `SELECT billing_counter, COUNT(*) AS bill_count, COALESCE(SUM(grand_total), 0) AS sales_total
        FROM invoices
-       WHERE DATE(created_at) = ?
+       WHERE created_at >= ? AND created_at < ?
          AND invoice_status <> 'CANCELLED'
        GROUP BY billing_counter
        ORDER BY billing_counter ASC`,
-      [date]
+      [date, nextDate]
     );
 
     const [paymentRows] = await db.query(
@@ -464,6 +471,29 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
       invoiceValues
     );
 
+    const [billRangeRows] = await db.query(
+      `SELECT
+         (
+           SELECT first_bill.invoice_no
+           FROM invoices first_bill
+           WHERE DATE(first_bill.created_at) BETWEEN ? AND ?
+             AND first_bill.invoice_status <> 'CANCELLED'
+             ${counter ? 'AND first_bill.billing_counter = ?' : ''}
+           ORDER BY first_bill.created_at ASC, first_bill.id ASC
+           LIMIT 1
+         ) AS starting_invoice_no,
+         (
+           SELECT last_bill.invoice_no
+           FROM invoices last_bill
+           WHERE DATE(last_bill.created_at) BETWEEN ? AND ?
+             AND last_bill.invoice_status <> 'CANCELLED'
+             ${counter ? 'AND last_bill.billing_counter = ?' : ''}
+           ORDER BY last_bill.created_at DESC, last_bill.id DESC
+           LIMIT 1
+         ) AS ending_invoice_no`,
+      counter ? [from, to, counter, from, to, counter] : [from, to, from, to]
+    );
+
     const [gstRows] = await db.query(
       `SELECT
          ii.gst_percent,
@@ -526,6 +556,8 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
 
     const totals = {
       billCount: Number(invoiceRows[0]?.bill_count || 0),
+      startingInvoiceNo: billRangeRows[0]?.starting_invoice_no || '',
+      endingInvoiceNo: billRangeRows[0]?.ending_invoice_no || '',
       taxable: Number(invoiceRows[0]?.taxable_total || 0),
       gst: Number(invoiceRows[0]?.gst_total || 0),
       saleTotal: Number(invoiceRows[0]?.sale_total || 0),

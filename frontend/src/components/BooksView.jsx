@@ -189,6 +189,7 @@ export default function BooksView() {
   const [voucherForm, setVoucherForm] = useState(blankVoucherForm());
   const [errorMessage, setErrorMessage] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
+  const [isReportOpen, setIsReportOpen] = useState(false);
 
   useEffect(() => {
     loadBooks();
@@ -373,9 +374,12 @@ export default function BooksView() {
   }
 
   function printSelectedBook() {
-    document.body.classList.add('printing-books');
-    window.print();
-    setTimeout(() => document.body.classList.remove('printing-books'), 300);
+    setIsReportOpen(true);
+    window.setTimeout(() => {
+      document.body.classList.add('printing-books');
+      window.print();
+      setTimeout(() => document.body.classList.remove('printing-books'), 300);
+    }, 50);
   }
 
   return (
@@ -410,6 +414,7 @@ export default function BooksView() {
                 onClick={() => {
                   setActiveBook(card.actionBook);
                   setAccountSearch('');
+                  setIsReportOpen(true);
                 }}
               >
                 <span>{card.title}</span>
@@ -424,7 +429,7 @@ export default function BooksView() {
                 key={book.key}
                 type="button"
                 className={`module-card book-select-card ${activeBook === book.key ? 'active' : ''}`}
-                onClick={() => { setActiveBook(book.key); setAccountSearch(''); }}
+                onClick={() => { setActiveBook(book.key); setAccountSearch(''); setIsReportOpen(true); }}
               >
                 <strong>{book.title}</strong>
                 <span className="muted">{book.entries} entries</span>
@@ -442,11 +447,18 @@ export default function BooksView() {
             <span className="muted">Date: {getOrderedRange(fromDate, toDate).from} to {getOrderedRange(fromDate, toDate).to}</span>
           </div>
           <div className="report-header-actions">
-            <button className="header-print-button" type="button" onClick={exportSelectedExcel}>Export Excel</button>
-            <button className="header-print-button" type="button" onClick={printSelectedBook}>Print / PDF</button>
+            {isReportOpen && <button className="header-print-button" type="button" onClick={exportSelectedExcel}>Export Excel</button>}
+            {isReportOpen && <button className="header-print-button" type="button" onClick={printSelectedBook}>Print / PDF</button>}
+            <button
+              className={isReportOpen ? 'close-action-button' : 'secondary-button'}
+              type="button"
+              onClick={() => setIsReportOpen((current) => !current)}
+            >
+              {isReportOpen ? 'Close' : 'View'}
+            </button>
           </div>
         </div>
-        <div className="panel-body books-print-area">
+        {isReportOpen && <div className="panel-body books-print-area">
           {activeReport && (
             <>
               <div className="books-print-heading">
@@ -567,7 +579,7 @@ export default function BooksView() {
               </div>
             </>
           )}
-        </div>
+        </div>}
       </section>
     </div>
   );

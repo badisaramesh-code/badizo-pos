@@ -115,6 +115,8 @@ export default function SystemView() {
   const [passwordVaultFolder, setPasswordVaultFolder] = useState('BADIZO_PRODUCT');
   const [passwordVault, setPasswordVault] = useState([]);
   const [visiblePasswords, setVisiblePasswords] = useState({});
+  const [showBackupPanel, setShowBackupPanel] = useState(false);
+  const [showLoginRecords, setShowLoginRecords] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -955,52 +957,63 @@ export default function SystemView() {
         <div className="panel">
           <div className="panel-header green">
             <h2 className="panel-title">Database Backup</h2>
-            <button className="secondary-button" onClick={loadBackups}>Refresh</button>
+            <div className="panel-header-actions">
+              {showBackupPanel && <button className="secondary-button" onClick={loadBackups}>Refresh</button>}
+              <button
+                className={showBackupPanel ? 'close-action-button' : 'secondary-button'}
+                type="button"
+                onClick={() => setShowBackupPanel((current) => !current)}
+              >
+                {showBackupPanel ? 'Close' : 'View'}
+              </button>
+            </div>
           </div>
-          <div className="panel-body form-stack">
-            <div className="change-box backup-folder-box">
-              <span>Daily backup runs at <strong>{settings.backup_daily_time || '09:00'}</strong>.</span>
-              <span>Backup folder: <strong>{backupInfo.backupDir || 'backend/backups'}</strong></span>
-            </div>
-            <div className="settings-section settings-inline-section">
-              <label>
-                <span className="field-label">Daily Backup Time</span>
-                <input
-                  className="field"
-                  type="time"
-                  value={settings.backup_daily_time || '09:00'}
-                  onChange={(event) => updateSetting('backup_daily_time', event.target.value)}
-                />
-              </label>
-              <button className="secondary-button" type="button" onClick={handleSaveBackupTime}>Save Backup Time</button>
-            </div>
-            <button className="primary-button" onClick={handleBackupNow} disabled={isBackingUp}>
-              {isBackingUp ? 'Creating Backup...' : 'Backup Now'}
-            </button>
+          {showBackupPanel && (
+            <div className="panel-body form-stack">
+              <div className="change-box backup-folder-box">
+                <span>Daily backup runs at <strong>{settings.backup_daily_time || '09:00'}</strong>.</span>
+                <span>Backup folder: <strong>{backupInfo.backupDir || 'backend/backups'}</strong></span>
+              </div>
+              <div className="settings-section settings-inline-section">
+                <label>
+                  <span className="field-label">Daily Backup Time</span>
+                  <input
+                    className="field"
+                    type="time"
+                    value={settings.backup_daily_time || '09:00'}
+                    onChange={(event) => updateSetting('backup_daily_time', event.target.value)}
+                  />
+                </label>
+                <button className="secondary-button" type="button" onClick={handleSaveBackupTime}>Save Backup Time</button>
+              </div>
+              <button className="primary-button" onClick={handleBackupNow} disabled={isBackingUp}>
+                {isBackingUp ? 'Creating Backup...' : 'Backup Now'}
+              </button>
 
-            <table className="history-table">
-              <thead><tr><th>Backup File</th><th>Size</th><th>Created</th><th>Action</th></tr></thead>
-              <tbody>
-                {backupInfo.backups.length === 0 ? (
-                  <tr><td colSpan="4">No backups created yet.</td></tr>
-                ) : (
-                  backupInfo.backups.slice(0, 8).map((backup) => (
-                    <tr key={backup.file}>
-                      <td className="mono">{backup.file}</td>
-                      <td>{formatBytes(backup.sizeBytes)}</td>
-                      <td>{backup.modifiedAt ? new Date(backup.modifiedAt).toLocaleString() : '-'}</td>
-                      <td>
-                        <div className="table-actions">
-                          <button className="secondary-button" onClick={() => downloadBackup(backup.file)}>Download</button>
-                          <button className="danger-button" onClick={() => handleRestoreBackup(backup.file)}>Restore</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+              <table className="history-table">
+                <thead><tr><th>Backup File</th><th>Size</th><th>Created</th><th>Action</th></tr></thead>
+                <tbody>
+                  {backupInfo.backups.length === 0 ? (
+                    <tr><td colSpan="4">No backups created yet.</td></tr>
+                  ) : (
+                    backupInfo.backups.slice(0, 8).map((backup) => (
+                      <tr key={backup.file}>
+                        <td className="mono">{backup.file}</td>
+                        <td>{formatBytes(backup.sizeBytes)}</td>
+                        <td>{backup.modifiedAt ? new Date(backup.modifiedAt).toLocaleString() : '-'}</td>
+                        <td>
+                          <div className="table-actions">
+                            <button className="secondary-button" onClick={() => downloadBackup(backup.file)}>Download</button>
+                            <button className="danger-button" onClick={() => handleRestoreBackup(backup.file)}>Restore</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div className="panel">
@@ -1021,9 +1034,18 @@ export default function SystemView() {
             <h2 className="panel-title">Login Records Folder</h2>
             <span className="panel-subtitle">Every admin, counter and security login/logout record with date and time</span>
           </div>
-          <button className="secondary-button" onClick={loadSessionEvents}>Refresh</button>
+          <div className="panel-header-actions">
+            {showLoginRecords && <button className="secondary-button" onClick={loadSessionEvents}>Refresh</button>}
+            <button
+              className={showLoginRecords ? 'close-action-button' : 'secondary-button'}
+              type="button"
+              onClick={() => setShowLoginRecords((current) => !current)}
+            >
+              {showLoginRecords ? 'Close' : 'View'}
+            </button>
+          </div>
         </div>
-        <div className="panel-body form-stack">
+        {showLoginRecords && <div className="panel-body form-stack">
           <form className="settings-section settings-inline-section" onSubmit={loadSessionEvents}>
             <label>
               <span className="field-label">From Date</span>
@@ -1092,7 +1114,7 @@ export default function SystemView() {
               </tbody>
             </table>
           </div>
-        </div>
+        </div>}
       </section>
 
       <section className="panel">

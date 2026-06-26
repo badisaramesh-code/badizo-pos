@@ -9,7 +9,7 @@ const pool = mysql.createPool({
   password: process.env.DB_PASSWORD || '1234',
   database: process.env.DB_NAME || 'badizo_pos',
   waitForConnections: true,
-  connectionLimit: 15,
+  connectionLimit: Number.parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 25,
   queueLimit: 0
 });
 
@@ -1194,6 +1194,47 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await connection.query("ALTER TABLE users MODIFY role ENUM('SERVER', 'ADMIN', 'COUNTER', 'SECURITY') NOT NULL DEFAULT 'COUNTER'");
     await ensureColumn(connection, 'users', 'counter_no', 'INT DEFAULT NULL AFTER role');
     await ensureColumn(connection, 'users', 'is_active', 'TINYINT(1) NOT NULL DEFAULT 1 AFTER counter_no');
+
+    // Runtime indexes for 6 counters + admin reports. These keep POS lookups, bill history,
+    // counter sale reports, customer visits, and ledger screens from scanning large tables.
+    await ensureIndex(connection, 'products', 'idx_products_barcode_name', '(barcode, product_name)');
+    await ensureIndex(connection, 'products', 'idx_products_group_name', '(product_group, product_name)');
+    await ensureIndex(connection, 'products', 'idx_products_stock_alert', '(stock_qty, min_stock_alert, product_name)');
+    await ensureIndex(connection, 'product_batches', 'idx_product_batches_sale_pick', '(barcode, quantity_available, expiry_date, id)');
+    await ensureIndex(connection, 'batch_free_offers', 'idx_batch_free_sale_pick', '(trigger_barcode, is_active, free_qty_remaining, id)');
+
+    await ensureIndex(connection, 'invoices', 'idx_invoices_created_status', '(created_at, invoice_status)');
+    await ensureIndex(connection, 'invoices', 'idx_invoices_counter_created_status', '(billing_counter, created_at, invoice_status)');
+    await ensureIndex(connection, 'invoices', 'idx_invoices_customer_phone_created', '(customer_phone, created_at)');
+    await ensureIndex(connection, 'invoices', 'idx_invoices_payment_created', '(payment_mode, created_at)');
+    await ensureIndex(connection, 'invoice_items', 'idx_invoice_items_invoice_id', '(invoice_no, id)');
+    await ensureIndex(connection, 'invoice_items', 'idx_invoice_items_barcode_invoice', '(barcode, invoice_no)');
+    await ensureIndex(connection, 'invoice_items', 'idx_invoice_items_gst_invoice', '(gst_percent, invoice_no)');
+    await ensureIndex(connection, 'invoice_payments', 'idx_invoice_payments_invoice_mode', '(invoice_no, payment_mode)');
+    await ensureIndex(connection, 'invoice_payments', 'idx_invoice_payments_created_mode', '(created_at, payment_mode)');
+    await ensureIndex(connection, 'invoice_item_batches', 'idx_invoice_item_batches_return_pick', '(invoice_item_id, returned_qty, id)');
+
+    await ensureIndex(connection, 'customers', 'idx_customers_name', '(customer_name)');
+    await ensureIndex(connection, 'customers', 'idx_customers_updated', '(updated_at)');
+    await ensureIndex(connection, 'loyalty_transactions', 'idx_loyalty_customer_created', '(customer_id, created_at)');
+
+    await ensureIndex(connection, 'inward_entries', 'idx_inward_created_status', '(created_at, posting_status)');
+    await ensureIndex(connection, 'inward_entries', 'idx_inward_supplier_created', '(supplier_name, created_at)');
+    await ensureIndex(connection, 'inward_entries', 'idx_inward_due_status', '(payment_status, due_date)');
+    await ensureIndex(connection, 'inward_items', 'idx_inward_items_inward_id', '(inward_no, id)');
+    await ensureIndex(connection, 'inward_items', 'idx_inward_items_gst_inward', '(gst_percent, inward_no)');
+    await ensureIndex(connection, 'supplier_payments', 'idx_supplier_payment_supplier_date', '(supplier_name, payment_date)');
+
+    await ensureIndex(connection, 'held_bills', 'idx_hold_counter_updated', '(counter_no, updated_at)');
+    await ensureIndex(connection, 'audit_logs', 'idx_audit_action_created', '(action, created_at)');
+    await ensureIndex(connection, 'user_session_events', 'idx_user_session_created_id', '(created_at, id)');
+    await ensureIndex(connection, 'accounting_vouchers', 'idx_accounting_voucher_date_type', '(voucher_date, voucher_type)');
+    await ensureIndex(connection, 'counter_cash_ledger_entries', 'idx_counter_cash_ledger_date_counter', '(entry_date, counter_no)');
+    await ensureIndex(connection, 'special_orders', 'idx_special_order_due_status', '(payment_status, due_date, required_date)');
+    await ensureIndex(connection, 'staff_attendance', 'idx_staff_attendance_day_staff', '(attendance_date, staff_id)');
+    await ensureIndex(connection, 'staff_salary_sheets', 'idx_staff_salary_month_status', '(salary_month, payment_status)');
+    await ensureIndex(connection, 'barcode_print_logs', 'idx_barcode_print_created_id', '(created_at, id)');
+    await ensureIndex(connection, 'gate_pass_entries', 'idx_gate_pass_date_type_id', '(movement_date, movement_type, id)');
 
     await connection.query(`
       UPDATE products

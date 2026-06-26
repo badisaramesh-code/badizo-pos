@@ -799,6 +799,14 @@ button:disabled {
   padding-bottom: 0;
 }
 
+.panel-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .customer-side-panel .billing-customer-details {
   padding: 0;
 }
