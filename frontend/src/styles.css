@@ -1007,18 +1007,74 @@ button:disabled {
   font-weight: 900;
 }
 
-.activity-held-details {
+.activity-held-details,
+.activity-last-bill-details {
   min-width: 0;
 }
 
-.activity-held-details summary {
+.activity-held-details summary,
+.activity-last-bill-details summary {
   min-height: 30px;
   background: var(--surface-soft);
   border: 0;
 }
 
-.activity-held-details[open] {
+.activity-last-bill-details summary {
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
+.activity-held-details[open],
+.activity-last-bill-details[open] {
   grid-column: 1 / -1;
+}
+
+.last-bill-summary {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+.last-bill-summary-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.last-bill-title-line {
+  justify-content: space-between;
+  color: var(--brand-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.last-bill-money-line {
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.last-bill-summary-line span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.last-bill-empty-button {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+
+.last-bill-empty-button span {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .activity-details {
@@ -1056,10 +1112,13 @@ button:disabled {
 .activity-detail-footer {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   padding: 8px 10px 10px;
   border-top: 1px solid #edf7ef;
 }
 
+.activity-detail-footer .primary-button,
+.activity-detail-footer .secondary-button,
 .activity-detail-footer .close-action-button {
   padding: 6px 12px;
   font-size: 12px;
