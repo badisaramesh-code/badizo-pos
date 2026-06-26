@@ -1199,12 +1199,16 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     // counter sale reports, customer visits, and ledger screens from scanning large tables.
     await ensureIndex(connection, 'products', 'idx_products_barcode_name', '(barcode, product_name)');
     await ensureIndex(connection, 'products', 'idx_products_group_name', '(product_group, product_name)');
+    await ensureIndex(connection, 'products', 'idx_products_code_name', '(product_code, product_name)');
+    await ensureIndex(connection, 'products', 'idx_products_name_id', '(product_name, id)');
     await ensureIndex(connection, 'products', 'idx_products_stock_alert', '(stock_qty, min_stock_alert, product_name)');
     await ensureIndex(connection, 'product_batches', 'idx_product_batches_sale_pick', '(barcode, quantity_available, expiry_date, id)');
     await ensureIndex(connection, 'batch_free_offers', 'idx_batch_free_sale_pick', '(trigger_barcode, is_active, free_qty_remaining, id)');
 
     await ensureIndex(connection, 'invoices', 'idx_invoices_created_status', '(created_at, invoice_status)');
+    await ensureIndex(connection, 'invoices', 'idx_invoices_status_created', '(invoice_status, created_at)');
     await ensureIndex(connection, 'invoices', 'idx_invoices_counter_created_status', '(billing_counter, created_at, invoice_status)');
+    await ensureIndex(connection, 'invoices', 'idx_invoices_counter_status_created_id', '(billing_counter, invoice_status, created_at, id)');
     await ensureIndex(connection, 'invoices', 'idx_invoices_customer_phone_created', '(customer_phone, created_at)');
     await ensureIndex(connection, 'invoices', 'idx_invoices_payment_created', '(payment_mode, created_at)');
     await ensureIndex(connection, 'invoice_items', 'idx_invoice_items_invoice_id', '(invoice_no, id)');
@@ -1212,9 +1216,11 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureIndex(connection, 'invoice_items', 'idx_invoice_items_gst_invoice', '(gst_percent, invoice_no)');
     await ensureIndex(connection, 'invoice_payments', 'idx_invoice_payments_invoice_mode', '(invoice_no, payment_mode)');
     await ensureIndex(connection, 'invoice_payments', 'idx_invoice_payments_created_mode', '(created_at, payment_mode)');
+    await ensureIndex(connection, 'invoice_payments', 'idx_invoice_payments_created_invoice_mode', '(created_at, invoice_no, payment_mode)');
     await ensureIndex(connection, 'invoice_item_batches', 'idx_invoice_item_batches_return_pick', '(invoice_item_id, returned_qty, id)');
 
     await ensureIndex(connection, 'customers', 'idx_customers_name', '(customer_name)');
+    await ensureIndex(connection, 'customers', 'idx_customers_phone_updated', '(phone, updated_at)');
     await ensureIndex(connection, 'customers', 'idx_customers_updated', '(updated_at)');
     await ensureIndex(connection, 'loyalty_transactions', 'idx_loyalty_customer_created', '(customer_id, created_at)');
 

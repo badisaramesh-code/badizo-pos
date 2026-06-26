@@ -30,6 +30,12 @@ function formatReturnNo() {
   return `SR-${stamp}`;
 }
 
+function nextIsoDate(dateText) {
+  const date = new Date(`${dateText}T00:00:00`);
+  date.setDate(date.getDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
 async function getLoyaltySettings(connection) {
   const defaults = {
     earnSaleAmount: 100,
@@ -1058,8 +1064,10 @@ router.get('/hold/list', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     const params = [];
 
     if (hasDateRange) {
-      where.push('DATE(created_at) BETWEEN ? AND ?');
-      params.push(from <= to ? from : to, from <= to ? to : from);
+      const start = from <= to ? from : to;
+      const end = from <= to ? to : from;
+      where.push('created_at >= ? AND created_at < ?');
+      params.push(start, nextIsoDate(end));
     }
 
     if (search) {
@@ -1074,7 +1082,7 @@ router.get('/hold/list', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const limitSql = hasDateRange ? '' : 'LIMIT 25';
+    const limitSql = hasDateRange ? 'LIMIT 500' : 'LIMIT 25';
     const [rows] = await db.query(
       `SELECT invoice_no, customer_name, customer_phone, grand_total, cash_received, change_returned, billing_counter,
               payment_status, payment_reference,
