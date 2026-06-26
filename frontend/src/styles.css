@@ -1059,6 +1059,10 @@ button:disabled {
   font-weight: 800;
 }
 
+.last-bill-money-line span {
+  flex: 0 1 auto;
+}
+
 .last-bill-summary-line span {
   max-width: 100%;
   overflow: hidden;

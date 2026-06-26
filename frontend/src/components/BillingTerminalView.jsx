@@ -3829,8 +3829,11 @@ export default function BillingTerminalView({ isActive = true }) {
                       </span>
                       <span className="last-bill-summary-line last-bill-money-line">
                         <span>Bill {formatMoney(latestInvoice.grand_total)}</span>
-                        <span>Cash {formatMoney(latestInvoice.cash_received)}</span>
-                        <span>Change {formatMoney(latestInvoice.change_returned)}</span>
+                        <span>
+                          {String(latestInvoice.payment_mode || '').toUpperCase() === 'CASH'
+                            ? `Change ${formatMoney(latestInvoice.change_returned)}`
+                            : `${latestInvoice.payment_mode || 'Other'} ${formatMoney(latestInvoice.grand_total)}`}
+                        </span>
                       </span>
                     </strong>
                   </summary>
