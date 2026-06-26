@@ -307,8 +307,9 @@ router.get('/reprints', authorize('SERVER', 'ADMIN'), async (req, res) => {
 router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     const date = normalizeDate(req.query.date, todayIso());
-    const nextDate = nextIsoDate(date);
-    const requestedCounter = normalizeCounterNoFromLabel(req.query.counter) || Number.parseInt(req.query.counter_no, 10) || 0;
+    const requestedCounter = normalizeCounterNoFromLabel(req.query.counter)
+      || Number.parseInt(req.query.counter_no ?? req.query.counterNo, 10)
+      || 0;
     const userCounter = Number.parseInt(req.user?.counter_no, 10) || 0;
     const counterNo = req.user?.role === 'COUNTER' && userCounter > 0
       ? userCounter
@@ -323,29 +324,29 @@ router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async 
          SELECT ip.invoice_no, ip.payment_mode, ip.amount
          FROM invoice_payments ip
          INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
-         WHERE i.created_at >= ? AND i.created_at < ?
-           AND i.billing_counter = ?
-           AND i.invoice_status <> 'CANCELLED'
+          WHERE DATE(i.created_at) = ?
+            AND i.billing_counter = ?
+            AND i.invoice_status <> 'CANCELLED'
          UNION ALL
          SELECT i.invoice_no, i.payment_mode, i.grand_total AS amount
          FROM invoices i
          LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
-         WHERE i.created_at >= ? AND i.created_at < ?
-           AND i.billing_counter = ?
-           AND i.invoice_status <> 'CANCELLED'
-           AND ip.id IS NULL
+          WHERE DATE(i.created_at) = ?
+            AND i.billing_counter = ?
+            AND i.invoice_status <> 'CANCELLED'
+            AND ip.id IS NULL
        ) payments
        GROUP BY payment_mode`,
-      [date, nextDate, `Counter ${counterNo}`, date, nextDate, `Counter ${counterNo}`]
+      [date, `Counter ${counterNo}`, date, `Counter ${counterNo}`]
     );
 
     const [counterBillRows] = await db.query(
       `SELECT COUNT(*) AS bill_count
        FROM invoices
-       WHERE created_at >= ? AND created_at < ?
-         AND billing_counter = ?
-         AND invoice_status <> 'CANCELLED'`,
-      [date, nextDate, `Counter ${counterNo}`]
+        WHERE DATE(created_at) = ?
+          AND billing_counter = ?
+          AND invoice_status <> 'CANCELLED'`,
+      [date, `Counter ${counterNo}`]
     );
 
     const [allRows] = await db.query(
@@ -357,26 +358,26 @@ router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async 
          SELECT ip.invoice_no, ip.payment_mode, ip.amount
          FROM invoice_payments ip
          INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
-         WHERE i.created_at >= ? AND i.created_at < ?
-           AND i.invoice_status <> 'CANCELLED'
+          WHERE DATE(i.created_at) = ?
+            AND i.invoice_status <> 'CANCELLED'
          UNION ALL
          SELECT i.invoice_no, i.payment_mode, i.grand_total AS amount
          FROM invoices i
          LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
-         WHERE i.created_at >= ? AND i.created_at < ?
-           AND i.invoice_status <> 'CANCELLED'
-           AND ip.id IS NULL
+          WHERE DATE(i.created_at) = ?
+            AND i.invoice_status <> 'CANCELLED'
+            AND ip.id IS NULL
        ) payments
        GROUP BY payment_mode`,
-      [date, nextDate, date, nextDate]
+      [date, date]
     );
 
     const [allBillRows] = await db.query(
       `SELECT COUNT(*) AS bill_count
        FROM invoices
-       WHERE created_at >= ? AND created_at < ?
-         AND invoice_status <> 'CANCELLED'`,
-      [date, nextDate]
+        WHERE DATE(created_at) = ?
+          AND invoice_status <> 'CANCELLED'`,
+      [date]
     );
 
     const normalizePaymentTotals = (rows) => {

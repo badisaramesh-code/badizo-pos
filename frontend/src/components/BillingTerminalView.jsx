@@ -386,6 +386,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const billingTableRef = useRef(null);
   const heldBillsDetailsRef = useRef(null);
   const priceCheckInputRef = useRef(null);
+  const restoredDraftRef = useRef(Boolean(initialDraft));
   const customerNameRef = useRef(null);
   const cashReceivedRef = useRef(null);
   const mixedCashRef = useRef(null);
@@ -411,7 +412,25 @@ export default function BillingTerminalView({ isActive = true }) {
     scannerRef.current?.focus();
     loadSettings();
     refreshHistory(false);
+    if (restoredDraftRef.current) {
+      setStatusMessage('Unsaved bill restored. Complete sale or Hold before closing POS.');
+    }
   }, []);
+
+  useEffect(() => {
+    if (!isActive) return undefined;
+    const hasUnsavedBill = cart.length > 0 || exchangeItems.length > 0 || isCheckoutSubmitting;
+    if (!hasUnsavedBill) return undefined;
+
+    const warnBeforeExit = (event) => {
+      event.preventDefault();
+      event.returnValue = 'Unsaved bill is still open. Complete sale or Hold before closing POS.';
+      return event.returnValue;
+    };
+
+    window.addEventListener('beforeunload', warnBeforeExit);
+    return () => window.removeEventListener('beforeunload', warnBeforeExit);
+  }, [cart.length, exchangeItems.length, isActive, isCheckoutSubmitting]);
 
   useEffect(() => {
     if (!isActive) return undefined;

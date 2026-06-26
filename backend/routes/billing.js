@@ -1066,8 +1066,8 @@ router.get('/hold/list', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     if (hasDateRange) {
       const start = from <= to ? from : to;
       const end = from <= to ? to : from;
-      where.push('created_at >= ? AND created_at < ?');
-      params.push(start, nextIsoDate(end));
+      where.push('DATE(created_at) >= ? AND DATE(created_at) <= ?');
+      params.push(start, end);
     }
 
     if (search) {
