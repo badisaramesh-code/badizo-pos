@@ -1007,20 +1007,17 @@ button:disabled {
   font-weight: 900;
 }
 
-.activity-held-details,
-.activity-last-bill-details {
+.activity-held-details {
   min-width: 0;
 }
 
-.activity-held-details summary,
-.activity-last-bill-details summary {
+.activity-held-details summary {
   min-height: 30px;
   background: var(--surface-soft);
   border: 0;
 }
 
-.activity-held-details[open],
-.activity-last-bill-details[open] {
+.activity-held-details[open] {
   grid-column: 1 / -1;
 }
 
@@ -1312,6 +1309,26 @@ button:disabled {
 .report-select-card span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.report-selector-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+.selected-report-label {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.selected-report-label strong {
+  color: var(--brand-dark);
 }
 
 .report-summary-strip {

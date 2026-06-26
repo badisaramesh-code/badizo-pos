@@ -78,6 +78,10 @@ function safeDecodeParam(value) {
   }
 }
 
+function escapeLikePattern(value) {
+  return String(value || '').replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
 function toProduct(row) {
   return {
     id: row.id,
@@ -2981,6 +2985,26 @@ router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER
     }
 
     if (q.length >= 3) {
+      const prefix = `${escapeLikePattern(q)}%`;
+      const [prefixRows] = await db.query(
+        `SELECT * FROM products
+         WHERE barcode LIKE ? OR product_code LIKE ? OR product_name LIKE ?
+         ORDER BY
+           CASE
+             WHEN barcode LIKE ? THEN 0
+             WHEN product_code LIKE ? THEN 1
+             ELSE 2
+           END,
+           product_name ASC,
+           id DESC
+         LIMIT 5`,
+        [prefix, prefix, prefix, prefix, prefix]
+      );
+
+      if (prefixRows && prefixRows.length > 0) {
+        return res.json(prefixRows.map(toProduct));
+      }
+
       const where = [];
       const values = [];
       applyProductSearch(where, values, q);

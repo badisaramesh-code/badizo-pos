@@ -415,6 +415,7 @@ export default function ReportsView({ isActive = true, onClose }) {
     { key: 'returns', title: 'Returns', note: `${exceptionReport.returns.length} returns` },
     { key: 'cancelled', title: 'Cancelled Bills', note: `${exceptionReport.cancelled.length} bills` }
   ];
+  const selectedReportOption = reportOptions.find((report) => report.key === activeReport) || reportOptions[0];
 
   const metricCards = [
     ['Bills', dailyReport.totals.billCount || 0, 'Selected range'],
@@ -1542,6 +1543,13 @@ export default function ReportsView({ isActive = true, onClose }) {
                 <span>{report.note}</span>
               </button>
             ))}
+          </div>
+          <div className="report-selector-actions">
+            <span className="selected-report-label">Selected: <strong>{selectedReportOption.title}</strong></span>
+            <button className="primary-button" type="button" onClick={() => refreshSelectedReport(activeReport)} disabled={isReportLoading}>
+              {isReportLoading ? 'Loading...' : 'View'}
+            </button>
+            <button className="close-action-button" type="button" onClick={onClose}>Close</button>
           </div>
         </div>
       </section>

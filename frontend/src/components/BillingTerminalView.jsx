@@ -336,7 +336,6 @@ export default function BillingTerminalView({ isActive = true }) {
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [isHistoryInvoiceLoading, setIsHistoryInvoiceLoading] = useState(false);
   const [heldBills, setHeldBills] = useState([]);
-  const [isLastBillOpen, setIsLastBillOpen] = useState(false);
   const [isHeldBillsOpen, setIsHeldBillsOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showPriceCheck, setShowPriceCheck] = useState(false);
@@ -385,7 +384,6 @@ export default function BillingTerminalView({ isActive = true }) {
   const lastPriceCheckScanRef = useRef('');
   const exchangeScannerRef = useRef(null);
   const billingTableRef = useRef(null);
-  const lastBillDetailsRef = useRef(null);
   const heldBillsDetailsRef = useRef(null);
   const priceCheckInputRef = useRef(null);
   const customerNameRef = useRef(null);
@@ -698,7 +696,6 @@ export default function BillingTerminalView({ isActive = true }) {
       if (isF8) {
         event.preventDefault();
         event.stopPropagation();
-        setIsLastBillOpen(false);
         setIsHeldBillsOpen(false);
         refreshHistory(true);
       }
@@ -707,7 +704,6 @@ export default function BillingTerminalView({ isActive = true }) {
         event.preventDefault();
         event.stopPropagation();
         setShowHistory(false);
-        setIsLastBillOpen(false);
         setIsHeldBillsOpen((current) => !current);
         refreshHeldBills(counterNo);
       }
@@ -760,13 +756,10 @@ export default function BillingTerminalView({ isActive = true }) {
   }, [priceCheckQuery, showPriceCheck]);
 
   useEffect(() => {
-    if (!isActive || (!isLastBillOpen && !isHeldBillsOpen)) return undefined;
+    if (!isActive || !isHeldBillsOpen) return undefined;
 
     const closeActivityPanelsOnOutsideClick = (event) => {
       const target = event.target;
-      if (isLastBillOpen && lastBillDetailsRef.current && !lastBillDetailsRef.current.contains(target)) {
-        setIsLastBillOpen(false);
-      }
       if (isHeldBillsOpen && heldBillsDetailsRef.current && !heldBillsDetailsRef.current.contains(target)) {
         setIsHeldBillsOpen(false);
       }
@@ -774,7 +767,7 @@ export default function BillingTerminalView({ isActive = true }) {
 
     document.addEventListener('pointerdown', closeActivityPanelsOnOutsideClick);
     return () => document.removeEventListener('pointerdown', closeActivityPanelsOnOutsideClick);
-  }, [isActive, isHeldBillsOpen, isLastBillOpen]);
+  }, [isActive, isHeldBillsOpen]);
 
   useEffect(() => {
     const { search: cleaned } = parseQuantitySearch(exchangeQuery);
@@ -855,7 +848,6 @@ export default function BillingTerminalView({ isActive = true }) {
     : paymentMode !== 'Cash' || payablePaise <= 0 || (cashReceivedAmount > 0 && cashReceivedPaise >= payablePaise);
   const canCompleteSale = cart.length > 0 && isCashReady && !cart.some((item) => item.isUnknown) && !isCheckoutSubmitting;
   const hasUnknownLine = cart.some((item) => item.isUnknown);
-  const latestInvoice = invoiceHistory[0];
   const filteredInvoiceHistory = useMemo(() => {
     const search = historySearch.trim().toLowerCase();
 
@@ -942,7 +934,6 @@ export default function BillingTerminalView({ isActive = true }) {
 
   function closeBillingActivityPanels() {
     setShowHistory(false);
-    setIsLastBillOpen(false);
     setIsHeldBillsOpen(false);
   }
 
@@ -3757,7 +3748,6 @@ export default function BillingTerminalView({ isActive = true }) {
                 className="secondary-button"
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => {
-                  setIsLastBillOpen(false);
                   setIsHeldBillsOpen(false);
                   const today = localIsoDate();
                   setHistoryFromDate(today);
@@ -3767,29 +3757,6 @@ export default function BillingTerminalView({ isActive = true }) {
               >
                 Old Bills / Reprint (F8)
               </button>
-              {latestInvoice ? (
-                <details
-                  ref={lastBillDetailsRef}
-                  className="activity-details activity-last-bill-details"
-                  open={isLastBillOpen}
-                  onToggle={(event) => setIsLastBillOpen(event.currentTarget.open)}
-                >
-                  <summary>
-                    <span>Last Bill</span>
-                    <strong className="mono">{latestInvoice.invoice_no}</strong>
-                  </summary>
-                  <div className="activity-detail-grid">
-                    <span>Amount</span><strong>{formatMoney(latestInvoice.grand_total)}</strong>
-                    <span>Cash Given</span><strong>{formatMoney(latestInvoice.cash_received)}</strong>
-                    <span>Change</span><strong className="stock-low">{formatMoney(latestInvoice.change_returned)}</strong>
-                  </div>
-                  <div className="activity-detail-footer">
-                    <button className="close-action-button" type="button" onClick={() => setIsLastBillOpen(false)}>Close</button>
-                  </div>
-                </details>
-              ) : (
-                <button className="secondary-button" disabled>Last Bill</button>
-              )}
               <details
                 ref={heldBillsDetailsRef}
                 className="activity-details activity-held-details"
@@ -4222,7 +4189,6 @@ export default function BillingTerminalView({ isActive = true }) {
                   className="secondary-button"
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={() => {
-                    setIsLastBillOpen(false);
                     setIsHeldBillsOpen(false);
                     refreshHistory(true);
                   }}
@@ -4231,7 +4197,6 @@ export default function BillingTerminalView({ isActive = true }) {
                 </button>
                 <button className="secondary-button" onPointerDown={(event) => event.stopPropagation()} onClick={() => {
                   setShowHistory(false);
-                  setIsLastBillOpen(false);
                   setIsHeldBillsOpen((current) => !current);
                   refreshHeldBills(counterNo);
                 }}>F6 Held Bills</button>
