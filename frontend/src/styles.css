@@ -1432,7 +1432,7 @@ button:disabled {
 .suggestion-row {
   width: 100%;
   display: grid;
-  grid-template-columns: 130px 1fr 95px 80px;
+  grid-template-columns: minmax(135px, 0.9fr) minmax(220px, 1.7fr) minmax(80px, 0.65fr) minmax(85px, 0.7fr) minmax(95px, 0.75fr);
   gap: 10px;
   align-items: center;
   padding: 11px 12px;
@@ -1440,6 +1440,57 @@ button:disabled {
   border-bottom: 1px solid var(--line);
   background: #fff;
   text-align: left;
+}
+
+.suggestion-row span {
+  min-width: 0;
+}
+
+.suggestion-row small {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.suggestion-row strong,
+.suggestion-row em {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestion-row em {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.suggestion-description strong {
+  color: var(--text);
+}
+
+.suggestion-stock strong {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--brand-dark);
+}
+
+.suggestion-stock .suggestion-unit {
+  display: inline-flex;
+  margin-top: 0;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #eaf4ee;
+  color: var(--brand-dark);
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .suggestion-row:hover,
@@ -3897,6 +3948,11 @@ button:disabled {
   font-size: 12px;
 }
 
+.handover-details-input,
+.handover-details-cell {
+  font-weight: 800;
+}
+
 .handover-table th,
 .handover-table td,
 .handover-auto-table th,
@@ -3993,6 +4049,24 @@ button:disabled {
   background: #fff;
 }
 
+.counter-handover-view > .handover-print-area {
+  display: block;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f6f8f7;
+}
+
+.counter-handover-view > .handover-print-area::before {
+  content: "Print Preview";
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .handover-print-sheet {
   width: 180mm;
   min-height: 260mm;
@@ -4001,6 +4075,8 @@ button:disabled {
   background: #fff;
   font-family: Arial, Helvetica, sans-serif;
   font-size: 11px;
+  margin: 0 auto;
+  box-shadow: 0 8px 24px rgba(12, 38, 24, 0.12);
 }
 
 .handover-print-sheet h1 {
@@ -4051,6 +4127,10 @@ button:disabled {
   padding: 2px 4px;
   border: 1px solid #111;
   vertical-align: middle;
+}
+
+.handover-print-sheet .handover-details-cell {
+  font-weight: 800;
 }
 
 .handover-print-sheet th:nth-child(1),
@@ -6098,6 +6178,10 @@ button:disabled {
     visibility: visible !important;
   }
 
+  body.printing-handover .handover-print-area::before {
+    display: none !important;
+  }
+
   .handover-print-area {
     width: 180mm;
     min-width: 180mm;
@@ -6111,6 +6195,8 @@ button:disabled {
     min-height: 260mm;
     max-height: 260mm;
     overflow: hidden;
+    margin: 0;
+    box-shadow: none;
     page-break-inside: avoid;
     break-inside: avoid;
   }

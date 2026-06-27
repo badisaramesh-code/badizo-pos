@@ -3728,11 +3728,29 @@ export default function BillingTerminalView({ isActive = true }) {
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => addProduct(product, parseQuantitySearch(query).quantity)}
                       >
-                        <span className="mono muted">{product.barcode}</span>
-                        <strong>{product.product_name}</strong>
-                        <span>{formatMoney(product.sale_price)}</span>
-                        <span className={toNumber(product.stock_qty) <= toNumber(product.min_stock_alert, 10) ? 'stock-low' : ''}>
-                          {product.stock_qty} in stock
+                        <span className="suggestion-code">
+                          <small>Code</small>
+                          <strong className="mono">{product.product_code || product.barcode}</strong>
+                          {product.product_code && <em className="mono">{product.barcode}</em>}
+                        </span>
+                        <span className="suggestion-description">
+                          <small>Description</small>
+                          <strong>{product.product_name}</strong>
+                        </span>
+                        <span>
+                          <small>MRP</small>
+                          <strong>{formatMoney(product.mrp)}</strong>
+                        </span>
+                        <span>
+                          <small>Sale</small>
+                          <strong>{formatMoney(product.sale_price)}</strong>
+                        </span>
+                        <span className={toNumber(product.stock_qty) <= toNumber(product.min_stock_alert, 10) ? 'suggestion-stock stock-low' : 'suggestion-stock'}>
+                          <small>Stock</small>
+                          <strong>
+                            {toNumber(product.stock_qty).toFixed(2)}
+                            <em className="suggestion-unit">{product.unit_type || product.unit || 'Nos'}</em>
+                          </strong>
                         </span>
                       </button>
                     ))}

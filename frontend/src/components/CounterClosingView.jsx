@@ -491,7 +491,7 @@ export default function CounterClosingView() {
       const entryRows = handoverPrintEntryRows.map((entry, index) => `
         <tr>
           <td>${index + 1}</td>
-          <td>${escapeHtml(entry.details)}</td>
+          <td class="handover-details-cell">${escapeHtml(entry.details)}</td>
           <td>${escapeHtml(entry.remarks)}</td>
           <td>${entry.direction === 'DR' && normalizeAmount(entry.amount) ? normalizeAmount(entry.amount).toFixed(2) : ''}</td>
           <td>${entry.direction === 'CR' && normalizeAmount(entry.amount) ? normalizeAmount(entry.amount).toFixed(2) : ''}</td>
@@ -529,7 +529,7 @@ export default function CounterClosingView() {
       padding: 2mm 4mm 2mm 2mm;
       background: #fff;
       color: #111;
-      font-size: 8px;
+      font-size: 9px;
       line-height: 1.15;
     }
     h1 {
@@ -537,7 +537,7 @@ export default function CounterClosingView() {
       padding: 2px;
       border: 1px solid #111;
       border-bottom: 0;
-      font-size: 11px;
+      font-size: 12px;
       line-height: 1.2;
       text-align: center;
       text-transform: lowercase;
@@ -553,7 +553,7 @@ export default function CounterClosingView() {
       padding: 2px;
       border-right: 1px solid #111;
       text-align: center;
-      font-size: 8px;
+      font-size: 9px;
     }
     .meta > *:last-child, .sale-row > *:last-child { border-right: 0; }
     table {
@@ -565,7 +565,7 @@ export default function CounterClosingView() {
       border: 1px solid #111;
       padding: 1px 2px;
       height: 13px;
-      font-size: 7px;
+      font-size: 8px;
       vertical-align: middle;
       word-break: break-word;
     }
@@ -574,10 +574,11 @@ export default function CounterClosingView() {
     th:nth-child(3), td:nth-child(3) { width: 15mm; }
     th:nth-child(4), th:nth-child(5), td:nth-child(4), td:nth-child(5) { width: 10mm; text-align: right; }
     tfoot th { font-weight: 700; }
+    .handover-details-cell { font-weight: 800; }
     .balance {
       padding: 5px 2px;
       text-align: center;
-      font-size: 8px;
+      font-size: 9px;
       line-height: 1.25;
     }
     .signatures {
@@ -585,7 +586,7 @@ export default function CounterClosingView() {
       grid-template-columns: 1fr 1fr 1fr;
       gap: 3px;
       margin-top: 8mm;
-      font-size: 7px;
+      font-size: 8px;
       text-align: center;
     }
   </style>
@@ -653,11 +654,11 @@ export default function CounterClosingView() {
         max-height: none !important;
         padding: 2mm !important;
         overflow: visible !important;
-        font-size: 9px !important;
+        font-size: 10px !important;
         line-height: 1.2 !important;
       }
       body.printing-handover.printing-thermal .handover-print-sheet h1 {
-        font-size: 12px !important;
+        font-size: 13px !important;
         line-height: 1.25 !important;
       }
       body.printing-handover.printing-thermal .handover-print-meta,
@@ -676,7 +677,7 @@ export default function CounterClosingView() {
       body.printing-handover.printing-thermal .handover-print-sheet td {
         height: auto !important;
         padding: 2px !important;
-        font-size: 8px !important;
+        font-size: 9px !important;
         word-break: break-word;
       }
       body.printing-handover.printing-thermal .handover-print-sheet th:nth-child(1),
@@ -692,12 +693,12 @@ export default function CounterClosingView() {
       body.printing-handover.printing-thermal .handover-print-balance {
         gap: 3px !important;
         padding: 6px 2px !important;
-        font-size: 10px !important;
+        font-size: 11px !important;
       }
       body.printing-handover.printing-thermal .handover-signatures {
         margin-top: 8mm !important;
         gap: 3px !important;
-        font-size: 8px !important;
+        font-size: 9px !important;
       }
     ` : '';
 
@@ -723,6 +724,7 @@ export default function CounterClosingView() {
 
   async function printHandoverSheet(mode) {
     const normalizedMode = mode === 'A4' ? 'A4' : 'Thermal';
+    const isPrintCancelled = (err) => /cancel/i.test(String(err?.message || err || ''));
     if (window.badizoDesktop?.printThermalHtml && normalizedMode === 'Thermal') {
       try {
         await window.badizoDesktop.printThermalHtml({
@@ -733,6 +735,10 @@ export default function CounterClosingView() {
         setStatusMessage('Counter closing sheet sent to thermal printer.');
         return;
       } catch (err) {
+        if (isPrintCancelled(err)) {
+          setStatusMessage('Counter closing thermal print cancelled.');
+          return;
+        }
         setErrorMessage(err.message || 'Unable to print counter closing sheet on thermal printer.');
         return;
       }
@@ -748,6 +754,10 @@ export default function CounterClosingView() {
         setStatusMessage('Counter closing sheet sent to A4 printer.');
         return;
       } catch (err) {
+        if (isPrintCancelled(err)) {
+          setStatusMessage('Counter closing A4 print cancelled.');
+          return;
+        }
         setErrorMessage(err.message || 'Unable to print counter closing sheet on A4 printer.');
         return;
       }
@@ -846,7 +856,7 @@ export default function CounterClosingView() {
                       <td>
                         <input
                           ref={(element) => { entryDetailRefs.current[index] = element; }}
-                          className="field"
+                          className="field handover-details-input"
                           value={entry.details}
                           onFocus={() => setActiveEntryIndex(index)}
                           onChange={(event) => updateEntry(index, 'details', event.target.value)}
@@ -1033,7 +1043,7 @@ export default function CounterClosingView() {
               {handoverPrintEntryRows.map((entry, index) => (
                 <tr key={index}>
                   <td>{index + 1}</td>
-                  <td>{entry.details}</td>
+                  <td className="handover-details-cell">{entry.details}</td>
                   <td>{entry.remarks}</td>
                   <td>{entry.direction === 'DR' && normalizeAmount(entry.amount) ? normalizeAmount(entry.amount).toFixed(2) : ''}</td>
                   <td>{entry.direction === 'CR' && normalizeAmount(entry.amount) ? normalizeAmount(entry.amount).toFixed(2) : ''}</td>
