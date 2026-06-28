@@ -63,6 +63,7 @@ const SCANNER_BARCODE_PATTERN = /^[A-Z0-9._-]+$/i;
 const SCANNER_SETTLE_MS = 650;
 const SCANNER_FAST_KEY_MS = 90;
 const TYPED_SEARCH_DEBOUNCE_MS = 160;
+const POS_SUGGESTION_LIMIT = 2000;
 
 function readActivePosDraft(username) {
   try {
@@ -622,7 +623,7 @@ export default function BillingTerminalView({ isActive = true }) {
           setSelectedSuggestion(0);
           return;
         }
-        setSuggestions(results.slice(0, 5));
+        setSuggestions(results.slice(0, POS_SUGGESTION_LIMIT));
         setSelectedSuggestion(0);
       } catch (err) {
         setSuggestions([]);
@@ -1725,7 +1726,7 @@ export default function BillingTerminalView({ isActive = true }) {
         }
         if (results.length === 1) addProduct(results[0], quantity);
         if (results.length > 1) {
-          setSuggestions(results.slice(0, 5));
+          setSuggestions(results.slice(0, POS_SUGGESTION_LIMIT));
           setSelectedSuggestion(0);
         }
         if (results.length === 0) {
