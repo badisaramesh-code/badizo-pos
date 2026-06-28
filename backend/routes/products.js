@@ -16,6 +16,7 @@ const PRICE_LIST_SEARCH_LIMIT = 500;
 const PRICE_LIST_UPDATE_LIMIT = 5000;
 const PRICE_LIST_UPDATE_BATCH_SIZE = 100;
 const PRICE_LIST_BACKGROUND_BATCH_SIZE = 100;
+const POS_PRODUCT_SEARCH_LIMIT = 500;
 const DEFAULT_GST_SLABS = [0, 3, 5, 12, 18, 28, 40];
 const PRODUCT_IMPORT_ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING']);
 const PRICE_LIST_JOB_ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING']);
@@ -2994,11 +2995,11 @@ router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER
              WHEN barcode LIKE ? THEN 0
              WHEN product_code LIKE ? THEN 1
              ELSE 2
-           END,
-           product_name ASC,
-           id DESC
-         LIMIT 5`,
-        [prefix, prefix, prefix, prefix, prefix]
+         END,
+         product_name ASC,
+         id DESC
+         LIMIT ?`,
+        [prefix, prefix, prefix, prefix, prefix, POS_PRODUCT_SEARCH_LIMIT]
       );
 
       if (prefixRows && prefixRows.length > 0) {
@@ -3012,8 +3013,8 @@ router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER
         `SELECT * FROM products
          WHERE ${where.join(' AND ')}
          ORDER BY product_name ASC
-         LIMIT 5`,
-        values
+         LIMIT ?`,
+        [...values, POS_PRODUCT_SEARCH_LIMIT]
       );
       return res.json((rows || []).map(toProduct));
     }

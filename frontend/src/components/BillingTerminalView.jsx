@@ -373,6 +373,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const scannerBufferLastKeyAtRef = useRef(0);
   const scannerBufferTimerRef = useRef(null);
   const searchFocusTimerRef = useRef(null);
+  const suggestionClickTimerRef = useRef(null);
   const exchangeScannerBufferRef = useRef('');
   const exchangeScannerBufferLastKeyAtRef = useRef(0);
   const exchangeScannerBufferTimerRef = useRef(null);
@@ -416,6 +417,13 @@ export default function BillingTerminalView({ isActive = true }) {
     refreshHistory(false);
     if (restoredDraftRef.current) {
       setStatusMessage('Unsaved bill restored. Complete sale or Hold before closing POS.');
+    }
+  }, []);
+
+  useEffect(() => () => {
+    if (suggestionClickTimerRef.current) {
+      window.clearTimeout(suggestionClickTimerRef.current);
+      suggestionClickTimerRef.current = null;
     }
   }, []);
 
@@ -794,6 +802,22 @@ export default function BillingTerminalView({ isActive = true }) {
     document.addEventListener('pointerdown', closeActivityPanelsOnOutsideClick);
     return () => document.removeEventListener('pointerdown', closeActivityPanelsOnOutsideClick);
   }, [isActive, isHeldBillsOpen, isLastBillOpen]);
+
+  useEffect(() => {
+    if (!isActive || suggestions.length === 0) return undefined;
+
+    const closeSuggestionsOnOutsideClick = (event) => {
+      const target = event.target;
+      if (scannerRef.current?.contains(target)) return;
+      if (target?.closest?.('.suggestions')) return;
+      clearPendingSuggestionClick();
+      setSuggestions([]);
+      setSelectedSuggestion(0);
+    };
+
+    document.addEventListener('pointerdown', closeSuggestionsOnOutsideClick);
+    return () => document.removeEventListener('pointerdown', closeSuggestionsOnOutsideClick);
+  }, [isActive, suggestions.length]);
 
   useEffect(() => {
     const { search: cleaned } = parseQuantitySearch(exchangeQuery);
@@ -1479,6 +1503,42 @@ export default function BillingTerminalView({ isActive = true }) {
     setErrorMessage('');
     setStatusMessage(`${product.product_name} x ${addQty} added to bill.`);
     scannerRef.current?.focus();
+  }
+
+  function clearPendingSuggestionClick() {
+    if (!suggestionClickTimerRef.current) return;
+    window.clearTimeout(suggestionClickTimerRef.current);
+    suggestionClickTimerRef.current = null;
+  }
+
+  function focusSearchInputAtEnd() {
+    const scanner = scannerRef.current;
+    if (!scanner) return;
+    scanner.focus();
+    const cursorAt = String(scanner.value || '').length;
+    scanner.setSelectionRange?.(cursorAt, cursorAt);
+  }
+
+  function focusSearchFromSuggestionScroll(event) {
+    clearPendingSuggestionClick();
+    event.preventDefault();
+    event.stopPropagation();
+    focusSearchInputAtEnd();
+  }
+
+  function handleSuggestionMouseDownCapture(event) {
+    if (event.detail < 2) return;
+    focusSearchFromSuggestionScroll(event);
+  }
+
+  function handleSuggestionClick(product, event) {
+    event.preventDefault();
+    clearPendingSuggestionClick();
+    const quantity = parseQuantitySearch(query).quantity;
+    suggestionClickTimerRef.current = window.setTimeout(() => {
+      suggestionClickTimerRef.current = null;
+      addProduct(product, quantity);
+    }, 360);
   }
 
   function openPriceCheck() {
@@ -3720,13 +3780,17 @@ export default function BillingTerminalView({ isActive = true }) {
                   placeholder="Type at least 3 letters or barcode digits"
                 />
                 {suggestions.length > 0 && (
-                  <div className="suggestions">
+                  <div
+                    className="suggestions"
+                    onMouseDownCapture={handleSuggestionMouseDownCapture}
+                    onDoubleClickCapture={focusSearchFromSuggestionScroll}
+                  >
                     {suggestions.map((product, index) => (
                       <button
                         key={product.barcode}
                         className={`suggestion-row ${index === selectedSuggestion ? 'active' : ''}`}
                         onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => addProduct(product, parseQuantitySearch(query).quantity)}
+                        onClick={(event) => handleSuggestionClick(product, event)}
                       >
                         <span className="suggestion-code">
                           <small>Code</small>

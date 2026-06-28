@@ -1426,7 +1426,25 @@ button:disabled {
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   box-shadow: var(--shadow);
-  overflow: hidden;
+  max-height: 292px;
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  scrollbar-color: #7fb88e #edf7ef;
+  scrollbar-width: thin;
+}
+
+.suggestions::-webkit-scrollbar {
+  width: 10px;
+}
+
+.suggestions::-webkit-scrollbar-track {
+  background: #edf7ef;
+}
+
+.suggestions::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #7fb88e;
+  border: 2px solid #edf7ef;
 }
 
 .suggestion-row {
@@ -1440,6 +1458,7 @@ button:disabled {
   border-bottom: 1px solid var(--line);
   background: #fff;
   text-align: left;
+  min-height: 72px;
 }
 
 .suggestion-row span {
