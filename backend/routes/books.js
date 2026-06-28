@@ -208,14 +208,31 @@ router.get('/accounting', async (req, res) => {
     );
 
     const [handoverSheets] = await db.query(
-      `SELECT closing_date, counter_no, sheet_no, opening_cash, counter_sales, all_counter_sales,
-              cash_sales, upi_sales, card_sales, dr_total, cr_total, notes_total, cash_balance,
-              variance_amount, handed_over_by, taken_over_by, created_at
-       FROM counter_handover_sheets
-       WHERE closing_date BETWEEN ? AND ?
-       ORDER BY closing_date ASC, counter_no ASC`,
+      `SELECT id, closing_date, counter_no, sheet_no, opening_cash, counter_sales, all_counter_sales,
+               cash_sales, upi_sales, card_sales, dr_total, cr_total, notes_total, cash_balance,
+               variance_amount, handed_over_by, taken_over_by,
+               DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
+               DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at
+        FROM counter_handover_sheets
+        WHERE closing_date BETWEEN ? AND ?
+        ORDER BY closing_date ASC, counter_no ASC`,
       [from, to]
     );
+    const handoverDenominationsBySheet = {};
+    if (handoverSheets.length) {
+      const [handoverDenominations] = await db.query(
+        `SELECT sheet_id, denomination_label, denomination_value, quantity, amount
+         FROM counter_handover_denominations
+         WHERE sheet_id IN (?)
+         ORDER BY denomination_value DESC`,
+        [handoverSheets.map((row) => row.id)]
+      );
+      handoverDenominations.forEach((row) => {
+        const key = Number(row.sheet_id);
+        if (!handoverDenominationsBySheet[key]) handoverDenominationsBySheet[key] = [];
+        handoverDenominationsBySheet[key].push(row);
+      });
+    }
 
     const [counterSalesRows] = await db.query(
       `SELECT billing_counter,
@@ -663,6 +680,56 @@ router.get('/accounting', async (req, res) => {
             'Notes Balance': Number(row.cash_sales || 0) - cashPurchaseTotal,
             Variance: 0
           })))
+        },
+        counterClosingSheets: {
+          title: 'Counter Closing Sheets',
+          summary: {
+            sheets: handoverSheets.length,
+            counterSales: sum(handoverSheets, 'counter_sales'),
+            notesBalance: sum(handoverSheets, 'cash_balance'),
+            difference: sum(handoverSheets, 'variance_amount')
+          },
+          columns: ['Date', 'Counter', 'Sheet No', 'Counter Sale', 'All Counter Sale', 'Cash', 'UPI', 'Card', 'DR', 'CR', 'Cash Notes', 'Notes Detail', '2000 Qty', '500 Qty', '200 Qty', '100 Qty', '50 Qty', '20 Qty', '10 Qty', '5 Qty', '2 Qty', '1 Qty', 'Difference', 'Handed Over', 'Checked By', 'Added Time', 'Edited Time', 'Action'],
+          rows: handoverSheets.map((row) => {
+            const denominations = handoverDenominationsBySheet[Number(row.id)] || [];
+            const denominationQty = denominations.reduce((acc, item) => {
+              acc[Number(item.denomination_value)] = Number(item.quantity || 0);
+              return acc;
+            }, {});
+            const notesDetail = denominations
+              .map((item) => `${item.denomination_label} x ${Number(item.quantity || 0)} = ${Number(item.amount || 0).toFixed(2)}`)
+              .join(', ');
+            return {
+              Date: row.closing_date,
+              Counter: row.counter_no,
+              'Sheet No': row.sheet_no,
+              'Counter Sale': Number(row.counter_sales || 0),
+              'All Counter Sale': Number(row.all_counter_sales || 0),
+              Cash: Number(row.cash_sales || 0),
+              UPI: Number(row.upi_sales || 0),
+              Card: Number(row.card_sales || 0),
+              DR: Number(row.dr_total || 0),
+              CR: Number(row.cr_total || 0),
+              'Cash Notes': Number(row.cash_balance || 0),
+              'Notes Detail': notesDetail,
+              '2000 Qty': denominationQty[2000] || '',
+              '500 Qty': denominationQty[500] || '',
+              '200 Qty': denominationQty[200] || '',
+              '100 Qty': denominationQty[100] || '',
+              '50 Qty': denominationQty[50] || '',
+              '20 Qty': denominationQty[20] || '',
+              '10 Qty': denominationQty[10] || '',
+              '5 Qty': denominationQty[5] || '',
+              '2 Qty': denominationQty[2] || '',
+              '1 Qty': denominationQty[1] || '',
+              Difference: Number(row.variance_amount || 0),
+              'Handed Over': row.handed_over_by || '',
+              'Checked By': row.taken_over_by || '',
+              'Added Time': row.created_at || '',
+              'Edited Time': row.updated_at || '',
+              Action: 'View'
+            };
+          })
         },
         purchaseBook: {
           title: 'Purchase Book',

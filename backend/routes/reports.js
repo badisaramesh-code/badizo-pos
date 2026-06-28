@@ -16,8 +16,13 @@ function normalizeCounterNoFromLabel(value) {
 }
 
 function nextIsoDate(dateText) {
-  const date = new Date(`${dateText}T00:00:00`);
-  date.setDate(date.getDate() + 1);
+  const match = String(dateText || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return dateText;
+  const date = new Date(Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]) + 1
+  ));
   return date.toISOString().slice(0, 10);
 }
 
@@ -341,7 +346,11 @@ router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async 
     );
 
     const [counterBillRows] = await db.query(
-      `SELECT COUNT(*) AS bill_count
+      `SELECT COUNT(*) AS bill_count,
+              COALESCE(SUM(CASE WHEN exchange_total > 0 THEN 1 ELSE 0 END), 0) AS exchange_bill_count,
+              COALESCE(SUM(CASE WHEN exchange_total > 0 THEN sub_total + gst_total ELSE 0 END), 0) AS exchange_sale_total,
+              COALESCE(SUM(exchange_total), 0) AS exchange_less,
+              COALESCE(SUM(CASE WHEN exchange_total > 0 THEN grand_total ELSE 0 END), 0) AS exchange_net_total
        FROM invoices
         WHERE DATE(created_at) = ?
           AND billing_counter = ?
@@ -373,7 +382,11 @@ router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async 
     );
 
     const [allBillRows] = await db.query(
-      `SELECT COUNT(*) AS bill_count
+      `SELECT COUNT(*) AS bill_count,
+              COALESCE(SUM(CASE WHEN exchange_total > 0 THEN 1 ELSE 0 END), 0) AS exchange_bill_count,
+              COALESCE(SUM(CASE WHEN exchange_total > 0 THEN sub_total + gst_total ELSE 0 END), 0) AS exchange_sale_total,
+              COALESCE(SUM(exchange_total), 0) AS exchange_less,
+              COALESCE(SUM(CASE WHEN exchange_total > 0 THEN grand_total ELSE 0 END), 0) AS exchange_net_total
        FROM invoices
         WHERE DATE(created_at) = ?
           AND invoice_status <> 'CANCELLED'`,
@@ -404,8 +417,16 @@ router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async 
 
     const counterTotals = normalizePaymentTotals(counterRows);
     counterTotals.billCount = Number(counterBillRows[0]?.bill_count || 0);
+    counterTotals.exchangeBillCount = Number(counterBillRows[0]?.exchange_bill_count || 0);
+    counterTotals.exchangeSaleTotal = Number(counterBillRows[0]?.exchange_sale_total || 0);
+    counterTotals.exchangeLess = Number(counterBillRows[0]?.exchange_less || 0);
+    counterTotals.exchangeNetTotal = Number(counterBillRows[0]?.exchange_net_total || 0);
     const allTotals = normalizePaymentTotals(allRows);
     allTotals.billCount = Number(allBillRows[0]?.bill_count || 0);
+    allTotals.exchangeBillCount = Number(allBillRows[0]?.exchange_bill_count || 0);
+    allTotals.exchangeSaleTotal = Number(allBillRows[0]?.exchange_sale_total || 0);
+    allTotals.exchangeLess = Number(allBillRows[0]?.exchange_less || 0);
+    allTotals.exchangeNetTotal = Number(allBillRows[0]?.exchange_net_total || 0);
 
     res.json({
       date,
@@ -472,7 +493,10 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
          COALESCE(SUM(gst_total), 0) AS gst_total,
          COALESCE(SUM(sub_total + gst_total), 0) AS sale_total,
          COALESCE(SUM(exchange_total), 0) AS exchange_total,
-         COALESCE(SUM(grand_total), 0) AS net_total
+         COALESCE(SUM(grand_total), 0) AS net_total,
+         COALESCE(SUM(CASE WHEN exchange_total > 0 THEN 1 ELSE 0 END), 0) AS exchange_bill_count,
+         COALESCE(SUM(CASE WHEN exchange_total > 0 THEN sub_total + gst_total ELSE 0 END), 0) AS exchange_sale_total,
+         COALESCE(SUM(CASE WHEN exchange_total > 0 THEN grand_total ELSE 0 END), 0) AS exchange_net_total
        FROM invoices i
        WHERE i.created_at >= ? AND i.created_at < ?
          AND i.invoice_status <> 'CANCELLED'
@@ -571,6 +595,9 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
       gst: Number(invoiceRows[0]?.gst_total || 0),
       saleTotal: Number(invoiceRows[0]?.sale_total || 0),
       exchangeTotal: Number(invoiceRows[0]?.exchange_total || 0),
+      exchangeBillCount: Number(invoiceRows[0]?.exchange_bill_count || 0),
+      exchangeSaleTotal: Number(invoiceRows[0]?.exchange_sale_total || 0),
+      exchangeNetTotal: Number(invoiceRows[0]?.exchange_net_total || 0),
       netTotal: Number(invoiceRows[0]?.net_total || 0)
     };
 

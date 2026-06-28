@@ -4,10 +4,13 @@ import { fetchAccountingBooks, saveAccountingVoucher, searchInwardSuppliers } fr
 import { todayIso } from '../utils/date';
 import { formatMoney } from '../utils/money';
 
+const COUNTER_CLOSING_VIEW_REQUEST_KEY = 'badizo_counter_closing_view_request';
+
 const BOOK_ORDER = [
   ['dayBook', 'Day Book'],
   ['cashBook', 'Cash Book'],
   ['counterCashBalance', 'Counter Cash Balance'],
+  ['counterClosingSheets', 'Counter Closing Sheets'],
   ['purchaseBook', 'Purchase Book'],
   ['sundryCreditors', 'Sundry Creditors'],
   ['sundryDebtors', 'Sundry Debtors'],
@@ -36,6 +39,12 @@ const DEFAULT_BOOKS = {
     title: 'Counter Cash Balance',
     summary: { sheets: 0, expectedCash: 0, notesBalance: 0, dr: 0, cr: 0 },
     columns: ['Date', 'Counter', 'Sheet No', 'Bills', 'Opening Cash', 'Cash Sales', 'UPI', 'Card', 'DR', 'CR', 'Notes Balance', 'Variance'],
+    rows: []
+  },
+  counterClosingSheets: {
+    title: 'Counter Closing Sheets',
+    summary: { sheets: 0, counterSales: 0, notesBalance: 0, difference: 0 },
+    columns: ['Date', 'Counter', 'Sheet No', 'Counter Sale', 'All Counter Sale', 'Cash', 'UPI', 'Card', 'DR', 'CR', 'Cash Notes', 'Notes Detail', '2000 Qty', '500 Qty', '200 Qty', '100 Qty', '50 Qty', '20 Qty', '10 Qty', '5 Qty', '2 Qty', '1 Qty', 'Difference', 'Handed Over', 'Checked By', 'Added Time', 'Edited Time', 'Action'],
     rows: []
   },
   purchaseBook: {
@@ -157,6 +166,7 @@ function getBookCardValue(key, book) {
   if (key === 'purchaseBook') return formatMoney(book.summary.purchases || 0);
   if (key === 'cashBook') return formatMoney(book.summary.closing || 0);
   if (key === 'counterCashBalance') return formatMoney(book.summary.notesBalance || 0);
+  if (key === 'counterClosingSheets') return `${book.summary.sheets || book?.rows?.length || 0} sheets`;
   if (key === 'taxBook') return formatMoney(book.summary.payable || 0);
   if (key === 'profitLoss') return formatMoney(book.summary.grossProfit || 0);
   if (key === 'balanceSheet') return formatMoney(book.summary.stockValue || 0);
@@ -178,7 +188,7 @@ function blankVoucherForm() {
   };
 }
 
-export default function BooksView() {
+export default function BooksView({ setActiveWorkspace }) {
   const [fromDate, setFromDate] = useState(financialYearStartIso());
   const [toDate, setToDate] = useState(todayIso());
   const [booksData, setBooksData] = useState(null);
@@ -233,12 +243,18 @@ export default function BooksView() {
 
   const activeReport = booksData?.books?.[activeBook] || DEFAULT_BOOKS[activeBook];
   const isAccountSearchBook = ['sundryCreditors', 'sundryDebtors'].includes(activeBook);
+  const isCounterClosingSheetBook = activeBook === 'counterClosingSheets';
   const visibleRows = useMemo(() => {
     const rows = activeReport?.rows || [];
     const query = accountSearch.trim().toLowerCase();
-    if (!query || !isAccountSearchBook) return rows;
-    return rows.filter((row) => String(row.Account || '').toLowerCase().includes(query));
-  }, [accountSearch, activeReport, isAccountSearchBook]);
+    if (!query) return rows;
+    if (isAccountSearchBook) return rows.filter((row) => String(row.Account || '').toLowerCase().includes(query));
+    if (isCounterClosingSheetBook) {
+      return rows.filter((row) => ['Date', 'Counter', 'Sheet No', 'Cash Notes', 'Notes Detail', 'Handed Over', 'Checked By', 'Added Time', 'Edited Time']
+        .some((column) => String(row[column] || '').toLowerCase().includes(query)));
+    }
+    return rows;
+  }, [accountSearch, activeReport, isAccountSearchBook, isCounterClosingSheetBook]);
 
   const bookCards = useMemo(() => BOOK_ORDER.map(([key, fallbackTitle]) => {
     const book = booksData?.books?.[key] || DEFAULT_BOOKS[key];
@@ -382,6 +398,15 @@ export default function BooksView() {
     }, 50);
   }
 
+  function viewCounterClosingSheet(row) {
+    const date = row?.Date;
+    const counterNo = Number(row?.Counter || 1);
+    if (!date) return;
+    window.sessionStorage.setItem(COUNTER_CLOSING_VIEW_REQUEST_KEY, JSON.stringify({ date, counterNo }));
+    setStatusMessage(`Opening ${row['Sheet No'] || 'counter closing sheet'} in Counter Closing.`);
+    setActiveWorkspace?.('closing');
+  }
+
   return (
     <div className="form-stack books-view">
       {errorMessage && <div className="alert-box">{errorMessage}</div>}
@@ -470,6 +495,19 @@ export default function BooksView() {
                   <span key={label}>{label}: <strong>{value}</strong></span>
                 ))}
               </div>
+              {isCounterClosingSheetBook && (
+                <div className="books-account-tools">
+                  <label className="supplier-lookup-field">
+                    <span className="field-label">Search Sheet</span>
+                    <input
+                      className="field"
+                      value={accountSearch}
+                      onChange={(event) => setAccountSearch(event.target.value)}
+                      placeholder="Search date, counter, sheet no, person, added/edited time"
+                    />
+                  </label>
+                </div>
+              )}
               {isAccountSearchBook && (
                 <div className="books-account-tools">
                   <label className="supplier-lookup-field">
@@ -570,7 +608,11 @@ export default function BooksView() {
                     ) : visibleRows.map((row, index) => (
                       <tr key={`${activeBook}-${index}`}>
                         {activeReport.columns.map((column) => (
-                          <td key={column}>{formatCell(row[column], column)}</td>
+                          <td key={column}>
+                            {activeBook === 'counterClosingSheets' && column === 'Action'
+                              ? <button className="secondary-button" type="button" onClick={() => viewCounterClosingSheet(row)}>View</button>
+                              : formatCell(row[column], column)}
+                          </td>
                         ))}
                       </tr>
                     ))}

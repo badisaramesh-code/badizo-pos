@@ -837,7 +837,7 @@ export async function fetchCounterHandover(date, counterNo) {
 }
 
 export async function saveCounterHandover(payload) {
-  const { data } = await api.post('/counter-closing/handover', payload);
+  const { data } = await api.post('/counter-closing/handover', payload, { timeout: 30000 });
   return data;
 }
 

@@ -7,6 +7,7 @@ const { normalizeDate, parseMoney } = require('../utils/formatters');
 
 const DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
 const CASH_BALANCE_LEDGER = 'Counter Cash Balance Sheet';
+const AUTO_ENTRY_DETAILS = new Set(['Counter Closing Cash', 'Today Sale']);
 
 function normalizeCounterNo(value, user) {
   if (user?.role === 'COUNTER' && user.counter_no) return Number(user.counter_no);
@@ -14,8 +15,13 @@ function normalizeCounterNo(value, user) {
 }
 
 function nextIsoDate(dateText) {
-  const date = new Date(`${dateText}T00:00:00`);
-  date.setDate(date.getDate() + 1);
+  const match = String(dateText || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return dateText;
+  const date = new Date(Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]) + 1
+  ));
   return date.toISOString().slice(0, 10);
 }
 
@@ -55,6 +61,10 @@ function normalizeEntries(entries) {
     .filter((entry) => entry.details && entry.amount > 0);
 }
 
+function isAutoEntry(entry) {
+  return AUTO_ENTRY_DETAILS.has(String(entry.details || '').trim());
+}
+
 function normalizeDenominationRows(denominations) {
   const source = denominations && typeof denominations === 'object' ? denominations : {};
   return DENOMINATIONS.map((value) => {
@@ -69,6 +79,7 @@ function normalizeDenominationRows(denominations) {
 }
 
 async function getSalesSnapshot(date, counterNo) {
+  const nextDate = nextIsoDate(date);
   const [counterRows] = await db.query(
     `SELECT
        COALESCE(SUM(amount), 0) AS total,
@@ -112,6 +123,29 @@ async function getSalesSnapshot(date, counterNo) {
      ) payments`,
     [date, date]
   );
+  const [counterExchangeRows] = await db.query(
+    `SELECT
+       COALESCE(SUM(CASE WHEN exchange_total > 0 THEN 1 ELSE 0 END), 0) AS exchange_bill_count,
+       COALESCE(SUM(CASE WHEN exchange_total > 0 THEN sub_total + gst_total ELSE 0 END), 0) AS exchange_sale_total,
+       COALESCE(SUM(exchange_total), 0) AS exchange_less,
+       COALESCE(SUM(CASE WHEN exchange_total > 0 THEN grand_total ELSE 0 END), 0) AS exchange_net_total
+     FROM invoices
+     WHERE created_at >= ? AND created_at < ?
+       AND billing_counter = ?
+       AND invoice_status <> 'CANCELLED'`,
+    [date, nextDate, `Counter ${counterNo}`]
+  );
+  const [allExchangeRows] = await db.query(
+    `SELECT
+       COALESCE(SUM(CASE WHEN exchange_total > 0 THEN 1 ELSE 0 END), 0) AS exchange_bill_count,
+       COALESCE(SUM(CASE WHEN exchange_total > 0 THEN sub_total + gst_total ELSE 0 END), 0) AS exchange_sale_total,
+       COALESCE(SUM(exchange_total), 0) AS exchange_less,
+       COALESCE(SUM(CASE WHEN exchange_total > 0 THEN grand_total ELSE 0 END), 0) AS exchange_net_total
+     FROM invoices
+     WHERE created_at >= ? AND created_at < ?
+       AND invoice_status <> 'CANCELLED'`,
+    [date, nextDate]
+  );
   const [latestRows] = await db.query(
     `SELECT DATE_FORMAT(MAX(created_at), '%Y-%m-%d') AS latest_invoice_date,
             COUNT(*) AS invoice_count
@@ -126,6 +160,14 @@ async function getSalesSnapshot(date, counterNo) {
     upi_sales: Number(counterRows[0]?.upi || 0),
     card_sales: Number(counterRows[0]?.card || 0),
     other_sales: Number(counterRows[0]?.other || 0),
+    exchange_bill_count: Number(counterExchangeRows[0]?.exchange_bill_count || 0),
+    exchange_sale_total: Number(counterExchangeRows[0]?.exchange_sale_total || 0),
+    exchange_less: Number(counterExchangeRows[0]?.exchange_less || 0),
+    exchange_net_total: Number(counterExchangeRows[0]?.exchange_net_total || 0),
+    all_exchange_bill_count: Number(allExchangeRows[0]?.exchange_bill_count || 0),
+    all_exchange_sale_total: Number(allExchangeRows[0]?.exchange_sale_total || 0),
+    all_exchange_less: Number(allExchangeRows[0]?.exchange_less || 0),
+    all_exchange_net_total: Number(allExchangeRows[0]?.exchange_net_total || 0),
     latest_invoice_date: latestRows[0]?.latest_invoice_date || null,
     invoice_count: Number(latestRows[0]?.invoice_count || 0)
   };
@@ -136,7 +178,9 @@ async function loadHandoverSheet(date, counterNo) {
     `SELECT id, DATE_FORMAT(closing_date, '%Y-%m-%d') AS closing_date, counter_no, sheet_no,
             opening_cash, counter_sales, all_counter_sales, cash_sales, upi_sales, card_sales,
             dr_total, cr_total, notes_total, cash_balance, variance_amount,
-            handed_over_by, taken_over_by, notes, created_by, created_at, updated_at
+            handed_over_by, taken_over_by, notes, created_by,
+            DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
+            DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at
      FROM counter_handover_sheets
      WHERE closing_date = ? AND counter_no = ?
      LIMIT 1`,
@@ -233,7 +277,9 @@ router.get('/handover/history', authorize('SERVER', 'ADMIN'), async (req, res) =
     const [rows] = await db.query(
       `SELECT id, DATE_FORMAT(closing_date, '%Y-%m-%d') AS closing_date, counter_no, sheet_no, counter_sales, all_counter_sales,
               dr_total, cr_total, notes_total, cash_balance, variance_amount,
-              handed_over_by, taken_over_by, created_at, updated_at
+              handed_over_by, taken_over_by,
+              DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
+              DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at
        FROM counter_handover_sheets
        WHERE closing_date BETWEEN ? AND ?${counterClause}
        ORDER BY closing_date DESC, counter_no ASC`,
@@ -252,19 +298,22 @@ router.post('/handover', async (req, res) => {
   const openingCash = parseMoney(req.body?.opening_cash);
   const entries = normalizeEntries(req.body?.entries);
   const denominationRows = normalizeDenominationRows(req.body?.denominations);
-  const handedOverBy = String(req.body?.handed_over_by || '').trim();
-  const takenOverBy = String(req.body?.taken_over_by || '').trim();
+  const defaultPerson = req.user?.username || `Counter ${counterNo}`;
+  const handedOverBy = String(req.body?.handed_over_by || defaultPerson).trim() || defaultPerson;
+  const takenOverBy = String(req.body?.taken_over_by || defaultPerson).trim() || defaultPerson;
   const notes = String(req.body?.notes || '').trim();
-
-  if (!handedOverBy || !takenOverBy) {
-    return res.status(400).json({ error: 'Handed over by and taken over by are required.' });
-  }
 
   try {
     const snapshot = await getSalesSnapshot(date, counterNo);
     const notesTotal = denominationRows.reduce((sum, row) => sum + row.amount, 0);
-    const entryDrTotal = entries.filter((entry) => entry.direction === 'DR').reduce((sum, entry) => sum + entry.amount, 0);
-    const entryCrTotal = entries.filter((entry) => entry.direction === 'CR').reduce((sum, entry) => sum + entry.amount, 0);
+    const manualEntries = entries.filter((entry) => !isAutoEntry(entry));
+    const closingEntries = [
+      ...manualEntries,
+      { line_no: manualEntries.length + 1, entry_type: 'CLOSING_BASE', details: 'Counter Closing Cash', remarks: 'Auto from opening cash', direction: 'CR', amount: openingCash },
+      { line_no: manualEntries.length + 2, entry_type: 'SALES', details: 'Today Sale', remarks: 'Auto counter sales total', direction: 'CR', amount: snapshot.counter_sales }
+    ].filter((entry) => entry.amount > 0);
+    const entryDrTotal = closingEntries.filter((entry) => entry.direction === 'DR').reduce((sum, entry) => sum + entry.amount, 0);
+    const entryCrTotal = closingEntries.filter((entry) => entry.direction === 'CR').reduce((sum, entry) => sum + entry.amount, 0);
     const drTotal = entryDrTotal + notesTotal;
     const crTotal = entryCrTotal;
     const cashBalance = notesTotal;
@@ -295,7 +344,8 @@ router.post('/handover', async (req, res) => {
            handed_over_by = VALUES(handed_over_by),
            taken_over_by = VALUES(taken_over_by),
            notes = VALUES(notes),
-           created_by = VALUES(created_by)`,
+           created_by = VALUES(created_by),
+           updated_at = CURRENT_TIMESTAMP`,
         [
           date,
           counterNo,
@@ -319,10 +369,17 @@ router.post('/handover', async (req, res) => {
       );
 
       const [sheetRows] = await connection.query(
-        `SELECT id FROM counter_handover_sheets WHERE closing_date = ? AND counter_no = ? LIMIT 1`,
+        `SELECT id,
+                DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
+                DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at
+         FROM counter_handover_sheets
+         WHERE closing_date = ? AND counter_no = ?
+         LIMIT 1`,
         [date, counterNo]
       );
       const sheetId = sheetRows[0].id;
+      const savedCreatedAt = sheetRows[0].created_at || '';
+      const savedUpdatedAt = sheetRows[0].updated_at || '';
 
       await connection.query('DELETE FROM counter_handover_entries WHERE sheet_id = ?', [sheetId]);
       await connection.query('DELETE FROM counter_handover_denominations WHERE sheet_id = ?', [sheetId]);
@@ -331,7 +388,8 @@ router.post('/handover', async (req, res) => {
         [sheetId]
       );
 
-      for (const entry of entries) {
+      let ledgerEntryCount = 0;
+      for (const entry of closingEntries) {
         await connection.query(
           `INSERT INTO counter_handover_entries
            (sheet_id, line_no, entry_type, details, remarks, direction, amount)
@@ -354,6 +412,7 @@ router.post('/handover', async (req, res) => {
             req.user.username
           ]
         );
+        ledgerEntryCount += 1;
       }
 
       for (const row of denominationRows) {
@@ -380,6 +439,7 @@ router.post('/handover', async (req, res) => {
             req.user.username
           ]
         );
+        ledgerEntryCount += 1;
       }
 
       await connection.commit();
@@ -398,12 +458,15 @@ router.post('/handover', async (req, res) => {
         date,
         counter_no: counterNo,
         sheet_no: sheetNo,
+        created_at: savedCreatedAt,
+        updated_at: savedUpdatedAt,
         snapshot,
         dr_total: drTotal,
         cr_total: crTotal,
         notes_total: notesTotal,
         cash_balance: cashBalance,
-        variance_amount: varianceAmount
+        variance_amount: varianceAmount,
+        ledger_entry_count: ledgerEntryCount
       });
     } catch (err) {
       await connection.rollback();

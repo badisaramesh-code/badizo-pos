@@ -202,8 +202,16 @@ function CounterSaleSlip({ slip, shop, printedAt }) {
       <div className="counter-sale-slip-line"><span>Card Sale</span><strong>{formatSlipAmount(counter.cardSale)}</strong></div>
       <div className="counter-sale-slip-line"><span>Cash Sale</span><strong>{formatSlipAmount(counter.cashSale)}</strong></div>
       <div className="counter-sale-slip-total"><span>Total Sale</span><strong>{formatSlipAmount(counter.totalSale)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Exchange Bills</span><strong>{Number(counter.exchangeBillCount || 0)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Exchange Sale</span><strong>{formatSlipAmount(counter.exchangeSaleTotal)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Exchange Less</span><strong>{formatSlipAmount(counter.exchangeLess)}</strong></div>
+      <div className="counter-sale-slip-total"><span>Exchange Net</span><strong>{formatSlipAmount(counter.exchangeNetTotal)}</strong></div>
       <div className="counter-sale-slip-rule" />
       <div className="counter-sale-slip-total all-sale"><span>All Counter Sale</span><strong>{formatSlipAmount(allCounters.totalSale)}</strong></div>
+      <div className="counter-sale-slip-line"><span>All Exchange Bills</span><strong>{Number(allCounters.exchangeBillCount || 0)}</strong></div>
+      <div className="counter-sale-slip-line"><span>All Exchange Sale</span><strong>{formatSlipAmount(allCounters.exchangeSaleTotal)}</strong></div>
+      <div className="counter-sale-slip-line"><span>All Exchange Less</span><strong>{formatSlipAmount(allCounters.exchangeLess)}</strong></div>
+      <div className="counter-sale-slip-total"><span>All Exchange Net</span><strong>{formatSlipAmount(allCounters.exchangeNetTotal)}</strong></div>
       <div className="counter-sale-slip-line"><span>Net Sale</span><strong>{formatSlipAmount(allCounters.totalSale)}</strong></div>
       <div className="counter-sale-slip-rule" />
       <div className="counter-sale-slip-footer">Cash handover slip</div>
@@ -255,7 +263,10 @@ function SaleReportSlip({ report, shop, printedAt }) {
       <div className="counter-sale-slip-rule" />
       <div className="counter-sale-slip-line"><span>Taxable</span><strong>{formatSlipAmount(totals.taxable)}</strong></div>
       <div className="counter-sale-slip-line"><span>GST</span><strong>{formatSlipAmount(totals.gst)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Exchange Bills</span><strong>{Number(totals.exchangeBillCount || 0)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Exchange Sale</span><strong>{formatSlipAmount(totals.exchangeSaleTotal)}</strong></div>
       <div className="counter-sale-slip-line"><span>Exchange Less</span><strong>{formatSlipAmount(totals.exchangeTotal)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Exchange Net</span><strong>{formatSlipAmount(totals.exchangeNetTotal)}</strong></div>
       <div className="counter-sale-slip-total"><span>Net Sale</span><strong>{formatSlipAmount(totals.netTotal)}</strong></div>
       <div className="counter-sale-slip-rule" />
       <div className="counter-sale-slip-line sale-report-bill-range"><span>Bill Starting No</span><strong>{totals.startingInvoiceNo || '-'}</strong></div>
@@ -2139,7 +2150,7 @@ export default function BillingTerminalView({ isActive = true }) {
     try {
       const printedAt = new Date();
       const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
-      const defaultSlipHeightMm = 90;
+      const defaultSlipHeightMm = 125;
       const thermalFeedMarginMm = getThermalFeedMarginMm(shopSettings);
       const slip = await fetchCounterSaleSlip({ date: localIsoDate(printedAt), counterNo });
       const slipMarkup = renderToStaticMarkup(<CounterSaleSlip slip={slip} shop={shopSettings} printedAt={printedAt} />);
@@ -2363,7 +2374,7 @@ export default function BillingTerminalView({ isActive = true }) {
     try {
       const printedAt = new Date();
       const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
-      const defaultSlipHeightMm = reportToPrint.reportType === 'GST' ? 150 : 105;
+      const defaultSlipHeightMm = reportToPrint.reportType === 'GST' ? 175 : 130;
       const thermalFeedMarginMm = getThermalFeedMarginMm(shopSettings);
       const slipMarkup = renderToStaticMarkup(<SaleReportSlip report={reportToPrint} shop={shopSettings} printedAt={printedAt} />);
       const slipPrintHtml = `<!doctype html>

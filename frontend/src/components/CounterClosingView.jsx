@@ -15,7 +15,23 @@ const HANDOVER_TRANSACTION_ROWS = 30;
 const HANDOVER_PRINT_MANUAL_ROWS = 23;
 const HANDOVER_PRINT_DENOMINATION_ROWS = 8;
 const AUTO_ENTRY_DETAILS = new Set(['Counter Closing Cash', 'Today Sale']);
-const EMPTY_SNAPSHOT = { counter_sales: 0, all_counter_sales: 0, cash_sales: 0, upi_sales: 0, card_sales: 0, other_sales: 0 };
+const COUNTER_CLOSING_VIEW_REQUEST_KEY = 'badizo_counter_closing_view_request';
+const EMPTY_SNAPSHOT = {
+  counter_sales: 0,
+  all_counter_sales: 0,
+  cash_sales: 0,
+  upi_sales: 0,
+  card_sales: 0,
+  other_sales: 0,
+  exchange_bill_count: 0,
+  exchange_sale_total: 0,
+  exchange_less: 0,
+  exchange_net_total: 0,
+  all_exchange_bill_count: 0,
+  all_exchange_sale_total: 0,
+  all_exchange_less: 0,
+  all_exchange_net_total: 0
+};
 
 function emptyDenominations(denominations) {
   return denominations.reduce((acc, value) => ({ ...acc, [value]: '' }), {});
@@ -93,7 +109,15 @@ function normalizeSnapshot(source) {
     cash_sales: cashSales,
     upi_sales: upiSales,
     card_sales: cardSales,
-    other_sales: Math.max(explicitOther, 0)
+    other_sales: Math.max(explicitOther, 0),
+    exchange_bill_count: Number(source?.exchange_bill_count || 0),
+    exchange_sale_total: toNumber(source?.exchange_sale_total),
+    exchange_less: toNumber(source?.exchange_less),
+    exchange_net_total: toNumber(source?.exchange_net_total),
+    all_exchange_bill_count: Number(source?.all_exchange_bill_count || 0),
+    all_exchange_sale_total: toNumber(source?.all_exchange_sale_total),
+    all_exchange_less: toNumber(source?.all_exchange_less),
+    all_exchange_net_total: toNumber(source?.all_exchange_net_total)
   };
 }
 
@@ -160,6 +184,22 @@ export default function CounterClosingView() {
   useEffect(() => {
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    const rawRequest = window.sessionStorage.getItem(COUNTER_CLOSING_VIEW_REQUEST_KEY);
+    if (!rawRequest) return;
+    window.sessionStorage.removeItem(COUNTER_CLOSING_VIEW_REQUEST_KEY);
+    try {
+      const request = JSON.parse(rawRequest);
+      const requestedDate = normalizeDateInput(request.date);
+      const requestedCounter = Math.max(Number.parseInt(request.counterNo, 10) || userCounterNo, 1);
+      setDate(requestedDate);
+      setCounterNo(requestedCounter);
+      setStatusMessage(`Opening saved counter closing sheet for ${formatDisplayDate(requestedDate)} Counter ${requestedCounter}.`);
+    } catch (err) {
+      setErrorMessage('Unable to open selected counter closing sheet.');
+    }
+  }, [userCounterNo]);
 
   useEffect(() => {
     loadHandover();
@@ -276,7 +316,7 @@ export default function CounterClosingView() {
       const savedSheet = result.sheet;
       setSheetNo(savedSheet?.sheet_no || result.sheet_no || '');
       setSheetMeta(savedSheet ? { created_at: savedSheet.created_at || '', updated_at: savedSheet.updated_at || '' } : { created_at: '', updated_at: '' });
-      setSnapshot(savedSheet ? normalizeSnapshot(savedSheet) : nextSnapshot);
+      setSnapshot(nextSnapshot);
       setDenominationList(nextDenominations);
 
       if (savedSheet) {
@@ -408,12 +448,14 @@ export default function CounterClosingView() {
     setStatusMessage('');
     setErrorMessage('');
 
-    if (!handedOverBy.trim() || !takenOverBy.trim()) {
-      setErrorMessage('Enter both handover person and checked/taken over person before saving.');
-      return;
-    }
+    const fallbackPerson = currentUser?.username || `Counter ${counterNo}`;
+    const saveHandedOverBy = handedOverBy.trim() || fallbackPerson;
+    const saveTakenOverBy = takenOverBy.trim() || fallbackPerson;
+    if (!handedOverBy.trim()) setHandedOverBy(saveHandedOverBy);
+    if (!takenOverBy.trim()) setTakenOverBy(saveTakenOverBy);
 
     setIsSaving(true);
+    setStatusMessage('Saving handover sheet and posting ledger...');
     try {
       const result = await saveCounterHandover({
         date: normalizeDateInput(date),
@@ -421,15 +463,21 @@ export default function CounterClosingView() {
         opening_cash: openingCash,
         entries: [...enteredEntries, ...autoLedgerRows].map((entry, index) => ({ ...entry, line_no: index + 1 })),
         denominations,
-        handed_over_by: handedOverBy,
-        taken_over_by: takenOverBy,
+        handed_over_by: saveHandedOverBy,
+        taken_over_by: saveTakenOverBy,
         notes
       });
-      setStatusMessage(`Sheet ${result.sheet_no} saved. Cash notes balance: ${formatMoney(result.cash_balance)}. Difference: ${formatMoney(result.variance_amount)}.`);
       await loadHandover();
       if (!isCounterUser) await loadHistory();
+      setSheetNo(result.sheet_no || sheetNo);
+      setSheetMeta({ created_at: result.created_at || '', updated_at: result.updated_at || '' });
+      setStatusMessage(`Sheet ${result.sheet_no} saved. Ledger rows posted: ${Number(result.ledger_entry_count || 0)}. Cash notes balance: ${formatMoney(result.cash_balance)}. Difference: ${formatMoney(result.variance_amount)}.`);
     } catch (err) {
-      setErrorMessage(err.response?.data?.error || 'Unable to save counter handover sheet.');
+      const message = err.code === 'ECONNABORTED'
+        ? 'Save timed out while posting ledger. Please press View to check if the sheet saved, then try again if needed.'
+        : err.response?.data?.error || 'Unable to save counter handover sheet.';
+      setErrorMessage(message);
+      setStatusMessage('Save failed. Sheet was not confirmed.');
     } finally {
       setIsSaving(false);
     }
@@ -602,6 +650,14 @@ export default function CounterClosingView() {
     <div class="sale-row">
       <strong>Counter ${escapeHtml(counterNo)} sale Rs. ${normalizeAmount(snapshot.counter_sales).toFixed(2)}</strong>
       <strong>All Counters sale Rs : ${normalizeAmount(snapshot.all_counter_sales).toFixed(2)}</strong>
+    </div>
+    <div class="sale-row">
+      <strong>Exchange Bills ${Number(snapshot.exchange_bill_count || 0)} / Rs. ${normalizeAmount(snapshot.exchange_less).toFixed(2)}</strong>
+      <strong>All Exchange ${Number(snapshot.all_exchange_bill_count || 0)} / Rs. ${normalizeAmount(snapshot.all_exchange_less).toFixed(2)}</strong>
+    </div>
+    <div class="sale-row">
+      <strong>Exchange Sale Rs. ${normalizeAmount(snapshot.exchange_sale_total).toFixed(2)} Net Rs. ${normalizeAmount(snapshot.exchange_net_total).toFixed(2)}</strong>
+      <strong>All Ex Sale Rs. ${normalizeAmount(snapshot.all_exchange_sale_total).toFixed(2)} Net Rs. ${normalizeAmount(snapshot.all_exchange_net_total).toFixed(2)}</strong>
     </div>
     <table>
       <thead><tr><th>Sno</th><th>Details</th><th>Remarks</th><th>DR Rs</th><th>CR Rs</th></tr></thead>
@@ -821,7 +877,15 @@ export default function CounterClosingView() {
             <div><span>UPI Sale</span><strong>{formatMoney(snapshot.upi_sales)}</strong></div>
             <div><span>Card Sale</span><strong>{formatMoney(snapshot.card_sales)}</strong></div>
             <div><span>Other Sale</span><strong>{formatMoney(snapshot.other_sales)}</strong></div>
+            <div><span>Exchange Bills</span><strong>{Number(snapshot.exchange_bill_count || 0)}</strong></div>
+            <div><span>Exchange Sale</span><strong>{formatMoney(snapshot.exchange_sale_total)}</strong></div>
+            <div><span>Exchange Less</span><strong>{formatMoney(snapshot.exchange_less)}</strong></div>
+            <div><span>Exchange Net</span><strong>{formatMoney(snapshot.exchange_net_total)}</strong></div>
             <div><span>All Counters Sale</span><strong>{formatMoney(snapshot.all_counter_sales)}</strong></div>
+            <div><span>All Exchange Bills</span><strong>{Number(snapshot.all_exchange_bill_count || 0)}</strong></div>
+            <div><span>All Exchange Sale</span><strong>{formatMoney(snapshot.all_exchange_sale_total)}</strong></div>
+            <div><span>All Exchange Less</span><strong>{formatMoney(snapshot.all_exchange_less)}</strong></div>
+            <div><span>All Exchange Net</span><strong>{formatMoney(snapshot.all_exchange_net_total)}</strong></div>
           </div>
 
           <div className="handover-actions-row">
@@ -1036,6 +1100,14 @@ export default function CounterClosingView() {
           <div className="handover-print-sale-row">
             <strong>Counter {counterNo} sale Rs. {normalizeAmount(snapshot.counter_sales).toFixed(2)}</strong>
             <strong>All Counters sale Rs : {normalizeAmount(snapshot.all_counter_sales).toFixed(2)}</strong>
+          </div>
+          <div className="handover-print-sale-row">
+            <strong>Exchange Bills {Number(snapshot.exchange_bill_count || 0)} / Rs. {normalizeAmount(snapshot.exchange_less).toFixed(2)}</strong>
+            <strong>All Exchange {Number(snapshot.all_exchange_bill_count || 0)} / Rs. {normalizeAmount(snapshot.all_exchange_less).toFixed(2)}</strong>
+          </div>
+          <div className="handover-print-sale-row">
+            <strong>Exchange Sale Rs. {normalizeAmount(snapshot.exchange_sale_total).toFixed(2)} Net Rs. {normalizeAmount(snapshot.exchange_net_total).toFixed(2)}</strong>
+            <strong>All Ex Sale Rs. {normalizeAmount(snapshot.all_exchange_sale_total).toFixed(2)} Net Rs. {normalizeAmount(snapshot.all_exchange_net_total).toFixed(2)}</strong>
           </div>
           <table>
             <thead><tr><th>Sno</th><th>Details</th><th>Remarks</th><th>DR Rs</th><th>CR Rs</th></tr></thead>

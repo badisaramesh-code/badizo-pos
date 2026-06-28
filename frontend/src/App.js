@@ -97,7 +97,7 @@ export default function App() {
     inward: <InwardEntryView />,
     staffPayroll: <StaffPayrollView />,
     reports: <ReportsView isActive={activeWorkspace === 'reports'} onClose={() => setActiveWorkspace('billing')} />,
-    books: <BooksView />,
+    books: <BooksView setActiveWorkspace={setActiveWorkspace} />,
     system: <SystemView />
   };
 
