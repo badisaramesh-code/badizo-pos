@@ -2,9 +2,13 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { normalizeDate } = require('../utils/formatters');
+const { normalizeDate, parseMoney } = require('../utils/formatters');
 
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
+
+const CASH_ACCOUNT_LEDGER = 'Counter Closing Cash Account';
+const CASH_ACCOUNT_MANUAL_SOURCE = 'CASH_ACCOUNT_MANUAL';
+const COUNTER_CASH_DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
 
 async function hasColumn(tableName, columnName) {
   const [rows] = await db.query(
@@ -67,6 +71,94 @@ function addAgingAmount(summary, bucket, amount) {
   else summary.days90Plus += amount;
   if (bucket !== 'Not Due') summary.overdue += amount;
   summary.total += amount;
+}
+
+function formatCashAccountDate(value) {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+  return date.toISOString().slice(0, 10);
+}
+
+function buildCounterClosingCashRows(handoverSheets, denominationsBySheet, manualEntries) {
+  const rows = [];
+
+  handoverSheets.forEach((sheet) => {
+    const sheetRows = denominationsBySheet[Number(sheet.id)] || [];
+    sheetRows.forEach((noteRow, index) => {
+      const denomination = Number(noteRow.denomination_value || 0);
+      const quantity = Number(noteRow.quantity || 0);
+      const amount = Number(noteRow.amount || 0);
+      rows.push({
+        Date: index === 0 ? formatCashAccountDate(sheet.closing_date) : '',
+        SortDate: formatCashAccountDate(sheet.closing_date),
+        Details: index === 0 ? `COUNTER ${sheet.counter_no} SALE` : '',
+        Counter: index === 0 ? `C.${sheet.counter_no}` : '',
+        'Note Detail': `${denomination.toFixed(2)} x ${quantity}`,
+        'DR Rs': amount,
+        'CR Rs': 0,
+        'dr/cr': 'Dr',
+        Source: 'AUTO',
+        SourceId: Number(sheet.id || 0),
+        Sequence: index
+      });
+    });
+  });
+
+  manualEntries.forEach((entry, index) => {
+    const direction = entry.direction === 'DR' ? 'DR' : 'CR';
+    rows.push({
+      Date: formatCashAccountDate(entry.entry_date),
+      SortDate: formatCashAccountDate(entry.entry_date),
+      Details: entry.details || entry.account_name || '',
+      Counter: entry.counter_no ? `C.${entry.counter_no}` : '',
+      'Note Detail': '',
+      'DR Rs': direction === 'DR' ? Number(entry.amount || 0) : 0,
+      'CR Rs': direction === 'CR' ? Number(entry.amount || 0) : 0,
+      'dr/cr': direction === 'DR' ? 'Dr' : 'Cr',
+      Source: 'MANUAL',
+      SourceId: Number(entry.id || 0),
+      Sequence: 100000 + index
+    });
+  });
+
+  let balance = 0;
+  return rows
+    .sort((a, b) => String(a.SortDate).localeCompare(String(b.SortDate)) || a.Sequence - b.Sequence)
+    .map((row) => {
+      balance += Number(row['DR Rs'] || 0) - Number(row['CR Rs'] || 0);
+      return {
+        Date: row.Date,
+        Details: row.Details,
+        Counter: row.Counter,
+        'Note Detail': row['Note Detail'],
+        'DR Rs': row['DR Rs'] || '',
+        'CR Rs': row['CR Rs'] || '',
+        'Balance Rs': balance,
+        'dr/cr': row['dr/cr'],
+        Source: row.Source,
+        SourceId: row.SourceId
+      };
+    });
+}
+
+function voucherTypeLabel(type) {
+  if (type === 'CREDITOR_PAYMENT') return 'Creditor Payment';
+  if (type === 'DEBTOR_RECEIPT') return 'Debtor Receipt';
+  if (type === 'EXPENSE') return 'Expense Voucher';
+  if (type === 'CUSTOMER_CREDIT') return 'Customer Credit';
+  return 'Voucher';
+}
+
+function voucherDebit(row) {
+  if (row.voucher_type === 'CREDITOR_PAYMENT') return Number(row.amount || 0);
+  if (row.voucher_type === 'EXPENSE') return Number(row.amount || 0);
+  if (row.voucher_type === 'CUSTOMER_CREDIT') return Number(row.amount || 0);
+  return 0;
+}
+
+function voucherCredit(row) {
+  return row.voucher_type === 'DEBTOR_RECEIPT' ? Number(row.amount || 0) : 0;
 }
 
 router.get('/summary', async (req, res) => {
@@ -205,6 +297,15 @@ router.get('/accounting', async (req, res) => {
        WHERE entry_date BETWEEN ? AND ?
        ORDER BY entry_date ASC, created_at ASC, id ASC`,
       [from, to]
+    );
+
+    const [cashAccountManualEntries] = await db.query(
+      `SELECT id, entry_date, counter_no, details, direction, amount, created_by, created_at
+       FROM counter_cash_ledger_entries
+       WHERE entry_date BETWEEN ? AND ?
+         AND source_type = ?
+       ORDER BY entry_date ASC, created_at ASC, id ASC`,
+      [from, to, CASH_ACCOUNT_MANUAL_SOURCE]
     );
 
     const [handoverSheets] = await db.query(
@@ -347,7 +448,14 @@ router.get('/accounting', async (req, res) => {
     );
 
     const supplierNames = Array.from(new Set(purchases.filter((row) => row.payment_mode !== 'Cash').map((row) => String(row.supplier_name || '').trim()).filter(Boolean)));
-    const customerNames = Array.from(new Set(sales.map((row) => String(row.customer_name || 'Walk-in Customer').trim()).filter(Boolean)));
+    const voucherCustomerNames = vouchers
+      .filter((row) => ['CUSTOMER_CREDIT', 'DEBTOR_RECEIPT'].includes(row.voucher_type))
+      .map((row) => String(row.account_name || '').trim())
+      .filter(Boolean);
+    const customerNames = Array.from(new Set([
+      ...sales.map((row) => String(row.customer_name || 'Walk-in Customer').trim()).filter(Boolean),
+      ...voucherCustomerNames
+    ]));
     const sum = (rows, field) => rows.reduce((total, row) => total + Number(row[field] || 0), 0);
     const cashSales = sales.filter((row) => row.payment_mode === 'Cash');
     const upiSales = sales.filter((row) => row.payment_mode === 'UPI');
@@ -358,7 +466,7 @@ router.get('/accounting', async (req, res) => {
     const purchaseTax = sum(purchases, 'gst_total');
     const cashDr = sum(cashLedger.filter((row) => row.direction === 'DR'), 'amount');
     const cashCr = sum(cashLedger.filter((row) => row.direction === 'CR'), 'amount');
-    const cashVoucherPayments = sum(vouchers.filter((row) => row.voucher_type === 'CREDITOR_PAYMENT' && row.payment_mode === 'Cash'), 'amount');
+    const cashVoucherPayments = sum(vouchers.filter((row) => ['CREDITOR_PAYMENT', 'EXPENSE'].includes(row.voucher_type) && row.payment_mode === 'Cash'), 'amount');
     const cashVoucherReceipts = sum(vouchers.filter((row) => row.voucher_type === 'DEBTOR_RECEIPT' && row.payment_mode === 'Cash'), 'amount');
     const cashSupplierPayments = sum(supplierPayments.filter((row) => row.payment_mode === 'Cash'), 'amount');
     const stockValue = Number(stockRows[0]?.stock_value || 0);
@@ -370,6 +478,10 @@ router.get('/accounting', async (req, res) => {
     const declaredCounterCash = sum(handoverSheets, 'cash_balance');
     const cashPurchaseTotal = sum(cashPurchases, 'grand_total');
     const counterCashBalance = handoverSheets.length ? declaredCounterCash : cashSalesTotal + cashDr + cashVoucherReceipts - cashCr - cashPurchaseTotal - cashVoucherPayments - cashSupplierPayments;
+    const counterClosingCashRows = buildCounterClosingCashRows(handoverSheets, handoverDenominationsBySheet, cashAccountManualEntries);
+    const counterClosingCashDr = sum(counterClosingCashRows, 'DR Rs');
+    const counterClosingCashCr = sum(counterClosingCashRows, 'CR Rs');
+    const counterClosingCashBalance = counterClosingCashDr - counterClosingCashCr;
 
     const dayBookRows = [
       ...sales.map((row) => ({
@@ -407,10 +519,10 @@ router.get('/accounting', async (req, res) => {
         Date: row.created_at || row.voucher_date,
         Voucher: row.voucher_no,
         Particulars: row.account_name,
-        Type: row.voucher_type === 'CREDITOR_PAYMENT' ? 'Creditor Payment' : 'Debtor Receipt',
+        Type: voucherTypeLabel(row.voucher_type),
         Mode: row.payment_mode,
-        Debit: row.voucher_type === 'DEBTOR_RECEIPT' ? Number(row.amount || 0) : 0,
-        Credit: row.voucher_type === 'CREDITOR_PAYMENT' ? Number(row.amount || 0) : 0,
+        Debit: voucherDebit(row),
+        Credit: voucherCredit(row),
         Amount: Number(row.amount || 0),
         Details: row.remarks || row.reference_no || ''
       })),
@@ -526,6 +638,18 @@ router.get('/accounting', async (req, res) => {
           Credit: Number(row.amount || 0),
           Balance: Number(row.amount || 0),
           'Balance Type': 'Cr'
+        })),
+      ...vouchers
+        .filter((row) => row.voucher_type === 'CUSTOMER_CREDIT')
+        .map((row) => ({
+          Date: row.created_at || row.voucher_date,
+          Account: row.account_name,
+          Voucher: row.voucher_no,
+          Particulars: `Temporary credit${row.remarks ? ` - ${row.remarks}` : ''}`,
+          Debit: Number(row.amount || 0),
+          Credit: 0,
+          Balance: Number(row.amount || 0),
+          'Balance Type': 'Dr'
         }))
     ].sort((a, b) => String(a.Account).localeCompare(String(b.Account)) || new Date(a.Date) - new Date(b.Date));
     const debtorBalance = sundryDebtorRows.reduce((total, row) => total + Number(row.Debit || 0) - Number(row.Credit || 0), 0);
@@ -628,12 +752,12 @@ router.get('/accounting', async (req, res) => {
             ...vouchers.map((row) => ({
               Date: row.created_at || row.voucher_date,
               Voucher: row.voucher_no,
-              Particulars: `${row.voucher_type === 'CREDITOR_PAYMENT' ? 'Creditor Payment' : 'Debtor Receipt'} - ${row.account_name}`,
-              Cash: row.payment_mode === 'Cash' ? Number(row.amount || 0) : 0,
+              Particulars: `${voucherTypeLabel(row.voucher_type)} - ${row.account_name}`,
+              Cash: row.payment_mode === 'Cash' && row.voucher_type !== 'CUSTOMER_CREDIT' ? Number(row.amount || 0) : 0,
               UPI: 0,
               Card: 0,
               Receipts: row.voucher_type === 'DEBTOR_RECEIPT' ? Number(row.amount || 0) : 0,
-              Payments: row.voucher_type === 'CREDITOR_PAYMENT' ? Number(row.amount || 0) : 0,
+              Payments: ['CREDITOR_PAYMENT', 'EXPENSE'].includes(row.voucher_type) ? Number(row.amount || 0) : 0,
               'Balance Type': row.payment_mode
             })),
             ...supplierPayments.map((row) => ({
@@ -730,6 +854,18 @@ router.get('/accounting', async (req, res) => {
               Action: 'View'
             };
           })
+        },
+        counterClosingCashAccount: {
+          title: CASH_ACCOUNT_LEDGER,
+          summary: {
+            autoSheets: handoverSheets.length,
+            manualEntries: cashAccountManualEntries.length,
+            dr: counterClosingCashDr,
+            cr: counterClosingCashCr,
+            balance: counterClosingCashBalance
+          },
+          columns: ['Date', 'Details', 'Counter', 'Note Detail', 'DR Rs', 'CR Rs', 'Balance Rs', 'dr/cr'],
+          rows: counterClosingCashRows
         },
         purchaseBook: {
           title: 'Purchase Book',
@@ -829,6 +965,39 @@ router.get('/accounting', async (req, res) => {
   } catch (err) {
     console.error('Accounting books failed:', err.message);
     res.status(500).json({ error: 'Unable to load accounting books.' });
+  }
+});
+
+router.post('/counter-closing-cash-account/manual', async (req, res) => {
+  try {
+    const entryDate = normalizeDate(req.body?.entry_date || req.body?.date);
+    const details = String(req.body?.details || '').trim().slice(0, 255);
+    const direction = req.body?.direction === 'DR' ? 'DR' : 'CR';
+    const amount = parseMoney(req.body?.amount);
+    const counterNo = Math.max(Number.parseInt(req.body?.counter_no, 10) || 0, 0) || null;
+
+    if (!details) return res.status(400).json({ error: 'Details are required.' });
+    if (amount <= 0) return res.status(400).json({ error: 'Amount must be greater than zero.' });
+
+    const [result] = await db.query(
+      `INSERT INTO counter_cash_ledger_entries
+       (entry_date, counter_no, source_type, source_id, account_name, details, direction, amount, payment_mode, created_by)
+       VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 'MANUAL', ?)`,
+      [entryDate, counterNo, CASH_ACCOUNT_MANUAL_SOURCE, CASH_ACCOUNT_LEDGER, details, direction, amount, req.user.username]
+    );
+
+    res.json({
+      success: true,
+      id: result.insertId,
+      entry_date: entryDate,
+      counter_no: counterNo,
+      details,
+      direction,
+      amount
+    });
+  } catch (err) {
+    console.error('Counter closing cash account manual entry failed:', err.message);
+    res.status(500).json({ error: 'Unable to save counter closing cash account entry.' });
   }
 });
 

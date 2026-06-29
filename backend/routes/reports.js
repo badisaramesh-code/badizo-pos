@@ -631,6 +631,7 @@ router.get('/counter-handover', authorize('SERVER', 'ADMIN'), async (req, res) =
 
     const [rows] = await db.query(
       `SELECT
+         id,
          closing_date,
          counter_no,
          sheet_no,
@@ -655,6 +656,44 @@ router.get('/counter-handover', authorize('SERVER', 'ADMIN'), async (req, res) =
       values
     );
 
+    let entryRows = [];
+    let denominationRows = [];
+    if (rows.length) {
+      const sheetIds = rows.map((row) => row.id);
+      [entryRows] = await db.query(
+        `SELECT sheet_id, line_no, entry_type, details, remarks, direction, amount
+         FROM counter_handover_entries
+         WHERE sheet_id IN (?)
+         ORDER BY sheet_id ASC, line_no ASC, id ASC`,
+        [sheetIds]
+      );
+      [denominationRows] = await db.query(
+        `SELECT sheet_id, denomination_label, denomination_value, quantity, amount
+         FROM counter_handover_denominations
+         WHERE sheet_id IN (?)
+         ORDER BY sheet_id ASC, denomination_value DESC`,
+        [sheetIds]
+      );
+    }
+
+    const entriesBySheet = entryRows.reduce((acc, row) => {
+      const key = Number(row.sheet_id);
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(row);
+      return acc;
+    }, {});
+    const denominationsBySheet = denominationRows.reduce((acc, row) => {
+      const key = Number(row.sheet_id);
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(row);
+      return acc;
+    }, {});
+    const sheets = rows.map((row) => ({
+      ...row,
+      entries: entriesBySheet[Number(row.id)] || [],
+      denominations: denominationsBySheet[Number(row.id)] || []
+    }));
+
     const totals = rows.reduce((acc, row) => ({
       sheets: acc.sheets + 1,
       counterSales: acc.counterSales + Number(row.counter_sales || 0),
@@ -664,7 +703,7 @@ router.get('/counter-handover', authorize('SERVER', 'ADMIN'), async (req, res) =
       difference: acc.difference + Number(row.variance_amount || 0)
     }), { sheets: 0, counterSales: 0, dr: 0, cr: 0, cashBalance: 0, difference: 0 });
 
-    res.json({ from, to, counter: counterNo > 0 ? `Counter ${counterNo}` : 'ALL', rows, totals });
+    res.json({ from, to, counter: counterNo > 0 ? `Counter ${counterNo}` : 'ALL', rows: sheets, totals });
   } catch (err) {
     console.error('Counter handover report failed:', err.message);
     res.status(500).json({ error: 'Unable to load counter handover report.' });

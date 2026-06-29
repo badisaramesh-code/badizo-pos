@@ -20,12 +20,20 @@ function voucherNo(prefix) {
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
 router.post('/', async (req, res) => {
-  const voucherType = req.body?.voucher_type === 'DEBTOR_RECEIPT' ? 'DEBTOR_RECEIPT' : 'CREDITOR_PAYMENT';
+  const allowedVoucherTypes = new Set(['CREDITOR_PAYMENT', 'DEBTOR_RECEIPT', 'EXPENSE', 'CUSTOMER_CREDIT']);
+  const requestedVoucherType = String(req.body?.voucher_type || '').trim().toUpperCase();
+  const voucherType = allowedVoucherTypes.has(requestedVoucherType) ? requestedVoucherType : 'CREDITOR_PAYMENT';
   const paymentMode = req.body?.payment_mode === 'Bank' ? 'Bank' : 'Cash';
   const accountName = String(req.body?.account_name || '').trim();
   const amount = parseMoney(req.body?.amount);
   const voucherDate = normalizeDate(req.body?.voucher_date);
-  const prefix = voucherType === 'DEBTOR_RECEIPT' ? 'DRV' : 'CPV';
+  const prefixes = {
+    CREDITOR_PAYMENT: 'CPV',
+    DEBTOR_RECEIPT: 'DRV',
+    EXPENSE: 'EXV',
+    CUSTOMER_CREDIT: 'CCV'
+  };
+  const prefix = prefixes[voucherType] || 'ACV';
   const accountHolderName = String(req.body?.account_holder_name || '').trim();
   const bankName = String(req.body?.bank_name || '').trim();
   const bankAccountNo = String(req.body?.bank_account_no || '').trim();

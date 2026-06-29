@@ -74,6 +74,12 @@ const DEFAULT_HSN_FILTERS = {
 };
 
 const HSN_VISIBLE_ROW_LIMIT = 500;
+const HANDOVER_AUTO_ENTRY_DETAILS = new Set(['Counter Closing Cash', 'Today Sale']);
+const HANDOVER_DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
+
+function isHandoverAutoEntry(entry) {
+  return HANDOVER_AUTO_ENTRY_DETAILS.has(String(entry?.details || '').trim());
+}
 
 function getHsnNumber(value) {
   const match = String(value || '').match(/\d+/);
@@ -762,7 +768,9 @@ export default function ReportsView({ isActive = true, onClose }) {
   }
 
   function exportCounterHandoverExcel() {
-    exportRows('counter_handover', (counterHandoverReport.rows || []).map((row) => ({
+    const { from, to } = getOrderedRange(fromDate, toDate);
+    const rows = counterHandoverReport.rows || [];
+    const summaryRows = rows.map((row) => ({
       Date: row.closing_date,
       Counter: row.counter_no,
       Sheet: row.sheet_no,
@@ -777,7 +785,54 @@ export default function ReportsView({ isActive = true, onClose }) {
       Difference: Number(row.variance_amount || 0),
       'Handed Over By': row.handed_over_by || '',
       'Checked By': row.taken_over_by || ''
+    }));
+    const manualRows = rows.flatMap((row) => (row.entries || [])
+      .filter((entry) => !isHandoverAutoEntry(entry))
+      .map((entry) => ({
+        Date: row.closing_date,
+        Counter: row.counter_no,
+        Sheet: row.sheet_no,
+        Line: Number(entry.line_no || 0),
+        Type: entry.entry_type || '',
+        Details: entry.details || '',
+        Remarks: entry.remarks || '',
+        Direction: entry.direction || '',
+        DR: entry.direction === 'DR' ? Number(entry.amount || 0) : 0,
+        CR: entry.direction === 'CR' ? Number(entry.amount || 0) : 0
+      })));
+    const entryRows = rows.flatMap((row) => (row.entries || []).map((entry) => ({
+      Date: row.closing_date,
+      Counter: row.counter_no,
+      Sheet: row.sheet_no,
+      Line: Number(entry.line_no || 0),
+      Type: entry.entry_type || '',
+      Details: entry.details || '',
+      Remarks: entry.remarks || '',
+      Direction: entry.direction || '',
+      Amount: Number(entry.amount || 0)
     })));
+    const denominationRows = rows.map((row) => {
+      const byValue = (row.denominations || []).reduce((acc, item) => {
+        acc[Number(item.denomination_value)] = Number(item.quantity || 0);
+        return acc;
+      }, {});
+      return HANDOVER_DENOMINATIONS.reduce((acc, value) => {
+        acc[`${value} Qty`] = byValue[value] || '';
+        return acc;
+      }, {
+        Date: row.closing_date,
+        Counter: row.counter_no,
+        Sheet: row.sheet_no,
+        'Cash Notes Balance': Number(row.cash_balance || 0)
+      });
+    });
+
+    exportWorkbook(reportFileName('counter_handover', from, to), [
+      { name: 'Summary', rows: summaryRows },
+      { name: 'Manual Entries', rows: manualRows },
+      { name: 'All Sheet Lines', rows: entryRows },
+      { name: 'Cash Notes', rows: denominationRows }
+    ]);
   }
 
   function exportExchangeExcel() {
@@ -1330,6 +1385,63 @@ export default function ReportsView({ isActive = true, onClose }) {
                   ))}
                 </tbody>
               </table>
+              {(counterHandoverReport.rows || []).map((row) => {
+                const manualEntries = (row.entries || []).filter((entry) => !isHandoverAutoEntry(entry));
+                const denominationQty = (row.denominations || []).reduce((acc, item) => {
+                  acc[Number(item.denomination_value)] = Number(item.quantity || 0);
+                  return acc;
+                }, {});
+                return (
+                  <section key={`${row.sheet_no}-details`} className="form-stack">
+                    <h3 className="panel-title">{row.sheet_no} - Counter {row.counter_no} Sheet Details</h3>
+                    <table className="history-table">
+                      <thead><tr><th>Line</th><th>Details</th><th>Remarks</th><th>DR</th><th>CR</th></tr></thead>
+                      <tbody>
+                        {(row.entries || []).length === 0 ? (
+                          <tr><td colSpan="5">No sheet lines saved.</td></tr>
+                        ) : row.entries.map((entry, index) => (
+                          <tr key={`${row.sheet_no}-entry-${index}`}>
+                            <td>{entry.line_no || index + 1}</td>
+                            <td>{entry.details || '-'}</td>
+                            <td>{entry.remarks || '-'}</td>
+                            <td>{entry.direction === 'DR' ? formatMoney(entry.amount) : '-'}</td>
+                            <td>{entry.direction === 'CR' ? formatMoney(entry.amount) : '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <table className="history-table">
+                      <thead><tr><th>Manual Entry</th><th>Remarks</th><th>Direction</th><th>Amount</th></tr></thead>
+                      <tbody>
+                        {manualEntries.length === 0 ? (
+                          <tr><td colSpan="4">No daily expense / bank cash manual entries saved for this sheet.</td></tr>
+                        ) : manualEntries.map((entry, index) => (
+                          <tr key={`${row.sheet_no}-manual-${index}`}>
+                            <td>{entry.details || '-'}</td>
+                            <td>{entry.remarks || '-'}</td>
+                            <td>{entry.direction || '-'}</td>
+                            <td>{formatMoney(entry.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <table className="history-table">
+                      <thead>
+                        <tr>
+                          {HANDOVER_DENOMINATIONS.map((value) => <th key={value}>{value} Qty</th>)}
+                          <th>Cash Notes Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          {HANDOVER_DENOMINATIONS.map((value) => <td key={value}>{denominationQty[value] || '-'}</td>)}
+                          <td><strong>{formatMoney(row.cash_balance)}</strong></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </section>
+                );
+              })}
             </div>
           </section>
         );
@@ -1532,7 +1644,7 @@ export default function ReportsView({ isActive = true, onClose }) {
                 className={`report-select-card ${activeReport === report.key ? 'active' : ''}`}
                 type="button"
                 onClick={() => {
-                  if (report.key === 'gstr') {
+                  if (report.key === 'gstr' || report.key === 'handover') {
                     setFromDate(currentMonthStartIso());
                     setToDate(todayIso());
                   }

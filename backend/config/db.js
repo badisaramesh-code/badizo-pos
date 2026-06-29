@@ -879,7 +879,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         voucher_no VARCHAR(80) NOT NULL UNIQUE,
         voucher_date DATE NOT NULL,
-        voucher_type ENUM('CREDITOR_PAYMENT', 'DEBTOR_RECEIPT') NOT NULL,
+        voucher_type ENUM('CREDITOR_PAYMENT', 'DEBTOR_RECEIPT', 'EXPENSE', 'CUSTOMER_CREDIT') NOT NULL,
         account_name VARCHAR(180) NOT NULL,
         payment_mode ENUM('Cash', 'Bank') NOT NULL DEFAULT 'Cash',
         amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
@@ -1140,6 +1140,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'accounting_vouchers', 'bank_account_no', "VARCHAR(80) DEFAULT '' AFTER bank_name");
     await ensureColumn(connection, 'accounting_vouchers', 'bank_ifsc', "VARCHAR(20) DEFAULT '' AFTER bank_account_no");
     await ensureColumn(connection, 'accounting_vouchers', 'upi_id', "VARCHAR(120) DEFAULT '' AFTER bank_ifsc");
+    await connection.query("ALTER TABLE accounting_vouchers MODIFY voucher_type ENUM('CREDITOR_PAYMENT', 'DEBTOR_RECEIPT', 'EXPENSE', 'CUSTOMER_CREDIT') NOT NULL");
     await ensureColumn(connection, 'inward_items', 'discount_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER discount_percent");
     await ensureColumn(connection, 'inward_items', 'discount_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER discount_type');
     await ensureColumn(connection, 'inward_items', 'scheme_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER scheme");

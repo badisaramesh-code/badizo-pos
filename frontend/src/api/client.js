@@ -771,6 +771,11 @@ export async function fetchAccountingBooks(dateOrRange) {
   return data;
 }
 
+export async function saveCounterClosingCashAccountEntry(payload) {
+  const { data } = await api.post('/books/counter-closing-cash-account/manual', payload);
+  return data;
+}
+
 export async function saveAccountingVoucher(payload) {
   const { data } = await api.post('/accounting-vouchers', payload);
   return data;

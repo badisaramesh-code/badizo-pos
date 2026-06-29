@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { fetchAccountingBooks, saveAccountingVoucher, searchInwardSuppliers } from '../api/client';
+import { fetchAccountingBooks, saveAccountingVoucher, saveCounterClosingCashAccountEntry, searchInwardSuppliers } from '../api/client';
 import { todayIso } from '../utils/date';
 import { formatMoney } from '../utils/money';
 
@@ -11,6 +11,7 @@ const BOOK_ORDER = [
   ['cashBook', 'Cash Book'],
   ['counterCashBalance', 'Counter Cash Balance'],
   ['counterClosingSheets', 'Counter Closing Sheets'],
+  ['counterClosingCashAccount', 'Counter Closing Cash Account'],
   ['purchaseBook', 'Purchase Book'],
   ['sundryCreditors', 'Sundry Creditors'],
   ['sundryDebtors', 'Sundry Debtors'],
@@ -45,6 +46,12 @@ const DEFAULT_BOOKS = {
     title: 'Counter Closing Sheets',
     summary: { sheets: 0, counterSales: 0, notesBalance: 0, difference: 0 },
     columns: ['Date', 'Counter', 'Sheet No', 'Counter Sale', 'All Counter Sale', 'Cash', 'UPI', 'Card', 'DR', 'CR', 'Cash Notes', 'Notes Detail', '2000 Qty', '500 Qty', '200 Qty', '100 Qty', '50 Qty', '20 Qty', '10 Qty', '5 Qty', '2 Qty', '1 Qty', 'Difference', 'Handed Over', 'Checked By', 'Added Time', 'Edited Time', 'Action'],
+    rows: []
+  },
+  counterClosingCashAccount: {
+    title: 'Counter Closing Cash Account',
+    summary: { autoSheets: 0, manualEntries: 0, dr: 0, cr: 0, balance: 0 },
+    columns: ['Date', 'Details', 'Counter', 'Note Detail', 'DR Rs', 'CR Rs', 'Balance Rs', 'dr/cr'],
     rows: []
   },
   purchaseBook: {
@@ -121,6 +128,10 @@ function formatCell(value, column = '') {
       return column === 'Time' ? date.toLocaleTimeString() : date.toLocaleDateString();
     }
   }
+  if (['DR Rs', 'CR Rs', 'Balance Rs'].includes(column)) {
+    const amount = Number(value || 0);
+    return Number.isFinite(amount) ? amount.toFixed(2) : String(value);
+  }
   if (typeof value === 'number') return formatMoney(value);
   return String(value);
 }
@@ -167,6 +178,7 @@ function getBookCardValue(key, book) {
   if (key === 'cashBook') return formatMoney(book.summary.closing || 0);
   if (key === 'counterCashBalance') return formatMoney(book.summary.notesBalance || 0);
   if (key === 'counterClosingSheets') return `${book.summary.sheets || book?.rows?.length || 0} sheets`;
+  if (key === 'counterClosingCashAccount') return formatMoney(book.summary.balance || 0);
   if (key === 'taxBook') return formatMoney(book.summary.payable || 0);
   if (key === 'profitLoss') return formatMoney(book.summary.grossProfit || 0);
   if (key === 'balanceSheet') return formatMoney(book.summary.stockValue || 0);
@@ -175,6 +187,8 @@ function getBookCardValue(key, book) {
 
 function blankVoucherForm() {
   return {
+    voucher_date: todayIso(),
+    voucher_type: 'EXPENSE',
     account_name: '',
     payment_mode: 'Cash',
     amount: '',
@@ -188,6 +202,16 @@ function blankVoucherForm() {
   };
 }
 
+function blankCashAccountEntryForm() {
+  return {
+    entry_date: todayIso(),
+    details: '',
+    counter_no: '',
+    dr_amount: '',
+    cr_amount: ''
+  };
+}
+
 export default function BooksView({ setActiveWorkspace }) {
   const [fromDate, setFromDate] = useState(financialYearStartIso());
   const [toDate, setToDate] = useState(todayIso());
@@ -197,6 +221,7 @@ export default function BooksView({ setActiveWorkspace }) {
   const [accountSuggestions, setAccountSuggestions] = useState([]);
   const [isAccountSuggestionOpen, setIsAccountSuggestionOpen] = useState(false);
   const [voucherForm, setVoucherForm] = useState(blankVoucherForm());
+  const [cashAccountEntryForm, setCashAccountEntryForm] = useState(blankCashAccountEntryForm());
   const [errorMessage, setErrorMessage] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [isReportOpen, setIsReportOpen] = useState(false);
@@ -243,7 +268,9 @@ export default function BooksView({ setActiveWorkspace }) {
 
   const activeReport = booksData?.books?.[activeBook] || DEFAULT_BOOKS[activeBook];
   const isAccountSearchBook = ['sundryCreditors', 'sundryDebtors'].includes(activeBook);
+  const isManualVoucherBook = activeBook === 'dayBook';
   const isCounterClosingSheetBook = activeBook === 'counterClosingSheets';
+  const isCounterClosingCashAccountBook = activeBook === 'counterClosingCashAccount';
   const visibleRows = useMemo(() => {
     const rows = activeReport?.rows || [];
     const query = accountSearch.trim().toLowerCase();
@@ -253,8 +280,12 @@ export default function BooksView({ setActiveWorkspace }) {
       return rows.filter((row) => ['Date', 'Counter', 'Sheet No', 'Cash Notes', 'Notes Detail', 'Handed Over', 'Checked By', 'Added Time', 'Edited Time']
         .some((column) => String(row[column] || '').toLowerCase().includes(query)));
     }
+    if (isCounterClosingCashAccountBook) {
+      return rows.filter((row) => ['Date', 'Details', 'Counter', 'Note Detail', 'DR Rs', 'CR Rs', 'Balance Rs', 'dr/cr']
+        .some((column) => String(row[column] || '').toLowerCase().includes(query)));
+    }
     return rows;
-  }, [accountSearch, activeReport, isAccountSearchBook, isCounterClosingSheetBook]);
+  }, [accountSearch, activeReport, isAccountSearchBook, isCounterClosingSheetBook, isCounterClosingCashAccountBook]);
 
   const bookCards = useMemo(() => BOOK_ORDER.map(([key, fallbackTitle]) => {
     const book = booksData?.books?.[key] || DEFAULT_BOOKS[key];
@@ -332,6 +363,10 @@ export default function BooksView({ setActiveWorkspace }) {
     setVoucherForm((current) => ({ ...current, [field]: value }));
   }
 
+  function updateCashAccountEntry(field, value) {
+    setCashAccountEntryForm((current) => ({ ...current, [field]: value }));
+  }
+
   function selectCreditorAccount(match) {
     const accountName = match.name || '';
     setAccountSearch(accountName);
@@ -352,11 +387,15 @@ export default function BooksView({ setActiveWorkspace }) {
     event.preventDefault();
     setErrorMessage('');
     setStatusMessage('');
-    const voucherType = activeBook === 'sundryDebtors' ? 'DEBTOR_RECEIPT' : 'CREDITOR_PAYMENT';
+    const voucherType = isManualVoucherBook
+      ? voucherForm.voucher_type
+      : activeBook === 'sundryDebtors'
+        ? 'DEBTOR_RECEIPT'
+        : 'CREDITOR_PAYMENT';
     try {
       const result = await saveAccountingVoucher({
         ...voucherForm,
-        voucher_date: toDate,
+        voucher_date: voucherForm.voucher_date || toDate,
         voucher_type: voucherType
       });
       setStatusMessage(`${result.voucher_no} saved for ${result.account_name}.`);
@@ -364,6 +403,36 @@ export default function BooksView({ setActiveWorkspace }) {
       await loadBooks();
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save voucher.');
+    }
+  }
+
+  async function submitCashAccountEntry(event) {
+    event.preventDefault();
+    setErrorMessage('');
+    setStatusMessage('');
+    const drAmount = Number(cashAccountEntryForm.dr_amount || 0);
+    const crAmount = Number(cashAccountEntryForm.cr_amount || 0);
+    if (drAmount > 0 && crAmount > 0) {
+      setErrorMessage('Enter amount in either DR Rs or CR Rs, not both.');
+      return;
+    }
+    if (drAmount <= 0 && crAmount <= 0) {
+      setErrorMessage('Enter amount in DR Rs or CR Rs.');
+      return;
+    }
+    try {
+      const result = await saveCounterClosingCashAccountEntry({
+        entry_date: cashAccountEntryForm.entry_date,
+        details: cashAccountEntryForm.details,
+        counter_no: cashAccountEntryForm.counter_no,
+        direction: drAmount > 0 ? 'DR' : 'CR',
+        amount: drAmount > 0 ? drAmount : crAmount
+      });
+      setStatusMessage(`Counter closing cash entry saved: ${result.details}.`);
+      setCashAccountEntryForm(blankCashAccountEntryForm());
+      await loadBooks();
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to save counter closing cash account entry.');
     }
   }
 
@@ -508,6 +577,68 @@ export default function BooksView({ setActiveWorkspace }) {
                   </label>
                 </div>
               )}
+              {isCounterClosingCashAccountBook && (
+                <div className="books-account-tools">
+                  <label className="supplier-lookup-field">
+                    <span className="field-label">Search Cash Account</span>
+                    <input
+                      className="field"
+                      value={accountSearch}
+                      onChange={(event) => setAccountSearch(event.target.value)}
+                      placeholder="Search date, note denomination, expense, bank deposit"
+                    />
+                  </label>
+                </div>
+              )}
+              {isManualVoucherBook && (
+                <div className="books-account-tools">
+                  <form className="voucher-entry-row" onSubmit={submitVoucher}>
+                    <label>
+                      <span className="field-label">Date</span>
+                      <input className="field" type="date" value={voucherForm.voucher_date} onChange={(event) => updateVoucher('voucher_date', event.target.value)} required />
+                    </label>
+                    <label>
+                      <span className="field-label">Voucher</span>
+                      <select className="select" value={voucherForm.voucher_type} onChange={(event) => updateVoucher('voucher_type', event.target.value)}>
+                        <option value="EXPENSE">Expense Voucher</option>
+                        <option value="CUSTOMER_CREDIT">Customer Credit</option>
+                        <option value="DEBTOR_RECEIPT">Customer Receipt</option>
+                        <option value="CREDITOR_PAYMENT">Supplier Payment</option>
+                      </select>
+                    </label>
+                    <label className="supplier-lookup-field">
+                      <span className="field-label">Account / Details</span>
+                      <input
+                        className="field"
+                        value={voucherForm.account_name}
+                        onChange={(event) => updateVoucher('account_name', event.target.value)}
+                        placeholder="Expense name / customer / supplier"
+                        required
+                      />
+                    </label>
+                    <label>
+                      <span className="field-label">Mode</span>
+                      <select className="select" value={voucherForm.payment_mode} onChange={(event) => updateVoucher('payment_mode', event.target.value)}>
+                        <option value="Cash">Cash</option>
+                        <option value="Bank">Bank</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span className="field-label">Amount</span>
+                      <input className="field" type="number" min="0" step="0.01" value={voucherForm.amount} onChange={(event) => updateVoucher('amount', event.target.value)} required />
+                    </label>
+                    <label>
+                      <span className="field-label">Ref No</span>
+                      <input className="field" value={voucherForm.reference_no} onChange={(event) => updateVoucher('reference_no', event.target.value)} />
+                    </label>
+                    <label>
+                      <span className="field-label">Remarks</span>
+                      <input className="field" value={voucherForm.remarks} onChange={(event) => updateVoucher('remarks', event.target.value)} />
+                    </label>
+                    <button className="primary-button compact-primary" type="submit">Save Voucher</button>
+                  </form>
+                </div>
+              )}
               {isAccountSearchBook && (
                 <div className="books-account-tools">
                   <label className="supplier-lookup-field">
@@ -536,6 +667,10 @@ export default function BooksView({ setActiveWorkspace }) {
                     )}
                   </label>
                   <form className="voucher-entry-row" onSubmit={submitVoucher}>
+                    <label>
+                      <span className="field-label">Date</span>
+                      <input className="field" type="date" value={voucherForm.voucher_date} onChange={(event) => updateVoucher('voucher_date', event.target.value)} required />
+                    </label>
                     <label className="supplier-lookup-field">
                       <span className="field-label">{activeBook === 'sundryCreditors' ? 'Creditor Payment Account' : 'Debtor Receipt Account'}</span>
                       <input
@@ -597,8 +732,8 @@ export default function BooksView({ setActiveWorkspace }) {
                   </form>
                 </div>
               )}
-              <div className="books-table-scroll">
-                <table className="history-table books-accounting-table">
+              <div className={isCounterClosingCashAccountBook ? 'books-table-scroll cash-account-table-scroll' : 'books-table-scroll'}>
+                <table className={isCounterClosingCashAccountBook ? 'history-table books-accounting-table cash-account-table' : 'history-table books-accounting-table'}>
                   <thead>
                     <tr>{activeReport.columns.map((column) => <th key={column}>{column}</th>)}</tr>
                   </thead>
@@ -619,6 +754,32 @@ export default function BooksView({ setActiveWorkspace }) {
                   </tbody>
                 </table>
               </div>
+              {isCounterClosingCashAccountBook && (
+                <form className="cash-account-entry-row" onSubmit={submitCashAccountEntry}>
+                  <strong>Manual Entry Sheet</strong>
+                  <label>
+                    <span className="field-label">Date</span>
+                    <input className="field" type="date" value={cashAccountEntryForm.entry_date} onChange={(event) => updateCashAccountEntry('entry_date', event.target.value)} required />
+                  </label>
+                  <label className="cash-account-details-field">
+                    <span className="field-label">Details</span>
+                    <input className="field" value={cashAccountEntryForm.details} onChange={(event) => updateCashAccountEntry('details', event.target.value)} placeholder="Cash purchase / HDFC deposit / expenses" required />
+                  </label>
+                  <label>
+                    <span className="field-label">Counter</span>
+                    <input className="field" type="number" min="1" max="99" step="1" value={cashAccountEntryForm.counter_no} onChange={(event) => updateCashAccountEntry('counter_no', event.target.value)} placeholder="C.No" />
+                  </label>
+                  <label>
+                    <span className="field-label">DR Rs</span>
+                    <input className="field" type="number" min="0" step="0.01" value={cashAccountEntryForm.dr_amount} onChange={(event) => updateCashAccountEntry('dr_amount', event.target.value)} placeholder="Cash added" />
+                  </label>
+                  <label>
+                    <span className="field-label">CR Rs</span>
+                    <input className="field" type="number" min="0" step="0.01" value={cashAccountEntryForm.cr_amount} onChange={(event) => updateCashAccountEntry('cr_amount', event.target.value)} placeholder="Cash used" />
+                  </label>
+                  <button className="primary-button compact-primary" type="submit">Post Entry</button>
+                </form>
+              )}
             </>
           )}
         </div>}
