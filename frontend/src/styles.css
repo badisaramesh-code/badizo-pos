@@ -4317,6 +4317,155 @@ button:disabled {
   min-width: 0;
 }
 
+.counter-cash-ledger-view {
+  padding-bottom: 128px;
+}
+
+.cash-ledger-filter-row {
+  align-items: end;
+}
+
+.cash-ledger-filter-row .secondary-button {
+  height: 38px;
+}
+
+.cash-ledger-body {
+  display: grid;
+  gap: 12px;
+}
+
+.cash-ledger-summary {
+  margin-bottom: 0;
+}
+
+.cash-ledger-scroll {
+  max-height: calc(100vh - 310px);
+  min-height: 420px;
+  overflow: auto;
+  border: 1px solid #111111;
+  border-radius: 0;
+  background: #ffffff;
+}
+
+.cash-ledger-table {
+  min-width: 980px;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+
+.cash-ledger-table th,
+.cash-ledger-table td {
+  height: 20px;
+  padding: 2px 4px;
+  border: 1px solid #111111;
+  color: #000000;
+  line-height: 1.2;
+}
+
+.cash-ledger-table thead th {
+  position: sticky;
+  z-index: 2;
+  background: #d9ead3;
+  color: #000000;
+  font-weight: 800;
+  text-align: center;
+}
+
+.cash-ledger-title-row th {
+  top: 0;
+  height: 26px;
+  background: #b7d7a8;
+  font-size: 14px;
+}
+
+.cash-ledger-title-row + tr th {
+  top: 26px;
+}
+
+.cash-ledger-table td:nth-child(4),
+.cash-ledger-table td:nth-child(5),
+.cash-ledger-table td:nth-child(6) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cash-ledger-table td:nth-child(2) {
+  min-width: 220px;
+}
+
+.cash-ledger-table td:nth-child(3) {
+  min-width: 170px;
+}
+
+.cash-ledger-entry-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 128px;
+  gap: 0;
+  align-items: stretch;
+  padding: 0;
+  border: 1px solid #111111;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: 0 -8px 24px rgba(20, 95, 34, 0.12);
+}
+
+.cash-ledger-manual-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.cash-ledger-manual-table th,
+.cash-ledger-manual-table td {
+  padding: 2px 4px;
+  border: 1px solid #111111;
+  color: #000000;
+}
+
+.cash-ledger-manual-table th {
+  background: #d9ead3;
+  font-weight: 800;
+  text-align: center;
+}
+
+.cash-ledger-manual-table thead tr:first-child th {
+  background: #b7d7a8;
+}
+
+.cash-ledger-manual-table td:first-child {
+  width: 150px;
+}
+
+.cash-ledger-manual-table td:nth-child(3),
+.cash-ledger-manual-table td:nth-child(4) {
+  width: 150px;
+}
+
+.cash-ledger-manual-table .field,
+.cash-ledger-manual-table .select {
+  height: 28px;
+  border-color: #b8c9b5;
+  border-radius: 0;
+  font-size: 12px;
+}
+
+.cash-ledger-manual-details {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 6px;
+}
+
+.cash-ledger-post-button {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  border-radius: 0;
+  white-space: nowrap;
+}
+
 @media (max-width: 980px) {
   .books-control-row {
     grid-template-columns: 1fr 1fr;
@@ -4333,6 +4482,14 @@ button:disabled {
   .cash-account-entry-row > strong,
   .cash-account-details-field {
     grid-column: 1 / -1;
+  }
+
+  .cash-ledger-entry-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .cash-ledger-manual-details {
+    grid-template-columns: 1fr;
   }
 }
 

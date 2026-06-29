@@ -853,6 +853,18 @@ export async function fetchCounterHandoverHistory({ from, to, counterNo = '' } =
   return data;
 }
 
+export async function fetchCounterCashLedger({ from, to, counterNo = '' } = {}) {
+  const { data } = await api.get('/counter-cash-ledger', {
+    params: { from, to, counter_no: counterNo }
+  });
+  return data;
+}
+
+export async function saveCounterCashLedgerEntry(payload) {
+  const { data } = await api.post('/counter-cash-ledger', payload);
+  return data;
+}
+
 export async function fetchUsers() {
   const { data } = await api.get('/users');
   return Array.isArray(data) ? data : [];

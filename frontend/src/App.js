@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import BarcodeStickersView from './components/BarcodeStickersView';
 import BillingTerminalView from './components/BillingTerminalView';
 import BooksView from './components/BooksView';
+import CounterCashLedgerView from './components/CounterCashLedgerView';
 import CounterClosingView from './components/CounterClosingView';
 import DashboardView from './components/DashboardView';
 import GatePassView from './components/GatePassView';
@@ -82,6 +83,7 @@ export default function App() {
     dashboard: <DashboardView setActiveWorkspace={setActiveWorkspace} />,
     billing: <BillingTerminalView isActive={activeWorkspace === 'billing'} />,
     closing: <CounterClosingView />,
+    cashLedger: <CounterCashLedgerView />,
     gatePass: <GatePassView />,
     inventory: (
       <InventoryDashboardView

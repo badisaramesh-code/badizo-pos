@@ -8,6 +8,7 @@ const routes = [
   ['/api/products', require('./products')],
   ['/api/billing', require('./billing')],
   ['/api/counter-closing', require('./counterClosing')],
+  ['/api/counter-cash-ledger', require('./counterCashLedger')],
   ['/api/customers', require('./customers')],
   ['/api/gate-pass', require('./gatePass')],
   ['/api/inward', require('./inward')],
