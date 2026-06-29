@@ -192,6 +192,8 @@ function blankVoucherForm() {
     account_name: '',
     payment_mode: 'Cash',
     amount: '',
+    dr_amount: '',
+    cr_amount: '',
     account_holder_name: '',
     bank_name: '',
     bank_account_no: '',
@@ -392,11 +394,38 @@ export default function BooksView({ setActiveWorkspace }) {
       : activeBook === 'sundryDebtors'
         ? 'DEBTOR_RECEIPT'
         : 'CREDITOR_PAYMENT';
+    const voucherDrAmount = Number(voucherForm.dr_amount || 0);
+    const voucherCrAmount = Number(voucherForm.cr_amount || 0);
+    const voucherAmount = isManualVoucherBook
+      ? voucherDrAmount > 0 ? voucherDrAmount : voucherCrAmount
+      : Number(voucherForm.amount || 0);
+    const debitVoucherTypes = new Set(['EXPENSE', 'CUSTOMER_CREDIT', 'CREDITOR_PAYMENT']);
+
+    if (isManualVoucherBook) {
+      if (voucherDrAmount > 0 && voucherCrAmount > 0) {
+        setErrorMessage('Enter amount in either DR Rs or CR Rs, not both.');
+        return;
+      }
+      if (voucherDrAmount <= 0 && voucherCrAmount <= 0) {
+        setErrorMessage('Enter amount in DR Rs or CR Rs.');
+        return;
+      }
+      if (voucherDrAmount > 0 && !debitVoucherTypes.has(voucherType)) {
+        setErrorMessage('Customer Receipt should be entered in CR Rs.');
+        return;
+      }
+      if (voucherCrAmount > 0 && voucherType !== 'DEBTOR_RECEIPT') {
+        setErrorMessage('Expense, Customer Credit, and Supplier Payment should be entered in DR Rs.');
+        return;
+      }
+    }
+
     try {
       const result = await saveAccountingVoucher({
         ...voucherForm,
         voucher_date: voucherForm.voucher_date || toDate,
-        voucher_type: voucherType
+        voucher_type: voucherType,
+        amount: voucherAmount
       });
       setStatusMessage(`${result.voucher_no} saved for ${result.account_name}.`);
       setVoucherForm(blankVoucherForm());
@@ -624,8 +653,12 @@ export default function BooksView({ setActiveWorkspace }) {
                       </select>
                     </label>
                     <label>
-                      <span className="field-label">Amount</span>
-                      <input className="field" type="number" min="0" step="0.01" value={voucherForm.amount} onChange={(event) => updateVoucher('amount', event.target.value)} required />
+                      <span className="field-label">DR Rs</span>
+                      <input className="field" type="number" min="0" step="0.01" value={voucherForm.dr_amount} onChange={(event) => updateVoucher('dr_amount', event.target.value)} placeholder="Debit amount" />
+                    </label>
+                    <label>
+                      <span className="field-label">CR Rs</span>
+                      <input className="field" type="number" min="0" step="0.01" value={voucherForm.cr_amount} onChange={(event) => updateVoucher('cr_amount', event.target.value)} placeholder="Credit amount" />
                     </label>
                     <label>
                       <span className="field-label">Ref No</span>
