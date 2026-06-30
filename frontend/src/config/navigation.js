@@ -7,7 +7,7 @@ export const USER_ROLES = {
 
 export const APP_TABS = [
   { key: 'dashboard', label: 'Dashboard', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
-  { key: 'billing', label: 'Badizo (pos)', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN, USER_ROLES.COUNTER] },
+  { key: 'billing', label: 'Badizo billing', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN, USER_ROLES.COUNTER] },
   { key: 'closing', label: 'Counter Closing', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN, USER_ROLES.COUNTER] },
   { key: 'gatePass', label: 'Gate Pass', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN, USER_ROLES.SECURITY] },
   { key: 'inventory', label: 'Products', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
