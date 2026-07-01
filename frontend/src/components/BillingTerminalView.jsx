@@ -386,6 +386,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const scannerBufferTimerRef = useRef(null);
   const searchFocusTimerRef = useRef(null);
   const suggestionClickTimerRef = useRef(null);
+  const suggestionRowRefs = useRef([]);
   const exchangeScannerBufferRef = useRef('');
   const exchangeScannerBufferLastKeyAtRef = useRef(0);
   const exchangeScannerBufferTimerRef = useRef(null);
@@ -830,6 +831,12 @@ export default function BillingTerminalView({ isActive = true }) {
     document.addEventListener('pointerdown', closeSuggestionsOnOutsideClick);
     return () => document.removeEventListener('pointerdown', closeSuggestionsOnOutsideClick);
   }, [isActive, suggestions.length]);
+
+  useEffect(() => {
+    if (!suggestions.length) return;
+    const selectedRow = suggestionRowRefs.current[selectedSuggestion];
+    selectedRow?.scrollIntoView?.({ block: 'nearest' });
+  }, [selectedSuggestion, suggestions.length]);
 
   useEffect(() => {
     const { search: cleaned } = parseQuantitySearch(exchangeQuery);
@@ -1686,6 +1693,12 @@ export default function BillingTerminalView({ isActive = true }) {
       scannerInputModeRef.current = 'keyboard';
       suppressSuggestionsUntilKeyboardInputRef.current = false;
       const { search: cleaned, quantity } = parseQuantitySearch(query);
+      const selectedProduct = suggestions[selectedSuggestion];
+
+      if (selectedProduct) {
+        addProduct(selectedProduct, quantity);
+        return;
+      }
 
       if (!cleaned) {
         setErrorMessage('Enter barcode digits or product name.');
@@ -3800,6 +3813,7 @@ export default function BillingTerminalView({ isActive = true }) {
                     {suggestions.map((product, index) => (
                       <button
                         key={product.barcode}
+                        ref={(element) => { suggestionRowRefs.current[index] = element; }}
                         className={`suggestion-row ${index === selectedSuggestion ? 'active' : ''}`}
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={(event) => handleSuggestionClick(product, event)}
