@@ -456,7 +456,7 @@ export default function SystemView() {
   }
 
   return (
-    <div className="form-stack">
+    <div className="form-stack system-view">
       <section className="panel">
         <div className="panel-header green"><h2 className="panel-title">Network Architecture - Badizo POS System</h2></div>
         <div className="panel-body system-grid">
@@ -557,7 +557,17 @@ export default function SystemView() {
 
       <section className="system-grid">
         <div className={`panel ${setupUnlocked ? 'setup-folder-panel' : ''}`}>
-          <div className="panel-header green"><h2 className="panel-title">Password Protected Store Setup Folder</h2></div>
+          <div className="panel-header green setup-folder-header">
+            <div>
+              <h2 className="panel-title">Password Protected Store Setup Folder</h2>
+              <span className="panel-subtitle">Protected store setup, bill print, printer and password files</span>
+            </div>
+            {setupUnlocked && (
+              <button className="close-action-button setup-close-top" type="button" onClick={() => setSetupUnlocked(false)}>
+                Close Setup
+              </button>
+            )}
+          </div>
           <div className="panel-body form-stack">
             {errorMessage && <div className="alert-box">{errorMessage}</div>}
             {statusMessage && <div className="change-box">{statusMessage}</div>}
@@ -579,7 +589,7 @@ export default function SystemView() {
               </form>
             ) : (
             <>
-            <div className="settings-section">
+            <div className="settings-section system-file-card setup-file-store">
               <div className="settings-section-title">Store Details</div>
               <label><span className="field-label">Shop Name</span><input className="field" value={settings.shop_name || ''} onChange={(event) => updateSetting('shop_name', event.target.value)} /></label>
               <label><span className="field-label">GST Number</span><input className="field" value={settings.gst_number || ''} onChange={(event) => updateSetting('gst_number', event.target.value.toUpperCase())} /></label>
@@ -618,7 +628,7 @@ export default function SystemView() {
               </div>
             </div>
 
-            <div className="settings-section">
+            <div className="settings-section system-file-card setup-file-bank">
               <div className="settings-section-title">A4 Invoice / Bank Details</div>
               <label><span className="field-label">Bank Name</span><input className="field" value={settings.bank_name || ''} onChange={(event) => updateSetting('bank_name', event.target.value)} /></label>
               <label><span className="field-label">Bank Account Name</span><input className="field" value={settings.bank_account_name || ''} onChange={(event) => updateSetting('bank_account_name', event.target.value)} /></label>
@@ -627,7 +637,7 @@ export default function SystemView() {
               <label><span className="field-label">Bank Branch</span><input className="field" value={settings.bank_branch || ''} onChange={(event) => updateSetting('bank_branch', event.target.value)} /></label>
             </div>
 
-            <div className="settings-section settings-inline-section">
+            <div className="settings-section settings-inline-section system-file-card setup-file-billing">
               <label>
                 <span className="field-label">Billing Counters</span>
                 <input
@@ -688,7 +698,7 @@ export default function SystemView() {
                 />
               </label>
             </div>
-            <div className="settings-section">
+            <div className="settings-section system-file-card setup-file-footer">
               <div className="settings-section-title">Thermal Bill Footer Lines</div>
               <div className="change-box">These 4 lines print below E. &amp; O. E on thermal bills.</div>
               {[1, 2, 3, 4].map((lineNo) => (
@@ -704,7 +714,7 @@ export default function SystemView() {
                 </label>
               ))}
             </div>
-            <div className="settings-section settings-inline-section">
+            <div className="settings-section settings-inline-section system-file-card setup-file-loyalty">
               <div className="settings-section-title">Loyalty Points</div>
               <label className="checkbox-line">
                 <input
@@ -762,7 +772,7 @@ export default function SystemView() {
                 Example: Sale Amount 100, Earn Points 10 means Rs.100 sale ki 10 points. Redeem Points 10, Redeem Value Rs 0.50 means 10000 points = Rs.500.
               </div>
             </div>
-            <div className="settings-section">
+            <div className="settings-section system-file-card setup-file-barcode">
               <div className="settings-section-title">Barcode Sticker Printers</div>
               <div className="change-box">
                 Each sticker size can print to a different Windows shared printer. Use one share path per line, for example \\localhost\TSC TTP-244 -1.
@@ -811,10 +821,12 @@ export default function SystemView() {
                 </table>
               </div>
             </div>
-            <button className="primary-button" onClick={handleSave}>Save Settings</button>
-            <button className="secondary-button" type="button" onClick={() => setSetupUnlocked(false)}>Close Setup Folder</button>
+            <div className="setup-folder-action-bar">
+              <button className="primary-button" onClick={handleSave}>Save Settings</button>
+              <button className="close-action-button setup-close-bottom" type="button" onClick={() => setSetupUnlocked(false)}>Close Setup Folder</button>
+            </div>
 
-            <div className="settings-section">
+            <div className="settings-section system-file-card setup-file-passwords">
               <div className="settings-section-title">Password Protected Files</div>
               <div className="alert-box">
                 Badizo product passwords and store operating passwords are stored separately. Password value is shown only after pressing View.
@@ -908,7 +920,7 @@ export default function SystemView() {
         </div>
 
         {setupUnlocked && (
-        <div className="panel">
+        <div className="panel system-folder-panel user-folder-panel">
           <div className="panel-header green"><h2 className="panel-title">User Management</h2></div>
           <div className="panel-body form-stack">
             <div className="user-form-grid">
@@ -974,7 +986,7 @@ export default function SystemView() {
         </div>
         )}
 
-        <div className="panel">
+        <div className="panel system-folder-panel backup-folder-panel">
           <div className="panel-header green">
             <h2 className="panel-title">Database Backup</h2>
             <div className="panel-header-actions">
@@ -994,7 +1006,7 @@ export default function SystemView() {
                 <span>Daily backup runs at <strong>{settings.backup_daily_time || '09:00'}</strong>.</span>
                 <span>Backup folder: <strong>{backupInfo.backupDir || 'backend/backups'}</strong></span>
               </div>
-              <div className="settings-section settings-inline-section">
+              <div className="settings-section settings-inline-section system-file-card setup-file-backup">
                 <label>
                   <span className="field-label">Daily Backup Time</span>
                   <input
@@ -1036,7 +1048,7 @@ export default function SystemView() {
           )}
         </div>
 
-        <div className="panel">
+        <div className="panel system-folder-panel checklist-folder-panel">
           <div className="panel-header green"><h2 className="panel-title">Production Checklist</h2></div>
           <div className="panel-body form-stack">
             <div className="change-box">SQL server connection required</div>
@@ -1048,7 +1060,7 @@ export default function SystemView() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel system-folder-panel login-folder-panel">
         <div className="panel-header green">
           <div>
             <h2 className="panel-title">Login Records Folder</h2>
@@ -1066,7 +1078,7 @@ export default function SystemView() {
           </div>
         </div>
         {showLoginRecords && <div className="panel-body form-stack">
-          <form className="settings-section settings-inline-section" onSubmit={loadSessionEvents}>
+          <form className="settings-section settings-inline-section system-file-card setup-file-login" onSubmit={loadSessionEvents}>
             <label>
               <span className="field-label">From Date</span>
               <input
@@ -1137,7 +1149,7 @@ export default function SystemView() {
         </div>}
       </section>
 
-      <section className="panel">
+      <section className="panel system-folder-panel audit-folder-panel">
         <div className="panel-header green">
           <h2 className="panel-title">Audit Log</h2>
           <button className="secondary-button" onClick={loadAuditLogs}>Refresh</button>

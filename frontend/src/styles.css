@@ -3219,6 +3219,43 @@ button:disabled {
 
 .setup-folder-panel {
   grid-column: 1 / -1;
+  border-color: #9bd0a8;
+}
+
+.setup-folder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.setup-close-top {
+  flex: 0 0 auto;
+  min-width: 132px;
+}
+
+.setup-folder-action-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #ffd38a;
+  border-radius: 8px;
+  background: rgba(255, 247, 230, 0.96);
+  box-shadow: 0 -8px 20px rgba(120, 64, 0, 0.12);
+}
+
+.setup-folder-action-bar .primary-button,
+.setup-folder-action-bar .close-action-button {
+  width: min(240px, 100%);
+  min-height: 44px;
+}
+
+.setup-close-bottom {
+  font-size: 15px;
 }
 
 .password-folder-tabs {
@@ -3443,6 +3480,175 @@ button:disabled {
   grid-template-columns: repeat(3, minmax(220px, 1fr));
 }
 
+.system-view {
+  gap: 18px;
+}
+
+.system-view > .panel,
+.system-view .system-grid > .panel {
+  border-color: #b8ddc0;
+  box-shadow: 0 10px 24px rgba(21, 95, 34, 0.09);
+}
+
+.system-view .panel-header.green {
+  min-height: 44px;
+  padding-top: 9px;
+  padding-bottom: 9px;
+  background: #dff5df;
+  color: #123b1d;
+  border-bottom: 2px solid #ffb04d;
+}
+
+.system-view .panel-title {
+  color: #123b1d;
+  letter-spacing: 0;
+}
+
+.system-view .panel-subtitle {
+  color: #315c3a;
+}
+
+.system-view .module-card,
+.system-view .health-card {
+  border-color: #b9dfc1;
+  background: #ffffff;
+  box-shadow: inset 4px 0 0 #ffb04d;
+}
+
+.system-view .system-folder-panel {
+  overflow: hidden;
+}
+
+.system-view .user-folder-panel,
+.system-view .backup-folder-panel,
+.system-view .checklist-folder-panel {
+  border-top: 4px solid #ffb04d;
+}
+
+.system-view .login-folder-panel {
+  border-top: 4px solid #155eef;
+}
+
+.system-view .audit-folder-panel {
+  border-top: 4px solid #6b5b95;
+}
+
+.system-file-card {
+  position: relative;
+  padding: 14px;
+  border-left: 7px solid #267f32;
+  background: #ffffff;
+  box-shadow: 0 3px 12px rgba(15, 23, 42, 0.05);
+}
+
+.system-file-card::before {
+  content: "SETUP FILE";
+  justify-self: start;
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #e8f7ed;
+  color: #155f22;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+}
+
+.system-file-card.settings-inline-section::before,
+.system-file-card .settings-section-title {
+  grid-column: 1 / -1;
+}
+
+.system-file-card .settings-section-title {
+  margin: -2px 0 2px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: #f1f8f2;
+  color: #123b1d;
+  font-size: 14px;
+}
+
+.setup-file-store {
+  border-left-color: #267f32;
+}
+
+.setup-file-store::before {
+  content: "STORE MASTER FILE";
+}
+
+.setup-file-bank {
+  border-left-color: #155eef;
+}
+
+.setup-file-bank::before {
+  content: "BANK / A4 FILE";
+  background: #eef4ff;
+  color: #155eef;
+}
+
+.setup-file-billing {
+  border-left-color: #ff8a00;
+}
+
+.setup-file-billing::before {
+  content: "BILLING PRINT FILE";
+  background: #fff7e6;
+  color: #9a5b00;
+}
+
+.setup-file-footer {
+  border-left-color: #6b5b95;
+}
+
+.setup-file-footer::before {
+  content: "THERMAL FOOTER FILE";
+  background: #f1effa;
+  color: #4b3d78;
+}
+
+.setup-file-loyalty {
+  border-left-color: #0f766e;
+}
+
+.setup-file-loyalty::before {
+  content: "LOYALTY FILE";
+  background: #e6fffb;
+  color: #0f766e;
+}
+
+.setup-file-barcode {
+  border-left-color: #b42318;
+}
+
+.setup-file-barcode::before {
+  content: "BARCODE PRINTER FILE";
+  background: #fff1f0;
+  color: #b42318;
+}
+
+.setup-file-passwords {
+  border-left-color: #17202a;
+}
+
+.setup-file-passwords::before {
+  content: "PASSWORD FILES";
+  background: #edf0f3;
+  color: #17202a;
+}
+
+.setup-file-backup::before {
+  content: "BACKUP SCHEDULE FILE";
+  background: #fff7e6;
+  color: #9a5b00;
+}
+
+.setup-file-login::before {
+  content: "LOGIN SEARCH FILE";
+  background: #eef4ff;
+  color: #155eef;
+}
+
 .settings-section {
   display: grid;
   gap: 10px;
@@ -3458,6 +3664,49 @@ button:disabled {
   color: #0d4e1b;
   font-size: 13px;
   font-weight: 800;
+}
+
+.system-view .system-file-card {
+  padding: 14px;
+  border: 1px solid #d9e7dc;
+  border-left-width: 7px;
+  background: #ffffff;
+}
+
+.system-view .setup-file-store {
+  border-left-color: #267f32;
+}
+
+.system-view .setup-file-bank {
+  border-left-color: #155eef;
+}
+
+.system-view .setup-file-billing {
+  border-left-color: #ff8a00;
+}
+
+.system-view .setup-file-footer {
+  border-left-color: #6b5b95;
+}
+
+.system-view .setup-file-loyalty {
+  border-left-color: #0f766e;
+}
+
+.system-view .setup-file-barcode {
+  border-left-color: #b42318;
+}
+
+.system-view .setup-file-passwords {
+  border-left-color: #17202a;
+}
+
+.system-view .setup-file-backup {
+  border-left-color: #ff8a00;
+}
+
+.system-view .setup-file-login {
+  border-left-color: #155eef;
 }
 
 .panel-subtitle {
