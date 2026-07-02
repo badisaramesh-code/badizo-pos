@@ -384,6 +384,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const scannerBufferRef = useRef('');
   const scannerBufferLastKeyAtRef = useRef(0);
   const scannerBufferTimerRef = useRef(null);
+  const scannerWakeBlockUntilRef = useRef(0);
   const searchFocusTimerRef = useRef(null);
   const suggestionClickTimerRef = useRef(null);
   const suggestionRowRefs = useRef([]);
@@ -421,6 +422,20 @@ export default function BillingTerminalView({ isActive = true }) {
   const activeSaleMode = activeMode.tier === 'WHOLESALE' ? 'WHOLESALE' : 'RETAIL';
   const activeTaxMode = activeMode.taxType === 'INTERSTATE' ? 'IGST' : 'GST';
 
+  function isScannerWakeBlocked() {
+    return Date.now() < scannerWakeBlockUntilRef.current;
+  }
+
+  function blockWakeScannerInput() {
+    scannerWakeBlockUntilRef.current = Date.now() + 1600;
+    resetScannerBuffer();
+    scannerInputModeRef.current = 'keyboard';
+    suppressSuggestionsUntilKeyboardInputRef.current = false;
+    setQuery('');
+    setSuggestions([]);
+    setSelectedSuggestion(0);
+  }
+
   useEffect(() => {
     if (!canSelectCounter && currentUser?.counter_no) {
       setCounterNo(Number(currentUser.counter_no));
@@ -457,6 +472,7 @@ export default function BillingTerminalView({ isActive = true }) {
 
   useEffect(() => {
     if (!isActive) return undefined;
+    blockWakeScannerInput();
     const timer = window.setTimeout(() => {
       scannerRef.current?.focus();
       scannerRef.current?.select?.();
@@ -502,6 +518,8 @@ export default function BillingTerminalView({ isActive = true }) {
 
     window.addEventListener('focus', focusSearchInput);
     document.addEventListener('focusin', delayedFocus);
+    window.addEventListener('focus', blockWakeScannerInput);
+    document.addEventListener('visibilitychange', blockWakeScannerInput);
 
     return () => {
       if (searchFocusTimerRef.current) {
@@ -511,6 +529,8 @@ export default function BillingTerminalView({ isActive = true }) {
       window.clearInterval(interval);
       window.removeEventListener('focus', focusSearchInput);
       document.removeEventListener('focusin', delayedFocus);
+      window.removeEventListener('focus', blockWakeScannerInput);
+      document.removeEventListener('visibilitychange', blockWakeScannerInput);
     };
   }, [approvalDialog, digitalContactModal, holdBillDialogOpen, isActive, returnInvoice, showHistory, showPriceCheck, showSaleReport]);
 
@@ -603,6 +623,11 @@ export default function BillingTerminalView({ isActive = true }) {
 
   useEffect(() => {
     const run = async () => {
+      if (isScannerWakeBlocked()) {
+        setSuggestions([]);
+        setSelectedSuggestion(0);
+        return;
+      }
       const { search: cleaned } = parseQuantitySearch(query);
       if (cleaned.length < 3) {
         setSuggestions([]);
@@ -647,6 +672,7 @@ export default function BillingTerminalView({ isActive = true }) {
   }, [query]);
 
   useEffect(() => {
+    if (isScannerWakeBlocked()) return undefined;
     const { search: cleaned, quantity } = parseQuantitySearch(query);
     if (!cleaned || !SCANNER_BARCODE_PATTERN.test(cleaned)) return undefined;
     if (scannerInputModeRef.current !== 'keyboard' || suppressSuggestionsUntilKeyboardInputRef.current) return undefined;
@@ -1447,6 +1473,14 @@ export default function BillingTerminalView({ isActive = true }) {
       || Math.abs(nextQuery.length - query.length) > 1;
     const { search: cleaned } = parseQuantitySearch(nextQuery);
 
+    if (isScannerWakeBlocked()) {
+      resetScannerBuffer();
+      setQuery('');
+      setSuggestions([]);
+      setSelectedSuggestion(0);
+      return;
+    }
+
     if (isPasteLikeInput && SCANNER_BARCODE_PATTERN.test(cleaned)) {
       scannerInputModeRef.current = 'scan';
       suppressSuggestionsUntilKeyboardInputRef.current = true;
@@ -1475,6 +1509,13 @@ export default function BillingTerminalView({ isActive = true }) {
     if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
 
     event.preventDefault();
+    if (isScannerWakeBlocked()) {
+      resetScannerBuffer();
+      setQuery('');
+      setSuggestions([]);
+      setSelectedSuggestion(0);
+      return;
+    }
     scannerInputModeRef.current = 'scan';
     suppressSuggestionsUntilKeyboardInputRef.current = true;
     setQuery(pastedValue);
@@ -1669,6 +1710,17 @@ export default function BillingTerminalView({ isActive = true }) {
   }
 
   async function handleSearchKeyDown(event) {
+    if (isScannerWakeBlocked()) {
+      if (event.key.length === 1 || event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        event.stopPropagation();
+        resetScannerBuffer();
+        setQuery('');
+        setSuggestions([]);
+        setSelectedSuggestion(0);
+        return;
+      }
+    }
     markRapidInputKey(event, scannerKeyTimesRef);
     const handledScannerKey = event.key === 'Enter' ? false : bufferScannerKey(event);
     if (handledScannerKey && (event.key === 'Enter' || event.key === 'Tab')) return;
