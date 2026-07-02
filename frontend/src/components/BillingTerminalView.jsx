@@ -358,6 +358,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [heldBillPreview, setHeldBillPreview] = useState(null);
   const [billWindows, setBillWindows] = useState([]);
   const [activeBillWindowId, setActiveBillWindowId] = useState(null);
+  const [hoverBillPreview, setHoverBillPreview] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showPriceCheck, setShowPriceCheck] = useState(false);
   const [showSaleReport, setShowSaleReport] = useState(false);
@@ -620,7 +621,9 @@ export default function BillingTerminalView({ isActive = true }) {
 
   useEffect(() => {
     if (!billingTableRef.current) return;
-    billingTableRef.current.scrollTop = billingTableRef.current.scrollHeight;
+    billingTableRef.current.scrollTop = cart.length >= 10
+      ? billingTableRef.current.scrollHeight
+      : 0;
   }, [cart.length]);
 
   useEffect(() => {
@@ -1075,6 +1078,29 @@ export default function BillingTerminalView({ isActive = true }) {
   function closeHeldBillPreview() {
     setHeldBillPreview(null);
     restoreScannerFocusSoon();
+  }
+
+  function showHoverBillPreview(anchorEvent, preview) {
+    const rect = anchorEvent.currentTarget.getBoundingClientRect();
+    setHoverBillPreview({
+      ...preview,
+      x: Math.max(8, Math.min(rect.left, window.innerWidth - 420)),
+      y: Math.max(96, Math.min(rect.top - 12, window.innerHeight - 24))
+    });
+  }
+
+  function hideHoverBillPreview() {
+    setHoverBillPreview(null);
+  }
+
+  function readHeldBillSavedState(heldBill) {
+    try {
+      return typeof heldBill.saved_state === 'string'
+        ? JSON.parse(heldBill.saved_state || '{}')
+        : (heldBill.saved_state || {});
+    } catch (err) {
+      return {};
+    }
   }
 
   function invoiceDetailsToPrintable(details, duplicate = false) {
@@ -2230,15 +2256,6 @@ export default function BillingTerminalView({ isActive = true }) {
     if (!hasRunningBill()) return;
     const savedState = currentBillSavedState();
 
-    if (activeBillWindowId) {
-      setBillWindows((current) => current.map((billWindow) => (
-        billWindow.id === activeBillWindowId
-          ? { ...billWindow, title: billWindowTitle(savedState), savedState, minimized: true }
-          : billWindow
-      )));
-      return;
-    }
-
     const id = `bill-window-${Date.now()}-${billWindowSeqRef.current}`;
     billWindowSeqRef.current += 1;
     setBillWindows((current) => [
@@ -2275,6 +2292,7 @@ export default function BillingTerminalView({ isActive = true }) {
   }
 
   function openNewBillTab() {
+    hideHoverBillPreview();
     saveCurrentBillAsWindow();
     setActiveBillWindowId(null);
     resetBill({ closeActiveWindow: false });
@@ -2284,16 +2302,16 @@ export default function BillingTerminalView({ isActive = true }) {
   }
 
   function switchToBillWindow(targetWindow) {
-    saveActiveBillWindowState();
-    setActiveBillWindowId(targetWindow.id);
-    setBillWindows((current) => current.map((billWindow) => (
-      billWindow.id === targetWindow.id ? { ...billWindow, minimized: false } : billWindow
-    )));
+    hideHoverBillPreview();
+    saveCurrentBillAsWindow();
+    setActiveBillWindowId(null);
+    setBillWindows((current) => current.filter((billWindow) => billWindow.id !== targetWindow.id));
     applyBillWindowState(targetWindow.savedState);
   }
 
   function closeBillWindow(windowId, event) {
     event?.stopPropagation?.();
+    hideHoverBillPreview();
     const isActiveWindow = activeBillWindowId === windowId;
     setBillWindows((current) => current.filter((billWindow) => billWindow.id !== windowId));
     if (isActiveWindow) {
@@ -2347,6 +2365,7 @@ export default function BillingTerminalView({ isActive = true }) {
 
   function resetBill(options = {}) {
     const { closeActiveWindow = true } = options;
+    hideHoverBillPreview();
     clearActivePosDraft();
     if (closeActiveWindow && activeBillWindowId) {
       setBillWindows((current) => current.filter((billWindow) => billWindow.id !== activeBillWindowId));
@@ -4217,8 +4236,21 @@ export default function BillingTerminalView({ isActive = true }) {
                   {heldBills.length === 0 ? (
                     <span className="muted">No held bills.</span>
                   ) : (
-                    heldBills.map((heldBill) => (
-                      <div key={heldBill.hold_token} className="activity-held-row">
+                    heldBills.map((heldBill) => {
+                      const savedState = readHeldBillSavedState(heldBill);
+                      return (
+                      <div
+                        key={heldBill.hold_token}
+                        className="activity-held-row"
+                        onMouseEnter={(event) => showHoverBillPreview(event, {
+                          title: heldBill.hold_token,
+                          customer: heldBill.customer_name || savedState.customerName || 'Walk-in Customer',
+                          total: heldBill.bill_total,
+                          items: savedState.cart || [],
+                          billingMode: savedState.billingMode || RETAIL_MODE
+                        })}
+                        onMouseLeave={hideHoverBillPreview}
+                      >
                         <div>
                           <strong>{heldBill.hold_token}</strong>
                           <span className="held-customer-name">{heldBill.customer_name || 'Walk-in Customer'}</span>
@@ -4229,7 +4261,8 @@ export default function BillingTerminalView({ isActive = true }) {
                           <button className="danger-button" onClick={() => deleteHeldBillSafely(heldBill)}>Delete</button>
                         </div>
                       </div>
-                    ))
+                    );
+                    })
                   )}
                 </div>
                 <div className="activity-detail-footer">
@@ -4304,6 +4337,33 @@ export default function BillingTerminalView({ isActive = true }) {
               </tbody>
             </table>
           </div>
+          {billWindows.length > 0 && (
+            <div className="bill-window-taskbar" aria-label="Open bill windows">
+              {billWindows.map((billWindow) => (
+                <button
+                  key={billWindow.id}
+                  type="button"
+                  className="bill-window-tab"
+                  onClick={() => switchToBillWindow(billWindow)}
+                  onMouseEnter={(event) => showHoverBillPreview(event, {
+                    title: billWindow.title,
+                    customer: (isBusinessBillingMode(billWindow.savedState.billingMode) ? billWindow.savedState.companyName : billWindow.savedState.customerName) || 'Walk-in Customer',
+                    total: (billWindow.savedState.cart || []).reduce((sum, item) => (
+                      sum + getUnitPrice(item, billWindow.savedState.billingMode || RETAIL_MODE) * toNumber(item.quantity, 1)
+                    ), 0),
+                    items: billWindow.savedState.cart || [],
+                    billingMode: billWindow.savedState.billingMode || RETAIL_MODE
+                  })}
+                  onMouseLeave={hideHoverBillPreview}
+                  title={billWindow.title}
+                >
+                  <span>{billWindow.title}</span>
+                  <strong>-</strong>
+                  <em onClick={(event) => closeBillWindow(billWindow.id, event)}>x</em>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
@@ -4677,7 +4737,7 @@ export default function BillingTerminalView({ isActive = true }) {
 
       </aside>
 
-      {billWindows.length > 0 && (
+      {false && billWindows.length > 0 && (
         <div className="bill-window-taskbar" aria-label="Open bill windows">
           {billWindows.map((billWindow) => (
             <button
@@ -4685,6 +4745,16 @@ export default function BillingTerminalView({ isActive = true }) {
               type="button"
               className={`bill-window-tab ${activeBillWindowId === billWindow.id ? 'active' : ''}`}
               onClick={() => switchToBillWindow(billWindow)}
+              onMouseEnter={(event) => showHoverBillPreview(event, {
+                title: billWindow.title,
+                customer: (isBusinessBillingMode(billWindow.savedState.billingMode) ? billWindow.savedState.companyName : billWindow.savedState.customerName) || 'Walk-in Customer',
+                total: (billWindow.savedState.cart || []).reduce((sum, item) => (
+                  sum + getUnitPrice(item, billWindow.savedState.billingMode || RETAIL_MODE) * toNumber(item.quantity, 1)
+                ), 0),
+                items: billWindow.savedState.cart || [],
+                billingMode: billWindow.savedState.billingMode || RETAIL_MODE
+              })}
+              onMouseLeave={hideHoverBillPreview}
               title={billWindow.title}
             >
               <span>{billWindow.title}</span>
@@ -4692,6 +4762,34 @@ export default function BillingTerminalView({ isActive = true }) {
               <em onClick={(event) => closeBillWindow(billWindow.id, event)}>×</em>
             </button>
           ))}
+        </div>
+      )}
+
+      {hoverBillPreview && (
+        <div
+          className="bill-hover-preview"
+          style={{ left: `${hoverBillPreview.x}px`, top: `${hoverBillPreview.y}px` }}
+        >
+          <div className="bill-hover-preview-head">
+            <strong>{hoverBillPreview.title}</strong>
+            <span>{hoverBillPreview.customer}</span>
+            <b>{formatMoney(hoverBillPreview.total || 0)}</b>
+          </div>
+          <div className="bill-hover-preview-list">
+            {(hoverBillPreview.items || []).slice(0, 8).map((item, index) => {
+              const qty = toNumber(item.quantity, 1);
+              const rate = getUnitPrice(item, hoverBillPreview.billingMode || RETAIL_MODE);
+              return (
+                <div key={`${item.barcode || index}-${index}`}>
+                  <span>{String(item.product_name || '').toUpperCase()}</span>
+                  <em>{qty.toFixed(3)}</em>
+                  <strong>{formatMoney(rate * qty)}</strong>
+                </div>
+              );
+            })}
+            {(hoverBillPreview.items || []).length === 0 && <p>No products.</p>}
+            {(hoverBillPreview.items || []).length > 8 && <p>+ {(hoverBillPreview.items || []).length - 8} more items</p>}
+          </div>
         </div>
       )}
 

@@ -1035,20 +1035,25 @@ button:disabled {
   position: sticky;
   bottom: 0;
   z-index: 80;
-  grid-column: 1 / -1;
   display: flex;
   gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  flex-wrap: nowrap;
   padding: 8px;
   border: 1px solid #bfe8c3;
   border-radius: 8px;
   background: rgba(223, 245, 223, 0.96);
   box-shadow: 0 -8px 18px rgba(21, 95, 34, 0.12);
   overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .bill-window-tab {
-  min-width: 190px;
-  max-width: 260px;
+  flex: 1 1 132px;
+  min-width: 112px;
+  max-width: 220px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
@@ -1089,6 +1094,89 @@ button:disabled {
 .bill-window-tab em {
   background: #fff1f0;
   color: var(--danger);
+}
+
+.bill-hover-preview {
+  position: fixed;
+  z-index: 1200;
+  width: min(400px, calc(100vw - 24px));
+  transform: translateY(-100%);
+  border: 1px solid #8fc59a;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.24);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.bill-hover-preview-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 10px;
+  padding: 9px 10px;
+  background: #dff5df;
+  color: #123b1d;
+}
+
+.bill-hover-preview-head strong,
+.bill-hover-preview-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bill-hover-preview-head span {
+  color: #315c3a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bill-hover-preview-head b {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+  color: #0f2733;
+}
+
+.bill-hover-preview-list {
+  max-height: 250px;
+  overflow: hidden;
+}
+
+.bill-hover-preview-list div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 54px 74px;
+  gap: 8px;
+  padding: 6px 9px;
+  border-top: 1px solid #e2efe5;
+  font-size: 12px;
+}
+
+.bill-hover-preview-list span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 800;
+}
+
+.bill-hover-preview-list em {
+  color: var(--muted);
+  font-style: normal;
+  text-align: right;
+}
+
+.bill-hover-preview-list strong {
+  text-align: right;
+}
+
+.bill-hover-preview-list p {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .billing-activity-panel {
