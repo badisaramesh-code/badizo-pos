@@ -589,8 +589,9 @@ export default function SystemView() {
               </form>
             ) : (
             <>
+            <div className="setup-files-two-column">
             <div className="settings-section system-file-card setup-file-store">
-              <div className="settings-section-title">Store Details</div>
+              <div className="settings-section-title">Store Master File</div>
               <label><span className="field-label">Shop Name</span><input className="field" value={settings.shop_name || ''} onChange={(event) => updateSetting('shop_name', event.target.value)} /></label>
               <label><span className="field-label">GST Number</span><input className="field" value={settings.gst_number || ''} onChange={(event) => updateSetting('gst_number', event.target.value.toUpperCase())} /></label>
               <label><span className="field-label">Phone</span><input className="field" value={settings.phone || ''} onChange={(event) => updateSetting('phone', event.target.value)} /></label>
@@ -629,7 +630,7 @@ export default function SystemView() {
             </div>
 
             <div className="settings-section system-file-card setup-file-bank">
-              <div className="settings-section-title">A4 Invoice / Bank Details</div>
+              <div className="settings-section-title">Bank / A4 File</div>
               <label><span className="field-label">Bank Name</span><input className="field" value={settings.bank_name || ''} onChange={(event) => updateSetting('bank_name', event.target.value)} /></label>
               <label><span className="field-label">Bank Account Name</span><input className="field" value={settings.bank_account_name || ''} onChange={(event) => updateSetting('bank_account_name', event.target.value)} /></label>
               <label><span className="field-label">Bank Account No</span><input className="field" value={settings.bank_account_no || ''} onChange={(event) => updateSetting('bank_account_no', event.target.value)} /></label>
@@ -638,6 +639,7 @@ export default function SystemView() {
             </div>
 
             <div className="settings-section settings-inline-section system-file-card setup-file-billing">
+              <div className="settings-section-title">Billing Print File</div>
               <label>
                 <span className="field-label">Billing Counters</span>
                 <input
@@ -699,7 +701,7 @@ export default function SystemView() {
               </label>
             </div>
             <div className="settings-section system-file-card setup-file-footer">
-              <div className="settings-section-title">Thermal Bill Footer Lines</div>
+              <div className="settings-section-title">Thermal Footer File</div>
               <div className="change-box">These 4 lines print below E. &amp; O. E on thermal bills.</div>
               {[1, 2, 3, 4].map((lineNo) => (
                 <label key={lineNo}>
@@ -713,6 +715,7 @@ export default function SystemView() {
                   />
                 </label>
               ))}
+            </div>
             </div>
             <div className="settings-section settings-inline-section system-file-card setup-file-loyalty">
               <div className="settings-section-title">Loyalty Points</div>

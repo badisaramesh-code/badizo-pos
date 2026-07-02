@@ -3566,7 +3566,24 @@ button:disabled {
   border-radius: 6px;
   background: #f1f8f2;
   color: #123b1d;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.setup-files-two-column {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(360px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.setup-files-two-column .system-file-card {
+  min-height: 100%;
+}
+
+.setup-files-two-column .settings-inline-section {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .setup-file-store {
@@ -7110,6 +7127,7 @@ button:disabled {
   .product-dropbox-header,
   .product-dropbox-toolbar,
   .product-dropbox-approval,
+  .setup-files-two-column,
   .settings-inline-section,
   .gate-pass-grid,
   .staff-payroll-grid {
