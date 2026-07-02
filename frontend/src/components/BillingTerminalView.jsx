@@ -64,6 +64,7 @@ const SCANNER_SETTLE_MS = 650;
 const SCANNER_FAST_KEY_MS = 90;
 const TYPED_SEARCH_DEBOUNCE_MS = 160;
 const POS_SUGGESTION_LIMIT = 2000;
+const MIN_VISIBLE_BILL_ROWS = 12;
 
 function readActivePosDraft(username) {
   try {
@@ -354,6 +355,9 @@ export default function BillingTerminalView({ isActive = true }) {
   const [heldBills, setHeldBills] = useState([]);
   const [isLastBillOpen, setIsLastBillOpen] = useState(false);
   const [isHeldBillsOpen, setIsHeldBillsOpen] = useState(false);
+  const [heldBillPreview, setHeldBillPreview] = useState(null);
+  const [billWindows, setBillWindows] = useState([]);
+  const [activeBillWindowId, setActiveBillWindowId] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showPriceCheck, setShowPriceCheck] = useState(false);
   const [showSaleReport, setShowSaleReport] = useState(false);
@@ -420,6 +424,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const paymentReferenceRef = useRef(null);
   const digitalContactNameRef = useRef(null);
   const digitalContactPhoneRef = useRef(null);
+  const billWindowSeqRef = useRef(1);
   const canManageInvoice = ['SERVER', 'ADMIN'].includes(currentUser?.role);
   const canSelectCounter = ['SERVER', 'ADMIN'].includes(currentUser?.role);
   const activeMode = BILLING_MODES[billingMode];
@@ -491,6 +496,7 @@ export default function BillingTerminalView({ isActive = true }) {
       Boolean(approvalDialog)
       || Boolean(digitalContactModal)
       || holdBillDialogOpen
+      || Boolean(heldBillPreview)
       || showHistory
       || showPriceCheck
       || showSaleReport
@@ -536,7 +542,7 @@ export default function BillingTerminalView({ isActive = true }) {
       window.removeEventListener('focus', blockWakeScannerInput);
       document.removeEventListener('visibilitychange', blockWakeScannerInput);
     };
-  }, [approvalDialog, digitalContactModal, holdBillDialogOpen, isActive, returnInvoice, showHistory, showPriceCheck, showSaleReport]);
+  }, [approvalDialog, digitalContactModal, heldBillPreview, holdBillDialogOpen, isActive, returnInvoice, showHistory, showPriceCheck, showSaleReport]);
 
   useEffect(() => {
     const wasExchangeMode = previousExchangeModeRef.current;
@@ -732,7 +738,7 @@ export default function BillingTerminalView({ isActive = true }) {
         event.preventDefault();
         event.stopPropagation();
         holdBillShortcutPressedRef.current = true;
-        openHoldBillDialog();
+        openNewBillTab();
         return;
       }
 
@@ -762,7 +768,7 @@ export default function BillingTerminalView({ isActive = true }) {
         event.preventDefault();
         event.stopPropagation();
         closeBillingActivityPanels();
-        scannerRef.current?.focus();
+        restoreScannerFocusSoon();
       }
 
       if (isF8) {
@@ -778,7 +784,11 @@ export default function BillingTerminalView({ isActive = true }) {
         event.stopPropagation();
         setShowHistory(false);
         setIsLastBillOpen(false);
-        setIsHeldBillsOpen((current) => !current);
+        setIsHeldBillsOpen((current) => {
+          const nextOpen = !current;
+          if (!nextOpen) restoreScannerFocusSoon();
+          return nextOpen;
+        });
         refreshHeldBills(counterNo);
       }
 
@@ -839,6 +849,7 @@ export default function BillingTerminalView({ isActive = true }) {
       }
       if (isHeldBillsOpen && heldBillsDetailsRef.current && !heldBillsDetailsRef.current.contains(target)) {
         setIsHeldBillsOpen(false);
+        restoreScannerFocusSoon();
       }
     };
 
@@ -1036,6 +1047,34 @@ export default function BillingTerminalView({ isActive = true }) {
     setShowHistory(false);
     setIsLastBillOpen(false);
     setIsHeldBillsOpen(false);
+  }
+
+  function restoreScannerFocusSoon() {
+    const focusScanner = () => {
+      if (!isActive) return;
+      const scanner = scannerRef.current;
+      if (!scanner) return;
+      scanner.focus();
+    };
+
+    window.requestAnimationFrame?.(focusScanner);
+    window.setTimeout(focusScanner, 20);
+    window.setTimeout(focusScanner, 80);
+  }
+
+  function closeHoldBillDialog() {
+    setHoldBillDialogOpen(false);
+    restoreScannerFocusSoon();
+  }
+
+  function closeHeldBillsPanel() {
+    setIsHeldBillsOpen(false);
+    restoreScannerFocusSoon();
+  }
+
+  function closeHeldBillPreview() {
+    setHeldBillPreview(null);
+    restoreScannerFocusSoon();
   }
 
   function invoiceDetailsToPrintable(details, duplicate = false) {
@@ -2144,6 +2183,126 @@ export default function BillingTerminalView({ isActive = true }) {
     scannerRef.current?.focus();
   }
 
+  function currentBillCustomerLabel() {
+    return (isBusinessBillingMode(billingMode) ? companyName : customerName).trim() || 'Walk-in Customer';
+  }
+
+  function currentBillSavedState() {
+    return {
+      invoiceNo,
+      counterNo,
+      cart,
+      exchangeMode,
+      exchangeItems,
+      billingMode,
+      customerName,
+      customerAddress,
+      customerPhone,
+      companyName,
+      customerGstin,
+      paymentMode,
+      mixedPayment,
+      paymentReference,
+      paymentConfirmed,
+      printMode,
+      cashReceived
+    };
+  }
+
+  function billWindowTitle(savedState = currentBillSavedState()) {
+    const customerLabel = (isBusinessBillingMode(savedState.billingMode) ? savedState.companyName : savedState.customerName)
+      || 'Walk-in';
+    const itemCount = (savedState.cart || []).length + (savedState.exchangeItems || []).length;
+    return `${savedState.invoiceNo || 'Bill'} - ${customerLabel} (${itemCount})`;
+  }
+
+  function saveActiveBillWindowState() {
+    if (!activeBillWindowId) return;
+    const savedState = currentBillSavedState();
+    setBillWindows((current) => current.map((billWindow) => (
+      billWindow.id === activeBillWindowId
+        ? { ...billWindow, title: billWindowTitle(savedState), savedState, minimized: true }
+        : billWindow
+    )));
+  }
+
+  function saveCurrentBillAsWindow() {
+    if (!hasRunningBill()) return;
+    const savedState = currentBillSavedState();
+
+    if (activeBillWindowId) {
+      setBillWindows((current) => current.map((billWindow) => (
+        billWindow.id === activeBillWindowId
+          ? { ...billWindow, title: billWindowTitle(savedState), savedState, minimized: true }
+          : billWindow
+      )));
+      return;
+    }
+
+    const id = `bill-window-${Date.now()}-${billWindowSeqRef.current}`;
+    billWindowSeqRef.current += 1;
+    setBillWindows((current) => [
+      ...current,
+      { id, title: billWindowTitle(savedState), savedState, minimized: true }
+    ]);
+  }
+
+  function applyBillWindowState(savedState) {
+    setInvoiceNo(savedState.invoiceNo || 'Draft');
+    setCounterNo(canSelectCounter ? savedState.counterNo || 1 : Number(currentUser?.counter_no || counterNo));
+    setCart(savedState.cart || []);
+    setSelectedCartIndex(savedState.cart?.length ? savedState.cart.length - 1 : -1);
+    setExchangeMode(Boolean(savedState.exchangeMode));
+    setExchangeItems(savedState.exchangeItems || []);
+    setExchangeQuery('');
+    setBillingMode(normalizeBillingMode(savedState.billingMode));
+    setCustomerName(savedState.customerName || '');
+    setCustomerAddress(savedState.customerAddress || '');
+    setCustomerPhone(savedState.customerPhone || '');
+    setCompanyName(savedState.companyName || '');
+    setCustomerGstin(savedState.customerGstin || '');
+    setPaymentMode(savedState.paymentMode || 'Cash');
+    setMixedPayment(savedState.mixedPayment || EMPTY_MIXED_PAYMENT);
+    setPaymentReference(savedState.paymentReference || '');
+    setPaymentConfirmed(Boolean(savedState.paymentConfirmed));
+    setPrintMode(savedState.printMode || 'Thermal');
+    setCashReceived(savedState.cashReceived || '');
+    setQuery('');
+    setSuggestions([]);
+    setErrorMessage('');
+    setStatusMessage('');
+    restoreScannerFocusSoon();
+  }
+
+  function openNewBillTab() {
+    saveCurrentBillAsWindow();
+    setActiveBillWindowId(null);
+    resetBill({ closeActiveWindow: false });
+    setErrorMessage('');
+    setStatusMessage('');
+    restoreScannerFocusSoon();
+  }
+
+  function switchToBillWindow(targetWindow) {
+    saveActiveBillWindowState();
+    setActiveBillWindowId(targetWindow.id);
+    setBillWindows((current) => current.map((billWindow) => (
+      billWindow.id === targetWindow.id ? { ...billWindow, minimized: false } : billWindow
+    )));
+    applyBillWindowState(targetWindow.savedState);
+  }
+
+  function closeBillWindow(windowId, event) {
+    event?.stopPropagation?.();
+    const isActiveWindow = activeBillWindowId === windowId;
+    setBillWindows((current) => current.filter((billWindow) => billWindow.id !== windowId));
+    if (isActiveWindow) {
+      setActiveBillWindowId(null);
+      resetBill();
+    }
+    restoreScannerFocusSoon();
+  }
+
   async function submitModeApproval(event) {
     event.preventDefault();
     if (!approvalDialog) return;
@@ -2162,6 +2321,11 @@ export default function BillingTerminalView({ isActive = true }) {
       });
 
       if (approvalDialog.action === 'RESUME') {
+        if (hasRunningBill()) {
+          setApprovalError('Running bill is open. Close preview and finish current bill before resuming.');
+          setIsApprovingMode(false);
+          return;
+        }
         await applyHeldBill(approvalDialog.savedState, approvalDialog.holdToken);
         setStatusMessage(`${BILLING_MODES[approvalDialog.targetMode].label} held bill resumed. Approved by ${result.approved_by}.`);
       } else if (approvalDialog.action === 'PRINT_MODE') {
@@ -2181,8 +2345,13 @@ export default function BillingTerminalView({ isActive = true }) {
     }
   }
 
-  function resetBill() {
+  function resetBill(options = {}) {
+    const { closeActiveWindow = true } = options;
     clearActivePosDraft();
+    if (closeActiveWindow && activeBillWindowId) {
+      setBillWindows((current) => current.filter((billWindow) => billWindow.id !== activeBillWindowId));
+      setActiveBillWindowId(null);
+    }
     setCart([]);
     setExchangeMode(false);
     setExchangeItems([]);
@@ -2202,7 +2371,12 @@ export default function BillingTerminalView({ isActive = true }) {
     setPaymentConfirmed(false);
     setPrintMode('Thermal');
     scannerRef.current?.focus();
+    restoreScannerFocusSoon();
     refreshInvoicePreview(counterNo, true);
+  }
+
+  function hasRunningBill() {
+    return cart.length > 0 || exchangeItems.length > 0;
   }
 
   function printBill(invoice = printableDraft) {
@@ -3376,34 +3550,14 @@ export default function BillingTerminalView({ isActive = true }) {
       return;
     }
 
-    const customerLabel = String(holdCustomerName || '').trim()
-      || (isBusinessBillingMode(billingMode) ? companyName : customerName).trim()
-      || 'Walk-in Customer';
+    const customerLabel = String(holdCustomerName || '').trim() || currentBillCustomerLabel();
     const holdToken = buildHoldToken({ invoiceNo, counterNo, customerLabel });
 
     try {
-      const savedState = {
-        invoiceNo,
-        counterNo,
-        cart,
-        exchangeMode,
-        exchangeItems,
-        billingMode,
-        customerName,
-        customerAddress,
-        customerPhone,
-        companyName,
-        customerGstin,
-        paymentMode,
-        mixedPayment,
-        paymentReference,
-        paymentConfirmed,
-        printMode,
-        cashReceived
-      };
+      const savedState = currentBillSavedState();
       await holdBill(holdToken, savedState, {
         counter_no: counterNo,
-        customer_name: (isBusinessBillingMode(billingMode) ? companyName : customerName) || 'Walk-in Customer',
+        customer_name: customerLabel,
         customer_address: customerAddress,
         customer_phone: customerPhone,
         bill_total: totals.grand.toFixed(2),
@@ -3413,6 +3567,7 @@ export default function BillingTerminalView({ isActive = true }) {
       setHoldBillDialogOpen(false);
       setHoldCustomerName('');
       resetBill();
+      restoreScannerFocusSoon();
       refreshHeldBills(counterNo);
       setIsHeldBillsOpen(true);
     } catch (err) {
@@ -3428,6 +3583,15 @@ export default function BillingTerminalView({ isActive = true }) {
 
       const heldMode = normalizeBillingMode(savedState.billingMode);
       savedState.billingMode = heldMode;
+
+      if (hasRunningBill()) {
+        setHeldBillPreview({ heldBill, savedState });
+        setIsHeldBillsOpen(false);
+        setErrorMessage('');
+        setStatusMessage('Held bill preview opened. Current running bill is still active.');
+        return;
+      }
+
       if (isSensitiveBillingMode(heldMode)) {
         setApprovalError('');
         setApprovalDialog({
@@ -3442,6 +3606,7 @@ export default function BillingTerminalView({ isActive = true }) {
       }
 
       await applyHeldBill(savedState, heldBill.hold_token);
+      setStatusMessage(`Held bill ${heldBill.hold_token} opened.`);
     } catch (err) {
       setErrorMessage('Unable to resume held bill.');
     }
@@ -3449,14 +3614,19 @@ export default function BillingTerminalView({ isActive = true }) {
 
   async function deleteHeldBillSafely(heldBill) {
     const confirmed = window.confirm(`Delete held bill ${heldBill.hold_token}?`);
-    if (!confirmed) return;
+    if (!confirmed) {
+      restoreScannerFocusSoon();
+      return;
+    }
 
     try {
       await deleteHeldBill(heldBill.hold_token);
       setStatusMessage(`Held bill ${heldBill.hold_token} deleted.`);
       refreshHeldBills(counterNo);
+      restoreScannerFocusSoon();
     } catch (err) {
       setErrorMessage('Unable to delete held bill.');
+      restoreScannerFocusSoon();
     }
   }
 
@@ -3846,6 +4016,18 @@ export default function BillingTerminalView({ isActive = true }) {
               </div>
             )}
 
+            {(hasRunningBill() || activeBillWindowId || billWindows.length > 0) && (
+              <div className="bill-window-titlebar">
+                <span>{activeBillWindowId ? 'Open Bill Window' : 'Current Bill'}</span>
+                <strong>{billWindowTitle()}</strong>
+                <div className="bill-window-controls">
+                  <button type="button" title="Minimize bill and open new bill" onClick={openNewBillTab}>-</button>
+                  <button type="button" title="Bring bill front" onClick={restoreScannerFocusSoon}>□</button>
+                  <button type="button" title="Close current bill" onClick={resetBill}>×</button>
+                </div>
+              </div>
+            )}
+
             <div className="scanner-row billing-scanner-row">
               <span className="status-chip">F9 Focus Scanner</span>
               <div className="search-wrap">
@@ -4043,7 +4225,7 @@ export default function BillingTerminalView({ isActive = true }) {
                           <span>{heldBill.item_count} items | {formatMoney(heldBill.bill_total)}</span>
                         </div>
                         <div className="activity-held-actions">
-                          <button className="secondary-button" onClick={() => resumeHeldBill(heldBill)}>Resume</button>
+                          <button className="secondary-button" onClick={() => resumeHeldBill(heldBill)}>{hasRunningBill() ? 'View' : 'Resume'}</button>
                           <button className="danger-button" onClick={() => deleteHeldBillSafely(heldBill)}>Delete</button>
                         </div>
                       </div>
@@ -4051,7 +4233,7 @@ export default function BillingTerminalView({ isActive = true }) {
                   )}
                 </div>
                 <div className="activity-detail-footer">
-                  <button className="close-action-button" type="button" onClick={() => setIsHeldBillsOpen(false)}>Close</button>
+                  <button className="close-action-button" type="button" onClick={closeHeldBillsPanel}>Close</button>
                 </div>
               </details>
             </div>
@@ -4076,14 +4258,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 </tr>
               </thead>
               <tbody>
-                {cart.length === 0 ? (
-                  <tr>
-                    <td colSpan="10">
-                      <div className="empty-state">Scan a barcode or search a product name to start a bill.</div>
-                    </td>
-                  </tr>
-                ) : (
-                  cart.map((item, index) => {
+                {cart.map((item, index) => {
                     const unitPrice = getUnitPrice(item, billingMode);
                     return (
                       <tr
@@ -4111,8 +4286,21 @@ export default function BillingTerminalView({ isActive = true }) {
                         <td><button className="danger-button" onClick={() => removeLine(index)}>Del</button></td>
                       </tr>
                     );
-                  })
-                )}
+                  })}
+                {Array.from({ length: Math.max(MIN_VISIBLE_BILL_ROWS - cart.length, 0) }, (_, blankIndex) => (
+                  <tr key={`blank-billing-row-${blankIndex}`} className="blank-billing-row">
+                    <td className="mono muted">{cart.length === 0 && blankIndex === 0 ? 'SCAN' : ''}</td>
+                    <td>{cart.length === 0 && blankIndex === 0 ? 'Scan barcode or search product name' : ''}</td>
+                    <td />
+                    <td />
+                    <td />
+                    <td />
+                    <td />
+                    <td />
+                    <td />
+                    <td />
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -4463,7 +4651,11 @@ export default function BillingTerminalView({ isActive = true }) {
                 <button className="secondary-button" onPointerDown={(event) => event.stopPropagation()} onClick={() => {
                   setShowHistory(false);
                   setIsLastBillOpen(false);
-                  setIsHeldBillsOpen((current) => !current);
+                  setIsHeldBillsOpen((current) => {
+                    const nextOpen = !current;
+                    if (!nextOpen) restoreScannerFocusSoon();
+                    return nextOpen;
+                  });
                   refreshHeldBills(counterNo);
                 }}>F6 Held Bills</button>
                 <button className="secondary-button" onClick={() => printBill(printableInvoice || printableDraft)}>Print</button>
@@ -4484,6 +4676,24 @@ export default function BillingTerminalView({ isActive = true }) {
         </section>
 
       </aside>
+
+      {billWindows.length > 0 && (
+        <div className="bill-window-taskbar" aria-label="Open bill windows">
+          {billWindows.map((billWindow) => (
+            <button
+              key={billWindow.id}
+              type="button"
+              className={`bill-window-tab ${activeBillWindowId === billWindow.id ? 'active' : ''}`}
+              onClick={() => switchToBillWindow(billWindow)}
+              title={billWindow.title}
+            >
+              <span>{billWindow.title}</span>
+              <strong>{activeBillWindowId === billWindow.id ? '□' : '-'}</strong>
+              <em onClick={(event) => closeBillWindow(billWindow.id, event)}>×</em>
+            </button>
+          ))}
+        </div>
+      )}
 
       {showSaleReport && (
         <div className="modal-backdrop">
@@ -4650,10 +4860,7 @@ export default function BillingTerminalView({ isActive = true }) {
               <button
                 className="close-action-button"
                 type="button"
-                onClick={() => {
-                  setHoldBillDialogOpen(false);
-                  scannerRef.current?.focus();
-                }}
+                onClick={closeHoldBillDialog}
               >
                 Cancel
               </button>
@@ -4676,6 +4883,62 @@ export default function BillingTerminalView({ isActive = true }) {
               <button className="primary-button" type="submit">Hold Bill & New Customer</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {heldBillPreview && (
+        <div className="modal-backdrop">
+          <div className="modal held-bill-preview-modal">
+            <div className="panel-header">
+              <div>
+                <h2 className="panel-title">Held Bill Preview</h2>
+                <span className="panel-subtitle">Current running bill is still active behind this screen.</span>
+              </div>
+              <button className="close-action-button" type="button" onClick={closeHeldBillPreview}>Close</button>
+            </div>
+            <div className="panel-body form-stack">
+              <div className="change-box">
+                <span>Hold Token: <strong className="mono">{heldBillPreview.heldBill.hold_token}</strong></span>
+                <span>Customer: <strong>{heldBillPreview.heldBill.customer_name || heldBillPreview.savedState.customerName || 'Walk-in Customer'}</strong></span>
+                <span>Total: <strong>{formatMoney(heldBillPreview.heldBill.bill_total || 0)}</strong></span>
+              </div>
+              <div className="table-scroll">
+                <table className="history-table held-bill-preview-table">
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>Barcode</th>
+                      <th>Qty</th>
+                      <th>Rate</th>
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(heldBillPreview.savedState.cart || []).length === 0 ? (
+                      <tr><td colSpan="5">No products in held bill.</td></tr>
+                    ) : (
+                      heldBillPreview.savedState.cart.map((item, index) => {
+                        const qty = toNumber(item.quantity, 1);
+                        const rate = getUnitPrice(item, heldBillPreview.savedState.billingMode || RETAIL_MODE);
+                        return (
+                          <tr key={`${item.barcode || item.product_code || index}-${index}`}>
+                            <td>{String(item.product_name || '').toUpperCase()}</td>
+                            <td className="mono">{item.barcode || item.product_code || '-'}</td>
+                            <td>{qty.toFixed(3)}</td>
+                            <td>{formatMoney(rate)}</td>
+                            <td>{formatMoney(rate * qty)}</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="alert-box">
+                Running bill close/hold avvadu. Ee preview close chesthe same running bill screen ki return avutundi.
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

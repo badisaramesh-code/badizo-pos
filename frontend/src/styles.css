@@ -985,6 +985,112 @@ button:disabled {
   font-weight: 700;
 }
 
+.bill-window-titlebar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid #bfe8c3;
+  border-radius: 6px;
+  background: #f8fff9;
+}
+
+.bill-window-titlebar span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.bill-window-titlebar strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bill-window-controls {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.bill-window-controls button {
+  width: 26px;
+  height: 24px;
+  border: 1px solid #9ccaa6;
+  border-radius: 4px;
+  background: #fff;
+  color: #123b1d;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.bill-window-controls button:last-child {
+  border-color: #f3b4ad;
+  color: var(--danger);
+}
+
+.bill-window-taskbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 80;
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #bfe8c3;
+  border-radius: 8px;
+  background: rgba(223, 245, 223, 0.96);
+  box-shadow: 0 -8px 18px rgba(21, 95, 34, 0.12);
+  overflow-x: auto;
+}
+
+.bill-window-tab {
+  min-width: 190px;
+  max-width: 260px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 1px solid #9ccaa6;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--text);
+  text-align: left;
+}
+
+.bill-window-tab.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 -3px 0 var(--accent);
+}
+
+.bill-window-tab span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 800;
+}
+
+.bill-window-tab strong,
+.bill-window-tab em {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: #f3fbf5;
+  color: #155f22;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.bill-window-tab em {
+  background: #fff1f0;
+  color: var(--danger);
+}
+
 .billing-activity-panel {
   display: grid;
   gap: 5px;
@@ -1834,7 +1940,7 @@ button:disabled {
 .billing-table-wrap {
   flex: 1 1 auto;
   max-height: none;
-  min-height: 0;
+  min-height: clamp(330px, 44vh, 430px);
   margin-top: 5px;
   overflow: auto;
   border: 1px solid #8fa99a;
@@ -1843,8 +1949,8 @@ button:disabled {
 }
 
 .billing-table-wrap.empty-cart {
-  min-height: auto;
-  overflow: hidden;
+  min-height: clamp(330px, 44vh, 430px);
+  overflow: auto;
 }
 
 .billing-product-table {
@@ -1970,6 +2076,20 @@ button:disabled {
   background: #cfeeda !important;
   outline: 2px solid #0f7a36;
   outline-offset: -2px;
+}
+
+.billing-product-table tbody tr.blank-billing-row {
+  height: 28px;
+  background: #ffffff;
+}
+
+.billing-product-table tbody tr.blank-billing-row:nth-child(even) {
+  background: #f8fcf9;
+}
+
+.billing-product-table tbody tr.blank-billing-row td {
+  color: #8aa092;
+  font-weight: 700;
 }
 
 .qty-input {
@@ -2366,6 +2486,14 @@ button:disabled {
 
 .price-check-modal {
   width: min(520px, 100%);
+}
+
+.held-bill-preview-modal {
+  width: min(880px, calc(100vw - 28px));
+}
+
+.held-bill-preview-table {
+  min-width: 720px;
 }
 
 .price-check-entry {
