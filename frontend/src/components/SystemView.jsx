@@ -89,6 +89,10 @@ export default function SystemView() {
     thermal_feed_margin_mm: 4,
     thermal_bill_logo_enabled: true,
     thermal_bill_logo_data_url: '',
+    thermal_footer_line_1: '1. Goods Exchange Time 2 P.M - 4 P.M',
+    thermal_footer_line_2: '2. Decoration Items & Toys Exchange Not Allowed',
+    thermal_footer_line_3: '3. Warranty or guarantee is the responsibility of the manufacturer.',
+    thermal_footer_line_4: '4. Any dispute subject related to SATHUPALLY jurisdiction.',
     gst_slabs: '0,3,5,12,18,28,40',
     loyalty_enabled: false,
     loyalty_earn_sale_amount: 100,
@@ -683,6 +687,22 @@ export default function SystemView() {
                   placeholder="0,3,5,12,18,28,40"
                 />
               </label>
+            </div>
+            <div className="settings-section">
+              <div className="settings-section-title">Thermal Bill Footer Lines</div>
+              <div className="change-box">These 4 lines print below E. &amp; O. E on thermal bills.</div>
+              {[1, 2, 3, 4].map((lineNo) => (
+                <label key={lineNo}>
+                  <span className="field-label">Footer Line {lineNo}</span>
+                  <input
+                    className="field"
+                    maxLength="140"
+                    value={settings[`thermal_footer_line_${lineNo}`] || ''}
+                    onChange={(event) => updateSetting(`thermal_footer_line_${lineNo}`, event.target.value)}
+                    placeholder={`${lineNo}. Footer message`}
+                  />
+                </label>
+              ))}
             </div>
             <div className="settings-section settings-inline-section">
               <div className="settings-section-title">Loyalty Points</div>

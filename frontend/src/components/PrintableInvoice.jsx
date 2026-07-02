@@ -182,6 +182,18 @@ function getValidFreeItems(items) {
   ));
 }
 
+function getThermalTerms(invoice, template) {
+  const defaultTerms = template.terms || [];
+  const customLines = [1, 2, 3, 4]
+    .map((lineNo) => String(invoice?.shop?.[`thermal_footer_line_${lineNo}`] || '').trim())
+    .filter(Boolean);
+
+  return [
+    defaultTerms[0] || 'E. & O. E',
+    ...(customLines.length ? customLines : defaultTerms.slice(1))
+  ];
+}
+
 function StoreHeader({ invoice }) {
   const taxBillLabel = getTaxBillLabel(invoice);
   return (
@@ -994,8 +1006,10 @@ function renderSection(section, invoice, template) {
       return invoice.totals.discount > 0 ? <><SectionLine /><div className="print-row print-discount-row"><span>You Have Gained Discount Amount</span><strong>{formatPlainMoney(invoice.totals.discount)}</strong></div></> : null;
     case 'gstSummary':
       return <><SectionLine /><div className="print-center"><strong>{invoice.taxType === 'INTERSTATE' ? 'IGST Summary' : 'GST Summary'}</strong></div><GstSummary invoice={invoice} /></>;
-    case 'terms':
-      return <><SectionLine /><div className="print-terms">{template.terms.map((term) => <p key={term}>{term}</p>)}</div></>;
+    case 'terms': {
+      const terms = getThermalTerms(invoice, template);
+      return <><SectionLine /><div className="print-terms">{terms.map((term, index) => <p key={`${index}-${term}`}>{term}</p>)}</div></>;
+    }
     case 'centerText':
       if (template.paperClass === 'a4-paper' && section.id === 'generated-note') return null;
       return <div className="print-center"><strong>{section.text}</strong></div>;

@@ -21,6 +21,10 @@ const ALLOWED_SETTINGS = new Set([
   'thermal_feed_margin_mm',
   'thermal_bill_logo_enabled',
   'thermal_bill_logo_data_url',
+  'thermal_footer_line_1',
+  'thermal_footer_line_2',
+  'thermal_footer_line_3',
+  'thermal_footer_line_4',
   'gst_slabs',
   'loyalty_enabled',
   'loyalty_earn_sale_amount',
@@ -109,6 +113,12 @@ function normalizeBarcodePrinterTemplates(rawValue) {
 
 function publicSettings(settings) {
   const logoDataUrl = String(settings.thermal_bill_logo_data_url || '').trim();
+  const thermalFooterDefaults = [
+    '1. Goods Exchange Time 2 P.M - 4 P.M',
+    '2. Decoration Items & Toys Exchange Not Allowed',
+    '3. Warranty or guarantee is the responsibility of the manufacturer.',
+    '4. Any dispute subject related to SATHUPALLY jurisdiction.'
+  ];
   const gstSlabs = String(settings.gst_slabs || '0,3,5,12,18,28,40')
     .split(/[,;\s]+/)
     .map((value) => Number(value))
@@ -135,6 +145,10 @@ function publicSettings(settings) {
       : 4,
     thermal_bill_logo_enabled: String(settings.thermal_bill_logo_enabled || '1') !== '0',
     thermal_bill_logo_data_url: /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(logoDataUrl) ? logoDataUrl : '',
+    thermal_footer_line_1: settings.thermal_footer_line_1 || thermalFooterDefaults[0],
+    thermal_footer_line_2: settings.thermal_footer_line_2 || thermalFooterDefaults[1],
+    thermal_footer_line_3: settings.thermal_footer_line_3 || thermalFooterDefaults[2],
+    thermal_footer_line_4: settings.thermal_footer_line_4 || thermalFooterDefaults[3],
     gst_slabs: gstSlabs.length ? gstSlabs.join(',') : '0,3,5,12,18,28,40',
     loyalty_enabled: String(settings.loyalty_enabled || '0') === '1',
     loyalty_earn_sale_amount: Number(settings.loyalty_earn_sale_amount || 100) > 0 ? Number(settings.loyalty_earn_sale_amount || 100) : 100,
@@ -242,6 +256,10 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
         if (value.length > 700000) {
           return res.status(400).json({ error: 'Thermal bill logo is too large. Use a small 22mm x 22mm image.' });
         }
+      }
+
+      if (key.startsWith('thermal_footer_line_')) {
+        value = String(rawValue || '').replace(/\s+/g, ' ').trim().slice(0, 140);
       }
 
       if (key === 'gst_slabs') {
