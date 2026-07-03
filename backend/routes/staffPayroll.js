@@ -59,6 +59,7 @@ function publicStaff(row) {
 function calculateSalary(staff, attendanceRows, monthDays, adjustments = {}) {
   const presentDays = attendanceRows.reduce((sum, row) => sum + dayCredit(row.status), 0);
   const absentDays = attendanceRows.filter((row) => row.status === 'ABSENT').length;
+  const halfDays = attendanceRows.filter((row) => row.status === 'HALF_DAY').length;
   const paidLeaveDays = attendanceRows.filter((row) => row.status === 'PAID_LEAVE').length;
   const overtimeHours = attendanceRows.reduce((sum, row) => sum + Number(row.overtime_hours || 0), 0);
   const dailyOverrideTotal = attendanceRows.reduce((sum, row) => {
@@ -85,21 +86,69 @@ function calculateSalary(staff, attendanceRows, monthDays, adjustments = {}) {
   }
 
   const overtimeAmount = overtimeHours * (Number(staff.hourly_wage || 0) || Number(staff.daily_wage || 0) / 8 || Number(staff.monthly_salary || 0) / monthDays / 8 || 0);
+  const sundayDays = parseMoney(adjustments.sunday_days);
+  const holidayDays = parseMoney(adjustments.holiday_days);
+  const daysWorked = parseMoney(adjustments.days_worked) || presentDays;
+  const unmarkedAbsentDays = parseMoney(adjustments.unmarked_absent_days);
+  const perDayAmount = parseMoney(adjustments.per_day_amount) || (monthDays > 0 ? Number(staff.monthly_salary || 0) / monthDays : Number(staff.daily_wage || 0));
+  const pfBaseAmount = parseMoney(adjustments.pf_base_amount);
+  const daAmount = parseMoney(adjustments.da_amount);
+  const hraAmount = parseMoney(adjustments.hra_amount);
+  const conveyanceAmount = parseMoney(adjustments.conveyance_amount);
+  const medicalAmount = parseMoney(adjustments.medical_amount);
+  const specialAmount = parseMoney(adjustments.special_amount);
+  const otherEarningAmount = parseMoney(adjustments.other_earning_amount);
   const bonusAmount = parseMoney(adjustments.bonus_amount);
   const advanceAmount = parseMoney(adjustments.advance_amount);
+  const pfAmount = parseMoney(adjustments.pf_amount);
+  const esiAmount = parseMoney(adjustments.esi_amount);
+  const professionalTaxAmount = parseMoney(adjustments.professional_tax_amount);
+  const tdsAmount = parseMoney(adjustments.tds_amount);
+  const otherDeductionAmount = parseMoney(adjustments.other_deduction_amount);
+  const canteenTokens = parseMoney(adjustments.canteen_tokens);
+  const canteenRate = parseMoney(adjustments.canteen_rate);
+  const canteenDeductionAmount = parseMoney(adjustments.canteen_deduction_amount) || Number((canteenTokens * canteenRate).toFixed(2));
   const deductionAmount = parseMoney(adjustments.deduction_amount);
-  const netSalary = Math.max(baseSalary + overtimeAmount + bonusAmount - advanceAmount - deductionAmount, 0);
+  const netSalary = Math.max(
+    baseSalary + overtimeAmount + daAmount + hraAmount + conveyanceAmount + medicalAmount + specialAmount + otherEarningAmount + bonusAmount
+      - advanceAmount - pfAmount - esiAmount - professionalTaxAmount - tdsAmount - otherDeductionAmount - canteenDeductionAmount - deductionAmount,
+    0
+  );
 
   return {
     working_days: monthDays,
     present_days: Number(presentDays.toFixed(2)),
     paid_leave_days: Number(paidLeaveDays.toFixed(2)),
     absent_days: Number(absentDays.toFixed(2)),
+    half_days: Number(halfDays.toFixed(2)),
+    sunday_days: sundayDays,
+    holiday_days: holidayDays,
+    days_worked: Number(daysWorked.toFixed(2)),
+    unmarked_absent_days: unmarkedAbsentDays,
+    per_day_amount: Number(perDayAmount.toFixed(2)),
+    pf_base_amount: pfBaseAmount,
+    financial_year: cleanText(adjustments.financial_year, 20),
+    branch_name: cleanText(adjustments.branch_name, 120),
     overtime_hours: Number(overtimeHours.toFixed(2)),
     base_salary: Number(baseSalary.toFixed(2)),
     overtime_amount: Number(overtimeAmount.toFixed(2)),
+    da_amount: daAmount,
+    hra_amount: hraAmount,
+    conveyance_amount: conveyanceAmount,
+    medical_amount: medicalAmount,
+    special_amount: specialAmount,
+    other_earning_amount: otherEarningAmount,
     bonus_amount: bonusAmount,
     advance_amount: advanceAmount,
+    pf_amount: pfAmount,
+    esi_amount: esiAmount,
+    professional_tax_amount: professionalTaxAmount,
+    tds_amount: tdsAmount,
+    other_deduction_amount: otherDeductionAmount,
+    canteen_deduction_amount: canteenDeductionAmount,
+    canteen_item: cleanText(adjustments.canteen_item, 120),
+    canteen_tokens: canteenTokens,
+    canteen_rate: canteenRate,
     deduction_amount: deductionAmount,
     net_salary: Number(netSalary.toFixed(2))
   };
@@ -377,20 +426,48 @@ router.post('/salary-sheet', async (req, res) => {
 
     await connection.query(
       `INSERT INTO staff_salary_sheets
-       (staff_id, salary_month, working_days, present_days, paid_leave_days, absent_days, overtime_hours,
-        base_salary, overtime_amount, bonus_amount, advance_amount, deduction_amount, net_salary,
+       (staff_id, salary_month, working_days, present_days, paid_leave_days, absent_days, half_days,
+        sunday_days, holiday_days, days_worked, unmarked_absent_days, per_day_amount, pf_base_amount,
+        financial_year, branch_name, overtime_hours, base_salary, overtime_amount, da_amount, hra_amount,
+        conveyance_amount, medical_amount, special_amount, other_earning_amount, bonus_amount, advance_amount,
+        pf_amount, esi_amount, professional_tax_amount, tds_amount, other_deduction_amount,
+        canteen_deduction_amount, canteen_item, canteen_tokens, canteen_rate, deduction_amount, net_salary,
         payment_status, payment_date, payment_mode, reference_no, remarks, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
         working_days = VALUES(working_days),
         present_days = VALUES(present_days),
         paid_leave_days = VALUES(paid_leave_days),
         absent_days = VALUES(absent_days),
+        half_days = VALUES(half_days),
+        sunday_days = VALUES(sunday_days),
+        holiday_days = VALUES(holiday_days),
+        days_worked = VALUES(days_worked),
+        unmarked_absent_days = VALUES(unmarked_absent_days),
+        per_day_amount = VALUES(per_day_amount),
+        pf_base_amount = VALUES(pf_base_amount),
+        financial_year = VALUES(financial_year),
+        branch_name = VALUES(branch_name),
         overtime_hours = VALUES(overtime_hours),
         base_salary = VALUES(base_salary),
         overtime_amount = VALUES(overtime_amount),
+        da_amount = VALUES(da_amount),
+        hra_amount = VALUES(hra_amount),
+        conveyance_amount = VALUES(conveyance_amount),
+        medical_amount = VALUES(medical_amount),
+        special_amount = VALUES(special_amount),
+        other_earning_amount = VALUES(other_earning_amount),
         bonus_amount = VALUES(bonus_amount),
         advance_amount = VALUES(advance_amount),
+        pf_amount = VALUES(pf_amount),
+        esi_amount = VALUES(esi_amount),
+        professional_tax_amount = VALUES(professional_tax_amount),
+        tds_amount = VALUES(tds_amount),
+        other_deduction_amount = VALUES(other_deduction_amount),
+        canteen_deduction_amount = VALUES(canteen_deduction_amount),
+        canteen_item = VALUES(canteen_item),
+        canteen_tokens = VALUES(canteen_tokens),
+        canteen_rate = VALUES(canteen_rate),
         deduction_amount = VALUES(deduction_amount),
         net_salary = VALUES(net_salary),
         payment_status = VALUES(payment_status),
@@ -400,8 +477,12 @@ router.post('/salary-sheet', async (req, res) => {
         remarks = VALUES(remarks),
         updated_at = CURRENT_TIMESTAMP`,
       [
-        staffId, month, salary.working_days, salary.present_days, salary.paid_leave_days, salary.absent_days, salary.overtime_hours,
-        salary.base_salary, salary.overtime_amount, salary.bonus_amount, salary.advance_amount, salary.deduction_amount, salary.net_salary,
+        staffId, month, salary.working_days, salary.present_days, salary.paid_leave_days, salary.absent_days, salary.half_days,
+        salary.sunday_days, salary.holiday_days, salary.days_worked, salary.unmarked_absent_days, salary.per_day_amount, salary.pf_base_amount,
+        salary.financial_year, salary.branch_name, salary.overtime_hours, salary.base_salary, salary.overtime_amount, salary.da_amount, salary.hra_amount,
+        salary.conveyance_amount, salary.medical_amount, salary.special_amount, salary.other_earning_amount, salary.bonus_amount, salary.advance_amount,
+        salary.pf_amount, salary.esi_amount, salary.professional_tax_amount, salary.tds_amount, salary.other_deduction_amount,
+        salary.canteen_deduction_amount, salary.canteen_item, salary.canteen_tokens, salary.canteen_rate, salary.deduction_amount, salary.net_salary,
         paymentStatus, paymentDate, paymentMode, cleanText(req.body?.reference_no, 120), cleanText(req.body?.remarks, 255), req.user.username
       ]
     );

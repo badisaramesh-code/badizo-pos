@@ -424,12 +424,26 @@ button:disabled {
 }
 
 .staff-payroll-table {
-  min-width: 1180px;
+  min-width: 1520px;
   font-size: 12px;
 }
 
 .staff-payroll-table td {
   vertical-align: top;
+}
+
+.payslip-preview-modal {
+  width: min(980px, calc(100vw - 28px));
+  max-height: calc(100vh - 28px);
+  display: flex;
+  flex-direction: column;
+}
+
+.payslip-preview-frame {
+  width: 100%;
+  height: min(78vh, 980px);
+  border: 0;
+  background: #f8fafc;
 }
 
 .panel {

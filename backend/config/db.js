@@ -964,11 +964,35 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         present_days DECIMAL(8,2) NOT NULL DEFAULT 0.00,
         paid_leave_days DECIMAL(8,2) NOT NULL DEFAULT 0.00,
         absent_days DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+        half_days DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+        sunday_days DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+        holiday_days DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+        days_worked DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+        unmarked_absent_days DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+        per_day_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        pf_base_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        financial_year VARCHAR(20) DEFAULT '',
+        branch_name VARCHAR(120) DEFAULT '',
         overtime_hours DECIMAL(8,2) NOT NULL DEFAULT 0.00,
         base_salary DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         overtime_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        da_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        hra_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        conveyance_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        medical_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        special_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        other_earning_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         bonus_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         advance_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        pf_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        esi_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        professional_tax_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        tds_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        other_deduction_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        canteen_deduction_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        canteen_item VARCHAR(120) DEFAULT '',
+        canteen_tokens DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        canteen_rate DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         deduction_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         net_salary DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         payment_status ENUM('PENDING', 'PAID') NOT NULL DEFAULT 'PENDING',
@@ -1038,6 +1062,30 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
 
     await ensureColumn(connection, 'products', 'purchase_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER mrp');
+    await ensureColumn(connection, 'staff_salary_sheets', 'da_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER overtime_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'hra_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER da_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'half_days', 'DECIMAL(8,2) NOT NULL DEFAULT 0.00 AFTER absent_days');
+    await ensureColumn(connection, 'staff_salary_sheets', 'sunday_days', 'DECIMAL(8,2) NOT NULL DEFAULT 0.00 AFTER half_days');
+    await ensureColumn(connection, 'staff_salary_sheets', 'holiday_days', 'DECIMAL(8,2) NOT NULL DEFAULT 0.00 AFTER sunday_days');
+    await ensureColumn(connection, 'staff_salary_sheets', 'days_worked', 'DECIMAL(8,2) NOT NULL DEFAULT 0.00 AFTER holiday_days');
+    await ensureColumn(connection, 'staff_salary_sheets', 'unmarked_absent_days', 'DECIMAL(8,2) NOT NULL DEFAULT 0.00 AFTER days_worked');
+    await ensureColumn(connection, 'staff_salary_sheets', 'per_day_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER unmarked_absent_days');
+    await ensureColumn(connection, 'staff_salary_sheets', 'pf_base_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER per_day_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'financial_year', "VARCHAR(20) DEFAULT '' AFTER pf_base_amount");
+    await ensureColumn(connection, 'staff_salary_sheets', 'branch_name', "VARCHAR(120) DEFAULT '' AFTER financial_year");
+    await ensureColumn(connection, 'staff_salary_sheets', 'conveyance_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER hra_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'medical_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER conveyance_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'special_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER medical_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'other_earning_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER special_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'pf_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER advance_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'esi_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER pf_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'professional_tax_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER esi_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'tds_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER professional_tax_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'other_deduction_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER tds_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'canteen_deduction_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER other_deduction_amount');
+    await ensureColumn(connection, 'staff_salary_sheets', 'canteen_item', "VARCHAR(120) DEFAULT '' AFTER canteen_deduction_amount");
+    await ensureColumn(connection, 'staff_salary_sheets', 'canteen_tokens', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER canteen_item');
+    await ensureColumn(connection, 'staff_salary_sheets', 'canteen_rate', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER canteen_tokens');
     await connection.query('ALTER TABLE app_settings MODIFY setting_value LONGTEXT NOT NULL');
     await ensureColumn(connection, 'products', 'wholesale_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER sale_price');
     await ensureColumn(connection, 'products', 'product_code', 'VARCHAR(60) DEFAULT NULL UNIQUE AFTER id');
