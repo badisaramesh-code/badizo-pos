@@ -7,6 +7,11 @@ function formatPlainMoney(value) {
   return toNumber(value).toFixed(2);
 }
 
+function formatPercent(value) {
+  const fixed = toNumber(value).toFixed(2);
+  return fixed.replace(/\.?0+$/, '') || '0';
+}
+
 function getItemUnit(item) {
   return String(item?.unit_type || item?.unit || '').trim() || 'Nos';
 }
@@ -277,7 +282,7 @@ function ThermalItemTable({ invoice, template }) {
                 <td>{item.barcode || '-'}</td>
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.mrp)}</td>
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(discount)}</td>
-                <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.gst_percent)}</td>
+                <td style={{ textAlign: 'right' }}>{formatPercent(item.gst_percent)}</td>
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.quantity)}</td>
                 <td className="thermal-line-total" style={{ textAlign: 'right' }}>{formatPlainMoney(item.lineTotal)}</td>
               </tr>
@@ -401,14 +406,14 @@ function ExchangeDetails({ invoice, compact = false }) {
                 isInterstate ? (
                   <tr key={row.gst}>
                     <td>{formatPlainMoney(row.taxable)}</td>
-                    <td>{formatPlainMoney(row.gst)}</td>
+                    <td>{formatPercent(row.gst)}</td>
                     <td>{formatPlainMoney(row.igst)}</td>
                     <td>{formatPlainMoney(row.taxable + row.tax)}</td>
                   </tr>
                 ) : (
                   <tr key={row.gst}>
                     <td>{formatPlainMoney(row.taxable)}</td>
-                    <td>{formatPlainMoney(row.gst)}</td>
+                    <td>{formatPercent(row.gst)}</td>
                     <td>{formatPlainMoney(row.cgst)}</td>
                     <td>{formatPlainMoney(row.sgst)}</td>
                     <td>{formatPlainMoney(row.taxable + row.tax)}</td>
@@ -456,18 +461,18 @@ function GstSummary({ invoice }) {
           return isInterstate ? (
             <tr key={row.gst}>
               <td>{formatPlainMoney(row.taxable)}</td>
-              <td>{formatPlainMoney(row.gst)}%</td>
-              <td>{formatPlainMoney(row.gst)}%</td>
+              <td>{formatPercent(row.gst)}%</td>
+              <td>{formatPercent(row.gst)}%</td>
               <td>{formatPlainMoney(row.igst)}</td>
               <td>{formatPlainMoney(row.tax)}</td>
             </tr>
           ) : (
             <tr key={row.gst}>
               <td>{formatPlainMoney(row.taxable)}</td>
-              <td>{formatPlainMoney(row.gst)}%</td>
-              <td>{formatPlainMoney(cgstPercent)}%</td>
+              <td>{formatPercent(row.gst)}%</td>
+              <td>{formatPercent(cgstPercent)}%</td>
               <td>{formatPlainMoney(row.cgst)}</td>
-              <td>{formatPlainMoney(sgstPercent)}%</td>
+              <td>{formatPercent(sgstPercent)}%</td>
               <td>{formatPlainMoney(row.sgst)}</td>
               <td>{formatPlainMoney(row.tax)}</td>
             </tr>
@@ -571,7 +576,7 @@ function A4ItemTable({ invoice, template }) {
             <td style={{ textAlign: 'right' }}>{formatQuantityWithUnit(item)}</td>
             <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.unitPrice)}</td>
             <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.taxableRate)}</td>
-            <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.gst_percent)}%</td>
+            <td style={{ textAlign: 'right' }}>{formatPercent(item.gst_percent)}%</td>
             <td style={{ textAlign: 'right' }}><strong>{formatPlainMoney(item.lineTotal)}</strong></td>
           </tr>
         ))}
@@ -651,8 +656,8 @@ function A4GstTable({ invoice }) {
             <tr key={row.gst}>
               <td>{hsn}</td>
               <td>{formatPlainMoney(row.taxable)}</td>
-              <td>{formatPlainMoney(row.gst)}%</td>
-              <td>{formatPlainMoney(row.gst)}%</td>
+              <td>{formatPercent(row.gst)}%</td>
+              <td>{formatPercent(row.gst)}%</td>
               <td>{formatPlainMoney(row.igst)}</td>
               <td>{formatPlainMoney(row.tax)}</td>
             </tr>
@@ -660,10 +665,10 @@ function A4GstTable({ invoice }) {
             <tr key={row.gst}>
               <td>{hsn}</td>
               <td>{formatPlainMoney(row.taxable)}</td>
-              <td>{formatPlainMoney(row.gst)}%</td>
-              <td>{formatPlainMoney(cgstPercent)}%</td>
+              <td>{formatPercent(row.gst)}%</td>
+              <td>{formatPercent(cgstPercent)}%</td>
               <td>{formatPlainMoney(row.cgst)}</td>
-              <td>{formatPlainMoney(sgstPercent)}%</td>
+              <td>{formatPercent(sgstPercent)}%</td>
               <td>{formatPlainMoney(row.sgst)}</td>
               <td>{formatPlainMoney(row.tax)}</td>
             </tr>
@@ -832,7 +837,7 @@ function A4StoreItemsTable({ rows, freeItems = [], startIndex, blankRowCount = 0
                 <td>{item.hsn_code || '-'}</td>
                 <td>{formatPlainMoney(item.mrp)}</td>
                 <td>{formatPlainMoney(discount)}</td>
-                <td>{formatPlainMoney(item.gst_percent)}</td>
+                <td>{formatPercent(item.gst_percent)}</td>
                 <td>{formatQuantityWithUnit(item)}</td>
                 <td><strong>{formatPlainMoney(item.lineTotal)}</strong></td>
               </tr>
@@ -916,7 +921,7 @@ function A4OnePageInvoice({ invoice, template }) {
             <tbody>
               {gstRows.map((row) => (
                 <tr key={row.gst}>
-                  <td>{formatPlainMoney(row.gst)}</td>
+                  <td>{formatPercent(row.gst)}</td>
                   <td>{formatPlainMoney(row.sgst)}</td>
                   <td>{formatPlainMoney(row.cgst)}</td>
                   <td>{formatPlainMoney(row.igst)}</td>
