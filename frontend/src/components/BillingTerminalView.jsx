@@ -3285,16 +3285,23 @@ export default function BillingTerminalView({ isActive = true }) {
     .thermal-product-row td {
       padding-top: 2px !important;
       padding-bottom: 1px !important;
+      border-bottom: 0 !important;
     }
     .thermal-hsn-row td {
       padding-top: 0.5px !important;
       padding-bottom: 0.5px !important;
       font-size: 8.5px !important;
+      border-bottom: 0 !important;
     }
     .thermal-detail-row td {
       padding-top: 1px !important;
       padding-bottom: 2px !important;
-      border-bottom: 1px solid #111 !important;
+      border-bottom: 0 !important;
+    }
+    .thermal-product-separator-row td {
+      padding: 0 !important;
+      height: 1px !important;
+      border-bottom: 1px dashed #111 !important;
     }
     .thermal-product-name {
       display: block !important;

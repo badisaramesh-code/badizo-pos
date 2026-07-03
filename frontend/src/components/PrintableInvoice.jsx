@@ -281,6 +281,11 @@ function ThermalItemTable({ invoice, template }) {
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.quantity)}</td>
                 <td className="thermal-line-total" style={{ textAlign: 'right' }}>{formatPlainMoney(item.lineTotal)}</td>
               </tr>
+              {index < saleItems.length - 1 && (
+                <tr className="thermal-product-separator-row">
+                  <td colSpan={template.itemColumns.length}></td>
+                </tr>
+              )}
             </React.Fragment>
           );
         })}
