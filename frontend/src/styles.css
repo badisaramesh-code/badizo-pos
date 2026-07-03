@@ -2039,6 +2039,7 @@ button:disabled {
 .billing-table-wrap.empty-cart {
   min-height: clamp(330px, 44vh, 430px);
   overflow: auto;
+  border-color: #e1e8e3;
 }
 
 .billing-product-table {
@@ -2191,11 +2192,12 @@ button:disabled {
 }
 
 .billing-product-table tbody tr.blank-billing-row:nth-child(even) {
-  background: #f8fcf9;
+  background: #fbfdfc;
 }
 
 .billing-product-table tbody tr.blank-billing-row td {
-  color: #8aa092;
+  border-color: #e5ece7;
+  color: #b9c8bd;
   font-weight: 700;
 }
 

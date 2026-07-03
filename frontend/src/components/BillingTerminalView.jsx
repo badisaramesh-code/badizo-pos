@@ -1889,7 +1889,7 @@ export default function BillingTerminalView({ isActive = true }) {
               isUnknown: true
             }
           ]);
-          setErrorMessage('Unknown barcode/product. The line is marked red and cannot be billed until corrected.');
+          setErrorMessage('');
           setQuery('');
         }
       } catch (err) {
