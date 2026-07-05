@@ -5222,13 +5222,14 @@ export default function BillingTerminalView({ isActive = true }) {
                     <th>Total</th>
                     <th>Payment</th>
                     <th>Status</th>
+                    <th>A4 GST API</th>
                     <th>Created</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredInvoiceHistory.length === 0 ? (
-                    <tr><td colSpan="7">No invoices found.</td></tr>
+                    <tr><td colSpan="8">No invoices found.</td></tr>
                   ) : (
                     filteredInvoiceHistory.map((invoice) => (
                       <tr key={invoice.invoice_no}>
@@ -5237,6 +5238,10 @@ export default function BillingTerminalView({ isActive = true }) {
                         <td><strong>{formatMoney(invoice.grand_total)}</strong></td>
                         <td>{invoice.payment_mode}</td>
                         <td>{invoice.invoice_status || 'PAID'}</td>
+                        <td>
+                          <span className="gst-api-status-line">A4 IRN: {invoice.einvoice_status || 'NOT_CREATED'}</span>
+                          <span className="gst-api-status-line">EWB: {invoice.ewaybill_status || 'NOT_CREATED'}</span>
+                        </td>
                         <td>{invoice.created_at ? new Date(invoice.created_at).toLocaleString() : '-'}</td>
                         <td>
                           <div className="table-actions">

@@ -229,6 +229,14 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         cancelled_by VARCHAR(100) DEFAULT NULL,
         cancelled_at TIMESTAMP NULL DEFAULT NULL,
         reprint_count INT NOT NULL DEFAULT 0,
+        einvoice_status VARCHAR(30) NOT NULL DEFAULT 'NOT_CREATED',
+        einvoice_irn VARCHAR(120) DEFAULT NULL,
+        einvoice_ack_no VARCHAR(80) DEFAULT NULL,
+        einvoice_ack_date DATETIME DEFAULT NULL,
+        ewaybill_status VARCHAR(30) NOT NULL DEFAULT 'NOT_CREATED',
+        ewaybill_no VARCHAR(80) DEFAULT NULL,
+        ewaybill_date DATETIME DEFAULT NULL,
+        ewaybill_valid_upto DATETIME DEFAULT NULL,
         INDEX idx_invoice_no (invoice_no),
         INDEX idx_created_at (created_at),
         INDEX idx_invoice_status (invoice_status)
@@ -1133,6 +1141,14 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'invoices', 'cancelled_by', 'VARCHAR(100) DEFAULT NULL AFTER cancel_reason');
     await ensureColumn(connection, 'invoices', 'cancelled_at', 'TIMESTAMP NULL DEFAULT NULL AFTER cancelled_by');
     await ensureColumn(connection, 'invoices', 'reprint_count', 'INT NOT NULL DEFAULT 0 AFTER cancelled_at');
+    await ensureColumn(connection, 'invoices', 'einvoice_status', "VARCHAR(30) NOT NULL DEFAULT 'NOT_CREATED' AFTER reprint_count");
+    await ensureColumn(connection, 'invoices', 'einvoice_irn', 'VARCHAR(120) DEFAULT NULL AFTER einvoice_status');
+    await ensureColumn(connection, 'invoices', 'einvoice_ack_no', 'VARCHAR(80) DEFAULT NULL AFTER einvoice_irn');
+    await ensureColumn(connection, 'invoices', 'einvoice_ack_date', 'DATETIME DEFAULT NULL AFTER einvoice_ack_no');
+    await ensureColumn(connection, 'invoices', 'ewaybill_status', "VARCHAR(30) NOT NULL DEFAULT 'NOT_CREATED' AFTER einvoice_ack_date");
+    await ensureColumn(connection, 'invoices', 'ewaybill_no', 'VARCHAR(80) DEFAULT NULL AFTER ewaybill_status');
+    await ensureColumn(connection, 'invoices', 'ewaybill_date', 'DATETIME DEFAULT NULL AFTER ewaybill_no');
+    await ensureColumn(connection, 'invoices', 'ewaybill_valid_upto', 'DATETIME DEFAULT NULL AFTER ewaybill_date');
     await ensureColumn(connection, 'invoice_items', 'hsn_code', "VARCHAR(20) DEFAULT '' AFTER product_name");
     await ensureColumn(connection, 'invoice_items', 'cgst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER gst_percent');
     await ensureColumn(connection, 'invoice_items', 'sgst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER cgst_amount');

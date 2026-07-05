@@ -3945,6 +3945,27 @@ button:disabled {
   color: #9a5b00;
 }
 
+.setup-file-gst-api {
+  border-left-color: #0b5cab;
+}
+
+.setup-file-gst-api::before {
+  content: "A4 GST API FILE";
+  background: #eef7ff;
+  color: #0b5cab;
+}
+
+.setup-wide-note {
+  grid-column: 1 / -1;
+}
+
+.gst-api-status-line {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .setup-file-footer {
   border-left-color: #6b5b95;
 }
