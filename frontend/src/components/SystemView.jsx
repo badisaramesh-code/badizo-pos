@@ -264,6 +264,14 @@ export default function SystemView() {
   const storeGst = settings.gst_number || '36AAJFH7790R1ZB';
   const storeAddress = settings.address || 'Sathupally - Khammam(dt) - 507303';
   const storePhone = settings.phone || '08761 295000';
+  const setupFileChecklist = [
+    { label: 'Store Master', file: 'Shop name, GST, phone, address', status: storeName ? 'Ready' : 'Check' },
+    { label: 'Login Alerts', file: 'SMS/WhatsApp alert phone', status: settings.login_logout_alert_phone ? 'Number set' : 'Add phone' },
+    { label: 'Bank / A4', file: 'Bank details for A4 print', status: settings.bank_account_no ? 'Ready' : 'Check' },
+    { label: 'Billing Print', file: 'Counters, print mode, GST slabs', status: `${settings.counter_count || 1} counters` },
+    { label: 'Thermal Footer', file: 'Four bill footer lines', status: settings.thermal_footer_line_1 ? 'Ready' : 'Check' },
+    { label: 'Passwords', file: 'Admin, counter, security logins', status: setupUnlocked ? 'Open' : 'Protected' }
+  ];
 
   async function handleSave() {
     setStatusMessage('');
@@ -590,13 +598,22 @@ export default function SystemView() {
               </form>
             ) : (
             <>
+            <div className="setup-file-checklist">
+              {setupFileChecklist.map((item) => (
+                <div className="setup-file-check" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong>{item.file}</strong>
+                  <em>{item.status}</em>
+                </div>
+              ))}
+            </div>
             <div className="setup-files-two-column">
             <div className="settings-section system-file-card setup-file-store">
               <div className="settings-section-title">Store Master File</div>
               <label><span className="field-label">Shop Name</span><input className="field" value={settings.shop_name || ''} onChange={(event) => updateSetting('shop_name', event.target.value)} /></label>
               <label><span className="field-label">GST Number</span><input className="field" value={settings.gst_number || ''} onChange={(event) => updateSetting('gst_number', event.target.value.toUpperCase())} /></label>
               <label><span className="field-label">Phone</span><input className="field" value={settings.phone || ''} onChange={(event) => updateSetting('phone', event.target.value)} /></label>
-              <label><span className="field-label">Login Alert Phone</span><input className="field" value={settings.login_logout_alert_phone || ''} onChange={(event) => updateSetting('login_logout_alert_phone', event.target.value)} placeholder="SMS/WhatsApp alert number" /></label>
+              <label className="setup-alert-phone-field"><span className="field-label">Login Alert Phone</span><input className="field" value={settings.login_logout_alert_phone || ''} onChange={(event) => updateSetting('login_logout_alert_phone', event.target.value)} placeholder="SMS/WhatsApp alert number" /></label>
               <label><span className="field-label">Address</span><textarea className="field settings-address-field" rows="2" value={settings.address || ''} onChange={(event) => updateSetting('address', event.target.value)} /></label>
               <div className="pos-header-preview">
                 <strong>{storeName}</strong>

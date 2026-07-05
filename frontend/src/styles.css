@@ -3854,6 +3854,49 @@ button:disabled {
   align-items: start;
 }
 
+.setup-file-checklist {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #cfe1d2;
+  border-radius: 8px;
+  background: #f8fcf8;
+}
+
+.setup-file-check {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid #d7e6da;
+  border-left: 4px solid var(--brand);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.setup-file-check span {
+  color: #123b1d;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.setup-file-check strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.setup-file-check em {
+  justify-self: start;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #e8f7ed;
+  color: #155f22;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .setup-files-two-column .system-file-card {
   min-height: 100%;
 }
@@ -3868,6 +3911,18 @@ button:disabled {
 
 .setup-file-store::before {
   content: "STORE MASTER FILE";
+}
+
+.setup-alert-phone-field {
+  padding: 8px;
+  border: 1px solid #f5ca7b;
+  border-radius: 7px;
+  background: #fff9ed;
+}
+
+.setup-alert-phone-field .field-label {
+  color: #7a4b00;
+  font-weight: 900;
 }
 
 .setup-file-bank {
@@ -7409,6 +7464,7 @@ button:disabled {
   .product-dropbox-header,
   .product-dropbox-toolbar,
   .product-dropbox-approval,
+  .setup-file-checklist,
   .setup-files-two-column,
   .settings-inline-section,
   .gate-pass-grid,
