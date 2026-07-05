@@ -32,6 +32,7 @@ const ALLOWED_SETTINGS = new Set([
   'loyalty_redeem_points',
   'loyalty_redeem_amount',
   'backup_daily_time',
+  'login_logout_alert_phone',
   'barcode_printer_templates'
 ]);
 
@@ -65,12 +66,20 @@ const VAULT_DEFAULTS = {
   },
   STORE_PROTECTED: {
     1: { title: 'Store Server Login', username: 'server' },
-    2: { title: 'Store Admin Login', username: 'admin' },
-    3: { title: 'Counter 1 Login', username: 'counter1' },
-    4: { title: 'Counter 2 Login', username: 'counter2' },
-    5: { title: 'Counter 3 Login', username: 'counter3' }
+    2: { title: 'Admin 1 Login', username: 'admin1', password: 'admin123' },
+    3: { title: 'Admin 2 Login', username: 'admin2', password: 'admin123' },
+    4: { title: 'Counter 1 Login', username: 'counter1', password: 'counter1' },
+    5: { title: 'Counter 2 Login', username: 'counter2', password: 'counter2' },
+    6: { title: 'Counter 3 Login', username: 'counter3', password: 'counter3' },
+    7: { title: 'Counter 4 Login', username: 'counter4', password: 'counter4' },
+    8: { title: 'Counter 5 Login', username: 'counter5', password: 'counter5' },
+    9: { title: 'Counter 6 Login', username: 'counter6', password: 'counter6' },
+    10: { title: 'Security 1 Login', username: 'security1', password: 'admin123' },
+    11: { title: 'Security 2 Login', username: 'security2', password: 'admin123' }
   }
 };
+
+VAULT_DEFAULTS.STORE_PROTECTED[1].password = 'server123';
 
 function normalizeVaultCategory(value) {
   const category = String(value || 'STORE_PROTECTED').trim().toUpperCase();
@@ -158,6 +167,7 @@ function publicSettings(settings) {
     backup_daily_time: /^\d{2}:\d{2}$/.test(settings.backup_daily_time || '')
       ? settings.backup_daily_time
       : (process.env.BACKUP_DAILY_TIME || '09:00'),
+    login_logout_alert_phone: settings.login_logout_alert_phone || '',
     barcode_printer_templates: normalizeBarcodePrinterTemplates(settings.barcode_printer_templates)
   };
 }
@@ -200,7 +210,7 @@ function publicVaultSlot(row, slotNo, category = 'STORE_PROTECTED') {
     title: row?.title || defaults.title || '',
     username: row?.username || defaults.username || '',
     notes: row?.notes || '',
-    has_password: Boolean(row?.secret_encrypted),
+    has_password: Boolean(row?.secret_encrypted || defaults.password),
     updated_by: row?.updated_by || '',
     updated_at: row?.updated_at || null
   };
@@ -294,6 +304,10 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
           : '09:00';
       }
 
+      if (key === 'login_logout_alert_phone') {
+        value = String(rawValue || '').replace(/[^\d+]/g, '').slice(0, 20);
+      }
+
       await db.query(
         `INSERT INTO app_settings (setting_key, setting_value)
          VALUES (?, ?)
@@ -320,7 +334,8 @@ router.get('/password-vault', authenticate, authorize('SERVER', 'ADMIN'), async 
       [category]
     );
     const bySlot = new Map(rows.map((row) => [Number(row.slot_no), row]));
-    const slots = Array.from({ length: 10 }, (_, index) => publicVaultSlot(bySlot.get(index + 1), index + 1, category));
+    const slotCount = category === 'STORE_PROTECTED' ? 11 : 10;
+    const slots = Array.from({ length: slotCount }, (_, index) => publicVaultSlot(bySlot.get(index + 1), index + 1, category));
     res.json({ category, slots });
   } catch (err) {
     console.error('Password vault list failed:', err.message);
@@ -331,8 +346,9 @@ router.get('/password-vault', authenticate, authorize('SERVER', 'ADMIN'), async 
 router.post('/password-vault/:slotNo', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
   const slotNo = Number.parseInt(req.params.slotNo, 10);
   const category = normalizeVaultCategory(req.body?.category || req.query?.category);
-  if (slotNo < 1 || slotNo > 10) {
-    return res.status(400).json({ error: 'Password slot must be between 1 and 10.' });
+  const maxSlotNo = category === 'STORE_PROTECTED' ? 11 : 10;
+  if (slotNo < 1 || slotNo > maxSlotNo) {
+    return res.status(400).json({ error: `Password slot must be between 1 and ${maxSlotNo}.` });
   }
 
   try {
@@ -382,8 +398,9 @@ router.post('/password-vault/:slotNo', authenticate, authorize('SERVER', 'ADMIN'
 router.get('/password-vault/:slotNo/reveal', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
   const slotNo = Number.parseInt(req.params.slotNo, 10);
   const category = normalizeVaultCategory(req.query?.category);
-  if (slotNo < 1 || slotNo > 10) {
-    return res.status(400).json({ error: 'Password slot must be between 1 and 10.' });
+  const maxSlotNo = category === 'STORE_PROTECTED' ? 11 : 10;
+  if (slotNo < 1 || slotNo > maxSlotNo) {
+    return res.status(400).json({ error: `Password slot must be between 1 and ${maxSlotNo}.` });
   }
 
   try {
@@ -391,7 +408,8 @@ router.get('/password-vault/:slotNo/reveal', authenticate, authorize('SERVER', '
       `SELECT secret_encrypted FROM password_vault WHERE category = ? AND slot_no = ? LIMIT 1`,
       [category, slotNo]
     );
-    res.json({ category, slot_no: slotNo, password: decryptSecret(rows[0]?.secret_encrypted || '') });
+    const defaultPassword = VAULT_DEFAULTS[category]?.[slotNo]?.password || '';
+    res.json({ category, slot_no: slotNo, password: rows[0]?.secret_encrypted ? decryptSecret(rows[0].secret_encrypted) : defaultPassword });
   } catch (err) {
     console.error('Password vault reveal failed:', err.message);
     res.status(500).json({ error: 'Unable to reveal password.' });

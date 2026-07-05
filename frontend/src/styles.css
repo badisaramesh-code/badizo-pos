@@ -2257,6 +2257,27 @@ button:disabled {
   box-shadow: 0 10px 26px rgba(15, 23, 42, 0.1);
 }
 
+.usage-side-panel .compact-panel-header {
+  padding: 8px 10px;
+}
+
+.usage-detail-grid {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: 5px 8px;
+  padding: 8px 10px 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.usage-detail-grid strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 .last-bill-panel {
   border-color: #f5ca7b;
   background: #fff9ed;

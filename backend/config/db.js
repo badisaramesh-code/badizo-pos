@@ -1306,22 +1306,35 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
       ['admin', 'admin123', 'ADMIN', null],
       ['admin1', 'admin123', 'ADMIN', null],
       ['admin2', 'admin123', 'ADMIN', null],
-      ['counter1', 'counter123', 'COUNTER', 1],
-      ['counter2', 'counter123', 'COUNTER', 2],
-      ['counter3', 'counter123', 'COUNTER', 3],
-      ['counter4', 'counter123', 'COUNTER', 4],
-      ['counter5', 'counter123', 'COUNTER', 5],
-      ['counter6', 'counter123', 'COUNTER', 6],
-      ['security', 'security123', 'SECURITY', null]
+      ['counter1', 'counter1', 'COUNTER', 1],
+      ['counter2', 'counter2', 'COUNTER', 2],
+      ['counter3', 'counter3', 'COUNTER', 3],
+      ['counter4', 'counter4', 'COUNTER', 4],
+      ['counter5', 'counter5', 'COUNTER', 5],
+      ['counter6', 'counter6', 'COUNTER', 6],
+      ['security', 'admin123', 'SECURITY', null],
+      ['security1', 'admin123', 'SECURITY', null],
+      ['security2', 'admin123', 'SECURITY', null]
     ];
 
     for (const [username, password, role, counterNo] of defaultUsers) {
       await connection.query(
-        `INSERT IGNORE INTO users (username, password_hash, role, counter_no)
-         VALUES (?, ?, ?, ?)`,
-        [username, hashPassword(password), role, counterNo]
+        `INSERT IGNORE INTO users (username, password, password_hash, role, counter_no)
+         VALUES (?, ?, ?, ?, ?)`,
+        [username, '', hashPassword(password), role, counterNo]
+      );
+      await connection.query(
+        `UPDATE users
+         SET password_hash = ?, role = ?, counter_no = ?, is_active = 1
+         WHERE username = ?`,
+        [hashPassword(password), role, counterNo, username]
       );
     }
+    await connection.query(
+      `UPDATE users
+       SET is_active = 0
+       WHERE username IN ('counter7', 'counter8', 'counter9', 'counter10')`
+    );
 
     console.log('Database schema is ready.');
     logInfo('Database schema is ready');

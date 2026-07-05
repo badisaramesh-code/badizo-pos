@@ -56,11 +56,14 @@ async function recordSessionEvent(req, user, sessionId, eventType) {
 function loginOption(row) {
   const counterNo = Number(row.counter_no || 0);
   const adminMatch = String(row.username || '').match(/^admin([1-9]\d*)$/i);
+  const securityMatch = String(row.username || '').match(/^security([1-9]\d*)$/i);
   const label = row.role === 'COUNTER' && counterNo > 0
     ? `Counter ${counterNo}`
     : adminMatch
       ? `Admin ${adminMatch[1]}`
-      : String(row.role || row.username).toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
+      : securityMatch
+        ? `Security ${securityMatch[1]}`
+        : String(row.role || row.username).toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
 
   return {
     username: row.username,
@@ -217,7 +220,7 @@ router.post('/approve-sensitive-mode', authenticate, async (req, res) => {
   const { username, password, reason } = req.body || {};
 
   if (!username || !password) {
-    return res.status(400).json({ error: 'Supervisor username and password are required.' });
+    return res.status(400).json({ error: 'Counter person username/code and password are required.' });
   }
 
   try {
@@ -230,9 +233,9 @@ router.post('/approve-sensitive-mode', authenticate, async (req, res) => {
     );
 
     const supervisor = rows[0];
-    const allowedRole = ['SERVER', 'ADMIN'].includes(supervisor?.role);
+    const allowedRole = ['SERVER', 'ADMIN', 'COUNTER'].includes(supervisor?.role);
     if (!supervisor || !supervisor.is_active || !allowedRole || !verifyPassword(password, supervisor.password_hash)) {
-      return res.status(401).json({ error: 'Supervisor approval failed.' });
+      return res.status(401).json({ error: 'Counter person approval failed.' });
     }
 
     res.json({
@@ -243,7 +246,7 @@ router.post('/approve-sensitive-mode', authenticate, async (req, res) => {
     });
   } catch (err) {
     console.error('Sensitive mode approval failed:', err.message);
-    res.status(500).json({ error: 'Unable to verify supervisor approval.' });
+    res.status(500).json({ error: 'Unable to verify counter person approval.' });
   }
 });
 

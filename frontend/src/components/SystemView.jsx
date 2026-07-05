@@ -100,6 +100,7 @@ export default function SystemView() {
     loyalty_redeem_points: 10,
     loyalty_redeem_amount: 0.5,
     backup_daily_time: '09:00',
+    login_logout_alert_phone: '',
     barcode_printer_templates: DEFAULT_BARCODE_PRINTER_TEMPLATES
   });
   const [statusMessage, setStatusMessage] = useState('');
@@ -595,6 +596,7 @@ export default function SystemView() {
               <label><span className="field-label">Shop Name</span><input className="field" value={settings.shop_name || ''} onChange={(event) => updateSetting('shop_name', event.target.value)} /></label>
               <label><span className="field-label">GST Number</span><input className="field" value={settings.gst_number || ''} onChange={(event) => updateSetting('gst_number', event.target.value.toUpperCase())} /></label>
               <label><span className="field-label">Phone</span><input className="field" value={settings.phone || ''} onChange={(event) => updateSetting('phone', event.target.value)} /></label>
+              <label><span className="field-label">Login Alert Phone</span><input className="field" value={settings.login_logout_alert_phone || ''} onChange={(event) => updateSetting('login_logout_alert_phone', event.target.value)} placeholder="SMS/WhatsApp alert number" /></label>
               <label><span className="field-label">Address</span><textarea className="field settings-address-field" rows="2" value={settings.address || ''} onChange={(event) => updateSetting('address', event.target.value)} /></label>
               <div className="pos-header-preview">
                 <strong>{storeName}</strong>
@@ -848,7 +850,7 @@ export default function SystemView() {
                 ))}
               </div>
               <div className="change-box">
-                Current file: <strong>{PASSWORD_VAULT_FOLDERS.find((folder) => folder.key === passwordVaultFolder)?.label}</strong> - 10 password slots.
+                Current file: <strong>{PASSWORD_VAULT_FOLDERS.find((folder) => folder.key === passwordVaultFolder)?.label}</strong> - {passwordVaultFolder === 'STORE_PROTECTED' ? 11 : 10} password slots.
               </div>
               <div className="table-scroll">
                 <table className="history-table password-vault-table">

@@ -318,7 +318,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [exchangeItems, setExchangeItems] = useState(initialDraft?.exchangeItems || []);
   const [billingMode, setBillingMode] = useState(normalizeBillingMode(initialDraft?.billingMode));
   const [approvalDialog, setApprovalDialog] = useState(null);
-  const [approvalUsername, setApprovalUsername] = useState(currentUser?.role === 'SERVER' || currentUser?.role === 'ADMIN' ? currentUser.username : '');
+  const [approvalUsername, setApprovalUsername] = useState(['SERVER', 'ADMIN', 'COUNTER'].includes(currentUser?.role) ? currentUser.username : '');
   const [approvalPassword, setApprovalPassword] = useState('');
   const [approvalError, setApprovalError] = useState('');
   const [isApprovingMode, setIsApprovingMode] = useState(false);
@@ -4375,6 +4375,20 @@ export default function BillingTerminalView({ isActive = true }) {
       </section>
 
       <aside className="sidebar">
+        <section className="panel usage-side-panel">
+          <div className="panel-header compact-panel-header">
+            <h2 className="panel-title">Usage Details</h2>
+            <span className="status-chip">Active</span>
+          </div>
+          <div className="usage-detail-grid">
+            <span>User</span><strong>{currentUser?.username || '-'}</strong>
+            <span>Role</span><strong>{currentUser?.role || '-'}</strong>
+            <span>Counter</span><strong>Counter {counterNo}</strong>
+            <span>Mode</span><strong>{activeMode.shortLabel || activeMode.label}</strong>
+            <span>Print</span><strong>{printMode}</strong>
+          </div>
+        </section>
+
         <section className="panel customer-side-panel">
           <div className="panel-header compact-panel-header">
             <h2 className="panel-title">Customer</h2>
@@ -5325,7 +5339,7 @@ export default function BillingTerminalView({ isActive = true }) {
               <div className="sensitive-bill-warning">{approvalDialog.message}</div>
               {approvalError && <div className="alert-box">{approvalError}</div>}
               <label>
-                <span className="field-label">Supervisor username</span>
+                <span className="field-label">Counter person username/code</span>
                 <input
                   className="field"
                   value={approvalUsername}
@@ -5335,7 +5349,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 />
               </label>
               <label>
-                <span className="field-label">Supervisor password</span>
+                <span className="field-label">Password</span>
                 <input
                   className="field"
                   type="password"
