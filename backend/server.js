@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { mountRoutes } = require('./routes');
 const { scheduleDailyBackup } = require('./services/backupService');
+const { scheduleDailySaleAlerts } = require('./services/saleAlertService');
 const { logError, logInfo } = require('./services/logger');
 
 const app = express();
@@ -44,6 +45,7 @@ function startServer(port = PORT) {
       console.log(`BADIZO POS API running on port ${port}`);
       logInfo('Backend started', { port });
       scheduleDailyBackup();
+      scheduleDailySaleAlerts();
       resolve(server);
     });
 

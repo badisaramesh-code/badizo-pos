@@ -39,6 +39,7 @@ function buildBillWhatsAppMessage({
 }
 
 function buildMetaTemplatePayload({ to, details }) {
+  if (!details) return null;
   const templateName = String(process.env.BADIZO_WHATSAPP_TEMPLATE_NAME || '').trim();
   if (!templateName) return null;
 
@@ -163,8 +164,29 @@ async function sendBillWhatsApp(details) {
   }
 }
 
+async function sendWhatsApp({ phone, message }) {
+  const to = `91${normalizePhone(phone)}`;
+  if (!whatsappEnabled()) return { sent: false, skipped: true, reason: 'WhatsApp disabled' };
+  if (!to || to.length !== 12) return { sent: false, skipped: true, reason: 'Invalid WhatsApp number' };
+
+  const timeoutMs = Math.max(Number(process.env.BADIZO_WHATSAPP_TIMEOUT_MS || 5000), 1000);
+  const provider = String(process.env.BADIZO_WHATSAPP_PROVIDER || 'meta').toLowerCase();
+
+  try {
+    const result = provider === 'generic'
+      ? await sendGenericWhatsApp({ to, message, timeoutMs })
+      : await sendMetaWhatsApp({ to, message, details: null, timeoutMs });
+    if (result.sent) logInfo('WhatsApp alert sent', { phone: to, provider });
+    return result;
+  } catch (err) {
+    logError('WhatsApp alert failed', err, { phone: to, provider });
+    return { sent: false, error: err.message };
+  }
+}
+
 module.exports = {
   buildBillWhatsAppMessage,
   sendBillWhatsApp,
+  sendWhatsApp,
   whatsappEnabled
 };
