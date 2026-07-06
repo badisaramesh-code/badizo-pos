@@ -442,31 +442,6 @@ export default function BarcodeStickersView() {
     <div className="form-stack">
       {screenMode === 'print' ? (
       <section className="panel barcode-workstation-panel">
-        <div className="panel-header green">
-          <div>
-            <h2 className="panel-title">Barcode Sticker Print</h2>
-            <span className="panel-subtitle">Search product, F11 load, enter sticker count, print</span>
-          </div>
-          <div className="barcode-header-actions">
-            <div className="barcode-mode-row barcode-mode-row-inline">
-              <button
-                className={`segment-button ${screenMode === 'print' ? 'active' : ''}`}
-                type="button"
-                onClick={openStickerPrint}
-              >
-                Sticker Print
-              </button>
-              <button
-                className={`segment-button ${screenMode === 'setup' ? 'active' : ''}`}
-                type="button"
-                onClick={openTemplateSetup}
-              >
-                PRN Template Setup
-              </button>
-            </div>
-            <button className="secondary-button" type="button" onClick={() => searchRef.current?.focus()}>Focus Search</button>
-          </div>
-        </div>
         <div className="panel-body form-stack barcode-workstation">
           {errorMessage && <div className="alert-box">{errorMessage}</div>}
           {statusMessage && <div className="change-box">{statusMessage}</div>}
@@ -475,7 +450,34 @@ export default function BarcodeStickersView() {
           )}
 
           <div className="barcode-entry-layout">
-            <div className="barcode-entry-form">
+            <div className="barcode-left-workspace">
+              <div className="panel-header green barcode-compact-header">
+                <div>
+                  <h2 className="panel-title">Barcode Sticker Print</h2>
+                  <span className="panel-subtitle">Search product, F11 load, enter sticker count, print</span>
+                </div>
+                <div className="barcode-header-actions">
+                  <div className="barcode-mode-row barcode-mode-row-inline">
+                    <button
+                      className={`segment-button ${screenMode === 'print' ? 'active' : ''}`}
+                      type="button"
+                      onClick={openStickerPrint}
+                    >
+                      Sticker Print
+                    </button>
+                    <button
+                      className={`segment-button ${screenMode === 'setup' ? 'active' : ''}`}
+                      type="button"
+                      onClick={openTemplateSetup}
+                    >
+                      PRN Template Setup
+                    </button>
+                  </div>
+                  <button className="secondary-button" type="button" onClick={() => searchRef.current?.focus()}>Focus Search</button>
+                </div>
+              </div>
+
+              <div className="barcode-entry-form">
               <label><span className="field-label">Barcode</span><input className="field" value={form.barcode} onChange={(event) => update('barcode', event.target.value.toUpperCase())} /></label>
               <label className="wide-field"><span className="field-label">Product</span><input className="field" value={form.product_name} onChange={(event) => update('product_name', event.target.value.toUpperCase())} /></label>
               <label><span className="field-label">Packing Date</span><input className="field" value={form.pkd_date} onChange={(event) => update('pkd_date', event.target.value.toUpperCase())} /></label>
@@ -509,6 +511,7 @@ export default function BarcodeStickersView() {
                   searchRef.current?.focus();
                 }}>Clear</button>
                 <span className="barcode-search-status">{isSearching ? 'Searching...' : `${suggestions.length} products`}</span>
+              </div>
               </div>
             </div>
 

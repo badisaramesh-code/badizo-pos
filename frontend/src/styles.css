@@ -3465,6 +3465,18 @@ button:disabled {
   line-height: 1.1;
 }
 
+.barcode-workstation-panel .barcode-compact-header {
+  justify-content: flex-start;
+  gap: 18px;
+  border: 1px solid #9ac08f;
+  border-bottom-color: #df9b2e;
+  border-radius: 2px;
+}
+
+.barcode-workstation-panel .barcode-compact-header > div:first-child {
+  flex: 0 0 220px;
+}
+
 .barcode-workstation {
   gap: 10px;
 }
@@ -3477,6 +3489,12 @@ button:disabled {
   padding: 10px;
   border: 1px solid #9ac08f;
   background: #e7f7dd;
+}
+
+.barcode-left-workspace {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
 
 .barcode-entry-form {
@@ -3621,10 +3639,10 @@ button:disabled {
 
 .barcode-header-actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
-  justify-content: flex-end;
-  flex: 1;
+  justify-content: flex-start;
+  flex: 0 1 auto;
 }
 
 .barcode-mode-row {
