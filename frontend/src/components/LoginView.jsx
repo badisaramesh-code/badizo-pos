@@ -11,7 +11,8 @@ const FALLBACK_LOGIN_OPTIONS = [
   { label: 'Counter 4', username: 'counter4' },
   { label: 'Counter 5', username: 'counter5' },
   { label: 'Counter 6', username: 'counter6' },
-  { label: 'Security', username: 'security' }
+  { label: 'Security 1', username: 'security1' },
+  { label: 'Security 2', username: 'security2' }
 ];
 
 function loginModeFromUrl() {
@@ -31,7 +32,7 @@ function filterLoginOptions(options, mode) {
     return options.filter((option) => String(option.username || '').toLowerCase() === 'server');
   }
   if (mode === 'security') {
-    return options.filter((option) => option.role === 'SECURITY' || String(option.username || '').toLowerCase() === 'security');
+    return options.filter((option) => option.role === 'SECURITY' || /^security[12]$/i.test(option.username));
   }
   return options;
 }
@@ -52,10 +53,19 @@ export default function LoginView({ onLogin }) {
   const initialOptions = useMemo(() => filterLoginOptions(FALLBACK_LOGIN_OPTIONS, loginMode), [loginMode]);
   const [username, setUsername] = useState(initialOptions[0]?.username || 'admin1');
   const [personName, setPersonName] = useState('');
-  const [password, setPassword] = useState(loginMode === 'counter' ? 'counter123' : loginMode === 'server' ? 'server123' : loginMode === 'security' ? 'security123' : 'admin123');
+  const [password, setPassword] = useState(loginMode === 'counter' ? 'counter1' : loginMode === 'server' ? 'server123' : loginMode === 'security' ? 'admin123' : 'admin123');
   const [loginOptions, setLoginOptions] = useState(initialOptions.length ? initialOptions : FALLBACK_LOGIN_OPTIONS);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  function defaultPasswordForUsername(nextUsername) {
+    const value = String(nextUsername || '').toLowerCase();
+    if (/^counter([1-9]|10)$/.test(value)) return value;
+    if (/^security[12]$/.test(value) || value === 'security') return 'admin123';
+    if (value === 'server') return 'server123';
+    if (value.startsWith('admin')) return 'admin123';
+    return '';
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -121,7 +131,15 @@ export default function LoginView({ onLogin }) {
 
         <label>
           <span className="field-label">Role</span>
-          <select className="field" value={username} onChange={(event) => setUsername(event.target.value)} autoFocus>
+          <select
+            className="field"
+            value={username}
+            onChange={(event) => {
+              setUsername(event.target.value);
+              setPassword(defaultPasswordForUsername(event.target.value));
+            }}
+            autoFocus
+          >
             {loginOptions.map((role) => (
               <option key={role.username} value={role.username}>{role.label}</option>
             ))}
@@ -149,7 +167,7 @@ export default function LoginView({ onLogin }) {
 
         {!isSecurityLogin && (
           <div className="change-box">
-            Default passwords: Server server123, Admin admin123, Counters counter123, Security security123.
+            Default passwords: Server server123, Admin admin123, Counters counter1 to counter6, Security admin123.
           </div>
         )}
       </form>

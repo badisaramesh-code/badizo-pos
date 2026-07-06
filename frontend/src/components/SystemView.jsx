@@ -100,6 +100,19 @@ export default function SystemView() {
     loyalty_redeem_points: 10,
     loyalty_redeem_amount: 0.5,
     backup_daily_time: '09:00',
+    login_logout_alert_phone: '',
+    gst_api_enabled: false,
+    gst_api_environment: 'SANDBOX',
+    gst_api_provider: '',
+    gst_api_username: '',
+    gst_api_client_id: '',
+    gst_api_client_secret: '',
+    gst_api_base_url: 'https://einv-apisandbox.nic.in',
+    ewaybill_enabled: false,
+    ewaybill_api_username: '',
+    ewaybill_api_base_url: 'https://api.ewaybillgst.gov.in',
+    ewaybill_default_transporter_id: '',
+    ewaybill_default_transport_mode: 'Road',
     barcode_printer_templates: DEFAULT_BARCODE_PRINTER_TEMPLATES
   });
   const [statusMessage, setStatusMessage] = useState('');
@@ -263,6 +276,15 @@ export default function SystemView() {
   const storeGst = settings.gst_number || '36AAJFH7790R1ZB';
   const storeAddress = settings.address || 'Sathupally - Khammam(dt) - 507303';
   const storePhone = settings.phone || '08761 295000';
+  const setupFileChecklist = [
+    { label: 'Store Master', file: 'Shop name, GST, phone, address', status: storeName ? 'Ready' : 'Check' },
+    { label: 'Login Alerts', file: 'SMS/WhatsApp alert phone', status: settings.login_logout_alert_phone ? 'Number set' : 'Add phone' },
+    { label: 'Bank / A4', file: 'Bank details for A4 print', status: settings.bank_account_no ? 'Ready' : 'Check' },
+    { label: 'Billing Print', file: 'Counters, print mode, GST slabs', status: `${settings.counter_count || 1} counters` },
+    { label: 'A4 GST API', file: 'A4 e-invoice and e-waybill setup', status: settings.gst_api_enabled ? 'Enabled' : 'Setup' },
+    { label: 'Thermal Footer', file: 'Four bill footer lines', status: settings.thermal_footer_line_1 ? 'Ready' : 'Check' },
+    { label: 'Passwords', file: 'Admin, counter, security logins', status: setupUnlocked ? 'Open' : 'Protected' }
+  ];
 
   async function handleSave() {
     setStatusMessage('');
@@ -455,6 +477,58 @@ export default function SystemView() {
     return <span className={`status-chip ${ok ? 'success' : badClass}`}>{ok ? goodText : badText}</span>;
   }
 
+  const gstApiFileCard = (
+    <div className="settings-section settings-inline-section system-file-card setup-file-gst-api open-gst-api-file">
+      <div className="settings-section-title">A4 GST E-Invoice / E-Waybill File</div>
+      <div className="change-box setup-wide-note">
+        E-invoice is only for A4 GST/IGST bills. Thermal POS bills will not create e-invoice. Live creation needs GST IRP/e-waybill API credentials from NIC/GSP.
+      </div>
+      <label className="checkbox-line">
+        <input
+          type="checkbox"
+          checked={settings.gst_api_enabled === true || settings.gst_api_enabled === '1'}
+          onChange={(event) => updateSetting('gst_api_enabled', event.target.checked)}
+        />
+        <span>Enable A4 e-invoice creation</span>
+      </label>
+      <label className="checkbox-line">
+        <input
+          type="checkbox"
+          checked={settings.ewaybill_enabled === true || settings.ewaybill_enabled === '1'}
+          onChange={(event) => updateSetting('ewaybill_enabled', event.target.checked)}
+        />
+        <span>Enable e-waybill creation</span>
+      </label>
+      <label>
+        <span className="field-label">Environment</span>
+        <select className="select" value={settings.gst_api_environment || 'SANDBOX'} onChange={(event) => updateSetting('gst_api_environment', event.target.value)}>
+          <option value="SANDBOX">Sandbox / Testing</option>
+          <option value="PRODUCTION">Production / Live</option>
+        </select>
+      </label>
+      <label><span className="field-label">API Provider / GSP</span><input className="field" value={settings.gst_api_provider || ''} onChange={(event) => updateSetting('gst_api_provider', event.target.value)} placeholder="NIC / GSP name" /></label>
+      <label><span className="field-label">E-Invoice Username</span><input className="field" value={settings.gst_api_username || ''} onChange={(event) => updateSetting('gst_api_username', event.target.value)} /></label>
+      <label><span className="field-label">Client ID</span><input className="field" value={settings.gst_api_client_id || ''} onChange={(event) => updateSetting('gst_api_client_id', event.target.value)} /></label>
+      <label><span className="field-label">Client Secret / Token</span><input className="field" type="password" value={settings.gst_api_client_secret || ''} onChange={(event) => updateSetting('gst_api_client_secret', event.target.value)} /></label>
+      <label><span className="field-label">E-Invoice API URL</span><input className="field" value={settings.gst_api_base_url || ''} onChange={(event) => updateSetting('gst_api_base_url', event.target.value)} /></label>
+      <label><span className="field-label">E-Waybill Username</span><input className="field" value={settings.ewaybill_api_username || ''} onChange={(event) => updateSetting('ewaybill_api_username', event.target.value)} /></label>
+      <label><span className="field-label">E-Waybill API URL</span><input className="field" value={settings.ewaybill_api_base_url || ''} onChange={(event) => updateSetting('ewaybill_api_base_url', event.target.value)} /></label>
+      <label><span className="field-label">Default Transporter ID</span><input className="field" value={settings.ewaybill_default_transporter_id || ''} onChange={(event) => updateSetting('ewaybill_default_transporter_id', event.target.value.toUpperCase())} /></label>
+      <label>
+        <span className="field-label">Default Transport Mode</span>
+        <select className="select" value={settings.ewaybill_default_transport_mode || 'Road'} onChange={(event) => updateSetting('ewaybill_default_transport_mode', event.target.value)}>
+          <option value="Road">Road</option>
+          <option value="Rail">Rail</option>
+          <option value="Air">Air</option>
+          <option value="Ship">Ship</option>
+        </select>
+      </label>
+      <div className="settings-action-row setup-wide-note">
+        <button className="primary-button" type="button" onClick={handleSave}>Save GST API Settings</button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="form-stack system-view">
       <section className="panel">
@@ -555,6 +629,18 @@ export default function SystemView() {
         </div>
       </section>
 
+      <section className="panel open-gst-api-panel">
+        <div className="panel-header green">
+          <div>
+            <h2 className="panel-title">GST E-Invoice / E-Waybill</h2>
+            <span className="panel-subtitle">Open setup for A4 GST/IGST invoice API</span>
+          </div>
+        </div>
+        <div className="panel-body">
+          {gstApiFileCard}
+        </div>
+      </section>
+
       <section className="system-grid">
         <div className={`panel ${setupUnlocked ? 'setup-folder-panel' : ''}`}>
           <div className="panel-header green setup-folder-header">
@@ -589,12 +675,22 @@ export default function SystemView() {
               </form>
             ) : (
             <>
+            <div className="setup-file-checklist">
+              {setupFileChecklist.map((item) => (
+                <div className="setup-file-check" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong>{item.file}</strong>
+                  <em>{item.status}</em>
+                </div>
+              ))}
+            </div>
             <div className="setup-files-two-column">
             <div className="settings-section system-file-card setup-file-store">
               <div className="settings-section-title">Store Master File</div>
               <label><span className="field-label">Shop Name</span><input className="field" value={settings.shop_name || ''} onChange={(event) => updateSetting('shop_name', event.target.value)} /></label>
               <label><span className="field-label">GST Number</span><input className="field" value={settings.gst_number || ''} onChange={(event) => updateSetting('gst_number', event.target.value.toUpperCase())} /></label>
               <label><span className="field-label">Phone</span><input className="field" value={settings.phone || ''} onChange={(event) => updateSetting('phone', event.target.value)} /></label>
+              <label className="setup-alert-phone-field"><span className="field-label">Login Alert Phone</span><input className="field" value={settings.login_logout_alert_phone || ''} onChange={(event) => updateSetting('login_logout_alert_phone', event.target.value)} placeholder="SMS/WhatsApp alert number" /></label>
               <label><span className="field-label">Address</span><textarea className="field settings-address-field" rows="2" value={settings.address || ''} onChange={(event) => updateSetting('address', event.target.value)} /></label>
               <div className="pos-header-preview">
                 <strong>{storeName}</strong>
@@ -700,6 +796,7 @@ export default function SystemView() {
                 />
               </label>
             </div>
+
             <div className="settings-section system-file-card setup-file-footer">
               <div className="settings-section-title">Thermal Footer File</div>
               <div className="change-box">These 4 lines print below E. &amp; O. E on thermal bills.</div>
@@ -848,7 +945,7 @@ export default function SystemView() {
                 ))}
               </div>
               <div className="change-box">
-                Current file: <strong>{PASSWORD_VAULT_FOLDERS.find((folder) => folder.key === passwordVaultFolder)?.label}</strong> - 10 password slots.
+                Current file: <strong>{PASSWORD_VAULT_FOLDERS.find((folder) => folder.key === passwordVaultFolder)?.label}</strong> - {passwordVaultFolder === 'STORE_PROTECTED' ? 11 : 10} password slots.
               </div>
               <div className="table-scroll">
                 <table className="history-table password-vault-table">

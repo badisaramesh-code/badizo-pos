@@ -229,6 +229,14 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         cancelled_by VARCHAR(100) DEFAULT NULL,
         cancelled_at TIMESTAMP NULL DEFAULT NULL,
         reprint_count INT NOT NULL DEFAULT 0,
+        einvoice_status VARCHAR(30) NOT NULL DEFAULT 'NOT_CREATED',
+        einvoice_irn VARCHAR(120) DEFAULT NULL,
+        einvoice_ack_no VARCHAR(80) DEFAULT NULL,
+        einvoice_ack_date DATETIME DEFAULT NULL,
+        ewaybill_status VARCHAR(30) NOT NULL DEFAULT 'NOT_CREATED',
+        ewaybill_no VARCHAR(80) DEFAULT NULL,
+        ewaybill_date DATETIME DEFAULT NULL,
+        ewaybill_valid_upto DATETIME DEFAULT NULL,
         INDEX idx_invoice_no (invoice_no),
         INDEX idx_created_at (created_at),
         INDEX idx_invoice_status (invoice_status)
@@ -1133,6 +1141,14 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'invoices', 'cancelled_by', 'VARCHAR(100) DEFAULT NULL AFTER cancel_reason');
     await ensureColumn(connection, 'invoices', 'cancelled_at', 'TIMESTAMP NULL DEFAULT NULL AFTER cancelled_by');
     await ensureColumn(connection, 'invoices', 'reprint_count', 'INT NOT NULL DEFAULT 0 AFTER cancelled_at');
+    await ensureColumn(connection, 'invoices', 'einvoice_status', "VARCHAR(30) NOT NULL DEFAULT 'NOT_CREATED' AFTER reprint_count");
+    await ensureColumn(connection, 'invoices', 'einvoice_irn', 'VARCHAR(120) DEFAULT NULL AFTER einvoice_status');
+    await ensureColumn(connection, 'invoices', 'einvoice_ack_no', 'VARCHAR(80) DEFAULT NULL AFTER einvoice_irn');
+    await ensureColumn(connection, 'invoices', 'einvoice_ack_date', 'DATETIME DEFAULT NULL AFTER einvoice_ack_no');
+    await ensureColumn(connection, 'invoices', 'ewaybill_status', "VARCHAR(30) NOT NULL DEFAULT 'NOT_CREATED' AFTER einvoice_ack_date");
+    await ensureColumn(connection, 'invoices', 'ewaybill_no', 'VARCHAR(80) DEFAULT NULL AFTER ewaybill_status');
+    await ensureColumn(connection, 'invoices', 'ewaybill_date', 'DATETIME DEFAULT NULL AFTER ewaybill_no');
+    await ensureColumn(connection, 'invoices', 'ewaybill_valid_upto', 'DATETIME DEFAULT NULL AFTER ewaybill_date');
     await ensureColumn(connection, 'invoice_items', 'hsn_code', "VARCHAR(20) DEFAULT '' AFTER product_name");
     await ensureColumn(connection, 'invoice_items', 'cgst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER gst_percent');
     await ensureColumn(connection, 'invoice_items', 'sgst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER cgst_amount');
@@ -1306,22 +1322,35 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
       ['admin', 'admin123', 'ADMIN', null],
       ['admin1', 'admin123', 'ADMIN', null],
       ['admin2', 'admin123', 'ADMIN', null],
-      ['counter1', 'counter123', 'COUNTER', 1],
-      ['counter2', 'counter123', 'COUNTER', 2],
-      ['counter3', 'counter123', 'COUNTER', 3],
-      ['counter4', 'counter123', 'COUNTER', 4],
-      ['counter5', 'counter123', 'COUNTER', 5],
-      ['counter6', 'counter123', 'COUNTER', 6],
-      ['security', 'security123', 'SECURITY', null]
+      ['counter1', 'counter1', 'COUNTER', 1],
+      ['counter2', 'counter2', 'COUNTER', 2],
+      ['counter3', 'counter3', 'COUNTER', 3],
+      ['counter4', 'counter4', 'COUNTER', 4],
+      ['counter5', 'counter5', 'COUNTER', 5],
+      ['counter6', 'counter6', 'COUNTER', 6],
+      ['security', 'admin123', 'SECURITY', null],
+      ['security1', 'admin123', 'SECURITY', null],
+      ['security2', 'admin123', 'SECURITY', null]
     ];
 
     for (const [username, password, role, counterNo] of defaultUsers) {
       await connection.query(
-        `INSERT IGNORE INTO users (username, password_hash, role, counter_no)
-         VALUES (?, ?, ?, ?)`,
-        [username, hashPassword(password), role, counterNo]
+        `INSERT IGNORE INTO users (username, password, password_hash, role, counter_no)
+         VALUES (?, ?, ?, ?, ?)`,
+        [username, '', hashPassword(password), role, counterNo]
+      );
+      await connection.query(
+        `UPDATE users
+         SET password_hash = ?, role = ?, counter_no = ?, is_active = 1
+         WHERE username = ?`,
+        [hashPassword(password), role, counterNo, username]
       );
     }
+    await connection.query(
+      `UPDATE users
+       SET is_active = 0
+       WHERE username IN ('counter7', 'counter8', 'counter9', 'counter10')`
+    );
 
     console.log('Database schema is ready.');
     logInfo('Database schema is ready');

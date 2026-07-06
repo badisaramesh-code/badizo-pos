@@ -2257,6 +2257,27 @@ button:disabled {
   box-shadow: 0 10px 26px rgba(15, 23, 42, 0.1);
 }
 
+.usage-side-panel .compact-panel-header {
+  padding: 8px 10px;
+}
+
+.usage-detail-grid {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: 5px 8px;
+  padding: 8px 10px 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.usage-detail-grid strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 .last-bill-panel {
   border-color: #f5ca7b;
   background: #fff9ed;
@@ -3833,6 +3854,49 @@ button:disabled {
   align-items: start;
 }
 
+.setup-file-checklist {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #cfe1d2;
+  border-radius: 8px;
+  background: #f8fcf8;
+}
+
+.setup-file-check {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid #d7e6da;
+  border-left: 4px solid var(--brand);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.setup-file-check span {
+  color: #123b1d;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.setup-file-check strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.setup-file-check em {
+  justify-self: start;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #e8f7ed;
+  color: #155f22;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .setup-files-two-column .system-file-card {
   min-height: 100%;
 }
@@ -3847,6 +3911,18 @@ button:disabled {
 
 .setup-file-store::before {
   content: "STORE MASTER FILE";
+}
+
+.setup-alert-phone-field {
+  padding: 8px;
+  border: 1px solid #f5ca7b;
+  border-radius: 7px;
+  background: #fff9ed;
+}
+
+.setup-alert-phone-field .field-label {
+  color: #7a4b00;
+  font-weight: 900;
 }
 
 .setup-file-bank {
@@ -3867,6 +3943,27 @@ button:disabled {
   content: "BILLING PRINT FILE";
   background: #fff7e6;
   color: #9a5b00;
+}
+
+.setup-file-gst-api {
+  border-left-color: #0b5cab;
+}
+
+.setup-file-gst-api::before {
+  content: "A4 GST API FILE";
+  background: #eef7ff;
+  color: #0b5cab;
+}
+
+.setup-wide-note {
+  grid-column: 1 / -1;
+}
+
+.gst-api-status-line {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .setup-file-footer {
@@ -7545,6 +7642,7 @@ button:disabled {
   .product-dropbox-header,
   .product-dropbox-toolbar,
   .product-dropbox-approval,
+  .setup-file-checklist,
   .setup-files-two-column,
   .settings-inline-section,
   .gate-pass-grid,

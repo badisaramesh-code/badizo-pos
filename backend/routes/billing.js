@@ -1091,7 +1091,8 @@ router.get('/hold/list', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     const [rows] = await db.query(
       `SELECT invoice_no, customer_name, customer_phone, grand_total, cash_received, change_returned, billing_counter,
               payment_status, payment_reference,
-              payment_mode, transaction_type, billing_tier, tax_type, invoice_status, reprint_count, created_at
+              payment_mode, transaction_type, billing_tier, tax_type, invoice_status, reprint_count,
+              einvoice_status, einvoice_irn, einvoice_ack_no, ewaybill_status, ewaybill_no, created_at
        FROM invoices
        ${whereSql}
        ORDER BY created_at DESC
