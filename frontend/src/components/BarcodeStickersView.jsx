@@ -23,6 +23,7 @@ const TEMPLATE_OPTIONS = [
 ];
 
 const BARCODE_STORE_SETTINGS_KEY = 'badizo_barcode_store_settings';
+const BARCODE_LABEL_FORMAT_KEY = 'badizo_barcode_label_format';
 const DEFAULT_STORE_SETTINGS = {
   company: 'hyper fresh mart llp',
   address_line_1: 'H.NO: 3-41, Behind GV Mall, Morisetti Vari street',
@@ -67,6 +68,15 @@ function downloadTextFile(text, filename) {
   window.URL.revokeObjectURL(url);
 }
 
+function loadBarcodeLabelFormat() {
+  try {
+    const saved = window.localStorage.getItem(BARCODE_LABEL_FORMAT_KEY);
+    return TEMPLATE_OPTIONS.some((option) => option.name === saved) ? saved : TEMPLATE_OPTIONS[0].name;
+  } catch (err) {
+    return TEMPLATE_OPTIONS[0].name;
+  }
+}
+
 function displayNumber(value, decimals = 2) {
   const amount = Number(String(value ?? '').replace(/,/g, ''));
   if (!Number.isFinite(amount)) return '0.00';
@@ -76,7 +86,7 @@ function displayNumber(value, decimals = 2) {
 export default function BarcodeStickersView() {
   const savedStoreSettings = loadBarcodeStoreSettings();
   const [screenMode, setScreenMode] = useState('print');
-  const [templateName, setTemplateName] = useState(TEMPLATE_OPTIONS[0].name);
+  const [templateName, setTemplateName] = useState(loadBarcodeLabelFormat);
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
@@ -198,6 +208,15 @@ export default function BarcodeStickersView() {
 
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function changeTemplateName(nextTemplateName) {
+    setTemplateName(nextTemplateName);
+    try {
+      window.localStorage.setItem(BARCODE_LABEL_FORMAT_KEY, nextTemplateName);
+    } catch (_err) {
+      // Ignore storage failures; selection still works for the current screen.
+    }
   }
 
   async function runLiveSearch(query) {
@@ -498,7 +517,7 @@ export default function BarcodeStickersView() {
               <label><span className="field-label">System Name</span><input className="field" value={systemName} readOnly /></label>
               <label>
                 <span className="field-label">Label Format</span>
-                <select className="select" value={templateName} onChange={(event) => setTemplateName(event.target.value)}>
+                <select className="select" value={templateName} onChange={(event) => changeTemplateName(event.target.value)}>
                   {TEMPLATE_OPTIONS.map((option) => (
                     <option key={option.name} value={option.name}>{option.label}</option>
                   ))}
@@ -630,7 +649,7 @@ export default function BarcodeStickersView() {
               <>
                 <label>
                   <span className="field-label">Sticker Size / Template</span>
-                  <select className="select" value={templateName} onChange={(event) => setTemplateName(event.target.value)}>
+                  <select className="select" value={templateName} onChange={(event) => changeTemplateName(event.target.value)}>
                     {TEMPLATE_OPTIONS.map((option) => (
                       <option key={option.name} value={option.name}>{option.label}</option>
                     ))}

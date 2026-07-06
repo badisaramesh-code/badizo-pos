@@ -3450,6 +3450,21 @@ button:disabled {
   padding: 10px;
 }
 
+.barcode-workstation-panel .panel-header {
+  min-height: 42px;
+  padding: 5px 10px;
+}
+
+.barcode-workstation-panel .panel-title {
+  font-size: 13px;
+  line-height: 1.1;
+}
+
+.barcode-workstation-panel .panel-subtitle {
+  font-size: 11px;
+  line-height: 1.1;
+}
+
 .barcode-workstation {
   gap: 10px;
 }
@@ -3632,8 +3647,13 @@ button:disabled {
   background: transparent;
   color: #064d20;
   font-weight: 800;
-  padding: 8px 14px;
+  padding: 6px 12px;
   cursor: pointer;
+}
+
+.barcode-header-actions .secondary-button {
+  min-height: 32px;
+  padding: 6px 12px;
 }
 
 .segment-button:last-child {
