@@ -38,12 +38,13 @@ app.get('/api/health', (_req, res) => {
 mountRoutes(app);
 
 const PORT = process.env.PORT || 5000;
+const HOST = process.env.HOST || '0.0.0.0';
 
 function startServer(port = PORT) {
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, () => {
-      console.log(`BADIZO POS API running on port ${port}`);
-      logInfo('Backend started', { port });
+    const server = app.listen(port, HOST, () => {
+      console.log(`BADIZO POS API running on http://${HOST}:${port}`);
+      logInfo('Backend started', { host: HOST, port });
       scheduleDailyBackup();
       scheduleDailySaleAlerts();
       resolve(server);

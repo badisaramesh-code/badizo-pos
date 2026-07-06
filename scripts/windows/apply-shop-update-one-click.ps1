@@ -1,5 +1,5 @@
 param(
-  [string]$ServerIp = '192.168.1.16',
+  [string]$ServerIp = '192.168.1.9',
   [switch]$SkipInstall,
   [switch]$SkipFrontendRestart
 )
