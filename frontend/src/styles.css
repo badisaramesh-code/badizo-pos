@@ -1940,6 +1940,18 @@ button:disabled {
   overflow: hidden;
 }
 
+.preview-modal-backdrop {
+  z-index: 130;
+}
+
+.preview-modal {
+  width: min(620px, calc(100vw - 36px));
+  max-height: min(88vh, 820px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .reprint-preview-header,
 .reprint-preview-meta {
   display: flex;
@@ -1966,10 +1978,15 @@ button:disabled {
 }
 
 .reprint-preview-scroll {
+  flex: 1 1 auto;
   max-height: 360px;
   overflow: auto;
   padding: 12px;
   background: #f5f7f9;
+}
+
+.preview-modal .reprint-preview-scroll {
+  max-height: none;
 }
 
 .reprint-preview-scroll .print-invoice {
@@ -2076,6 +2093,11 @@ button:disabled {
 }
 
 .gate-pass-preview-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
   border-top: 1px solid var(--line);
   padding: 12px;
   background: #fff;

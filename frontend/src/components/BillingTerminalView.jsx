@@ -3935,6 +3935,7 @@ export default function BillingTerminalView({ isActive = true }) {
         invoice: invoiceToPreview,
         printedAt: new Date()
       });
+      setSelectedHistoryInvoice(null);
       setStatusMessage(`${invoiceNoForGatePass} gate pass loaded. Check and print.`);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to view gate pass.');
@@ -5392,6 +5393,7 @@ export default function BillingTerminalView({ isActive = true }) {
             if (event.target === event.currentTarget) {
               setShowHistory(false);
               setSelectedHistoryInvoice(null);
+              setGatePassPreview(null);
             }
           }}
         >
@@ -5404,6 +5406,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 onClick={() => {
                   setShowHistory(false);
                   setSelectedHistoryInvoice(null);
+                  setGatePassPreview(null);
                 }}
               >
                 Close
@@ -5454,84 +5457,6 @@ export default function BillingTerminalView({ isActive = true }) {
                 }} type="button">Clear</button>
                 <span className="status-chip">{filteredInvoiceHistory.length} bills</span>
               </form>
-              {gatePassPreview && (
-                <div className="reprint-preview-box gate-pass-preview-box">
-                  <div className="reprint-preview-header">
-                    <div>
-                      <span className="field-label">Gate Pass View</span>
-                      <strong className="mono">{gatePassPreview.invoice.invoiceNo}</strong>
-                    </div>
-                    <div className="table-actions">
-                      <button
-                        className="close-action-button"
-                        type="button"
-                        onClick={() => setGatePassPreview(null)}
-                      >
-                        Hide
-                      </button>
-                    </div>
-                  </div>
-                  <div className="reprint-preview-meta">
-                    <span>{gatePassPreview.invoice.customerName || 'Walk-in Customer'}</span>
-                    <span>{gatePassPreview.invoice.date || '-'} {gatePassPreview.invoice.time || ''}</span>
-                    <strong>{formatMoney(gatePassPreview.invoice.totals?.grand || 0)}</strong>
-                  </div>
-                  <div className="reprint-preview-scroll gate-pass-preview-scroll">
-                    <GatePassSlip invoice={gatePassPreview.invoice} printedAt={gatePassPreview.printedAt} />
-                  </div>
-                  <div className="gate-pass-preview-actions">
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={() => printGatePassSlip(gatePassPreview.invoice)}
-                    >
-                      Print Gate Pass
-                    </button>
-                  </div>
-                </div>
-              )}
-              {selectedHistoryInvoice && (
-                <div className="reprint-preview-box">
-                  <div className="reprint-preview-header">
-                    <div>
-                      <span className="field-label">Selected Bill</span>
-                      <strong className="mono">{selectedHistoryInvoice.invoiceNo}</strong>
-                    </div>
-                    <div className="table-actions">
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => handleReprint(selectedHistoryInvoice.invoiceNo, 'Thermal')}
-                      >
-                        Reprint
-                      </button>
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => handleReprint(selectedHistoryInvoice.invoiceNo, 'A4')}
-                      >
-                        A4 Reprint
-                      </button>
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => handleViewGatePass(selectedHistoryInvoice.invoiceNo)}
-                      >
-                        Gate Pass
-                      </button>
-                      <button className="close-action-button" type="button" onClick={() => setSelectedHistoryInvoice(null)}>Hide</button>
-                    </div>
-                  </div>
-                  <div className="reprint-preview-meta">
-                    <span>{selectedHistoryInvoice.customerName || 'Walk-in Customer'}</span>
-                    <span>{selectedHistoryInvoice.date || '-'} {selectedHistoryInvoice.time || ''}</span>
-                    <strong>{formatMoney(selectedHistoryInvoice.totals?.grand || 0)}</strong>
-                  </div>
-                  <div className="reprint-preview-scroll">
-                    <PrintableInvoice invoice={selectedHistoryInvoice} mode="Thermal" />
-                  </div>
-                </div>
-              )}
               <table className="history-table">
                 <thead>
                   <tr>
@@ -5587,6 +5512,102 @@ export default function BillingTerminalView({ isActive = true }) {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gatePassPreview && (
+        <div
+          className="modal-backdrop preview-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setGatePassPreview(null);
+            }
+          }}
+        >
+          <div className="modal preview-modal">
+            <div className="reprint-preview-header">
+              <div>
+                <span className="field-label">Gate Pass View</span>
+                <strong className="mono">{gatePassPreview.invoice.invoiceNo}</strong>
+              </div>
+              <button
+                className="close-action-button"
+                type="button"
+                onClick={() => setGatePassPreview(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="reprint-preview-meta">
+              <span>{gatePassPreview.invoice.customerName || 'Walk-in Customer'}</span>
+              <span>{gatePassPreview.invoice.date || '-'} {gatePassPreview.invoice.time || ''}</span>
+              <strong>{formatMoney(gatePassPreview.invoice.totals?.grand || 0)}</strong>
+            </div>
+            <div className="reprint-preview-scroll gate-pass-preview-scroll">
+              <GatePassSlip invoice={gatePassPreview.invoice} printedAt={gatePassPreview.printedAt} />
+            </div>
+            <div className="gate-pass-preview-actions">
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => printGatePassSlip(gatePassPreview.invoice)}
+              >
+                Print Gate Pass
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedHistoryInvoice && (
+        <div
+          className="modal-backdrop preview-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setSelectedHistoryInvoice(null);
+            }
+          }}
+        >
+          <div className="modal preview-modal">
+            <div className="reprint-preview-header">
+              <div>
+                <span className="field-label">Bill View</span>
+                <strong className="mono">{selectedHistoryInvoice.invoiceNo}</strong>
+              </div>
+              <button className="close-action-button" type="button" onClick={() => setSelectedHistoryInvoice(null)}>Close</button>
+            </div>
+            <div className="reprint-preview-meta">
+              <span>{selectedHistoryInvoice.customerName || 'Walk-in Customer'}</span>
+              <span>{selectedHistoryInvoice.date || '-'} {selectedHistoryInvoice.time || ''}</span>
+              <strong>{formatMoney(selectedHistoryInvoice.totals?.grand || 0)}</strong>
+            </div>
+            <div className="reprint-preview-scroll bill-preview-scroll">
+              <PrintableInvoice invoice={selectedHistoryInvoice} mode="Thermal" />
+            </div>
+            <div className="gate-pass-preview-actions">
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => handleReprint(selectedHistoryInvoice.invoiceNo, 'Thermal')}
+              >
+                Print Bill
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => handleReprint(selectedHistoryInvoice.invoiceNo, 'A4')}
+              >
+                A4 Print
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => handleViewGatePass(selectedHistoryInvoice.invoiceNo)}
+              >
+                Gate Pass
+              </button>
             </div>
           </div>
         </div>
