@@ -1979,6 +1979,113 @@ button:disabled {
   box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
 }
 
+.gate-pass-preview-scroll .gate-pass-slip {
+  width: 80mm;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 12px 18px;
+  box-sizing: border-box;
+  background: #fff;
+  color: #000;
+  font-family: Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.gate-pass-preview-scroll .gate-pass-brand {
+  text-align: center;
+}
+
+.gate-pass-preview-scroll .gate-pass-brand strong,
+.gate-pass-preview-scroll .gate-pass-brand span {
+  display: block;
+}
+
+.gate-pass-preview-scroll .gate-pass-brand strong {
+  font-size: 15px;
+  text-transform: uppercase;
+}
+
+.gate-pass-preview-scroll .gate-pass-brand span {
+  margin-top: 2px;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.gate-pass-preview-scroll .gate-pass-rule {
+  border-top: 1px dashed #000;
+  margin: 5px 0;
+}
+
+.gate-pass-preview-scroll .gate-pass-row,
+.gate-pass-preview-scroll .gate-pass-total {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.gate-pass-preview-scroll .gate-pass-row strong,
+.gate-pass-preview-scroll .gate-pass-total strong,
+.gate-pass-preview-scroll .gate-pass-customer strong {
+  overflow-wrap: anywhere;
+}
+
+.gate-pass-preview-scroll .gate-pass-customer {
+  display: grid;
+  gap: 2px;
+}
+
+.gate-pass-preview-scroll .gate-pass-customer span,
+.gate-pass-preview-scroll .gate-pass-customer em {
+  font-style: normal;
+  font-size: 11px;
+}
+
+.gate-pass-preview-scroll .gate-pass-total {
+  border-top: 1px solid #000;
+  margin-top: 3px;
+  padding-top: 5px;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.gate-pass-preview-scroll .gate-pass-note {
+  padding: 4px 0 36px;
+  text-align: center;
+  font-size: 11px;
+}
+
+.gate-pass-preview-scroll .gate-pass-signatures {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 36px;
+  padding-top: 24px;
+}
+
+.gate-pass-preview-scroll .gate-pass-signatures div {
+  border-top: 1px solid #000;
+  min-height: 28px;
+  font-size: 11px;
+}
+
+.gate-pass-preview-scroll .gate-pass-signatures div:last-child {
+  text-align: right;
+}
+
+.gate-pass-preview-actions {
+  border-top: 1px solid var(--line);
+  padding: 12px;
+  background: #fff;
+}
+
+.gate-pass-preview-actions .primary-button {
+  width: auto;
+  min-width: 180px;
+}
+
 .supplier-master-form {
   display: grid;
   grid-template-columns: repeat(3, minmax(180px, 1fr));
@@ -5699,10 +5806,22 @@ button:disabled {
   box-sizing: border-box;
   margin: 0 auto;
   padding: 1.5mm;
+  position: relative;
   font-size: 10px;
   font-weight: 700;
   page: thermal-receipt;
   overflow: visible;
+}
+
+.thermal-brand-edge {
+  position: absolute;
+  top: 0.4mm;
+  left: 0.6mm;
+  font-size: 6px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: #111;
 }
 
 .thermal-paper .print-table {
