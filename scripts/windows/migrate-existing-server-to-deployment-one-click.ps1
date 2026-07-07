@@ -1,5 +1,5 @@
 param(
-  [string]$ServerIp = '192.168.1.7',
+  [string]$ServerIp = '192.168.1.9',
   [string]$TargetRoot = 'C:\BadizoServer',
   [switch]$SkipInstall
 )

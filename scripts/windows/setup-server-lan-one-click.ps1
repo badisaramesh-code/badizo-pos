@@ -1,5 +1,5 @@
 param(
-  [string]$ServerIp = '192.168.1.7'
+  [string]$ServerIp = '192.168.1.9'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -117,6 +117,16 @@ function Test-Http {
   }
 }
 
+function Get-LocalLanIps {
+  return @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.IPAddress -notlike '127.*' -and
+      $_.IPAddress -notlike '169.254.*' -and
+      $_.PrefixOrigin -ne 'WellKnown'
+    } |
+    Select-Object -ExpandProperty IPAddress)
+}
+
 Assert-Administrator
 
 $scriptRoot = $PSScriptRoot
@@ -127,6 +137,15 @@ $frontendTaskScript = Join-Path $scriptRoot 'install-frontend-startup-task.ps1'
 Write-Host 'Badizo POS server LAN one-click setup' -ForegroundColor Green
 Write-Host "App folder: $appRoot"
 Write-Host "Server IP: $ServerIp"
+
+$localIps = Get-LocalLanIps
+if ($localIps.Count -gt 0) {
+  Write-Host "This computer IPs: $($localIps -join ', ')"
+}
+if ($localIps.Count -gt 0 -and $localIps -notcontains $ServerIp) {
+  Write-Host "WARNING: $ServerIp is not currently assigned to this server computer." -ForegroundColor Yellow
+  Write-Host 'If clients use this IP, reserve it in the router or set this server to a static IP.' -ForegroundColor Yellow
+}
 
 Build-Frontend -AppRoot $appRoot -ServerIp $ServerIp
 
@@ -150,15 +169,20 @@ $backendLocal = Test-Port -HostName 'localhost' -Port 5000
 $frontendLocal = Test-Port -HostName 'localhost' -Port 3000
 $backendLan = Test-Port -HostName $ServerIp -Port 5000
 $frontendLan = Test-Port -HostName $ServerIp -Port 3000
+$backendName = Test-Port -HostName $env:COMPUTERNAME -Port 5000
+$frontendName = Test-Port -HostName $env:COMPUTERNAME -Port 3000
 
 Write-Step 'Testing browser URLs'
 $backendHealth = Test-Http -Url "http://${ServerIp}:5000/api/health"
 $frontendHome = Test-Http -Url "http://${ServerIp}:3000"
+$backendNameHealth = Test-Http -Url "http://$env:COMPUTERNAME`:5000/api/health"
+$frontendNameHome = Test-Http -Url "http://$env:COMPUTERNAME`:3000"
 
 Write-Host ''
-if ($backendLocal -and $frontendLocal -and $backendLan -and $frontendLan -and $backendHealth -and $frontendHome) {
+if ($backendLocal -and $frontendLocal -and $backendLan -and $frontendLan -and $backendName -and $frontendName -and $backendHealth -and $frontendHome -and $backendNameHealth -and $frontendNameHome) {
   Write-Host 'Server LAN setup completed successfully. Slave PCs can use:' -ForegroundColor Green
   Write-Host "http://${ServerIp}:3000" -ForegroundColor Green
+  Write-Host "http://$env:COMPUTERNAME`:3000" -ForegroundColor Green
 } else {
   Write-Host 'Setup finished, but one or more checks failed.' -ForegroundColor Yellow
   Write-Host 'Check that MySQL is running, Node.js is installed, and the server IP is correct.' -ForegroundColor Yellow

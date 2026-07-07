@@ -2,7 +2,7 @@
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
-set "SERVER_IP=192.168.1.7"
+set "SERVER_IP=192.168.1.9"
 set "SETUP_PS1=%SCRIPT_DIR%setup-slave-app.ps1"
 
 if not exist "%SETUP_PS1%" (

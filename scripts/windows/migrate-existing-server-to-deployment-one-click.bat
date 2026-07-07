@@ -2,7 +2,7 @@
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
-set "SERVER_IP=192.168.1.7"
+set "SERVER_IP=192.168.1.9"
 set "TARGET_ROOT=C:\BadizoServer"
 set "MIGRATE_PS1=%SCRIPT_DIR%migrate-existing-server-to-deployment-one-click.ps1"
 set "BADIZO_SKIP_OPEN_AFTER_BUILD=1"

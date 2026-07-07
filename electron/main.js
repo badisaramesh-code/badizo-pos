@@ -81,12 +81,16 @@ function resolveFrontendBuildPath() {
   return candidates.find((candidate) => fs.existsSync(path.join(candidate, 'index.html'))) || candidates[1];
 }
 
-async function isReachable(url) {
+async function isReachable(url, timeoutMs = 2500) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { cache: 'no-store' });
+    const response = await fetch(url, { cache: 'no-store', signal: controller.signal });
     return response.ok;
   } catch (_err) {
     return false;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -97,6 +101,13 @@ async function waitForUrl(url, timeoutMs = 15000) {
     await new Promise((resolve) => setTimeout(resolve, 400));
   }
   return false;
+}
+
+async function ensureRemoteFrontendReachable(config) {
+  if (config.startFrontend !== false) return;
+  logMessage(`Checking remote frontend before load ${config.appUrl}`);
+  if (await waitForUrl(config.appUrl, 5000)) return;
+  throw new Error(`Badizo server is not reachable at ${config.appUrl}. Update the client config to the current server name/IP and check LAN/Wi-Fi.`);
 }
 
 async function startBackendIfNeeded(config) {
@@ -420,6 +431,7 @@ app.whenReady().then(async () => {
   logMessage('App ready');
   try {
     await startLocalServices(config);
+    await ensureRemoteFrontendReachable(config);
     createWindow(config);
   } catch (err) {
     logMessage(`Startup error: ${err.stack || err.message || err}`);

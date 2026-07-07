@@ -3446,8 +3446,203 @@ button:disabled {
   background: #eef8f2;
 }
 
+.barcode-workstation-panel .panel-body {
+  padding: 10px;
+}
+
+.barcode-workstation-panel .panel-header {
+  min-height: 42px;
+  padding: 5px 10px;
+}
+
+.barcode-workstation-panel .panel-title {
+  font-size: 13px;
+  line-height: 1.1;
+}
+
+.barcode-workstation-panel .panel-subtitle {
+  font-size: 11px;
+  line-height: 1.1;
+}
+
+.barcode-workstation-panel .barcode-compact-header {
+  justify-content: flex-start;
+  gap: 18px;
+  border: 1px solid #9ac08f;
+  border-bottom-color: #df9b2e;
+  border-radius: 2px;
+}
+
+.barcode-workstation-panel .barcode-compact-header > div:first-child {
+  flex: 0 0 220px;
+}
+
+.barcode-workstation {
+  gap: 10px;
+}
+
+.barcode-entry-layout {
+  display: grid;
+  grid-template-columns: minmax(720px, 1fr) minmax(260px, 320px);
+  gap: 14px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid #9ac08f;
+  background: #e7f7dd;
+}
+
+.barcode-left-workspace {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.barcode-entry-form {
+  display: grid;
+  grid-template-columns: 110px minmax(240px, 1.35fr) repeat(3, minmax(120px, 0.8fr));
+  gap: 8px 12px;
+  align-items: end;
+}
+
+.barcode-entry-form label,
+.barcode-printer-card label {
+  margin: 0;
+}
+
+.barcode-entry-form .field,
+.barcode-printer-card .field,
+.barcode-printer-card .select,
+.barcode-live-search {
+  min-height: 28px;
+  height: 28px;
+  padding: 4px 7px;
+  border-radius: 2px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.barcode-entry-form .wide-field {
+  grid-column: span 2;
+}
+
+.barcode-entry-form .sticker-count-field .field {
+  border-color: #7aa66f;
+  background: #fff;
+  font-size: 15px;
+  text-align: center;
+}
+
+.barcode-printer-card {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #aed1a1;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.barcode-printer-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.barcode-search-strip {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) 72px 72px 120px;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid #9ac08f;
+  background: #effbe8;
+}
+
+.barcode-search-under-print {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  padding: 6px;
+}
+
+.barcode-live-search {
+  width: 100%;
+}
+
+.barcode-search-status {
+  color: #245b2e;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: right;
+}
+
+.barcode-product-grid-wrap {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid #7fab77;
+  background: #fff;
+}
+
+.barcode-product-grid-table {
+  min-width: 1650px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.barcode-product-grid-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #cde7bd;
+  color: #173f1f;
+  border: 1px solid #95bd8b;
+  padding: 5px 6px;
+  white-space: nowrap;
+}
+
+.barcode-product-grid-table td {
+  border: 1px solid #bad3b4;
+  padding: 4px 6px;
+  white-space: nowrap;
+}
+
+.barcode-product-grid-table tbody tr:nth-child(even) {
+  background: #f7fff4;
+}
+
+.barcode-product-grid-table tbody tr:hover,
+.barcode-product-grid-table tbody tr.selected-row {
+  background: #d8ecff;
+  color: #102a43;
+}
+
+.barcode-product-grid-table tbody tr.selected-row td,
+.barcode-product-grid-table tbody tr:hover td {
+  border-color: #76aee8;
+}
+
+.barcode-product-grid-table tbody tr.selected-row strong,
+.barcode-product-grid-table tbody tr:hover strong {
+  color: #071f36;
+}
+
+.barcode-bottom-preview {
+  display: grid;
+  grid-template-columns: minmax(280px, 420px) 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid #c6ead6;
+  background: #f8fcf9;
+}
+
 .barcode-screen-switcher .panel-body {
   padding: 10px 12px;
+}
+
+.barcode-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-start;
+  flex: 0 1 auto;
 }
 
 .barcode-mode-row {
@@ -3460,14 +3655,23 @@ button:disabled {
   background: #f7fff8;
 }
 
+.barcode-mode-row-inline {
+  background: rgba(255, 255, 255, 0.65);
+}
+
 .segment-button {
   border: 0;
   border-right: 1px solid #1c7c3b;
   background: transparent;
   color: #064d20;
   font-weight: 800;
-  padding: 9px 16px;
+  padding: 6px 12px;
   cursor: pointer;
+}
+
+.barcode-header-actions .secondary-button {
+  min-height: 32px;
+  padding: 6px 12px;
 }
 
 .segment-button:last-child {
