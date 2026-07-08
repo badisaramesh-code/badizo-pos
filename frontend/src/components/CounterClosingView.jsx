@@ -574,11 +574,22 @@ export default function CounterClosingView() {
       display: block;
       width: 72mm;
       margin: 0;
+      position: relative;
       padding: 2mm 4mm 2mm 2mm;
       background: #fff;
       color: #111;
       font-size: 9px;
       line-height: 1.15;
+    }
+    .thermal-brand-edge {
+      position: absolute;
+      top: 0.4mm;
+      left: 10mm;
+      font-size: 8px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0;
+      color: #111;
     }
     h1 {
       margin: 0;
@@ -641,6 +652,7 @@ export default function CounterClosingView() {
 </head>
 <body>
   <div class="counter-sale-slip">
+    <div class="thermal-brand-edge">Badizo</div>
     <h1>${escapeHtml(shopName)}</h1>
     <div class="meta">
       <span>Date : ${escapeHtml(formatDisplayDate(date))}</span>
@@ -708,10 +720,21 @@ export default function CounterClosingView() {
         max-width: 80mm !important;
         min-height: 0 !important;
         max-height: none !important;
+        position: relative !important;
         padding: 2mm !important;
         overflow: visible !important;
         font-size: 10px !important;
         line-height: 1.2 !important;
+      }
+      body.printing-handover.printing-thermal .thermal-brand-edge {
+        position: absolute !important;
+        top: 0.4mm !important;
+        left: 10mm !important;
+        font-size: 8px !important;
+        line-height: 1 !important;
+        font-weight: 800 !important;
+        letter-spacing: 0 !important;
+        color: #111 !important;
       }
       body.printing-handover.printing-thermal .handover-print-sheet h1 {
         font-size: 13px !important;
@@ -1091,6 +1114,7 @@ export default function CounterClosingView() {
 
       <div className="print-area handover-print-area print-a4 print-thermal">
         <div className="handover-print-sheet">
+          <div className="thermal-brand-edge">Badizo</div>
           <h1>{shopName}</h1>
           <div className="handover-print-meta">
             <span>Date : {formatDisplayDate(date)}</span>

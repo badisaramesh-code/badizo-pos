@@ -136,6 +136,7 @@ function normalizeBarcodePrinterTemplates(rawValue) {
 }
 
 function publicSettings(settings) {
+  const logoDataUrl = String(settings.thermal_bill_logo_data_url || '').trim();
   const thermalFooterDefaults = [
     '1. Goods Exchange Time 2 P.M - 4 P.M',
     '2. Decoration Items & Toys Exchange Not Allowed',
@@ -162,8 +163,8 @@ function publicSettings(settings) {
     default_print_mode: 'Thermal',
     thermal_receipt_width_mm: FIXED_THERMAL_RECEIPT_WIDTH_MM,
     thermal_feed_margin_mm: FIXED_THERMAL_FEED_MARGIN_MM,
-    thermal_bill_logo_enabled: false,
-    thermal_bill_logo_data_url: '',
+    thermal_bill_logo_enabled: String(settings.thermal_bill_logo_enabled || '1') !== '0',
+    thermal_bill_logo_data_url: /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(logoDataUrl) ? logoDataUrl : '',
     thermal_footer_line_1: settings.thermal_footer_line_1 || thermalFooterDefaults[0],
     thermal_footer_line_2: settings.thermal_footer_line_2 || thermalFooterDefaults[1],
     thermal_footer_line_3: settings.thermal_footer_line_3 || thermalFooterDefaults[2],
@@ -278,11 +279,17 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
       }
 
       if (key === 'thermal_bill_logo_enabled') {
-        value = '0';
+        value = ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase()) ? '1' : '0';
       }
 
       if (key === 'thermal_bill_logo_data_url') {
-        value = '';
+        value = String(rawValue || '').trim();
+        if (value && !/^data:image\/(png|jpeg|jpg|webp);base64,/i.test(value)) {
+          return res.status(400).json({ error: 'Thermal bill logo must be a PNG, JPG, or WebP image.' });
+        }
+        if (value.length > 700000) {
+          return res.status(400).json({ error: 'Thermal bill logo is too large. Use a small 22mm x 22mm image.' });
+        }
       }
 
       if (key.startsWith('thermal_footer_line_')) {

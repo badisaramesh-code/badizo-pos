@@ -129,9 +129,18 @@ function BillQrCode({ invoice, className = '' }) {
 }
 
 function ThermalLogoSlot({ invoice }) {
+  const shop = invoice?.shop || {};
+  const logoEnabled = shop.thermal_bill_logo_enabled !== false && shop.thermal_bill_logo_enabled !== '0';
+  const logoSrc = String(shop.thermal_bill_logo_data_url || '').trim();
+  const showLogo = logoEnabled && logoSrc;
+
   return (
-    <div className="thermal-logo-slot thermal-logo-slot-text">
-      <strong className="thermal-logo-fallback">Badizo</strong>
+    <div className={`thermal-logo-slot${showLogo ? '' : ' thermal-logo-slot-text'}`}>
+      {showLogo ? (
+        <img src={logoSrc} alt="" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
+      ) : (
+        <strong className="thermal-logo-fallback">Badizo</strong>
+      )}
     </div>
   );
 }

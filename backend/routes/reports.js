@@ -448,7 +448,7 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
     const reportType = String(req.query.report_type || 'ALL').toUpperCase() === 'GST' ? 'GST' : 'ALL';
     const requestedCounter = normalizeCounterNoFromLabel(req.query.counter) || Number.parseInt(req.query.counter_no, 10) || 0;
     const userCounter = Number.parseInt(req.user?.counter_no, 10) || 0;
-    const counterNo = req.user?.role === 'COUNTER' && userCounter > 0
+    const counterNo = req.user?.role === 'COUNTER' && requestedCounter > 0 && requestedCounter !== userCounter
       ? userCounter
       : requestedCounter;
     const counter = counterNo > 0 ? `Counter ${counterNo}` : '';

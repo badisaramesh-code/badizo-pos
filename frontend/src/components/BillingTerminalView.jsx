@@ -172,6 +172,13 @@ function localIsoDate(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function normalizeDateRange(fromDate, toDate) {
+  const fallback = localIsoDate();
+  const from = String(fromDate || fallback).trim() || fallback;
+  const to = String(toDate || from).trim() || from;
+  return from <= to ? { from, to } : { from: to, to: from };
+}
+
 function getThermalFeedMarginMm(settings) {
   return FIXED_THERMAL_FEED_MARGIN_MM;
 }
@@ -201,6 +208,7 @@ function CounterSaleSlip({ slip, shop, printedAt }) {
 
   return (
     <div className="counter-sale-slip">
+      <div className="thermal-brand-edge">Badizo</div>
       <div className="counter-sale-slip-title">
         <strong>{shop.shop_name}</strong>
         <span>{printedDate} | {printedTime}</span>
@@ -241,6 +249,7 @@ function SaleReportSlip({ report, shop, printedAt }) {
 
   return (
     <div className="counter-sale-slip sale-report-slip">
+      <div className="thermal-brand-edge">Badizo</div>
       <div className="counter-sale-slip-title">
         <strong>{shop.shop_name}</strong>
         <span>{printedDate} | {printedTime}</span>
@@ -308,6 +317,7 @@ function GatePassSlip({ invoice, printedAt }) {
 
   return (
     <div className="gate-pass-slip">
+      <div className="thermal-brand-edge">Badizo</div>
       <div className="gate-pass-brand">
         <strong>{invoice?.shop?.shop_name || 'Badizo'}</strong>
         <span>STOCK DELIVERY GATE PASS</span>
@@ -454,7 +464,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [saleReportFromDate, setSaleReportFromDate] = useState(localIsoDate());
   const [saleReportToDate, setSaleReportToDate] = useState(localIsoDate());
   const [saleReportType, setSaleReportType] = useState('ALL');
-  const [saleReportScope, setSaleReportScope] = useState('CURRENT');
+  const [saleReportScope, setSaleReportScope] = useState('ALL');
   const [saleReport, setSaleReport] = useState(null);
   const [isSaleReportLoading, setIsSaleReportLoading] = useState(false);
   const [saleReportError, setSaleReportError] = useState('');
@@ -500,6 +510,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const billingTableRef = useRef(null);
   const lastBillDetailsRef = useRef(null);
   const heldBillsDetailsRef = useRef(null);
+  const saleReportFormRef = useRef(null);
   const priceCheckInputRef = useRef(null);
   const restoredDraftRef = useRef(Boolean(initialDraft));
   const customerNameRef = useRef(null);
@@ -2587,9 +2598,20 @@ export default function BillingTerminalView({ isActive = true }) {
     .counter-sale-slip {
       width: ${thermalWidthMm}mm;
       box-sizing: border-box;
+      position: relative;
       padding: 3mm 5mm ${thermalFeedMarginMm}mm;
       font-size: 12px;
       line-height: 1.2;
+    }
+    .thermal-brand-edge {
+      position: absolute;
+      top: 0.4mm;
+      left: 10mm;
+      font-size: 8px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0;
+      color: #111;
     }
     .counter-sale-slip-title,
     .counter-sale-slip-heading,
@@ -2740,21 +2762,29 @@ export default function BillingTerminalView({ isActive = true }) {
     }
   }
 
-  function getSaleReportRequest() {
+  function getSaleReportRequest(event) {
+    const form = event?.currentTarget?.form || saleReportFormRef.current;
+    const formData = form ? new FormData(form) : null;
+    const selectedFrom = formData?.get('sale_report_from') || saleReportFromDate;
+    const selectedTo = formData?.get('sale_report_to') || saleReportToDate || selectedFrom;
+    const { from, to } = normalizeDateRange(selectedFrom, selectedTo);
+    if (from !== saleReportFromDate) setSaleReportFromDate(from);
+    if (to !== saleReportToDate) setSaleReportToDate(to);
+
     return {
-      from: saleReportFromDate || localIsoDate(),
-      to: saleReportToDate || saleReportFromDate || localIsoDate(),
+      from,
+      to,
       reportType: saleReportType,
       counterNo: saleReportScope === 'CURRENT' ? counterNo : ''
     };
   }
 
-  async function loadSaleReportForPos() {
+  async function loadSaleReportForPos(event) {
     setIsSaleReportLoading(true);
     setSaleReportError('');
     setErrorMessage('');
     try {
-      const report = await fetchPosSaleReport(getSaleReportRequest());
+      const report = await fetchPosSaleReport(getSaleReportRequest(event));
       setSaleReport(report);
       setStatusMessage(`Sale report loaded: ${report.from} to ${report.to}.`);
       return report;
@@ -2770,12 +2800,12 @@ export default function BillingTerminalView({ isActive = true }) {
 
   async function handleViewSaleReport(event) {
     event?.preventDefault?.();
-    await loadSaleReportForPos();
+    await loadSaleReportForPos(event);
   }
 
   async function handlePrintSaleReport(event) {
     event?.preventDefault?.();
-    const report = await loadSaleReportForPos();
+    const report = await loadSaleReportForPos(event);
     if (report) await printSaleReportSlip(report);
   }
 
@@ -2810,9 +2840,20 @@ export default function BillingTerminalView({ isActive = true }) {
     .counter-sale-slip {
       width: ${thermalWidthMm}mm;
       box-sizing: border-box;
+      position: relative;
       padding: 3mm 5mm ${thermalFeedMarginMm}mm;
       font-size: 12px;
       line-height: 1.2;
+    }
+    .thermal-brand-edge {
+      position: absolute;
+      top: 0.4mm;
+      left: 10mm;
+      font-size: 8px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0;
+      color: #111;
     }
     .counter-sale-slip-title,
     .counter-sale-slip-heading,
@@ -3003,10 +3044,21 @@ export default function BillingTerminalView({ isActive = true }) {
     .gate-pass-slip {
       width: ${thermalWidthMm}mm;
       box-sizing: border-box;
+      position: relative;
       padding: 3mm 5mm ${thermalFeedMarginMm}mm;
       font-size: 12px;
       line-height: 1.2;
       font-weight: 700;
+    }
+    .thermal-brand-edge {
+      position: absolute;
+      top: 0.4mm;
+      left: 10mm;
+      font-size: 8px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0;
+      color: #111;
     }
     .gate-pass-brand {
       text-align: center;
@@ -3384,10 +3436,10 @@ export default function BillingTerminalView({ isActive = true }) {
     body.printing-thermal .thermal-brand-edge {
       position: absolute !important;
       top: 0.4mm !important;
-      left: 2.8mm !important;
-      font-size: 6px !important;
+      left: 10mm !important;
+      font-size: 8px !important;
       line-height: 1 !important;
-      font-weight: 600 !important;
+      font-weight: 800 !important;
     }
     body.printing-thermal .thermal-logo-slot img {
       width: 22mm !important;
@@ -3685,10 +3737,10 @@ export default function BillingTerminalView({ isActive = true }) {
     .thermal-brand-edge {
       position: absolute !important;
       top: 0.4mm !important;
-      left: 2.8mm !important;
-      font-size: 6px !important;
+      left: 10mm !important;
+      font-size: 8px !important;
       line-height: 1 !important;
-      font-weight: 600 !important;
+      font-weight: 800 !important;
       letter-spacing: 0 !important;
       color: #111 !important;
     }
@@ -5275,6 +5327,7 @@ export default function BillingTerminalView({ isActive = true }) {
                   onClick={() => {
                     setSaleReport(null);
                     setSaleReportError('');
+                    setSaleReportScope('ALL');
                     setShowSaleReport(true);
                   }}
                 >
@@ -5362,17 +5415,18 @@ export default function BillingTerminalView({ isActive = true }) {
             <div className="panel-body form-stack">
               <form
                 className="sale-report-pos-form"
+                ref={saleReportFormRef}
                 onSubmit={handleViewSaleReport}
               >
                 <div className="sale-report-form-line sale-report-title-line">Sale Report</div>
                 <div className="sale-report-form-line">
                   <label>
                     <span className="field-label">From Date</span>
-                    <input className="field" type="date" value={saleReportFromDate} onChange={(event) => setSaleReportFromDate(event.target.value)} />
+                    <input className="field" type="date" name="sale_report_from" value={saleReportFromDate} onChange={(event) => setSaleReportFromDate(event.target.value)} />
                   </label>
                   <label>
                     <span className="field-label">To Date</span>
-                    <input className="field" type="date" value={saleReportToDate} onChange={(event) => setSaleReportToDate(event.target.value)} />
+                    <input className="field" type="date" name="sale_report_to" value={saleReportToDate} onChange={(event) => setSaleReportToDate(event.target.value)} />
                   </label>
                 </div>
                 <div className="sale-report-form-line">

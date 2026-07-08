@@ -2016,6 +2016,7 @@ button:disabled {
   width: 80mm;
   max-width: 100%;
   margin: 0 auto;
+  position: relative;
   padding: 12px 18px;
   box-sizing: border-box;
   background: #fff;
@@ -5476,6 +5477,7 @@ button:disabled {
 .handover-print-sheet {
   width: 180mm;
   min-height: 260mm;
+  position: relative;
   padding: 5mm;
   color: #111;
   background: #fff;
@@ -6127,10 +6129,10 @@ button:disabled {
 .thermal-brand-edge {
   position: absolute;
   top: 0.4mm;
-  left: 2.8mm;
-  font-size: 6px;
+  left: 10mm;
+  font-size: 8px;
   line-height: 1;
-  font-weight: 600;
+  font-weight: 800;
   letter-spacing: 0;
   color: #111;
 }
@@ -7649,11 +7651,23 @@ button:disabled {
     max-width: 80mm !important;
     min-height: 0 !important;
     max-height: none !important;
+    position: relative !important;
     padding: 2mm !important;
     overflow: visible !important;
     page: thermal-receipt;
     font-size: 9px !important;
     line-height: 1.2 !important;
+  }
+
+  body.printing-handover.printing-thermal .thermal-brand-edge {
+    position: absolute !important;
+    top: 0.4mm !important;
+    left: 10mm !important;
+    font-size: 8px !important;
+    line-height: 1 !important;
+    font-weight: 800 !important;
+    letter-spacing: 0 !important;
+    color: #111 !important;
   }
 
   body.printing-handover.printing-thermal .handover-print-sheet h1 {

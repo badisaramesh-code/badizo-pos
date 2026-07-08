@@ -698,25 +698,28 @@ export default function SystemView() {
               </div>
               <div className="thermal-logo-settings">
                 <div className="thermal-logo-preview-box">
-                  <span>Badizo</span>
+                  {settings.thermal_bill_logo_data_url ? (
+                    <img src={settings.thermal_bill_logo_data_url} alt="Thermal bill logo preview" />
+                  ) : (
+                    <span>Badizo</span>
+                  )}
                 </div>
                 <div className="thermal-logo-controls">
                   <label className="checkbox-row">
                     <input
                       type="checkbox"
-                      checked={false}
-                      disabled
-                      readOnly
+                      checked={settings.thermal_bill_logo_enabled !== false && settings.thermal_bill_logo_enabled !== '0'}
+                      onChange={(event) => updateSetting('thermal_bill_logo_enabled', event.target.checked)}
                     />
-                    <span>Thermal bill header is fixed to Badizo text</span>
+                    <span>Print shop logo in fixed thermal bill top space</span>
                   </label>
                   <label>
                     <span className="field-label">Thermal Bill Logo</span>
-                    <input className="field" value="Logo disabled for fixed bill layout" readOnly />
+                    <input className="field" type="file" accept="image/png,image/jpeg,image/webp" onChange={handleThermalLogoUpload} />
                   </label>
                   <div className="settings-action-row">
-                    <button className="secondary-button" type="button" onClick={clearThermalLogo} disabled>Remove Logo</button>
-                    <span className="muted">Logo image is disabled so every counter prints the same thermal layout.</span>
+                    <button className="secondary-button" type="button" onClick={clearThermalLogo} disabled={!settings.thermal_bill_logo_data_url}>Remove Logo</button>
+                    <span className="muted">Logo prints inside the locked 25mm top space on every counter.</span>
                   </div>
                 </div>
               </div>
