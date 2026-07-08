@@ -30,7 +30,7 @@ function sendFile(res, filePath) {
 
     res.writeHead(200, {
       'Content-Type': contentTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
-      'Cache-Control': filePath === indexPath ? 'no-store' : 'public, max-age=31536000, immutable'
+      'Cache-Control': 'no-store'
     });
     res.end(data);
   });

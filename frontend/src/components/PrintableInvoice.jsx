@@ -1055,6 +1055,7 @@ export default function PrintableInvoice({ invoice, mode }) {
 
   return (
     <div className={`print-invoice ${template.paperClass}`}>
+      <div className="thermal-brand-edge">Badizo</div>
       {template.sections.map((section) => (
         <React.Fragment key={section.id}>
           {renderSection(section, invoice, template)}

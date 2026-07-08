@@ -277,6 +277,48 @@ function SaleReportSlip({ report, shop, printedAt }) {
   );
 }
 
+function GatePassSlip({ invoice, printedAt }) {
+  const printedDate = printedAt.toLocaleDateString('en-IN');
+  const printedTime = printedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  const customerName = String(invoice?.customerName || '').trim() || 'Walk-in Customer';
+  const customerPhone = String(invoice?.customerPhone || '').trim();
+  const customerAddress = String(invoice?.customerAddress || '').trim();
+  const qtyTotal = (invoice?.items || [])
+    .filter((item) => !item.is_free_bonus)
+    .reduce((sum, item) => sum + toNumber(item.quantity), 0);
+
+  return (
+    <div className="gate-pass-slip">
+      <div className="gate-pass-brand">
+        <strong>{invoice?.shop?.shop_name || 'Badizo'}</strong>
+        <span>STOCK DELIVERY GATE PASS</span>
+      </div>
+      <div className="gate-pass-rule" />
+      <div className="gate-pass-row"><span>Bill No</span><strong>{invoice?.invoiceNo || '-'}</strong></div>
+      <div className="gate-pass-row"><span>Counter</span><strong>Counter {invoice?.counterNo || '-'}</strong></div>
+      <div className="gate-pass-row"><span>Bill Date</span><strong>{invoice?.date || '-'}</strong></div>
+      <div className="gate-pass-row"><span>Bill Time</span><strong>{invoice?.time || '-'}</strong></div>
+      <div className="gate-pass-row"><span>Printed</span><strong>{printedDate} {printedTime}</strong></div>
+      <div className="gate-pass-rule" />
+      <div className="gate-pass-customer">
+        <span>Customer</span>
+        <strong>{customerName}</strong>
+        {customerPhone && <em>Phone: {customerPhone}</em>}
+        {customerAddress && <em>Address: {customerAddress}</em>}
+      </div>
+      <div className="gate-pass-rule" />
+      <div className="gate-pass-total"><span>Bill Amount</span><strong>{formatMoney(invoice?.totals?.grand || 0)}</strong></div>
+      <div className="gate-pass-total"><span>Qty Total</span><strong>{formatSlipAmount(qtyTotal)}</strong></div>
+      <div className="gate-pass-rule" />
+      <div className="gate-pass-note">Goods delivered against above bill.</div>
+      <div className="gate-pass-signatures">
+        <div><span>Checked Sign</span></div>
+        <div><span>Security Sign</span></div>
+      </div>
+    </div>
+  );
+}
+
 export default function BillingTerminalView({ isActive = true }) {
   const currentUser = getStoredUser();
   const initialDraft = readActivePosDraft(currentUser?.username);
@@ -350,6 +392,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [historyFromDate, setHistoryFromDate] = useState(localIsoDate());
   const [historyToDate, setHistoryToDate] = useState(localIsoDate());
   const [selectedHistoryInvoice, setSelectedHistoryInvoice] = useState(null);
+  const [gatePassPreview, setGatePassPreview] = useState(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [isHistoryInvoiceLoading, setIsHistoryInvoiceLoading] = useState(false);
   const [heldBills, setHeldBills] = useState([]);
@@ -2820,6 +2863,196 @@ export default function BillingTerminalView({ isActive = true }) {
     }
   }
 
+  async function printGatePassSlip(invoiceToPrint) {
+    if (!invoiceToPrint) {
+      setErrorMessage('Select a bill before printing gate pass.');
+      return;
+    }
+
+    try {
+      const printedAt = new Date();
+      const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
+      const defaultSlipHeightMm = 120;
+      const thermalFeedMarginMm = getThermalFeedMarginMm(shopSettings);
+      const slipMarkup = renderToStaticMarkup(<GatePassSlip invoice={invoiceToPrint} printedAt={printedAt} />);
+      const slipPrintHtml = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Gate Pass</title>
+  <style>
+    html, body {
+      width: ${thermalWidthMm}mm;
+      min-width: ${thermalWidthMm}mm;
+      max-width: ${thermalWidthMm}mm;
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      color: #000;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    .gate-pass-slip {
+      width: ${thermalWidthMm}mm;
+      box-sizing: border-box;
+      padding: 3mm 5mm ${thermalFeedMarginMm}mm;
+      font-size: 12px;
+      line-height: 1.2;
+      font-weight: 700;
+    }
+    .gate-pass-brand {
+      text-align: center;
+    }
+    .gate-pass-brand strong,
+    .gate-pass-brand span {
+      display: block;
+    }
+    .gate-pass-brand strong {
+      font-size: 15px;
+      text-transform: uppercase;
+    }
+    .gate-pass-brand span {
+      margin-top: 2px;
+      font-size: 14px;
+      font-weight: 900;
+    }
+    .gate-pass-rule {
+      border-top: 1px dashed #000;
+      margin: 5px 0;
+    }
+    .gate-pass-row,
+    .gate-pass-total {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 3px 0;
+    }
+    .gate-pass-row strong,
+    .gate-pass-total strong {
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+    .gate-pass-customer {
+      display: grid;
+      gap: 2px;
+    }
+    .gate-pass-customer span,
+    .gate-pass-customer em {
+      font-style: normal;
+      font-size: 11px;
+    }
+    .gate-pass-customer strong {
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    .gate-pass-total {
+      border-top: 1px solid #000;
+      margin-top: 3px;
+      padding-top: 5px;
+      font-size: 14px;
+      font-weight: 900;
+    }
+    .gate-pass-note {
+      padding: 4px 0 12mm;
+      text-align: center;
+      font-size: 11px;
+    }
+    .gate-pass-signatures {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12mm;
+      padding-top: 7mm;
+    }
+    .gate-pass-signatures div {
+      border-top: 1px solid #000;
+      min-height: 8mm;
+      font-size: 11px;
+    }
+    .gate-pass-signatures div:last-child {
+      text-align: right;
+    }
+    @media print {
+      @page { size: ${thermalWidthMm}mm ${defaultSlipHeightMm}mm; margin: 0; }
+      html, body {
+        width: ${thermalWidthMm}mm !important;
+        min-width: ${thermalWidthMm}mm !important;
+        max-width: ${thermalWidthMm}mm !important;
+        height: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+      }
+    }
+  </style>
+</head>
+<body>${slipMarkup}</body>
+</html>`;
+
+      const printFrame = document.createElement('iframe');
+      printFrame.title = 'Gate pass print frame';
+      printFrame.style.position = 'fixed';
+      printFrame.style.left = '-10000px';
+      printFrame.style.top = '0';
+      printFrame.style.width = `${thermalWidthMm}mm`;
+      printFrame.style.height = `${defaultSlipHeightMm}mm`;
+      printFrame.style.border = '0';
+      printFrame.style.visibility = 'hidden';
+      document.body.appendChild(printFrame);
+
+      const frameDocument = printFrame.contentDocument || printFrame.contentWindow?.document;
+      if (!frameDocument) {
+        printFrame.remove();
+        return;
+      }
+
+      frameDocument.open();
+      frameDocument.write(slipPrintHtml);
+      frameDocument.close();
+
+      const cleanup = () => window.setTimeout(() => printFrame.remove(), 300);
+      const frameWindow = printFrame.contentWindow;
+      frameWindow?.addEventListener('afterprint', cleanup, { once: true });
+      window.setTimeout(async () => {
+        try {
+          const slipElement = frameDocument.querySelector('.gate-pass-slip');
+          const contentHeightPx = Math.max(
+            slipElement?.scrollHeight || 0,
+            slipElement?.getBoundingClientRect?.().height || 0,
+            frameDocument.body?.scrollHeight || 0
+          );
+          const contentHeightMm = Math.max(70, Math.ceil((contentHeightPx * 25.4) / 96) + thermalFeedMarginMm);
+          const dynamicStyle = frameDocument.createElement('style');
+          dynamicStyle.textContent = `@media print { @page { size: ${thermalWidthMm}mm ${contentHeightMm}mm; margin: 0; } }`;
+          frameDocument.head.appendChild(dynamicStyle);
+          printFrame.style.height = `${contentHeightMm}mm`;
+
+          if (window.badizoDesktop?.printThermalHtml) {
+            await window.badizoDesktop.printThermalHtml({
+              html: frameDocument.documentElement.outerHTML,
+              widthMm: thermalWidthMm,
+              heightMm: contentHeightMm,
+              feedMarginMm: 0
+            });
+            cleanup();
+            setStatusMessage(`${invoiceToPrint.invoiceNo} gate pass printed.`);
+            return;
+          }
+
+          frameWindow?.focus();
+          frameWindow?.print();
+          window.setTimeout(() => {
+            if (document.body.contains(printFrame)) printFrame.remove();
+          }, 120000);
+          setStatusMessage(`${invoiceToPrint.invoiceNo} gate pass ready to print.`);
+        } catch (err) {
+          cleanup();
+          setErrorMessage(err.response?.data?.error || err.message || 'Unable to print gate pass.');
+        }
+      }, 250);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to print gate pass.');
+    }
+  }
+
   function schedulePrint(mode = printMode, afterPrint, invoiceForPrint = printableInvoice || printableDraft) {
     const printClass = mode === 'A4' ? 'printing-a4' : 'printing-thermal';
     const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
@@ -3666,6 +3899,48 @@ export default function BillingTerminalView({ isActive = true }) {
       setStatusMessage(`${invoiceNoForReprint} duplicate bill printing in ${reprintMode} format.`);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to reprint invoice.');
+    }
+  }
+
+  async function handleGatePassPrint(invoiceNoForGatePass) {
+    try {
+      const [details, latestSettings] = await Promise.all([
+        fetchInvoiceDetails(invoiceNoForGatePass),
+        fetchSettings()
+      ]);
+      setShopSettings(latestSettings);
+      const invoiceToPrint = {
+        ...invoiceDetailsToPrintable(details, false),
+        shop: latestSettings
+      };
+      await printGatePassSlip(invoiceToPrint);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to print gate pass.');
+    }
+  }
+
+  async function handleViewGatePass(invoiceNoForGatePass) {
+    setIsHistoryInvoiceLoading(true);
+    try {
+      const [details, latestSettings] = await Promise.all([
+        fetchInvoiceDetails(invoiceNoForGatePass),
+        fetchSettings()
+      ]);
+      setShopSettings(latestSettings);
+      const invoiceToPreview = {
+        ...invoiceDetailsToPrintable(details, false),
+        shop: latestSettings
+      };
+      setGatePassPreview({
+        invoice: invoiceToPreview,
+        printedAt: new Date()
+      });
+      setSelectedHistoryInvoice(null);
+      setStatusMessage(`${invoiceNoForGatePass} gate pass loaded. Check and print.`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to view gate pass.');
+    } finally {
+      setIsHistoryInvoiceLoading(false);
     }
   }
 
@@ -5118,6 +5393,7 @@ export default function BillingTerminalView({ isActive = true }) {
             if (event.target === event.currentTarget) {
               setShowHistory(false);
               setSelectedHistoryInvoice(null);
+              setGatePassPreview(null);
             }
           }}
         >
@@ -5130,6 +5406,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 onClick={() => {
                   setShowHistory(false);
                   setSelectedHistoryInvoice(null);
+                  setGatePassPreview(null);
                 }}
               >
                 Close
@@ -5176,44 +5453,10 @@ export default function BillingTerminalView({ isActive = true }) {
                   setHistoryFromDate(localIsoDate());
                   setHistoryToDate(localIsoDate());
                   setSelectedHistoryInvoice(null);
+                  setGatePassPreview(null);
                 }} type="button">Clear</button>
                 <span className="status-chip">{filteredInvoiceHistory.length} bills</span>
               </form>
-              {selectedHistoryInvoice && (
-                <div className="reprint-preview-box">
-                  <div className="reprint-preview-header">
-                    <div>
-                      <span className="field-label">Selected Bill</span>
-                      <strong className="mono">{selectedHistoryInvoice.invoiceNo}</strong>
-                    </div>
-                    <div className="table-actions">
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => handleReprint(selectedHistoryInvoice.invoiceNo, 'Thermal')}
-                      >
-                        Reprint
-                      </button>
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => handleReprint(selectedHistoryInvoice.invoiceNo, 'A4')}
-                      >
-                        A4 Reprint
-                      </button>
-                      <button className="close-action-button" type="button" onClick={() => setSelectedHistoryInvoice(null)}>Hide</button>
-                    </div>
-                  </div>
-                  <div className="reprint-preview-meta">
-                    <span>{selectedHistoryInvoice.customerName || 'Walk-in Customer'}</span>
-                    <span>{selectedHistoryInvoice.date || '-'} {selectedHistoryInvoice.time || ''}</span>
-                    <strong>{formatMoney(selectedHistoryInvoice.totals?.grand || 0)}</strong>
-                  </div>
-                  <div className="reprint-preview-scroll">
-                    <PrintableInvoice invoice={selectedHistoryInvoice} mode="Thermal" />
-                  </div>
-                </div>
-              )}
               <table className="history-table">
                 <thead>
                   <tr>
@@ -5255,6 +5498,7 @@ export default function BillingTerminalView({ isActive = true }) {
                             </button>
                             <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no, 'Thermal')}>Reprint</button>
                             <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no, 'A4')}>A4 Reprint</button>
+                            <button className="secondary-button" disabled={isHistoryInvoiceLoading} onClick={() => handleViewGatePass(invoice.invoice_no)}>Gate Pass</button>
                             {canManageInvoice && invoice.invoice_status !== 'CANCELLED' && invoice.invoice_status !== 'RETURNED' && (
                               <button className="secondary-button" onClick={() => openReturnInvoice(invoice.invoice_no)}>Return</button>
                             )}
@@ -5268,6 +5512,102 @@ export default function BillingTerminalView({ isActive = true }) {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gatePassPreview && (
+        <div
+          className="modal-backdrop preview-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setGatePassPreview(null);
+            }
+          }}
+        >
+          <div className="modal preview-modal">
+            <div className="reprint-preview-header">
+              <div>
+                <span className="field-label">Gate Pass View</span>
+                <strong className="mono">{gatePassPreview.invoice.invoiceNo}</strong>
+              </div>
+              <button
+                className="close-action-button"
+                type="button"
+                onClick={() => setGatePassPreview(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="reprint-preview-meta">
+              <span>{gatePassPreview.invoice.customerName || 'Walk-in Customer'}</span>
+              <span>{gatePassPreview.invoice.date || '-'} {gatePassPreview.invoice.time || ''}</span>
+              <strong>{formatMoney(gatePassPreview.invoice.totals?.grand || 0)}</strong>
+            </div>
+            <div className="reprint-preview-scroll gate-pass-preview-scroll">
+              <GatePassSlip invoice={gatePassPreview.invoice} printedAt={gatePassPreview.printedAt} />
+            </div>
+            <div className="gate-pass-preview-actions">
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => printGatePassSlip(gatePassPreview.invoice)}
+              >
+                Print Gate Pass
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedHistoryInvoice && (
+        <div
+          className="modal-backdrop preview-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setSelectedHistoryInvoice(null);
+            }
+          }}
+        >
+          <div className="modal preview-modal">
+            <div className="reprint-preview-header">
+              <div>
+                <span className="field-label">Bill View</span>
+                <strong className="mono">{selectedHistoryInvoice.invoiceNo}</strong>
+              </div>
+              <button className="close-action-button" type="button" onClick={() => setSelectedHistoryInvoice(null)}>Close</button>
+            </div>
+            <div className="reprint-preview-meta">
+              <span>{selectedHistoryInvoice.customerName || 'Walk-in Customer'}</span>
+              <span>{selectedHistoryInvoice.date || '-'} {selectedHistoryInvoice.time || ''}</span>
+              <strong>{formatMoney(selectedHistoryInvoice.totals?.grand || 0)}</strong>
+            </div>
+            <div className="reprint-preview-scroll bill-preview-scroll">
+              <PrintableInvoice invoice={selectedHistoryInvoice} mode="Thermal" />
+            </div>
+            <div className="gate-pass-preview-actions">
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => handleReprint(selectedHistoryInvoice.invoiceNo, 'Thermal')}
+              >
+                Print Bill
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => handleReprint(selectedHistoryInvoice.invoiceNo, 'A4')}
+              >
+                A4 Print
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => handleViewGatePass(selectedHistoryInvoice.invoiceNo)}
+              >
+                Gate Pass
+              </button>
             </div>
           </div>
         </div>
