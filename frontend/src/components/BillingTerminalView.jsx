@@ -62,9 +62,13 @@ const EMPTY_MIXED_PAYMENT = { cash: '', upi: '', card: '', upi_reference: '', ca
 const SCANNER_BARCODE_PATTERN = /^[A-Z0-9._-]+$/i;
 const SCANNER_SETTLE_MS = 650;
 const SCANNER_FAST_KEY_MS = 90;
+const SCANNER_WAKE_BLOCK_MS = 120;
 const TYPED_SEARCH_DEBOUNCE_MS = 160;
 const POS_SUGGESTION_LIMIT = 2000;
 const MIN_VISIBLE_BILL_ROWS = 12;
+const FIXED_THERMAL_RECEIPT_WIDTH_MM = 80;
+const FIXED_THERMAL_CONTENT_WIDTH_MM = 72;
+const FIXED_THERMAL_FEED_MARGIN_MM = 4;
 
 function readActivePosDraft(username) {
   try {
@@ -169,8 +173,15 @@ function localIsoDate(date = new Date()) {
 }
 
 function getThermalFeedMarginMm(settings) {
-  const parsed = Number(settings?.thermal_feed_margin_mm ?? 4);
-  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 0), 30) : 4;
+  return FIXED_THERMAL_FEED_MARGIN_MM;
+}
+
+function getThermalReceiptWidthMm() {
+  return FIXED_THERMAL_RECEIPT_WIDTH_MM;
+}
+
+function getThermalContentWidthMm() {
+  return FIXED_THERMAL_CONTENT_WIDTH_MM;
 }
 
 function buildHoldToken({ invoiceNo, counterNo, customerLabel }) {
@@ -283,6 +294,14 @@ function GatePassSlip({ invoice, printedAt }) {
   const customerName = String(invoice?.customerName || '').trim() || 'Walk-in Customer';
   const customerPhone = String(invoice?.customerPhone || '').trim();
   const customerAddress = String(invoice?.customerAddress || '').trim();
+  const gatePassDetails = normalizeGatePassDetails(invoice?.gatePassDetails);
+  const fixedDetails = [
+    ['Box', gatePassDetails.boxQty],
+    ['Gunny Bags', gatePassDetails.gunnyBagQty],
+    ['Tins', gatePassDetails.tinsQty]
+  ].filter(([, value]) => value);
+  const hasCounterDetail = gatePassDetails.counterItemName || gatePassDetails.counterItemQty;
+  const hasExtraDetails = fixedDetails.length > 0 || hasCounterDetail;
   const qtyTotal = (invoice?.items || [])
     .filter((item) => !item.is_free_bonus)
     .reduce((sum, item) => sum + toNumber(item.quantity), 0);
@@ -309,6 +328,23 @@ function GatePassSlip({ invoice, printedAt }) {
       <div className="gate-pass-rule" />
       <div className="gate-pass-total"><span>Bill Amount</span><strong>{formatMoney(invoice?.totals?.grand || 0)}</strong></div>
       <div className="gate-pass-total"><span>Qty Total</span><strong>{formatSlipAmount(qtyTotal)}</strong></div>
+      {hasExtraDetails && (
+        <>
+          <div className="gate-pass-rule" />
+          <div className="gate-pass-extra">
+            <strong>Counter Details</strong>
+            {fixedDetails.map(([label, value]) => (
+              <div className="gate-pass-extra-row" key={label}><span>{label}</span><em>{value}</em></div>
+            ))}
+            {hasCounterDetail && (
+              <div className="gate-pass-extra-row">
+                <span>{gatePassDetails.counterItemName || 'Counter Entry'}</span>
+                <em>{gatePassDetails.counterItemQty || gatePassDetails.counterItemName}</em>
+              </div>
+            )}
+          </div>
+        </>
+      )}
       <div className="gate-pass-rule" />
       <div className="gate-pass-note">Goods delivered against above bill.</div>
       <div className="gate-pass-signatures">
@@ -317,6 +353,16 @@ function GatePassSlip({ invoice, printedAt }) {
       </div>
     </div>
   );
+}
+
+function normalizeGatePassDetails(details = {}) {
+  return {
+    boxQty: String(details.boxQty || details.bagDetails || '').trim().slice(0, 40),
+    gunnyBagQty: String(details.gunnyBagQty || details.gunnyBagDetails || '').trim().slice(0, 40),
+    tinsQty: String(details.tinsQty || details.tinsDetails || '').trim().slice(0, 40),
+    counterItemName: String(details.counterItemName || details.counterItemOne || '').trim().slice(0, 80),
+    counterItemQty: String(details.counterItemQty || details.counterItemTwo || '').trim().slice(0, 40)
+  };
 }
 
 export default function BillingTerminalView({ isActive = true }) {
@@ -471,6 +517,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const billWindowSeqRef = useRef(1);
   const canManageInvoice = ['SERVER', 'ADMIN'].includes(currentUser?.role);
   const canSelectCounter = ['SERVER', 'ADMIN'].includes(currentUser?.role);
+  const canUseA4Print = ['SERVER', 'ADMIN'].includes(currentUser?.role);
   const activeMode = BILLING_MODES[billingMode];
   const activeSaleMode = activeMode.tier === 'WHOLESALE' ? 'WHOLESALE' : 'RETAIL';
   const activeTaxMode = activeMode.taxType === 'INTERSTATE' ? 'IGST' : 'GST';
@@ -480,13 +527,18 @@ export default function BillingTerminalView({ isActive = true }) {
   }
 
   function blockWakeScannerInput() {
-    scannerWakeBlockUntilRef.current = Date.now() + 1600;
+    scannerWakeBlockUntilRef.current = Date.now() + SCANNER_WAKE_BLOCK_MS;
     resetScannerBuffer();
     scannerInputModeRef.current = 'keyboard';
     suppressSuggestionsUntilKeyboardInputRef.current = false;
     setQuery('');
     setSuggestions([]);
     setSelectedSuggestion(0);
+  }
+
+  function releaseScannerWakeBlockForInput() {
+    if (!isScannerWakeBlocked()) return;
+    scannerWakeBlockUntilRef.current = 0;
   }
 
   useEffect(() => {
@@ -500,6 +552,11 @@ export default function BillingTerminalView({ isActive = true }) {
       setStatusMessage('Unsaved bill restored. Complete sale or Hold before closing POS.');
     }
   }, []);
+
+  useEffect(() => {
+    if (canUseA4Print || printMode === 'Thermal') return;
+    setPrintMode('Thermal');
+  }, [canUseA4Print, printMode]);
 
   useEffect(() => () => {
     if (suggestionClickTimerRef.current) {
@@ -642,13 +699,13 @@ export default function BillingTerminalView({ isActive = true }) {
         mixedPayment,
         paymentReference,
         paymentConfirmed,
-        printMode,
+        printMode: canUseA4Print ? printMode : 'Thermal',
         savedAt: new Date().toISOString()
       }));
     } catch (err) {
       // Keep billing usable even if browser storage is unavailable.
     }
-  }, [billingMode, cart, cashReceived, companyName, counterNo, currentUser?.username, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, exchangeMode, invoiceNo, mixedPayment, paymentConfirmed, paymentMode, paymentReference, printMode]);
+  }, [billingMode, canUseA4Print, cart, cashReceived, companyName, counterNo, currentUser?.username, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, exchangeMode, invoiceNo, mixedPayment, paymentConfirmed, paymentMode, paymentReference, printMode]);
 
   useEffect(() => {
     if (!isActive) return undefined;
@@ -742,7 +799,11 @@ export default function BillingTerminalView({ isActive = true }) {
         if (String(scannerRef.current?.value || '').trim().toUpperCase() !== cleaned.toUpperCase()) return;
         addProduct(exactProduct, quantity);
       } catch (err) {
-        setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
+        if (SCANNER_BARCODE_PATTERN.test(cleaned)) {
+          addUnknownProductLine(cleaned, quantity);
+        } else {
+          setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
+        }
       }
     }, 650);
 
@@ -971,6 +1032,8 @@ export default function BillingTerminalView({ isActive = true }) {
     const loyaltyRedeemAmount = redeemRulePoints > 0 && redeemRuleAmount > 0 && requestedRedeemPoints > 0
       ? Math.min((requestedRedeemPoints / redeemRulePoints) * redeemRuleAmount, netGrand)
       : 0;
+    const unroundedGrand = Math.max(netGrand - loyaltyRedeemAmount, 0);
+    const roundedGrand = Math.round(unroundedGrand);
     const isInterstate = BILLING_MODES[billingMode].taxType === 'INTERSTATE';
     return {
       taxable,
@@ -981,7 +1044,9 @@ export default function BillingTerminalView({ isActive = true }) {
       loyaltyBaseTotal: netGrand,
       loyaltyRedeemPoints: loyaltyRedeemAmount > 0 ? requestedRedeemPoints : 0,
       loyaltyRedeemAmount,
-      grand: Math.max(netGrand - loyaltyRedeemAmount, 0),
+      unroundedGrand,
+      grand: roundedGrand,
+      roundOff: roundedGrand - unroundedGrand,
       cgst: isInterstate ? 0 : tax / 2,
       sgst: isInterstate ? 0 : tax / 2,
       igst: isInterstate ? tax : 0
@@ -1032,7 +1097,6 @@ export default function BillingTerminalView({ isActive = true }) {
   }, [invoiceNo]);
   const printableDraft = useMemo(() => {
     const isInterstate = BILLING_MODES[billingMode].taxType === 'INTERSTATE';
-    const roundedGrand = Math.round(totals.grand);
 
     return {
       invoiceNo,
@@ -1080,8 +1144,6 @@ export default function BillingTerminalView({ isActive = true }) {
       })),
       totals: {
         ...totals,
-        grand: roundedGrand,
-        roundOff: roundedGrand - totals.grand,
         cgst: isInterstate ? 0 : totals.tax / 2,
         sgst: isInterstate ? 0 : totals.tax / 2,
         igst: isInterstate ? totals.tax : 0
@@ -1176,6 +1238,11 @@ export default function BillingTerminalView({ isActive = true }) {
         taxAmount: lineTotal - taxableRate * quantity
       };
     });
+    const saleGrand = toNumber(invoice.sub_total) + toNumber(invoice.gst_total);
+    const exchangeTotal = toNumber(invoice.exchange_total);
+    const loyaltyRedeemAmount = toNumber(invoice.loyalty_redeemed_amount);
+    const rawPayableTotal = Math.max(saleGrand - exchangeTotal - loyaltyRedeemAmount, 0);
+    const roundedGrand = Math.round(toNumber(invoice.grand_total));
 
     return {
       invoiceNo: invoice.invoice_no,
@@ -1210,12 +1277,12 @@ export default function BillingTerminalView({ isActive = true }) {
         taxable: toNumber(invoice.sub_total),
         tax: toNumber(invoice.gst_total),
         discount: 0,
-        saleGrand: toNumber(invoice.sub_total) + toNumber(invoice.gst_total),
-        exchangeTotal: toNumber(invoice.exchange_total),
+        saleGrand,
+        exchangeTotal,
         loyaltyRedeemPoints: toNumber(invoice.loyalty_redeemed_points),
-        loyaltyRedeemAmount: toNumber(invoice.loyalty_redeemed_amount),
-        grand: Math.round(toNumber(invoice.grand_total)),
-        roundOff: Math.round(toNumber(invoice.grand_total)) - toNumber(invoice.grand_total),
+        loyaltyRedeemAmount,
+        grand: roundedGrand,
+        roundOff: roundedGrand - rawPayableTotal,
         cgst: isInterstate ? 0 : toNumber(invoice.gst_total) / 2,
         sgst: isInterstate ? 0 : toNumber(invoice.gst_total) / 2,
         igst: isInterstate ? toNumber(invoice.gst_total) : 0
@@ -1322,7 +1389,7 @@ export default function BillingTerminalView({ isActive = true }) {
     try {
       const settings = await fetchSettings();
       setShopSettings(settings);
-      setPrintMode(settings.default_print_mode || 'Thermal');
+      setPrintMode(canUseA4Print ? (settings.default_print_mode || 'Thermal') : 'Thermal');
       const nextCounterCount = Number(settings.counter_count || 6);
       setCounterCount(nextCounterCount);
       setCounterNo((current) => {
@@ -1557,10 +1624,10 @@ export default function BillingTerminalView({ isActive = true }) {
           if (exactProduct) {
             addProduct(exactProduct, scanRead.quantity);
           } else {
-            setErrorMessage(`Scanned barcode ${scanRead.barcode} was not found.`);
+            addUnknownProductLine(scanRead.barcode, scanRead.quantity);
           }
         } catch (err) {
-          setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
+          addUnknownProductLine(scanRead.barcode, scanRead.quantity);
         }
       }
     } finally {
@@ -1585,13 +1652,7 @@ export default function BillingTerminalView({ isActive = true }) {
       || Math.abs(nextQuery.length - query.length) > 1;
     const { search: cleaned } = parseQuantitySearch(nextQuery);
 
-    if (isScannerWakeBlocked()) {
-      resetScannerBuffer();
-      setQuery('');
-      setSuggestions([]);
-      setSelectedSuggestion(0);
-      return;
-    }
+    releaseScannerWakeBlockForInput();
 
     if (isPasteLikeInput && SCANNER_BARCODE_PATTERN.test(cleaned)) {
       scannerInputModeRef.current = 'scan';
@@ -1621,13 +1682,7 @@ export default function BillingTerminalView({ isActive = true }) {
     if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
 
     event.preventDefault();
-    if (isScannerWakeBlocked()) {
-      resetScannerBuffer();
-      setQuery('');
-      setSuggestions([]);
-      setSelectedSuggestion(0);
-      return;
-    }
+    releaseScannerWakeBlockForInput();
     scannerInputModeRef.current = 'scan';
     suppressSuggestionsUntilKeyboardInputRef.current = true;
     setQuery(pastedValue);
@@ -1675,6 +1730,63 @@ export default function BillingTerminalView({ isActive = true }) {
     setErrorMessage('');
     setStatusMessage(`${product.product_name} x ${addQty} added to bill.`);
     scannerRef.current?.focus();
+  }
+
+  function addUnknownProductLine(barcode, quantityToAdd = 1) {
+    const cleaned = String(barcode || '').trim().toUpperCase();
+    if (!cleaned) return;
+
+    const addQty = Math.max(toNumber(quantityToAdd, 1), 0.001);
+    setCart((current) => {
+      const existingIndex = current.findIndex((item) => (
+        item.isUnknown && String(item.barcode || '').trim().toUpperCase() === cleaned
+      ));
+
+      if (existingIndex >= 0) {
+        setSelectedCartIndex(existingIndex);
+        return current.map((item, index) => (
+          index === existingIndex ? { ...item, quantity: toNumber(item.quantity, 1) + addQty } : item
+        ));
+      }
+
+      setSelectedCartIndex(current.length);
+      return [
+        ...current,
+        {
+          barcode: cleaned,
+          product_code: cleaned,
+          product_name: 'PRODUCT NOT FOUND',
+          hsn_code: '',
+          gst_percent: 0,
+          mrp: 0,
+          sale_price: 0,
+          wholesale_price: 0,
+          quantity: addQty,
+          isUnknown: true
+        }
+      ];
+    });
+
+    setQuery('');
+    setSuggestions([]);
+    setSelectedSuggestion(0);
+    setErrorMessage('');
+    setStatusMessage('');
+    scannerRef.current?.focus();
+  }
+
+  function isGeneralProductLine(item) {
+    const barcode = String(item?.barcode || '').trim().toUpperCase();
+    const productCode = String(item?.product_code || '').trim().toUpperCase();
+    const productName = String(item?.product_name || '').trim().toUpperCase();
+    return barcode === '35' || productCode === '35' || productName.includes('GENERAL');
+  }
+
+  function updateProductDetail(index, value) {
+    const nextName = String(value || '').toUpperCase().slice(0, 120);
+    setCart((current) => current.map((item, itemIndex) => (
+      itemIndex === index ? { ...item, product_name: nextName } : item
+    )));
   }
 
   function clearPendingSuggestionClick() {
@@ -1824,13 +1936,7 @@ export default function BillingTerminalView({ isActive = true }) {
   async function handleSearchKeyDown(event) {
     if (isScannerWakeBlocked()) {
       if (event.key.length === 1 || event.key === 'Enter' || event.key === 'Tab') {
-        event.preventDefault();
-        event.stopPropagation();
-        resetScannerBuffer();
-        setQuery('');
-        setSuggestions([]);
-        setSelectedSuggestion(0);
-        return;
+        releaseScannerWakeBlockForInput();
       }
     }
     markRapidInputKey(event, scannerKeyTimesRef);
@@ -1880,7 +1986,7 @@ export default function BillingTerminalView({ isActive = true }) {
           }
           setErrorMessage('Enter at least 3 letters for product search, or scan/enter an exact barcode.');
         } catch (err) {
-          setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
+          addUnknownProductLine(cleaned, quantity);
         }
         return;
       }
@@ -1918,25 +2024,14 @@ export default function BillingTerminalView({ isActive = true }) {
           setSelectedSuggestion(0);
         }
         if (results.length === 0) {
-          setCart((current) => [
-            ...current,
-            {
-              barcode: cleaned,
-              product_name: 'Unknown product',
-              hsn_code: '',
-              gst_percent: 0,
-              mrp: 0,
-              sale_price: 0,
-              wholesale_price: 0,
-              quantity: 1,
-              isUnknown: true
-            }
-          ]);
-          setErrorMessage('');
-          setQuery('');
+          addUnknownProductLine(cleaned, quantity);
         }
       } catch (err) {
-        setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
+        if (SCANNER_BARCODE_PATTERN.test(cleaned)) {
+          addUnknownProductLine(cleaned, quantity);
+        } else {
+          setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
+        }
       }
     }
   }
@@ -2208,6 +2303,13 @@ export default function BillingTerminalView({ isActive = true }) {
     setStatusMessage('');
     setApprovalError('');
 
+    if (!canUseA4Print) {
+      setPrintMode('Thermal');
+      setStatusMessage('Counter billing print format is fixed to Thermal.');
+      scannerRef.current?.focus();
+      return;
+    }
+
     if (targetPrintMode === printMode) {
       scannerRef.current?.focus();
       return;
@@ -2245,7 +2347,7 @@ export default function BillingTerminalView({ isActive = true }) {
     setMixedPayment(savedState.mixedPayment || EMPTY_MIXED_PAYMENT);
     setPaymentReference(savedState.paymentReference || '');
     setPaymentConfirmed(Boolean(savedState.paymentConfirmed));
-    setPrintMode(savedState.printMode || 'Thermal');
+    setPrintMode(canUseA4Print ? (savedState.printMode || 'Thermal') : 'Thermal');
     setCashReceived('');
     await deleteHeldBill(holdToken);
     refreshHeldBills(savedState.counterNo || counterNo);
@@ -2273,7 +2375,7 @@ export default function BillingTerminalView({ isActive = true }) {
       mixedPayment,
       paymentReference,
       paymentConfirmed,
-      printMode,
+      printMode: canUseA4Print ? printMode : 'Thermal',
       cashReceived
     };
   }
@@ -2325,7 +2427,7 @@ export default function BillingTerminalView({ isActive = true }) {
     setMixedPayment(savedState.mixedPayment || EMPTY_MIXED_PAYMENT);
     setPaymentReference(savedState.paymentReference || '');
     setPaymentConfirmed(Boolean(savedState.paymentConfirmed));
-    setPrintMode(savedState.printMode || 'Thermal');
+    setPrintMode(canUseA4Print ? (savedState.printMode || 'Thermal') : 'Thermal');
     setCashReceived(savedState.cashReceived || '');
     setQuery('');
     setSuggestions([]);
@@ -2390,6 +2492,12 @@ export default function BillingTerminalView({ isActive = true }) {
         await applyHeldBill(approvalDialog.savedState, approvalDialog.holdToken);
         setStatusMessage(`${BILLING_MODES[approvalDialog.targetMode].label} held bill resumed. Approved by ${result.approved_by}.`);
       } else if (approvalDialog.action === 'PRINT_MODE') {
+        if (!canUseA4Print) {
+          setPrintMode('Thermal');
+          setStatusMessage('Counter billing print format is fixed to Thermal.');
+          closeApprovalDialog();
+          return;
+        }
         setPrintMode(approvalDialog.targetPrintMode);
         setStatusMessage(`${approvalDialog.targetPrintMode} enabled for this bill. Approved by ${result.approved_by}.`);
         scannerRef.current?.focus();
@@ -2432,6 +2540,7 @@ export default function BillingTerminalView({ isActive = true }) {
     setPaymentReference('');
     setPaymentConfirmed(false);
     setPrintMode('Thermal');
+    setInvoiceNo('Draft');
     scannerRef.current?.focus();
     restoreScannerFocusSoon();
     refreshInvoicePreview(counterNo, true);
@@ -2454,7 +2563,7 @@ export default function BillingTerminalView({ isActive = true }) {
   async function printCounterSaleSlip() {
     try {
       const printedAt = new Date();
-      const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
+      const thermalWidthMm = getThermalReceiptWidthMm();
       const defaultSlipHeightMm = 125;
       const thermalFeedMarginMm = getThermalFeedMarginMm(shopSettings);
       const slip = await fetchCounterSaleSlip({ date: localIsoDate(printedAt), counterNo });
@@ -2678,7 +2787,7 @@ export default function BillingTerminalView({ isActive = true }) {
 
     try {
       const printedAt = new Date();
-      const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
+      const thermalWidthMm = getThermalReceiptWidthMm();
       const defaultSlipHeightMm = reportToPrint.reportType === 'GST' ? 175 : 130;
       const thermalFeedMarginMm = getThermalFeedMarginMm(shopSettings);
       const slipMarkup = renderToStaticMarkup(<SaleReportSlip report={reportToPrint} shop={shopSettings} printedAt={printedAt} />);
@@ -2871,7 +2980,7 @@ export default function BillingTerminalView({ isActive = true }) {
 
     try {
       const printedAt = new Date();
-      const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
+      const thermalWidthMm = getThermalReceiptWidthMm();
       const defaultSlipHeightMm = 120;
       const thermalFeedMarginMm = getThermalFeedMarginMm(shopSettings);
       const slipMarkup = renderToStaticMarkup(<GatePassSlip invoice={invoiceToPrint} printedAt={printedAt} />);
@@ -2951,6 +3060,31 @@ export default function BillingTerminalView({ isActive = true }) {
       font-size: 14px;
       font-weight: 900;
     }
+    .gate-pass-extra {
+      display: grid;
+      gap: 3px;
+      padding: 3px 0;
+    }
+    .gate-pass-extra > strong {
+      font-size: 12px;
+      text-align: center;
+      text-transform: uppercase;
+    }
+    .gate-pass-extra-row {
+      display: grid;
+      grid-template-columns: 88px 1fr;
+      gap: 6px;
+      font-size: 11px;
+      line-height: 1.18;
+    }
+    .gate-pass-extra-row span {
+      font-weight: 700;
+    }
+    .gate-pass-extra-row em {
+      font-style: normal;
+      font-weight: 900;
+      overflow-wrap: anywhere;
+    }
     .gate-pass-note {
       padding: 4px 0 12mm;
       text-align: center;
@@ -3026,15 +3160,19 @@ export default function BillingTerminalView({ isActive = true }) {
           printFrame.style.height = `${contentHeightMm}mm`;
 
           if (window.badizoDesktop?.printThermalHtml) {
-            await window.badizoDesktop.printThermalHtml({
-              html: frameDocument.documentElement.outerHTML,
-              widthMm: thermalWidthMm,
-              heightMm: contentHeightMm,
-              feedMarginMm: 0
-            });
-            cleanup();
-            setStatusMessage(`${invoiceToPrint.invoiceNo} gate pass printed.`);
-            return;
+            try {
+              await window.badizoDesktop.printThermalHtml({
+                html: frameDocument.documentElement.outerHTML,
+                widthMm: thermalWidthMm,
+                heightMm: contentHeightMm,
+                feedMarginMm: 0
+              });
+              cleanup();
+              setStatusMessage(`${invoiceToPrint.invoiceNo} gate pass printed.`);
+              return;
+            } catch (nativePrintError) {
+              console.warn('Direct gate pass print failed, falling back to browser print.', nativePrintError);
+            }
           }
 
           frameWindow?.focus();
@@ -3055,8 +3193,8 @@ export default function BillingTerminalView({ isActive = true }) {
 
   function schedulePrint(mode = printMode, afterPrint, invoiceForPrint = printableInvoice || printableDraft) {
     const printClass = mode === 'A4' ? 'printing-a4' : 'printing-thermal';
-    const thermalWidthMm = Number(shopSettings.thermal_receipt_width_mm || 80) || 80;
-    const thermalContentWidthMm = thermalWidthMm >= 76 ? 72 : Math.max(48, thermalWidthMm - 8);
+    const thermalWidthMm = getThermalReceiptWidthMm();
+    const thermalContentWidthMm = getThermalContentWidthMm();
     const thermalFeedMarginMm = getThermalFeedMarginMm(shopSettings);
     const canUseElectronThermalPrint = mode === 'Thermal' && typeof window !== 'undefined' && Boolean(window.badizoDesktop?.printThermalHtml);
     let cleanupTimer;
@@ -3228,6 +3366,29 @@ export default function BillingTerminalView({ isActive = true }) {
       height: 25mm !important;
       margin-bottom: 1mm !important;
     }
+    body.printing-thermal .thermal-logo-slot-text {
+      height: 25mm !important;
+      min-height: 25mm !important;
+      overflow: visible !important;
+    }
+    body.printing-thermal .thermal-logo-fallback {
+      display: block !important;
+      width: 100% !important;
+      text-align: center !important;
+      font-weight: 900 !important;
+      letter-spacing: 0 !important;
+      color: #111 !important;
+      font-size: 16px !important;
+      line-height: 1.15 !important;
+    }
+    body.printing-thermal .thermal-brand-edge {
+      position: absolute !important;
+      top: 0.4mm !important;
+      left: 2.8mm !important;
+      font-size: 6px !important;
+      line-height: 1 !important;
+      font-weight: 600 !important;
+    }
     body.printing-thermal .thermal-logo-slot img {
       width: 22mm !important;
       height: 22mm !important;
@@ -3251,8 +3412,22 @@ export default function BillingTerminalView({ isActive = true }) {
     body.printing-thermal .gst-summary-table th,
     body.printing-thermal .gst-summary-table td {
       padding: 1.5px 1px !important;
-      font-size: 8.8px !important;
+      font-size: 8.2px !important;
       line-height: 1.02 !important;
+    }
+    body.printing-thermal .gst-summary-table {
+      table-layout: fixed !important;
+      width: 100% !important;
+    }
+    body.printing-thermal .gst-summary-table th:first-child,
+    body.printing-thermal .gst-summary-table td:first-child {
+      width: 12mm !important;
+      text-align: left !important;
+    }
+    body.printing-thermal .gst-summary-table th,
+    body.printing-thermal .gst-summary-table td {
+      text-align: right !important;
+      white-space: nowrap !important;
     }
     body.printing-thermal .thermal-total-box {
       gap: 1px !important;
@@ -3482,12 +3657,40 @@ export default function BillingTerminalView({ isActive = true }) {
       break-before: avoid !important;
       break-after: auto !important;
       break-inside: auto !important;
+      font-family: Arial, sans-serif !important;
+      color: #111 !important;
+      background: #fff !important;
       font-size: 10px !important;
       line-height: 1.05 !important;
     }
     .thermal-logo-slot {
       height: 25mm !important;
       margin-bottom: 1mm !important;
+    }
+    .thermal-logo-slot-text {
+      height: 25mm !important;
+      min-height: 25mm !important;
+      overflow: visible !important;
+    }
+    .thermal-logo-fallback {
+      display: block !important;
+      width: 100% !important;
+      text-align: center !important;
+      font-weight: 900 !important;
+      letter-spacing: 0 !important;
+      color: #111 !important;
+      font-size: 16px !important;
+      line-height: 1.15 !important;
+    }
+    .thermal-brand-edge {
+      position: absolute !important;
+      top: 0.4mm !important;
+      left: 2.8mm !important;
+      font-size: 6px !important;
+      line-height: 1 !important;
+      font-weight: 600 !important;
+      letter-spacing: 0 !important;
+      color: #111 !important;
     }
     .thermal-logo-slot img {
       width: 22mm !important;
@@ -3512,8 +3715,25 @@ export default function BillingTerminalView({ isActive = true }) {
     .gst-summary-table th,
     .gst-summary-table td {
       padding: 1.5px 1px !important;
-      font-size: 8.8px !important;
+      font-size: 8.2px !important;
       line-height: 1.02 !important;
+    }
+    .gst-summary-table {
+      table-layout: fixed !important;
+      width: 100% !important;
+    }
+    .gst-summary-table th:first-child,
+    .gst-summary-table td:first-child {
+      width: 12mm !important;
+      text-align: left !important;
+    }
+    .gst-summary-table th,
+    .gst-summary-table td {
+      text-align: right !important;
+      white-space: nowrap !important;
+    }
+    table {
+      border-collapse: collapse !important;
     }
     .thermal-product-row td {
       padding-top: 2px !important;
@@ -3944,6 +4164,23 @@ export default function BillingTerminalView({ isActive = true }) {
     }
   }
 
+  function updateGatePassPreviewDetail(field, value) {
+    setGatePassPreview((current) => {
+      if (!current) return current;
+      const nextDetails = normalizeGatePassDetails({
+        ...(current.invoice.gatePassDetails || {}),
+        [field]: value
+      });
+      return {
+        ...current,
+        invoice: {
+          ...current.invoice,
+          gatePassDetails: nextDetails
+        }
+      };
+    });
+  }
+
   async function handleViewHistoryInvoice(invoiceNoForView) {
     setIsHistoryInvoiceLoading(true);
     try {
@@ -4192,9 +4429,7 @@ export default function BillingTerminalView({ isActive = true }) {
         cashReceived: received,
         changeReturned: Math.max(receivedPaise - payablePaiseForCheckout, 0) / 100,
         totals: {
-          ...printableDraft.totals,
-          grand: Math.round(totals.grand),
-          roundOff: Math.round(totals.grand) - totals.grand
+          ...printableDraft.totals
         },
         items: [...printableDraft.items, ...freeInvoiceItems],
         itemCount: printableDraft.itemCount + freeInvoiceItems.reduce((sum, item) => sum + toNumber(item.quantity), 0),
@@ -4298,10 +4533,14 @@ export default function BillingTerminalView({ isActive = true }) {
                 </label>
                 <label className="top-control-field print-control-field">
                   <span>Print</span>
-                  <select aria-label="Print format" value={printMode} onChange={(event) => requestPrintMode(event.target.value)}>
-                    <option value="Thermal">Thermal</option>
-                    <option value="A4">A4</option>
-                  </select>
+                  {canUseA4Print ? (
+                    <select aria-label="Print format" value={printMode} onChange={(event) => requestPrintMode(event.target.value)}>
+                      <option value="Thermal">Thermal</option>
+                      <option value="A4">A4</option>
+                    </select>
+                  ) : (
+                    <span className="locked-counter-chip">Thermal</span>
+                  )}
                 </label>
               </div>
             </div>
@@ -4582,7 +4821,19 @@ export default function BillingTerminalView({ isActive = true }) {
                         onClick={() => setSelectedCartIndex(index)}
                       >
                         <td className="mono muted">{item.barcode}</td>
-                        <td><strong className="billing-product-name" title={item.product_name}>{item.product_name}</strong></td>
+                        <td>
+                          {isGeneralProductLine(item) ? (
+                            <input
+                              className="field billing-product-detail-input"
+                              value={item.product_name || ''}
+                              onChange={(event) => updateProductDetail(index, event.target.value)}
+                              onClick={(event) => event.stopPropagation()}
+                              placeholder="Enter product detail"
+                            />
+                          ) : (
+                            <strong className="billing-product-name" title={item.product_name}>{item.product_name}</strong>
+                          )}
+                        </td>
                         <td>{item.hsn_code || '-'}</td>
                         <td className="muted">{formatMoney(item.mrp)}</td>
                         <td>{formatMoney(Math.max(toNumber(item.mrp) - unitPrice, 0))}</td>
@@ -4803,6 +5054,9 @@ export default function BillingTerminalView({ isActive = true }) {
               )}
               {totals.loyaltyRedeemAmount > 0 && (
                 <div className="summary-line exchange-less-line"><span>Loyalty less ({totals.loyaltyRedeemPoints} pts)</span><strong>- {formatMoney(totals.loyaltyRedeemAmount)}</strong></div>
+              )}
+              {Math.abs(totals.roundOff || 0) >= 0.01 && (
+                <div className="summary-line"><span>Round off</span><strong>{totals.roundOff > 0 ? '+ ' : '- '}{formatMoney(Math.abs(totals.roundOff))}</strong></div>
               )}
               <span className="total-label">Net payable</span>
               <span className="total-value">{formatMoney(totals.grand)}</span>
@@ -5547,6 +5801,51 @@ export default function BillingTerminalView({ isActive = true }) {
             </div>
             <div className="reprint-preview-scroll gate-pass-preview-scroll">
               <GatePassSlip invoice={gatePassPreview.invoice} printedAt={gatePassPreview.printedAt} />
+            </div>
+            <div className="gate-pass-detail-editor">
+              <div className="gate-pass-detail-grid">
+                <div className="gate-pass-detail-pair">
+                  <span className="gate-pass-detail-label">Box</span>
+                  <input
+                    className="field gate-pass-detail-value"
+                    value={gatePassPreview.invoice.gatePassDetails?.boxQty || ''}
+                    onChange={(event) => updateGatePassPreviewDetail('boxQty', event.target.value)}
+                    placeholder="Qty"
+                  />
+                </div>
+                <div className="gate-pass-detail-pair gate-pass-detail-pair-wide-label">
+                  <span className="gate-pass-detail-label">Gunny Bags</span>
+                  <input
+                    className="field gate-pass-detail-value"
+                    value={gatePassPreview.invoice.gatePassDetails?.gunnyBagQty || ''}
+                    onChange={(event) => updateGatePassPreviewDetail('gunnyBagQty', event.target.value)}
+                    placeholder="Qty"
+                  />
+                </div>
+                <div className="gate-pass-detail-pair">
+                  <span className="gate-pass-detail-label">Tins</span>
+                  <input
+                    className="field gate-pass-detail-value"
+                    value={gatePassPreview.invoice.gatePassDetails?.tinsQty || ''}
+                    onChange={(event) => updateGatePassPreviewDetail('tinsQty', event.target.value)}
+                    placeholder="Qty"
+                  />
+                </div>
+                <div className="gate-pass-detail-pair gate-pass-detail-custom-pair">
+                  <input
+                    className="field gate-pass-detail-label-input"
+                    value={gatePassPreview.invoice.gatePassDetails?.counterItemName || ''}
+                    onChange={(event) => updateGatePassPreviewDetail('counterItemName', event.target.value)}
+                    placeholder="Item name"
+                  />
+                  <input
+                    className="field gate-pass-detail-value"
+                    value={gatePassPreview.invoice.gatePassDetails?.counterItemQty || ''}
+                    onChange={(event) => updateGatePassPreviewDetail('counterItemQty', event.target.value)}
+                    placeholder="Qty"
+                  />
+                </div>
+              </div>
             </div>
             <div className="gate-pass-preview-actions">
               <button

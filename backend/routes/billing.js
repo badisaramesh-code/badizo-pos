@@ -14,6 +14,7 @@ const {
 const { normalizePaymentMode, normalizePaymentSplits } = require('../services/paymentService');
 const { sendBillSms } = require('../services/smsService');
 const { sendBillWhatsApp } = require('../services/whatsappService');
+const { logError, logInfo } = require('../services/logger');
 const { normalizePhone, parseMoney } = require('../utils/formatters');
 const { moneyToPaise, paiseToMoney, parseCurrency } = require('../utils/money');
 
@@ -411,12 +412,12 @@ router.get('/invoice/next', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'
     const counterNo = normalizeCounterNo(requestedCounterForUser(req.user, req.query.counter_no), counterCount);
     const financialYear = getFinancialYear();
 
-    await ensureSequenceRow(db, financialYear, counterNo);
+    await ensureSequenceRow(db, financialYear, 0);
     const [rows] = await db.query(
       `SELECT next_number
        FROM invoice_sequences
-       WHERE financial_year = ? AND counter_no = ?`,
-      [financialYear, counterNo]
+       WHERE financial_year = ? AND counter_no = 0`,
+      [financialYear]
     );
 
     const sequenceNo = Number(rows[0]?.next_number || 1);
@@ -501,7 +502,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       loyaltySettings
     );
     const normalizedPaymentMode = normalizePaymentMode(payment_mode);
-    const grandTotal = parseCurrency(saleGrandBeforeRedeem - loyaltyRedeemResult.amount);
+    const grandTotal = Math.round(parseCurrency(saleGrandBeforeRedeem - loyaltyRedeemResult.amount));
     const paymentSplits = normalizePaymentSplits(normalizedPaymentMode, payment_splits, grandTotal, payment_reference);
     const paidTotalPaise = paymentSplits.reduce((sum, row) => sum + moneyToPaise(row.amount), 0);
     const tenderTotalPaise = normalizedPaymentMode === 'Mixed' ? moneyToPaise(cash_received || paiseToMoney(paidTotalPaise)) : paidTotalPaise;
@@ -673,8 +674,18 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       itemCount: items.length,
       loyalty: loyaltyResult
     };
-    const smsResult = await sendBillSms(notificationDetails);
-    const whatsappResult = await sendBillWhatsApp(notificationDetails);
+    Promise.allSettled([
+      sendBillSms(notificationDetails),
+      sendBillWhatsApp(notificationDetails)
+    ]).then(([smsResult, whatsappResult]) => {
+      logInfo('Bill notification processed', {
+        invoiceNo,
+        sms: smsResult.status === 'fulfilled' ? smsResult.value : { sent: false, error: smsResult.reason?.message || String(smsResult.reason || '') },
+        whatsapp: whatsappResult.status === 'fulfilled' ? whatsappResult.value : { sent: false, error: whatsappResult.reason?.message || String(whatsappResult.reason || '') }
+      });
+    }).catch((notificationError) => {
+      logError('Bill notification failed', notificationError, { invoiceNo });
+    });
 
     res.json({
       success: true,
@@ -684,8 +695,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       counter_no: counterNo,
       sequence_no: allocatedInvoice.sequenceNo,
       free_items: freeItems,
-      sms: smsResult,
-      whatsapp: whatsappResult
+      notifications: { queued: true }
     });
   } catch (err) {
     await connection.rollback();

@@ -1,5 +1,5 @@
 param(
-  [string]$ServerIp = '192.168.1.9'
+  [string]$ServerIp = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -132,13 +132,19 @@ Assert-Administrator
 $scriptRoot = $PSScriptRoot
 $appRoot = Split-Path -Parent (Split-Path -Parent $scriptRoot)
 $backendTaskScript = Join-Path $scriptRoot 'install-backend-startup-task.ps1'
-$frontendTaskScript = Join-Path $scriptRoot 'install-frontend-startup-task.ps1'
 
 Write-Host 'Badizo POS server LAN one-click setup' -ForegroundColor Green
 Write-Host "App folder: $appRoot"
 Write-Host "Server IP: $ServerIp"
 
 $localIps = Get-LocalLanIps
+if ([string]::IsNullOrWhiteSpace($ServerIp) -and $localIps.Count -gt 0) {
+  $ServerIp = @($localIps)[0]
+}
+if ([string]::IsNullOrWhiteSpace($ServerIp)) {
+  throw 'Unable to auto-detect server IP. Connect this server to LAN and run setup again.'
+}
+
 if ($localIps.Count -gt 0) {
   Write-Host "This computer IPs: $($localIps -join ', ')"
 }
@@ -152,37 +158,29 @@ Build-Frontend -AppRoot $appRoot -ServerIp $ServerIp
 Write-Step 'Installing backend startup task'
 & $backendTaskScript
 
-Write-Step 'Installing frontend startup task'
-& $frontendTaskScript -ServerIp $ServerIp
-
 Write-Step 'Allowing Badizo ports through Windows Firewall'
-Add-FirewallRuleIfMissing -DisplayName 'Badizo Frontend 3000' -Port 3000
 Add-FirewallRuleIfMissing -DisplayName 'Badizo Backend 5000' -Port 5000
 
 Write-Step 'Starting scheduled tasks'
 Start-ScheduledTask -TaskName 'Badizo POS Backend' -ErrorAction SilentlyContinue
-Start-ScheduledTask -TaskName 'Badizo POS Frontend' -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 8
 
 Write-Step 'Testing server ports'
 $backendLocal = Test-Port -HostName 'localhost' -Port 5000
-$frontendLocal = Test-Port -HostName 'localhost' -Port 3000
 $backendLan = Test-Port -HostName $ServerIp -Port 5000
-$frontendLan = Test-Port -HostName $ServerIp -Port 3000
 $backendName = Test-Port -HostName $env:COMPUTERNAME -Port 5000
-$frontendName = Test-Port -HostName $env:COMPUTERNAME -Port 3000
 
 Write-Step 'Testing browser URLs'
 $backendHealth = Test-Http -Url "http://${ServerIp}:5000/api/health"
-$frontendHome = Test-Http -Url "http://${ServerIp}:3000"
+$frontendHome = Test-Http -Url "http://${ServerIp}:5000"
 $backendNameHealth = Test-Http -Url "http://$env:COMPUTERNAME`:5000/api/health"
-$frontendNameHome = Test-Http -Url "http://$env:COMPUTERNAME`:3000"
+$frontendNameHome = Test-Http -Url "http://$env:COMPUTERNAME`:5000"
 
 Write-Host ''
-if ($backendLocal -and $frontendLocal -and $backendLan -and $frontendLan -and $backendName -and $frontendName -and $backendHealth -and $frontendHome -and $backendNameHealth -and $frontendNameHome) {
+if ($backendLocal -and $backendLan -and $backendName -and $backendHealth -and $frontendHome -and $backendNameHealth -and $frontendNameHome) {
   Write-Host 'Server LAN setup completed successfully. Slave PCs can use:' -ForegroundColor Green
-  Write-Host "http://${ServerIp}:3000" -ForegroundColor Green
-  Write-Host "http://$env:COMPUTERNAME`:3000" -ForegroundColor Green
+  Write-Host "http://${ServerIp}:5000" -ForegroundColor Green
+  Write-Host "http://$env:COMPUTERNAME`:5000" -ForegroundColor Green
 } else {
   Write-Host 'Setup finished, but one or more checks failed.' -ForegroundColor Yellow
   Write-Host 'Check that MySQL is running, Node.js is installed, and the server IP is correct.' -ForegroundColor Yellow

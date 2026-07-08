@@ -129,15 +129,9 @@ function BillQrCode({ invoice, className = '' }) {
 }
 
 function ThermalLogoSlot({ invoice }) {
-  const shop = invoice?.shop || {};
-  const logoEnabled = shop.thermal_bill_logo_enabled !== false && shop.thermal_bill_logo_enabled !== '0';
-  const logoSrc = String(shop.thermal_bill_logo_data_url || '').trim();
-
   return (
-    <div className="thermal-logo-slot">
-      {logoEnabled && logoSrc && (
-        <img src={logoSrc} alt="" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
-      )}
+    <div className="thermal-logo-slot thermal-logo-slot-text">
+      <strong className="thermal-logo-fallback">Badizo</strong>
     </div>
   );
 }
@@ -431,48 +425,48 @@ function ExchangeDetails({ invoice, compact = false }) {
 function GstSummary({ invoice }) {
   const isInterstate = invoice.taxType === 'INTERSTATE';
   const rows = getGstRows(invoice.items, isInterstate);
+  const taxableTotal = rows.reduce((sum, row) => sum + row.taxable, 0);
+  const taxTotal = rows.reduce((sum, row) => sum + row.tax, 0);
+  const igstTotal = rows.reduce((sum, row) => sum + row.igst, 0);
+  const cgstTotal = rows.reduce((sum, row) => sum + row.cgst, 0);
+  const sgstTotal = rows.reduce((sum, row) => sum + row.sgst, 0);
+
   return (
     <table className="print-table gst-summary-table">
       <thead>
         {isInterstate ? (
           <tr>
-            <th>TaxableAmt</th>
             <th>GST%</th>
-            <th>IGST%</th>
-            <th>IGST Amt</th>
-            <th>TaxAmt</th>
+            <th>Taxable</th>
+            <th>IGST</th>
+            <th>Tax</th>
+            <th>Total</th>
           </tr>
         ) : (
           <tr>
-            <th>TaxableAmt</th>
             <th>GST%</th>
-            <th>CGST%</th>
-            <th>CGST Amt</th>
-            <th>SGST%</th>
-            <th>SGST Amt</th>
-            <th>TaxAmt</th>
+            <th>Taxable</th>
+            <th>CGST</th>
+            <th>SGST</th>
+            <th>Tax</th>
           </tr>
         )}
       </thead>
       <tbody>
         {rows.map((row) => {
-          const cgstPercent = row.gst / 2;
-          const sgstPercent = row.gst / 2;
           return isInterstate ? (
             <tr key={row.gst}>
+              <td>{formatPercent(row.gst)}%</td>
               <td>{formatPlainMoney(row.taxable)}</td>
-              <td>{formatPercent(row.gst)}%</td>
-              <td>{formatPercent(row.gst)}%</td>
               <td>{formatPlainMoney(row.igst)}</td>
               <td>{formatPlainMoney(row.tax)}</td>
+              <td>{formatPlainMoney(row.total)}</td>
             </tr>
           ) : (
             <tr key={row.gst}>
-              <td>{formatPlainMoney(row.taxable)}</td>
               <td>{formatPercent(row.gst)}%</td>
-              <td>{formatPercent(cgstPercent)}%</td>
+              <td>{formatPlainMoney(row.taxable)}</td>
               <td>{formatPlainMoney(row.cgst)}</td>
-              <td>{formatPercent(sgstPercent)}%</td>
               <td>{formatPlainMoney(row.sgst)}</td>
               <td>{formatPlainMoney(row.tax)}</td>
             </tr>
@@ -482,20 +476,18 @@ function GstSummary({ invoice }) {
           {isInterstate ? (
             <>
               <td>Total</td>
-              <td />
-              <td />
-              <td>{formatPlainMoney(rows.reduce((sum, row) => sum + row.igst, 0))}</td>
-              <td>{formatPlainMoney(rows.reduce((sum, row) => sum + row.tax, 0))}</td>
+              <td>{formatPlainMoney(taxableTotal)}</td>
+              <td>{formatPlainMoney(igstTotal)}</td>
+              <td>{formatPlainMoney(taxTotal)}</td>
+              <td>{formatPlainMoney(rows.reduce((sum, row) => sum + row.total, 0))}</td>
             </>
           ) : (
             <>
               <td>Total</td>
-              <td />
-              <td />
-              <td>{formatPlainMoney(rows.reduce((sum, row) => sum + row.cgst, 0))}</td>
-              <td />
-              <td>{formatPlainMoney(rows.reduce((sum, row) => sum + row.sgst, 0))}</td>
-              <td>{formatPlainMoney(rows.reduce((sum, row) => sum + row.tax, 0))}</td>
+              <td>{formatPlainMoney(taxableTotal)}</td>
+              <td>{formatPlainMoney(cgstTotal)}</td>
+              <td>{formatPlainMoney(sgstTotal)}</td>
+              <td>{formatPlainMoney(taxTotal)}</td>
             </>
           )}
         </tr>

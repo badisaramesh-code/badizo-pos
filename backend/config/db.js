@@ -1066,7 +1066,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         ('loyalty_redeem_points', '10'),
         ('loyalty_redeem_amount', '0.5'),
         ('backup_daily_time', '09:00'),
-        ('barcode_printer_templates', '{"tsc-244-pro-50x50-two-up.prn":{"label":"50 x 50 mm Two-Up","printer":"TSC TTP-244 Pro","shares":["\\\\\\\\localhost\\\\TSC TTP-244 Pro","\\\\\\\\localhost\\\\TSC-244-Pro"]},"tsc-244-1-33x25-single.prn":{"label":"33 x 25 mm Two-Up","printer":"TSC TTP-244 -1","shares":["\\\\\\\\localhost\\\\TSC TTP-244 -1","\\\\\\\\localhost\\\\TSC 244-1"]},"tsc-244-2-jewellery-100x15-tail.prn":{"label":"100 x 15 mm Jewellery Tail","printer":"TSC 244-2","shares":["\\\\\\\\localhost\\\\TSC 244-2"]}}')
+        ('barcode_printer_templates', '{"tsc-244-pro-50x50-two-up.prn":{"label":"50 x 50 mm Two-Up","printer":"TSC TTP-244 Pro","shares":["\\\\\\\\localhost\\\\TSC TTP-244 Pro","\\\\\\\\localhost\\\\TSC-244-Pro"]},"tsc-244-1-33x25-single.prn":{"label":"33 x 25 mm Two-Up","printer":"TSC TE244","shares":["\\\\\\\\localhost\\\\TSC-244-2"]},"tsc-244-2-jewellery-100x15-tail.prn":{"label":"100 x 15 mm Jewellery Tail","printer":"TSC 244-2","shares":["\\\\\\\\localhost\\\\TSC 244-2"]}}')
     `);
 
     await ensureColumn(connection, 'products', 'purchase_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER mrp');
@@ -1335,15 +1335,15 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
 
     for (const [username, password, role, counterNo] of defaultUsers) {
       await connection.query(
-        `INSERT IGNORE INTO users (username, password, password_hash, role, counter_no)
-         VALUES (?, ?, ?, ?, ?)`,
-        [username, '', hashPassword(password), role, counterNo]
+        `INSERT IGNORE INTO users (username, password_hash, role, counter_no)
+         VALUES (?, ?, ?, ?)`,
+        [username, hashPassword(password), role, counterNo]
       );
       await connection.query(
         `UPDATE users
-         SET password_hash = ?, role = ?, counter_no = ?, is_active = 1
+         SET role = ?, counter_no = ?, is_active = 1
          WHERE username = ?`,
-        [hashPassword(password), role, counterNo, username]
+        [role, counterNo, username]
       );
     }
     await connection.query(

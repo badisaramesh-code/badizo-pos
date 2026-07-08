@@ -62,8 +62,8 @@ const DEFAULT_BARCODE_PRINTER_TEMPLATES = {
   },
   'tsc-244-1-33x25-single.prn': {
     label: '33 x 25 mm Two-Up',
-    printer: 'TSC TTP-244 -1',
-    shares: ['\\\\localhost\\TSC TTP-244 -1', '\\\\localhost\\TSC 244-1']
+    printer: 'TSC TE244',
+    shares: ['\\\\localhost\\TSC-244-2']
   },
   'tsc-244-2-jewellery-100x15-tail.prn': {
     label: '100 x 15 mm Jewellery Tail',
@@ -698,28 +698,25 @@ export default function SystemView() {
               </div>
               <div className="thermal-logo-settings">
                 <div className="thermal-logo-preview-box">
-                  {settings.thermal_bill_logo_data_url ? (
-                    <img src={settings.thermal_bill_logo_data_url} alt="Thermal bill logo preview" />
-                  ) : (
-                    <span>No Logo</span>
-                  )}
+                  <span>Badizo</span>
                 </div>
                 <div className="thermal-logo-controls">
                   <label className="checkbox-row">
                     <input
                       type="checkbox"
-                      checked={settings.thermal_bill_logo_enabled !== false && settings.thermal_bill_logo_enabled !== '0'}
-                      onChange={(event) => updateSetting('thermal_bill_logo_enabled', event.target.checked)}
+                      checked={false}
+                      disabled
+                      readOnly
                     />
-                    <span>Print logo in 25mm thermal bill top space</span>
+                    <span>Thermal bill header is fixed to Badizo text</span>
                   </label>
                   <label>
                     <span className="field-label">Thermal Bill Logo</span>
-                    <input className="field" type="file" accept="image/png,image/jpeg,image/webp" onChange={handleThermalLogoUpload} />
+                    <input className="field" value="Logo disabled for fixed bill layout" readOnly />
                   </label>
                   <div className="settings-action-row">
-                    <button className="secondary-button" type="button" onClick={clearThermalLogo} disabled={!settings.thermal_bill_logo_data_url}>Remove Logo</button>
-                    <span className="muted">Use a square 22mm x 22mm image. Save settings after upload.</span>
+                    <button className="secondary-button" type="button" onClick={clearThermalLogo} disabled>Remove Logo</button>
+                    <span className="muted">Logo image is disabled so every counter prints the same thermal layout.</span>
                   </div>
                 </div>
               </div>
@@ -760,30 +757,14 @@ export default function SystemView() {
               </label>
               <label>
                 <span className="field-label">Thermal Width</span>
-                <select
-                  className="select"
-                  value={settings.thermal_receipt_width_mm || 80}
-                  onChange={(event) => updateSetting('thermal_receipt_width_mm', event.target.value)}
-                >
-                  <option value="58">58 mm</option>
-                  <option value="60">60 mm</option>
-                  <option value="72">72 mm</option>
-                  <option value="76">76 mm</option>
-                  <option value="80">80 mm</option>
-                  <option value="82">82 mm</option>
-                  <option value="85">85 mm</option>
-                  <option value="90">90 mm</option>
-                </select>
+                <input className="field" value="80 mm fixed" readOnly />
               </label>
               <label>
                 <span className="field-label">Thermal Feed Margin</span>
                 <input
                   className="field"
-                  type="number"
-                  min="0"
-                  max="30"
-                  value={settings.thermal_feed_margin_mm ?? 4}
-                  onChange={(event) => updateSetting('thermal_feed_margin_mm', event.target.value)}
+                  value="4 mm fixed"
+                  readOnly
                 />
               </label>
               <label>

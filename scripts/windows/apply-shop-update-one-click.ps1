@@ -57,19 +57,15 @@ try {
   if ($SkipInstall) {
     $updateArgs.SkipInstall = $true
   }
-  if (!$SkipFrontendRestart) {
-    $updateArgs.RestartFrontendTask = $true
-  }
-
   Write-Step 'Applying update'
   & $updateScript @updateArgs
 
   Write-Step 'Final server checks'
   $backendOk = Test-Url -Url "http://${ServerIp}:5000/api/health"
-  $frontendOk = Test-Url -Url "http://${ServerIp}:3000"
+  $frontendOk = Test-Url -Url "http://${ServerIp}:5000"
 
   if (!$backendOk -or !$frontendOk) {
-    throw 'Update finished, but final server checks failed. Check backend/frontend scheduled tasks and firewall.'
+    throw 'Update finished, but final server checks failed. Check backend scheduled task and firewall port 5000.'
   }
 
   Write-Host ''

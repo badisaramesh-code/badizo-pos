@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 const { mountRoutes } = require('./routes');
 const { scheduleDailyBackup } = require('./services/backupService');
 const { scheduleDailySaleAlerts } = require('./services/saleAlertService');
@@ -36,6 +38,23 @@ app.get('/api/health', (_req, res) => {
 });
 
 mountRoutes(app);
+
+const frontendBuildPath = path.resolve(__dirname, '..', 'frontend', 'build');
+const frontendIndexPath = path.join(frontendBuildPath, 'index.html');
+if (fs.existsSync(frontendIndexPath)) {
+  app.use(express.static(frontendBuildPath, {
+    index: false,
+    maxAge: '1y',
+    setHeaders(res, filePath) {
+      if (filePath === frontendIndexPath) {
+        res.setHeader('Cache-Control', 'no-store');
+      }
+    }
+  }));
+  app.get(/^\/(?!api\/).*/, (_req, res) => {
+    res.sendFile(frontendIndexPath);
+  });
+}
 
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';

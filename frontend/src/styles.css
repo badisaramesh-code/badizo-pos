@@ -30,6 +30,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
+  font-size: 14px;
 }
 
 button,
@@ -126,6 +127,20 @@ button:disabled {
   height: 70px;
   display: block;
   object-fit: contain;
+}
+
+.fixed-login-role {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7fcf8;
+}
+
+.fixed-login-role strong {
+  color: var(--brand-dark);
+  font-size: 18px;
 }
 
 .brand-logo {
@@ -259,6 +274,7 @@ button:disabled {
   max-width: 1720px;
   margin: 0 auto;
   padding: 20px;
+  width: 100%;
 }
 
 .billing-grid {
@@ -2069,6 +2085,36 @@ button:disabled {
   font-weight: 900;
 }
 
+.gate-pass-preview-scroll .gate-pass-extra {
+  display: grid;
+  gap: 3px;
+  padding: 3px 0;
+}
+
+.gate-pass-preview-scroll .gate-pass-extra > strong {
+  font-size: 12px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.gate-pass-preview-scroll .gate-pass-extra-row {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.18;
+}
+
+.gate-pass-preview-scroll .gate-pass-extra-row span {
+  font-weight: 700;
+}
+
+.gate-pass-preview-scroll .gate-pass-extra-row em {
+  font-style: normal;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
 .gate-pass-preview-scroll .gate-pass-note {
   padding: 4px 0 36px;
   text-align: center;
@@ -2106,6 +2152,64 @@ button:disabled {
 .gate-pass-preview-actions .primary-button {
   width: auto;
   min-width: 180px;
+}
+
+.gate-pass-detail-editor {
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  background: #f8fafc;
+}
+
+.gate-pass-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(250px, 1.45fr);
+  gap: 14px 28px;
+  align-items: center;
+}
+
+.gate-pass-detail-pair {
+  display: grid;
+  grid-template-columns: 78px minmax(72px, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.gate-pass-detail-pair-wide-label {
+  grid-template-columns: 150px minmax(96px, 1fr);
+}
+
+.gate-pass-detail-custom-pair {
+  grid-template-columns: minmax(150px, 1fr) minmax(72px, 0.55fr);
+}
+
+.gate-pass-detail-label,
+.gate-pass-detail-label-input,
+.gate-pass-detail-value {
+  min-height: 38px;
+  border: 2px solid #111827;
+  border-radius: 2px;
+  background: #fff;
+  color: #111827;
+  font-weight: 800;
+}
+
+.gate-pass-detail-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 8px;
+  text-transform: uppercase;
+}
+
+.gate-pass-detail-label-input,
+.gate-pass-detail-value {
+  width: 100%;
+  padding: 6px 10px;
+  text-transform: none;
+}
+
+.gate-pass-detail-value {
+  text-align: center;
 }
 
 .supplier-master-form {
@@ -2279,6 +2383,16 @@ button:disabled {
   line-height: 1.18;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.billing-product-detail-input {
+  width: 100%;
+  min-height: 26px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
 }
 
 .billing-product-table .qty-input {
@@ -5948,6 +6062,24 @@ button:disabled {
   object-fit: contain;
 }
 
+.thermal-logo-slot-text {
+  height: 25mm;
+  min-height: 25mm;
+  margin-bottom: 1mm;
+  overflow: visible;
+}
+
+.thermal-logo-fallback {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font-size: 16px;
+  line-height: 1.15;
+  font-weight: 900;
+  letter-spacing: 0;
+  color: #111;
+}
+
 .print-rule {
   border-top: 1px dashed #111;
   margin: 2px 0;
@@ -5995,7 +6127,7 @@ button:disabled {
 .thermal-brand-edge {
   position: absolute;
   top: 0.4mm;
-  left: 0.6mm;
+  left: 2.8mm;
   font-size: 6px;
   line-height: 1;
   font-weight: 600;
@@ -7894,6 +8026,116 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+}
+
+@media screen and (max-width: 1440px), screen and (max-height: 820px) {
+  .topbar {
+    height: 60px;
+    padding: 0 14px;
+  }
+
+  .brand-image {
+    width: 122px;
+    height: 36px;
+  }
+
+  .nav-tabs {
+    gap: 5px;
+  }
+
+  .tab-button,
+  .secondary-button,
+  .danger-button {
+    padding: 7px 10px;
+    font-size: 12px;
+  }
+
+  .workspace {
+    padding: 10px;
+    max-width: none;
+  }
+
+  .billing-grid {
+    grid-template-columns: minmax(660px, 1fr) 340px;
+    gap: 10px;
+    height: calc(100vh - 80px);
+  }
+
+  .billing-main-panel {
+    height: calc(100vh - 80px);
+    max-height: calc(100vh - 80px);
+  }
+
+  .sidebar {
+    height: calc(100vh - 80px);
+  }
+
+  .panel-header {
+    padding: 10px 12px;
+  }
+
+  .panel-body {
+    padding: 10px;
+  }
+
+  .billing-panel-body {
+    padding: 6px 7px 8px;
+  }
+}
+
+@media screen and (max-width: 1120px) {
+  .billing-grid {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  .billing-main-panel,
+  .sidebar {
+    height: auto;
+    max-height: none;
+    position: relative;
+  }
+}
+
+@media screen and (max-height: 720px) {
+  .topbar {
+    height: 52px;
+  }
+
+  .brand-image {
+    width: 108px;
+    height: 32px;
+  }
+
+  .workspace {
+    padding: 8px;
+  }
+
+  .billing-grid {
+    height: calc(100vh - 68px);
+  }
+
+  .billing-main-panel,
+  .sidebar {
+    height: calc(100vh - 68px);
+    max-height: calc(100vh - 68px);
+  }
+
+  .panel-header {
+    padding: 8px 10px;
+  }
+
+  .panel-body {
+    padding: 8px;
+  }
+}
+
+@media screen and (max-width: 1120px) and (max-height: 720px) {
+  .billing-main-panel,
+  .sidebar {
+    height: auto;
+    max-height: none;
+  }
 }
 
 @media (max-width: 720px) {

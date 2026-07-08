@@ -3,6 +3,9 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const { JWT_SECRET, authenticate, authorize } = require('../middleware/auth');
+const { sendSms, smsEnabled } = require('../services/smsService');
+const { sendWhatsApp, whatsappEnabled } = require('../services/whatsappService');
+const { logError, logInfo } = require('../services/logger');
 
 const router = express.Router();
 
@@ -34,6 +37,64 @@ function requestUserAgent(req) {
   return String(req.headers['user-agent'] || '').slice(0, 255);
 }
 
+function counterLabel(user) {
+  const counterNo = Number(user?.counter_no || 0);
+  if (user?.role === 'COUNTER' && counterNo > 0) return `Counter ${counterNo}`;
+
+  const counterMatch = String(user?.username || '').match(/^counter([1-9]\d*)$/i);
+  if (counterMatch) return `Counter ${counterMatch[1]}`;
+
+  return String(user?.role || user?.username || 'User').toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
+}
+
+async function getLoginAlertPhone() {
+  const [rows] = await db.query(
+    `SELECT setting_key, setting_value
+     FROM app_settings
+     WHERE setting_key IN ('login_logout_alert_phone', 'phone')`
+  );
+  const settings = Object.fromEntries(rows.map((row) => [row.setting_key, row.setting_value]));
+  return String(settings.login_logout_alert_phone || settings.phone || '').trim();
+}
+
+function buildSessionAlertMessage(user, eventType) {
+  const action = eventType === 'LOGOUT' ? 'logout' : 'login';
+  const personName = String(user?.person_name || '').trim();
+  const label = counterLabel(user);
+  const pieces = [
+    `Badizo POS ${label} ${action}`,
+    personName ? `Person: ${personName}` : '',
+    `User: ${user?.username || 'unknown'}`,
+    new Date().toLocaleString('en-IN', { hour12: true })
+  ].filter(Boolean);
+  return pieces.join(' | ');
+}
+
+async function sendSessionAlert(user, eventType) {
+  const phone = await getLoginAlertPhone();
+  if (!phone) {
+    logInfo('Login/logout alert skipped', { reason: 'Alert phone missing', username: user?.username, eventType });
+    return;
+  }
+
+  const message = buildSessionAlertMessage(user, eventType);
+  const smsResult = smsEnabled()
+    ? await sendSms({ phone, message })
+    : { sent: false, skipped: true, reason: 'SMS disabled' };
+  const whatsappResult = whatsappEnabled()
+    ? await sendWhatsApp({ phone, message })
+    : { sent: false, skipped: true, reason: 'WhatsApp disabled' };
+
+  logInfo('Login/logout alert processed', {
+    username: user?.username,
+    role: user?.role,
+    counterNo: user?.counter_no || null,
+    eventType,
+    sms: smsResult,
+    whatsapp: whatsappResult
+  });
+}
+
 async function recordSessionEvent(req, user, sessionId, eventType) {
   await db.query(
     `INSERT INTO user_session_events
@@ -51,6 +112,15 @@ async function recordSessionEvent(req, user, sessionId, eventType) {
       requestUserAgent(req)
     ]
   );
+
+  sendSessionAlert(user, eventType).catch((err) => {
+    logError('Login/logout alert failed', err, {
+      username: user?.username,
+      role: user?.role,
+      counterNo: user?.counter_no || null,
+      eventType
+    });
+  });
 }
 
 function loginOption(row) {

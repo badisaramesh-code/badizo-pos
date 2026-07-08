@@ -21,6 +21,12 @@ function loginModeFromUrl() {
   return ['server', 'admin', 'counter', 'security', 'all'].includes(mode) ? mode : 'all';
 }
 
+function fixedLoginUserFromUrl() {
+  const params = new URLSearchParams(window.location.search || '');
+  const username = String(params.get('loginUser') || params.get('user') || params.get('username') || '').trim().toLowerCase();
+  return /^(server|admin[1-9]\d*|counter[1-6]|security)$/.test(username) ? username : '';
+}
+
 function filterLoginOptions(options, mode) {
   if (mode === 'counter') {
     return options.filter((option) => option.role === 'COUNTER' || /^counter[1-6]$/i.test(option.username));
@@ -49,23 +55,20 @@ function mergeLoginOptions(options) {
 
 export default function LoginView({ onLogin }) {
   const loginMode = loginModeFromUrl();
+  const fixedLoginUser = fixedLoginUserFromUrl();
   const isSecurityLogin = loginMode === 'security';
-  const initialOptions = useMemo(() => filterLoginOptions(FALLBACK_LOGIN_OPTIONS, loginMode), [loginMode]);
-  const [username, setUsername] = useState(initialOptions[0]?.username || 'admin1');
+  const initialOptions = useMemo(() => {
+    const modeOptions = filterLoginOptions(FALLBACK_LOGIN_OPTIONS, loginMode);
+    return fixedLoginUser ? modeOptions.filter((option) => option.username === fixedLoginUser) : modeOptions;
+  }, [loginMode, fixedLoginUser]);
+  const [username, setUsername] = useState(initialOptions[0]?.username || fixedLoginUser || 'admin1');
   const [personName, setPersonName] = useState('');
-  const [password, setPassword] = useState(loginMode === 'counter' ? 'counter1' : loginMode === 'server' ? 'server123' : loginMode === 'security' ? 'admin123' : 'admin123');
+  const [password, setPassword] = useState('');
   const [loginOptions, setLoginOptions] = useState(initialOptions.length ? initialOptions : FALLBACK_LOGIN_OPTIONS);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-
-  function defaultPasswordForUsername(nextUsername) {
-    const value = String(nextUsername || '').toLowerCase();
-    if (/^counter([1-9]|10)$/.test(value)) return value;
-    if (/^security[12]$/.test(value) || value === 'security') return 'admin123';
-    if (value === 'server') return 'server123';
-    if (value.startsWith('admin')) return 'admin123';
-    return '';
-  }
+  const selectedLogin = loginOptions.find((option) => option.username === username);
+  const isFixedLogin = Boolean(fixedLoginUser);
 
   useEffect(() => {
     let isMounted = true;
@@ -77,7 +80,10 @@ export default function LoginView({ onLogin }) {
 
         const mergedOptions = mergeLoginOptions(options);
         const filteredOptions = filterLoginOptions(mergedOptions, loginMode);
-        const visibleOptions = filteredOptions.length ? filteredOptions : mergedOptions;
+        const fixedOptions = fixedLoginUser
+          ? filteredOptions.filter((option) => option.username === fixedLoginUser)
+          : filteredOptions;
+        const visibleOptions = fixedOptions.length ? fixedOptions : (filteredOptions.length ? filteredOptions : mergedOptions);
         setLoginOptions(visibleOptions);
         setUsername((currentUsername) => (
           visibleOptions.some((option) => option.username === currentUsername)
@@ -95,19 +101,20 @@ export default function LoginView({ onLogin }) {
     return () => {
       isMounted = false;
     };
-  }, [loginMode, initialOptions]);
+  }, [loginMode, fixedLoginUser, initialOptions]);
 
   async function handleSubmit(event) {
     event.preventDefault();
     setErrorMessage('');
-    if (!personName.trim()) {
+    const effectivePersonName = personName.trim();
+    if (!effectivePersonName) {
       setErrorMessage('Person name is required.');
       return;
     }
     setIsLoading(true);
 
     try {
-      const user = await login(username, password, personName);
+      const user = await login(username, password, effectivePersonName);
       onLogin(user);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to login.');
@@ -129,32 +136,54 @@ export default function LoginView({ onLogin }) {
 
         {errorMessage && <div className="alert-box">{errorMessage}</div>}
 
-        <label>
-          <span className="field-label">Role</span>
-          <select
-            className="field"
-            value={username}
-            onChange={(event) => {
-              setUsername(event.target.value);
-              setPassword(defaultPasswordForUsername(event.target.value));
-            }}
-            autoFocus
-          >
-            {loginOptions.map((role) => (
-              <option key={role.username} value={role.username}>{role.label}</option>
-            ))}
-          </select>
-        </label>
+        {isFixedLogin ? (
+          <>
+            <div className="fixed-login-role">
+              <span className="field-label">Login</span>
+              <strong>{selectedLogin?.label || username}</strong>
+            </div>
 
-        <label>
-          <span className="field-label">Person Name</span>
-          <input
-            className="field"
-            value={personName}
-            onChange={(event) => setPersonName(event.target.value)}
-            placeholder="Enter duty person name"
-          />
-        </label>
+            <label>
+              <span className="field-label">Person Name</span>
+              <input
+                className="field"
+                value={personName}
+                onChange={(event) => setPersonName(event.target.value)}
+                placeholder="Enter duty person name"
+                autoFocus
+              />
+            </label>
+          </>
+        ) : (
+          <>
+            <label>
+              <span className="field-label">Role</span>
+              <select
+                className="field"
+                value={username}
+                onChange={(event) => {
+                  setUsername(event.target.value);
+                  setPassword(defaultPasswordForUsername(event.target.value));
+                }}
+                autoFocus
+              >
+                {loginOptions.map((role) => (
+                  <option key={role.username} value={role.username}>{role.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <span className="field-label">Person Name</span>
+              <input
+                className="field"
+                value={personName}
+                onChange={(event) => setPersonName(event.target.value)}
+                placeholder="Enter duty person name"
+              />
+            </label>
+          </>
+        )}
 
         <label>
           <span className="field-label">Password</span>
@@ -165,7 +194,7 @@ export default function LoginView({ onLogin }) {
           {isLoading ? 'Logging in...' : 'Login'}
         </button>
 
-        {!isSecurityLogin && (
+        {!isSecurityLogin && !isFixedLogin && (
           <div className="change-box">
             Default passwords: Server server123, Admin admin123, Counters counter1 to counter6, Security admin123.
           </div>

@@ -3,13 +3,14 @@ const path = require('path');
 const os = require('os');
 const Module = require('module');
 const express = require('express');
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, screen, shell } = require('electron');
 const { print: printPdf } = require('pdf-to-printer');
 
-const DEFAULT_APP_URL = 'http://localhost:3000';
+const DEFAULT_APP_URL = 'http://localhost:5000';
 const DEFAULT_API_URL = 'http://localhost:5000/api/health';
 const DEFAULT_BACKEND_PORT = 5000;
 const DEFAULT_FRONTEND_PORT = 3000;
+const DEFAULT_DISCOVERY_TIMEOUT_MS = 9000;
 const servers = [];
 let mainWindow = null;
 
@@ -40,30 +41,62 @@ function getConfig() {
   ];
 
   const config = configPaths.map(readJsonIfExists).find(Boolean) || {};
+  const configuredAppUrl = process.env.BADIZO_APP_URL || config.appUrl || DEFAULT_APP_URL;
+  const configuredApiHealthUrl = process.env.BADIZO_API_HEALTH_URL || config.apiHealthUrl || DEFAULT_API_URL;
+  const loginFromUrl = getLoginParamsFromUrl(configuredAppUrl);
+  const appHost = getUrlHost(configuredAppUrl);
+  const apiHost = getUrlHost(configuredApiHealthUrl);
+  const usesRemoteServer = isRemoteHost(appHost) || isRemoteHost(apiHost);
   return {
-    appUrl: process.env.BADIZO_APP_URL || config.appUrl || DEFAULT_APP_URL,
-    apiHealthUrl: process.env.BADIZO_API_HEALTH_URL || config.apiHealthUrl || DEFAULT_API_URL,
+    appUrl: configuredAppUrl,
+    apiHealthUrl: configuredApiHealthUrl,
     backendPort: Number(process.env.BADIZO_BACKEND_PORT || config.backendPort || DEFAULT_BACKEND_PORT),
     frontendPort: Number(process.env.BADIZO_FRONTEND_PORT || config.frontendPort || DEFAULT_FRONTEND_PORT),
-    startBackend: config.startBackend !== false,
-    startFrontend: config.startFrontend !== false,
+    startBackend: usesRemoteServer ? false : config.startBackend !== false,
+    startFrontend: usesRemoteServer ? false : config.startFrontend !== false,
+    serverHosts: parseServerHosts(process.env.BADIZO_SERVER_HOSTS || config.serverHosts || config.serverHost || ''),
+    discoveryEnabled: config.discoveryEnabled !== false,
+    discoveryTimeoutMs: Number(config.discoveryTimeoutMs || DEFAULT_DISCOVERY_TIMEOUT_MS),
     loginMode: ['server', 'admin', 'counter', 'all'].includes(String(config.loginMode || '').toLowerCase())
       ? String(config.loginMode).toLowerCase()
-      : '',
+      : loginFromUrl.loginMode,
+    loginUser: String(config.loginUser || loginFromUrl.loginUser || '').trim().toLowerCase(),
     kiosk: Boolean(config.kiosk),
     devTools: Boolean(config.devTools)
   };
 }
 
-function withLoginMode(appUrl, loginMode) {
-  if (!loginMode) return appUrl;
+function getLoginParamsFromUrl(appUrl) {
   try {
     const url = new URL(appUrl);
-    url.searchParams.set('loginMode', loginMode);
+    const loginMode = String(url.searchParams.get('loginMode') || '').trim().toLowerCase();
+    return {
+      loginMode: ['server', 'admin', 'counter', 'all'].includes(loginMode) ? loginMode : '',
+      loginUser: String(url.searchParams.get('loginUser') || '').trim().toLowerCase()
+    };
+  } catch (_err) {
+    return { loginMode: '', loginUser: '' };
+  }
+}
+
+function parseServerHosts(value) {
+  const values = Array.isArray(value) ? value : String(value || '').split(',');
+  return values.map((host) => String(host || '').trim()).filter(Boolean);
+}
+
+function withLoginParams(appUrl, loginMode, loginUser) {
+  if (!loginMode && !loginUser) return appUrl;
+  try {
+    const url = new URL(appUrl);
+    if (loginMode) url.searchParams.set('loginMode', loginMode);
+    if (loginUser) url.searchParams.set('loginUser', loginUser);
     return url.toString();
   } catch (_err) {
+    const params = [];
+    if (loginMode) params.push(`loginMode=${encodeURIComponent(loginMode)}`);
+    if (loginUser) params.push(`loginUser=${encodeURIComponent(loginUser)}`);
     const separator = String(appUrl || '').includes('?') ? '&' : '?';
-    return `${appUrl}${separator}loginMode=${encodeURIComponent(loginMode)}`;
+    return `${appUrl}${separator}${params.join('&')}`;
   }
 }
 
@@ -94,6 +127,136 @@ async function isReachable(url, timeoutMs = 2500) {
   }
 }
 
+function getUrlHost(url) {
+  try {
+    return new URL(url).hostname;
+  } catch (_err) {
+    return '';
+  }
+}
+
+function getUrlPort(url, fallback) {
+  try {
+    return Number(new URL(url).port || fallback);
+  } catch (_err) {
+    return fallback;
+  }
+}
+
+function getLocalHosts() {
+  const hosts = new Set(['localhost', '127.0.0.1', '::1', os.hostname().toLowerCase()]);
+  const interfaces = os.networkInterfaces();
+  Object.values(interfaces).flat().filter(Boolean).forEach((item) => {
+    if (item.address) hosts.add(String(item.address).toLowerCase());
+  });
+  return hosts;
+}
+
+function isRemoteHost(host) {
+  const normalizedHost = String(host || '').trim().toLowerCase();
+  if (!normalizedHost) return false;
+  return !getLocalHosts().has(normalizedHost);
+}
+
+function buildUrl(host, port, pathname = '/') {
+  const hostname = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+  return `http://${hostname}:${port}${pathname}`;
+}
+
+function getLocalSubnetCandidates() {
+  const candidates = [];
+  const interfaces = os.networkInterfaces();
+  Object.values(interfaces).flat().filter(Boolean).forEach((item) => {
+    if (item.family !== 'IPv4' || item.internal) return;
+    if (/^(127|169\.254)\./.test(item.address)) return;
+    const parts = item.address.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) return;
+    for (let last = 1; last <= 254; last += 1) {
+      if (last === parts[3]) continue;
+      candidates.push(`${parts[0]}.${parts[1]}.${parts[2]}.${last}`);
+    }
+  });
+  return [...new Set(candidates)];
+}
+
+async function findReachableHealthUrl(urls, timeoutMs) {
+  for (const url of urls) {
+    logMessage(`Trying Badizo health ${url}`);
+    if (await isReachable(url, Math.min(1800, timeoutMs))) return url;
+  }
+  return '';
+}
+
+async function scanSubnetForHealth(port, timeoutMs) {
+  const hosts = getLocalSubnetCandidates();
+  const startedAt = Date.now();
+  const concurrency = 48;
+  let cursor = 0;
+  let found = '';
+
+  async function worker() {
+    while (!found && cursor < hosts.length && Date.now() - startedAt < timeoutMs) {
+      const host = hosts[cursor];
+      cursor += 1;
+      const healthUrl = buildUrl(host, port, '/api/health');
+      if (await isReachable(healthUrl, 550)) {
+        found = healthUrl;
+        return;
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, hosts.length) }, worker));
+  return found;
+}
+
+async function resolveRemoteServer(config) {
+  if (config.startFrontend !== false) return config;
+
+  const apiHost = getUrlHost(config.apiHealthUrl);
+  const appHost = getUrlHost(config.appUrl);
+  const healthPort = getUrlPort(config.apiHealthUrl, config.backendPort);
+  const hosts = [
+    ...config.serverHosts,
+    appHost,
+    apiHost,
+    'badizo-server.local',
+    'badizo-server',
+    'BADIZO-SERVER',
+    'server',
+    'SERVER'
+  ].filter(Boolean);
+
+  const healthUrls = [
+    config.apiHealthUrl,
+    ...[...new Set(hosts)].map((host) => buildUrl(host, healthPort, '/api/health'))
+  ];
+
+  const discoveryTimeoutMs = Number.isFinite(config.discoveryTimeoutMs)
+    ? Math.max(3000, config.discoveryTimeoutMs)
+    : DEFAULT_DISCOVERY_TIMEOUT_MS;
+  let healthUrl = await findReachableHealthUrl([...new Set(healthUrls)], discoveryTimeoutMs);
+  if (!healthUrl && config.discoveryEnabled) {
+    logMessage('Configured Badizo server was not reachable; scanning local LAN.');
+    healthUrl = await scanSubnetForHealth(healthPort, discoveryTimeoutMs);
+  }
+
+  if (!healthUrl) {
+    throw new Error(`Badizo server was not found on this LAN. Checked saved config, common server names, and port ${healthPort}. Make sure the server computer is on, backend is running, and firewall allows port 5000.`);
+  }
+
+  const host = getUrlHost(healthUrl);
+  const appCandidates = [buildUrl(host, healthPort, '/')];
+  const appUrl = await findReachableHealthUrl(appCandidates, 2500) || appCandidates[0];
+  logMessage(`Resolved Badizo server appUrl=${appUrl} healthUrl=${healthUrl}`);
+
+  return {
+    ...config,
+    appUrl,
+    apiHealthUrl: healthUrl
+  };
+}
+
 async function waitForUrl(url, timeoutMs = 15000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -106,8 +269,8 @@ async function waitForUrl(url, timeoutMs = 15000) {
 async function ensureRemoteFrontendReachable(config) {
   if (config.startFrontend !== false) return;
   logMessage(`Checking remote frontend before load ${config.appUrl}`);
-  if (await waitForUrl(config.appUrl, 5000)) return;
-  throw new Error(`Badizo server is not reachable at ${config.appUrl}. Update the client config to the current server name/IP and check LAN/Wi-Fi.`);
+  if (await waitForUrl(config.appUrl, 8000)) return;
+  throw new Error(`Badizo frontend is not reachable at ${config.appUrl}. Backend was found at ${config.apiHealthUrl}, so check the server frontend build and firewall port 5000.`);
 }
 
 async function startBackendIfNeeded(config) {
@@ -170,21 +333,26 @@ async function startLocalServices(config) {
 }
 
 function showStartupError(error, appUrl) {
+  const message = error.message || String(error);
   dialog.showErrorBox(
     'Badizo could not open',
-    `Unable to open ${appUrl}.\n\nCheck that MySQL is running and the Badizo database settings are correct.\n\n${error.message || error}`
+    `Unable to open ${appUrl}.\n\n${message}\n\nIf this is a counter/admin computer, start Badizo on the server computer first. The app will auto-find the server when port 5000 is reachable on the LAN. If this is the server computer, check MySQL and restart START_BADIZO_SERVER.bat.`
   );
 }
 
 function createWindow(config) {
-  const appUrl = withLoginMode(config.appUrl, config.loginMode);
+  const appUrl = withLoginParams(config.appUrl, config.loginMode, config.loginUser);
   logMessage(`Creating window for ${appUrl}`);
   const iconPath = resolveResourcePath('assets', 'badizo.ico');
+  const { workAreaSize } = screen.getPrimaryDisplay();
+  const windowWidth = Math.min(1400, Math.max(980, workAreaSize.width));
+  const windowHeight = Math.min(900, Math.max(680, workAreaSize.height));
+
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1100,
-    minHeight: 720,
+    width: windowWidth,
+    height: windowHeight,
+    minWidth: Math.min(980, workAreaSize.width),
+    minHeight: Math.min(660, workAreaSize.height),
     title: 'Badizo',
     icon: iconPath,
     backgroundColor: '#f7f8fb',
@@ -201,9 +369,15 @@ function createWindow(config) {
 
   mainWindow.once('ready-to-show', () => {
     logMessage('Window ready to show');
+    mainWindow.webContents.setZoomFactor(1);
     mainWindow.maximize();
     mainWindow.show();
     if (config.devTools) mainWindow.webContents.openDevTools({ mode: 'detach' });
+  });
+
+  mainWindow.webContents.on('dom-ready', () => {
+    mainWindow.webContents.setZoomFactor(1);
+    mainWindow.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {});
   });
 
   mainWindow.on('closed', () => {
@@ -343,17 +517,13 @@ async function printThermalHtml({ html, widthMm, heightMm, printerName, feedMarg
       orientation: 'portrait'
     };
     const longRollPaperSize = receiptWidthMm >= 76 ? 'Roll Paper 80 x 3276 mm' : 'Roll Paper 58 x 3276 mm';
-    const shouldUseLongRoll = effectiveHeightMm > 297;
-    const printOptions = shouldUseLongRoll
-      ? { ...basePrintOptions, paperSize: longRollPaperSize }
-      : basePrintOptions;
+    const printOptions = { ...basePrintOptions, paperSize: longRollPaperSize };
 
     try {
       logMessage(`Thermal PDF spool options: ${JSON.stringify({ ...printOptions, printer: printOptions.printer || '(default)' })}`);
       try {
         await printPdf(pdfPath, printOptions);
       } catch (error) {
-        if (!shouldUseLongRoll) throw error;
         logMessage(`Thermal PDF print with ${longRollPaperSize} failed, retrying without explicit paperSize: ${error.message || error}`);
         await printPdf(pdfPath, basePrintOptions);
       }
@@ -427,9 +597,10 @@ ipcMain.handle('badizo:print-html', async (_event, payload) => {
 });
 
 app.whenReady().then(async () => {
-  const config = getConfig();
+  let config = getConfig();
   logMessage('App ready');
   try {
+    config = await resolveRemoteServer(config);
     await startLocalServices(config);
     await ensureRemoteFrontendReachable(config);
     createWindow(config);

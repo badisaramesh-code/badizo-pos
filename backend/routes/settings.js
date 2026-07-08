@@ -48,6 +48,9 @@ const ALLOWED_SETTINGS = new Set([
   'barcode_printer_templates'
 ]);
 
+const FIXED_THERMAL_RECEIPT_WIDTH_MM = 80;
+const FIXED_THERMAL_FEED_MARGIN_MM = 4;
+
 const DEFAULT_BARCODE_PRINTER_TEMPLATES = {
   'tsc-244-pro-50x50-two-up.prn': {
     label: '50 x 50 mm Two-Up',
@@ -56,8 +59,8 @@ const DEFAULT_BARCODE_PRINTER_TEMPLATES = {
   },
   'tsc-244-1-33x25-single.prn': {
     label: '33 x 25 mm Two-Up',
-    printer: 'TSC TTP-244 -1',
-    shares: ['\\\\localhost\\TSC TTP-244 -1', '\\\\localhost\\TSC 244-1']
+    printer: 'TSC TE244',
+    shares: ['\\\\localhost\\TSC-244-2']
   },
   'tsc-244-2-jewellery-100x15-tail.prn': {
     label: '100 x 15 mm Jewellery Tail',
@@ -133,7 +136,6 @@ function normalizeBarcodePrinterTemplates(rawValue) {
 }
 
 function publicSettings(settings) {
-  const logoDataUrl = String(settings.thermal_bill_logo_data_url || '').trim();
   const thermalFooterDefaults = [
     '1. Goods Exchange Time 2 P.M - 4 P.M',
     '2. Decoration Items & Toys Exchange Not Allowed',
@@ -157,15 +159,11 @@ function publicSettings(settings) {
     bank_ifsc: settings.bank_ifsc || 'HDFC0004047',
     bank_branch: settings.bank_branch || 'Sathupally',
     counter_count: Number.parseInt(settings.counter_count, 10) || 6,
-    default_print_mode: ['Thermal', 'A4'].includes(settings.default_print_mode) ? settings.default_print_mode : 'Thermal',
-    thermal_receipt_width_mm: [58, 60, 72, 76, 80, 82, 85, 90].includes(Number.parseInt(settings.thermal_receipt_width_mm, 10))
-      ? Number.parseInt(settings.thermal_receipt_width_mm, 10)
-      : 80,
-    thermal_feed_margin_mm: Number.isFinite(Number.parseInt(settings.thermal_feed_margin_mm, 10))
-      ? Math.min(Math.max(Number.parseInt(settings.thermal_feed_margin_mm, 10), 0), 30)
-      : 4,
-    thermal_bill_logo_enabled: String(settings.thermal_bill_logo_enabled || '1') !== '0',
-    thermal_bill_logo_data_url: /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(logoDataUrl) ? logoDataUrl : '',
+    default_print_mode: 'Thermal',
+    thermal_receipt_width_mm: FIXED_THERMAL_RECEIPT_WIDTH_MM,
+    thermal_feed_margin_mm: FIXED_THERMAL_FEED_MARGIN_MM,
+    thermal_bill_logo_enabled: false,
+    thermal_bill_logo_data_url: '',
     thermal_footer_line_1: settings.thermal_footer_line_1 || thermalFooterDefaults[0],
     thermal_footer_line_2: settings.thermal_footer_line_2 || thermalFooterDefaults[1],
     thermal_footer_line_3: settings.thermal_footer_line_3 || thermalFooterDefaults[2],
@@ -267,29 +265,24 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
       if (key === 'default_print_mode' && !['Thermal', 'A4'].includes(value)) {
         value = 'Thermal';
       }
+      if (key === 'default_print_mode') {
+        value = 'Thermal';
+      }
 
       if (key === 'thermal_receipt_width_mm') {
-        const width = Number.parseInt(value, 10);
-        value = String([58, 60, 72, 76, 80, 82, 85, 90].includes(width) ? width : 80);
+        value = String(FIXED_THERMAL_RECEIPT_WIDTH_MM);
       }
 
       if (key === 'thermal_feed_margin_mm') {
-        const margin = Number.parseInt(value, 10);
-        value = String(Number.isFinite(margin) ? Math.min(Math.max(margin, 0), 30) : 4);
+        value = String(FIXED_THERMAL_FEED_MARGIN_MM);
       }
 
       if (key === 'thermal_bill_logo_enabled') {
-        value = ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase()) ? '1' : '0';
+        value = '0';
       }
 
       if (key === 'thermal_bill_logo_data_url') {
-        value = String(rawValue || '').trim();
-        if (value && !/^data:image\/(png|jpeg|jpg|webp);base64,/i.test(value)) {
-          return res.status(400).json({ error: 'Thermal bill logo must be a PNG, JPG, or WebP image.' });
-        }
-        if (value.length > 700000) {
-          return res.status(400).json({ error: 'Thermal bill logo is too large. Use a small 22mm x 22mm image.' });
-        }
+        value = '';
       }
 
       if (key.startsWith('thermal_footer_line_')) {

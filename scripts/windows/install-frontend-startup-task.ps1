@@ -68,11 +68,11 @@ function Register-FrontendTask {
 
 try {
   $startupTrigger = New-ScheduledTaskTrigger -AtStartup
-  $startupPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
+  $startupPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
   Register-FrontendTask `
     -Trigger $startupTrigger `
     -Principal $startupPrincipal `
-    -Description 'Serves the Badizo POS production frontend automatically after Windows starts.'
+    -Description 'Serves the Badizo POS production frontend automatically after Windows starts, even before the server user logs in.'
 } catch {
   Write-Host 'Administrator permission was not available for a startup task. Creating a login task for the current Windows user instead.' -ForegroundColor Yellow
   $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME

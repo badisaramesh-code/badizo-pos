@@ -1,10 +1,10 @@
 {
-  "appUrl": "http://localhost:3000",
+  "appUrl": "http://localhost:5000",
   "apiHealthUrl": "http://localhost:5000/api/health",
   "backendPort": 5000,
   "frontendPort": 3000,
   "startBackend": false,
-  "startFrontend": true,
+  "startFrontend": false,
   "kiosk": false,
   "devTools": false
 }

@@ -131,15 +131,7 @@ if (!$SkipBackendRestart) {
 }
 
 if ($RestartFrontendTask) {
-  Write-Step 'Restarting frontend task'
-  $frontendTask = Get-ScheduledTask -TaskName 'Badizo POS Frontend' -ErrorAction SilentlyContinue
-  if ($frontendTask) {
-    Stop-ScheduledTask -TaskName 'Badizo POS Frontend' -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
-    Start-ScheduledTask -TaskName 'Badizo POS Frontend'
-  } else {
-    Write-Host 'Frontend task not found. Run install-frontend-startup-task.ps1 to serve the production frontend automatically.' -ForegroundColor Yellow
-  }
+  Write-Host 'Frontend is served by backend port 5000; separate frontend task restart is no longer needed.' -ForegroundColor Yellow
 }
 
 Write-Step 'Checking ports'
@@ -147,10 +139,6 @@ $backendPort = Test-NetConnection localhost -Port 5000 -WarningAction SilentlyCo
 Write-Host "Backend 5000: $($backendPort.TcpTestSucceeded)"
 if (!$backendPort.TcpTestSucceeded) {
   throw 'Backend port 5000 is not reachable. The update did not fully complete.'
-}
-if ($RestartFrontendTask) {
-  $frontendPort = Test-NetConnection localhost -Port 3000 -WarningAction SilentlyContinue
-  Write-Host "Frontend 3000: $($frontendPort.TcpTestSucceeded)"
 }
 
 Write-Host ""

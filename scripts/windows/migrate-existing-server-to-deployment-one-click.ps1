@@ -80,8 +80,7 @@ function Stop-ProcessListeningOnPort {
 }
 
 function Stop-OldAppProcesses {
-  Write-Step 'Stopping old backend/frontend processes'
-  Stop-ProcessListeningOnPort -Port 3000
+  Write-Step 'Stopping old backend process'
   Stop-ProcessListeningOnPort -Port 5000
   Start-Sleep -Seconds 2
 }
@@ -245,9 +244,7 @@ function Install-StartupTasks {
   Write-Step 'Installing startup tasks from deployment folder'
   $scriptRoot = Join-Path $DestinationRoot 'scripts\windows'
   & (Join-Path $scriptRoot 'install-backend-startup-task.ps1')
-  & (Join-Path $scriptRoot 'install-frontend-startup-task.ps1') -ServerIp $ServerIp
 
-  Add-FirewallRuleIfMissing -DisplayName 'Badizo Frontend 3000' -Port 3000
   Add-FirewallRuleIfMissing -DisplayName 'Badizo Backend 5000' -Port 5000
 }
 
@@ -273,9 +270,9 @@ function Test-FinalHealth {
   Write-Step 'Checking migrated server'
   Start-Sleep -Seconds 8
   $backendLocal = Test-Url -Url 'http://localhost:5000/api/health'
-  $frontendLocal = Test-Url -Url 'http://localhost:3000'
+  $frontendLocal = Test-Url -Url 'http://localhost:5000'
   $backendLan = Test-Url -Url "http://${ServerIp}:5000/api/health"
-  $frontendLan = Test-Url -Url "http://${ServerIp}:3000"
+  $frontendLan = Test-Url -Url "http://${ServerIp}:5000"
 
   if (!$backendLocal -or !$frontendLocal -or !$backendLan -or !$frontendLan) {
     throw 'Migration finished, but one or more server checks failed.'

@@ -11,7 +11,7 @@ const TEMPLATE_OPTIONS = [
   {
     name: 'tsc-244-1-33x25-single.prn',
     label: '33 x 25 mm Two-Up',
-    printer: 'TSC 244-1',
+    printer: 'TSC TE244',
     help: 'One printer row prints two 33x25mm stickers side-by-side.'
   },
   {

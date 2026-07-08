@@ -11,8 +11,8 @@ function getDefaultApiBaseUrl() {
 }
 
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_BASE_URL || getDefaultApiBaseUrl(),
-  timeout: 10000
+  baseURL: getDefaultApiBaseUrl(),
+  timeout: 25000
 });
 
 const AUTH_TOKEN_KEY = 'badizo_token';
@@ -35,6 +35,30 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+function shouldRetryRequest(error) {
+  const method = String(error.config?.method || 'get').toLowerCase();
+  if (method !== 'get') return false;
+  if (error.code === 'ECONNABORTED' || error.message?.toLowerCase().includes('timeout')) return true;
+  if (!error.response && error.request) return true;
+  return false;
+}
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error.config || {};
+    config.__badizoRetryCount = Number(config.__badizoRetryCount || 0);
+    if (!shouldRetryRequest(error) || config.__badizoRetryCount >= 2) {
+      return Promise.reject(error);
+    }
+
+    config.__badizoRetryCount += 1;
+    const delayMs = config.__badizoRetryCount === 1 ? 350 : 900;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    return api(config);
+  }
+);
 
 export function setAuthSession(token, user) {
   clearLegacyAuthSession();
@@ -129,7 +153,7 @@ export async function searchProducts(query) {
   const trimmed = String(query || '').trim();
   if (!trimmed) return [];
 
-  const { data } = await api.get(`/products/search/${encodeURIComponent(trimmed)}`);
+  const { data } = await api.get(`/products/search/${encodeURIComponent(trimmed)}`, { timeout: 30000 });
   return Array.isArray(data) ? data : [];
 }
 
@@ -139,7 +163,8 @@ export async function lookupExactProduct(query) {
 
   try {
     const { data } = await api.get(`/products/exact/${encodeURIComponent(trimmed)}`, {
-      params: { _: Date.now() }
+      params: { _: Date.now() },
+      timeout: 30000
     });
     return data || null;
   } catch (err) {

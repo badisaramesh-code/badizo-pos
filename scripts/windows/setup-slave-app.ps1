@@ -1,10 +1,12 @@
 param(
-  [Parameter(Mandatory = $true)]
-  [string]$ServerIp,
+  [string]$ServerIp = '',
+  [string[]]$ServerHosts = @(),
   [ValidateSet('counter', 'admin', 'server', 'all')]
   [string]$LoginMode = 'counter',
+  [string]$LoginUser = '',
   [string]$InstallerPath = '',
   [switch]$Kiosk,
+  [switch]$SkipServerCheck,
   [switch]$SkipInstall,
   [switch]$SkipLaunch
 )
@@ -40,32 +42,91 @@ function Find-Installer {
   return $installer.FullName
 }
 
+function Test-BadizoUrl {
+  param([string]$Url, [int]$TimeoutSec = 3)
+  try {
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec $TimeoutSec
+    return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 400)
+  } catch {
+    return $false
+  }
+}
+
+function Get-LocalSubnetIps {
+  $ips = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.IPAddress -notlike '127.*' -and
+      $_.IPAddress -notlike '169.254.*' -and
+      $_.PrefixOrigin -ne 'WellKnown'
+    } |
+    Select-Object -ExpandProperty IPAddress)
+
+  $candidates = New-Object System.Collections.Generic.List[string]
+  foreach ($ip in $ips) {
+    $parts = $ip.Split('.')
+    if ($parts.Count -ne 4) { continue }
+    for ($last = 1; $last -le 254; $last++) {
+      $candidate = "$($parts[0]).$($parts[1]).$($parts[2]).$last"
+      if ($candidate -ne $ip) {
+        $candidates.Add($candidate)
+      }
+    }
+  }
+  return @($candidates | Select-Object -Unique)
+}
+
+function Resolve-BadizoServer {
+  $candidateHosts = New-Object System.Collections.Generic.List[string]
+  if (![string]::IsNullOrWhiteSpace($ServerIp)) {
+    $candidateHosts.Add($ServerIp.Trim())
+  }
+  foreach ($hostName in $ServerHosts) {
+    if (![string]::IsNullOrWhiteSpace($hostName)) {
+      $candidateHosts.Add($hostName.Trim())
+    }
+  }
+  foreach ($hostName in @('badizo-server.local', 'badizo-server', 'BADIZO-SERVER', 'server', 'SERVER')) {
+    $candidateHosts.Add($hostName)
+  }
+
+  foreach ($hostName in @($candidateHosts | Select-Object -Unique)) {
+    $healthUrl = "http://${hostName}:5000/api/health"
+    Write-Host "Trying $healthUrl"
+    if (Test-BadizoUrl -Url $healthUrl -TimeoutSec 4) {
+      return $hostName
+    }
+  }
+
+  Write-Host 'Saved server address was not reachable. Scanning this LAN for Badizo server on port 5000...' -ForegroundColor Yellow
+  foreach ($ip in Get-LocalSubnetIps) {
+    if (Test-BadizoUrl -Url "http://${ip}:5000/api/health" -TimeoutSec 1) {
+      return $ip
+    }
+  }
+
+  return ''
+}
+
 function Test-Server {
+  if ($SkipServerCheck) {
+    Write-Host 'Skipping server pre-check because -SkipServerCheck was used.' -ForegroundColor Yellow
+    return
+  }
+
   Write-Step 'Checking server connection'
-  $frontendPortTest = Test-NetConnection -ComputerName $ServerIp -Port 3000 -WarningAction SilentlyContinue
-  if (!$frontendPortTest.TcpTestSucceeded) {
-    throw "Cannot reach Badizo frontend at ${ServerIp}:3000. Check server frontend, server firewall, and same Wi-Fi/LAN."
+  $script:ResolvedServerHost = Resolve-BadizoServer
+  if ([string]::IsNullOrWhiteSpace($script:ResolvedServerHost)) {
+    throw 'Cannot find Badizo server on this LAN. Start the server computer, run START_BADIZO_SERVER.bat once, and allow Windows Firewall port 5000.'
   }
 
-  $portTest = Test-NetConnection -ComputerName $ServerIp -Port 5000 -WarningAction SilentlyContinue
-  if (!$portTest.TcpTestSucceeded) {
-    throw "Cannot reach Badizo server at ${ServerIp}:5000. Check server backend, server firewall, and same Wi-Fi/LAN."
+  $frontend5000 = "http://${script:ResolvedServerHost}:5000"
+  if (!(Test-BadizoUrl -Url $frontend5000 -TimeoutSec 8)) {
+    throw "Badizo backend was found, but frontend did not open at ${frontend5000}."
   }
 
-  $frontendUrl = "http://${ServerIp}:3000"
-  $frontendResponse = Invoke-WebRequest -UseBasicParsing -Uri $frontendUrl -TimeoutSec 5
-  if ($frontendResponse.StatusCode -lt 200 -or $frontendResponse.StatusCode -ge 400) {
-    throw "Server frontend check failed: $frontendUrl"
-  }
-
-  $healthUrl = "http://${ServerIp}:5000/api/health"
-  $response = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 5
-  if ($response.StatusCode -ne 200) {
-    throw "Server health check failed: $healthUrl"
-  }
-
-  Write-Host "Frontend OK: $frontendUrl" -ForegroundColor Green
-  Write-Host "Server OK: $healthUrl" -ForegroundColor Green
+  Write-Host "Badizo server found: $script:ResolvedServerHost" -ForegroundColor Green
+  Write-Host "Frontend OK: $frontend5000" -ForegroundColor Green
+  Write-Host "Server OK: http://${script:ResolvedServerHost}:5000/api/health" -ForegroundColor Green
 }
 
 function Write-AppConfig {
@@ -78,24 +139,55 @@ function Write-AppConfig {
     throw 'APPDATA path was not found for this Windows user.'
   }
 
-  $configDir = Join-Path $roamingAppData 'Badizo'
-  $configPath = Join-Path $configDir 'app-config.json'
-  New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+  $serverHost = $script:ResolvedServerHost
+  if ([string]::IsNullOrWhiteSpace($serverHost)) {
+    $serverHost = $ServerIp
+  }
+  if ([string]::IsNullOrWhiteSpace($serverHost)) {
+    $serverHost = 'badizo-server'
+  }
+  $allServerHosts = @($serverHost, $ServerIp) + $ServerHosts + @('badizo-server.local', 'badizo-server', 'server')
+  $allServerHosts = @($allServerHosts | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
+  $appUrl = "http://${serverHost}:5000"
+  $queryParts = @()
+  if (![string]::IsNullOrWhiteSpace($LoginMode)) {
+    $queryParts += "loginMode=$([uri]::EscapeDataString($LoginMode.Trim().ToLower()))"
+  }
+  if (![string]::IsNullOrWhiteSpace($LoginUser)) {
+    $queryParts += "loginUser=$([uri]::EscapeDataString($LoginUser.Trim().ToLower()))"
+  }
+  if ($queryParts.Count -gt 0) {
+    $appUrl = "$appUrl`?$($queryParts -join '&')"
+  }
 
   $config = [ordered]@{
-    appUrl = "http://${ServerIp}:3000"
-    apiHealthUrl = "http://${ServerIp}:5000/api/health"
+    appUrl = $appUrl
+    apiHealthUrl = "http://${serverHost}:5000/api/health"
+    serverHosts = $allServerHosts
+    discoveryEnabled = $true
+    discoveryTimeoutMs = 12000
     backendPort = 5000
     frontendPort = 3000
     startBackend = $false
     startFrontend = $false
     loginMode = $LoginMode
+    loginUser = $LoginUser
     kiosk = [bool]$Kiosk
     devTools = $false
   }
 
-  $config | ConvertTo-Json -Depth 4 | Set-Content -Path $configPath -Encoding UTF8
-  Write-Host "Config written: $configPath" -ForegroundColor Green
+  $configJson = $config | ConvertTo-Json -Depth 4
+  $configDirs = @(
+    (Join-Path $roamingAppData 'Badizo'),
+    (Join-Path $roamingAppData 'badizo-desktop')
+  ) | Select-Object -Unique
+
+  foreach ($configDir in $configDirs) {
+    $configPath = Join-Path $configDir 'app-config.json'
+    New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+    $configJson | Set-Content -Path $configPath -Encoding UTF8
+    Write-Host "Config written: $configPath" -ForegroundColor Green
+  }
 }
 
 function Install-App {
@@ -107,9 +199,18 @@ function Install-App {
   Write-Step 'Installing Badizo app'
   $installer = Find-Installer
   Write-Host "Installer: $installer"
+
+  Get-Process -Name Badizo -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
   $process = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
   if ($process.ExitCode -ne 0) {
-    throw "Installer failed with exit code $($process.ExitCode)."
+    Write-Host "Silent installer returned exit code $($process.ExitCode)." -ForegroundColor Yellow
+    Write-Host 'Opening normal installer. Complete the installer window, then this setup will continue.' -ForegroundColor Yellow
+
+    $manualProcess = Start-Process -FilePath $installer -Wait -PassThru
+    if ($manualProcess.ExitCode -ne 0) {
+      throw "Installer failed with exit code $($manualProcess.ExitCode). Close Badizo if it is open, then run this setup again."
+    }
   }
   Write-Host 'Install completed.' -ForegroundColor Green
 }
@@ -139,8 +240,11 @@ function Launch-App {
 
 try {
   Write-Host 'Badizo POS slave setup' -ForegroundColor Green
-  Write-Host "Server IP: $ServerIp"
+  Write-Host "Server IP/host: $ServerIp"
   Write-Host "Login mode: $LoginMode"
+  if (![string]::IsNullOrWhiteSpace($LoginUser)) {
+    Write-Host "Login user: $LoginUser"
+  }
   Test-Server
   Write-AppConfig
   Install-App
