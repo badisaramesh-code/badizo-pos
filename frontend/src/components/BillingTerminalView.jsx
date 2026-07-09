@@ -17,6 +17,7 @@ import {
   holdBill,
   lookupExactProduct,
   lookupCustomer,
+  pingBackendHealth,
   recordInvoiceReprint,
   saveCustomer,
   voidInvoice,
@@ -60,10 +61,12 @@ const RETAIL_MODE = 'RETAIL_LOCAL';
 const POS_DRAFT_KEY = 'badizo_pos_active_draft';
 const EMPTY_MIXED_PAYMENT = { cash: '', upi: '', card: '', upi_reference: '', card_reference: '' };
 const SCANNER_BARCODE_PATTERN = /^[A-Z0-9._-]+$/i;
-const SCANNER_SETTLE_MS = 650;
-const SCANNER_FAST_KEY_MS = 90;
+const SCANNER_SETTLE_MS = 240;
+const SCANNER_FAST_KEY_MS = 160;
 const SCANNER_WAKE_BLOCK_MS = 120;
 const TYPED_SEARCH_DEBOUNCE_MS = 160;
+const TYPED_BARCODE_AUTO_ADD_MS = 300;
+const EXACT_PRODUCT_CACHE_TTL_MS = 2000;
 const POS_SUGGESTION_LIMIT = 2000;
 const MIN_VISIBLE_BILL_ROWS = 12;
 const FIXED_THERMAL_RECEIPT_WIDTH_MM = 80;
@@ -481,7 +484,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [returnReason, setReturnReason] = useState('');
   const [refundMode, setRefundMode] = useState('Cash');
   const scannerRef = useRef(null);
-  const exactProductCacheRef = useRef(new Map());
+  const exactProductShortCacheRef = useRef(new Map());
   const scannerKeyTimesRef = useRef([]);
   const scannerAutoAddTimerRef = useRef(null);
   const scannerInputModeRef = useRef('keyboard');
@@ -513,6 +516,9 @@ export default function BillingTerminalView({ isActive = true }) {
   const saleReportFormRef = useRef(null);
   const priceCheckInputRef = useRef(null);
   const restoredDraftRef = useRef(Boolean(initialDraft));
+  const restoredDraftInvoiceNoRef = useRef(initialDraft?.invoiceNo || '');
+  const restoredDraftCheckedRef = useRef(false);
+  const suppressDraftPersistenceRef = useRef(false);
   const customerNameRef = useRef(null);
   const cashReceivedRef = useRef(null);
   const mixedCashRef = useRef(null);
@@ -670,6 +676,14 @@ export default function BillingTerminalView({ isActive = true }) {
 
   useEffect(() => {
     const hasBillLines = cart.length > 0 || exchangeItems.length > 0;
+    if (suppressDraftPersistenceRef.current) {
+      clearActivePosDraft();
+      if (!hasBillLines) {
+        suppressDraftPersistenceRef.current = false;
+      }
+      return;
+    }
+
     const hasDraft = hasBillLines && (
       exchangeMode
       || billingMode !== RETAIL_MODE
@@ -723,6 +737,25 @@ export default function BillingTerminalView({ isActive = true }) {
     setLiveTime(new Date());
     const timer = window.setInterval(() => setLiveTime(new Date()), 1000);
     return () => window.clearInterval(timer);
+  }, [isActive]);
+
+  useEffect(() => {
+    if (!isActive) return undefined;
+
+    const keepCounterWarm = () => {
+      if (document.visibilityState === 'hidden') return;
+      pingBackendHealth();
+    };
+
+    keepCounterWarm();
+    const interval = window.setInterval(keepCounterWarm, 20000);
+    window.addEventListener('focus', keepCounterWarm);
+    document.addEventListener('visibilitychange', keepCounterWarm);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', keepCounterWarm);
+      document.removeEventListener('visibilitychange', keepCounterWarm);
+    };
   }, [isActive]);
 
   useEffect(() => {
@@ -810,13 +843,9 @@ export default function BillingTerminalView({ isActive = true }) {
         if (String(scannerRef.current?.value || '').trim().toUpperCase() !== cleaned.toUpperCase()) return;
         addProduct(exactProduct, quantity);
       } catch (err) {
-        if (SCANNER_BARCODE_PATTERN.test(cleaned)) {
-          addUnknownProductLine(cleaned, quantity);
-        } else {
-          setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
-        }
+        setErrorMessage(`Product lookup failed for ${cleaned}. Check network and scan again.`);
       }
-    }, 650);
+    }, TYPED_BARCODE_AUTO_ADD_MS);
 
     return () => window.clearTimeout(timer);
   }, [query]);
@@ -1007,7 +1036,7 @@ export default function BillingTerminalView({ isActive = true }) {
       if (exchangeScannerBufferRef.current || exchangeScannerBufferTimerRef.current) return;
       if (String(exchangeScannerRef.current?.value || '').trim().toUpperCase() !== cleaned.toUpperCase()) return;
       await addExchangeProductByExactScan(cleaned);
-    }, 650);
+    }, TYPED_BARCODE_AUTO_ADD_MS);
 
     return () => window.clearTimeout(timer);
   }, [exchangeMode, exchangeQuery]);
@@ -1080,6 +1109,43 @@ export default function BillingTerminalView({ isActive = true }) {
     : paymentMode !== 'Cash' || payablePaise <= 0 || (cashReceivedAmount > 0 && cashReceivedPaise >= payablePaise);
   const canCompleteSale = cart.length > 0 && isCashReady && !cart.some((item) => item.isUnknown) && !isCheckoutSubmitting;
   const hasUnknownLine = cart.some((item) => item.isUnknown);
+
+  useEffect(() => {
+    if (!isActive || !restoredDraftRef.current || restoredDraftCheckedRef.current) return undefined;
+    const restoredInvoiceNo = String(restoredDraftInvoiceNoRef.current || '').trim();
+    if (!restoredInvoiceNo || restoredInvoiceNo === 'Draft' || restoredInvoiceNo === 'Loading...') return undefined;
+
+    restoredDraftCheckedRef.current = true;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const details = await fetchInvoiceDetails(restoredInvoiceNo);
+        if (cancelled) return;
+
+        const savedInvoice = details?.invoice || {};
+        const sameInvoice = String(savedInvoice.invoice_no || '') === restoredInvoiceNo;
+        const savedCounter = String(savedInvoice.billing_counter || '').trim().toLowerCase();
+        const expectedCounter = `counter ${counterNo}`.toLowerCase();
+        const sameCounter = !savedCounter || savedCounter === expectedCounter;
+        const sameTotal = Math.abs(moneyToPaise(savedInvoice.grand_total) - moneyToPaise(totals.grand)) <= 1;
+        const savedStatus = String(savedInvoice.invoice_status || '').toUpperCase();
+
+        if (sameInvoice && sameCounter && sameTotal && savedStatus !== 'VOID') {
+          suppressDraftPersistenceRef.current = true;
+          resetBill({ closeActiveWindow: false });
+          setStatusMessage(`Invoice ${restoredInvoiceNo} already saved. Old screen bill cleared.`);
+          refreshInvoicePreview(counterNo);
+        }
+      } catch (err) {
+        // If the invoice is not found, keep the restored draft as an unsaved bill.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [counterNo, isActive, totals.grand]);
   const latestInvoice = invoiceHistory[0];
   const filteredInvoiceHistory = useMemo(() => {
     const search = historySearch.trim().toLowerCase();
@@ -1504,14 +1570,40 @@ export default function BillingTerminalView({ isActive = true }) {
   async function findExactProductFast(searchValue) {
     const key = String(searchValue || '').trim().toUpperCase();
     if (!key) return null;
-    if (exactProductCacheRef.current.has(key)) {
-      return exactProductCacheRef.current.get(key);
+    const cached = exactProductShortCacheRef.current.get(key);
+    if (cached && Date.now() - cached.at < EXACT_PRODUCT_CACHE_TTL_MS) {
+      return cached.product;
     }
+
     const product = await lookupExactProduct(key);
     if (product) {
-      exactProductCacheRef.current.set(key, product);
+      exactProductShortCacheRef.current.set(key, { at: Date.now(), product });
+    } else {
+      exactProductShortCacheRef.current.delete(key);
     }
     return product;
+  }
+
+  async function findProductForScan(searchValue) {
+    const key = String(searchValue || '').trim().toUpperCase();
+    if (!key) return null;
+
+    try {
+      return await findExactProductFast(key);
+    } catch (exactErr) {
+      console.warn('Exact product lookup failed, trying search fallback:', exactErr.message || exactErr);
+    }
+
+    const results = await searchProducts(key);
+    const exactFromSearch = results.find((product) => (
+      String(product.barcode || '').toUpperCase() === key
+      || String(product.product_code || '').toUpperCase() === key
+    ));
+    if (exactFromSearch) {
+      exactProductShortCacheRef.current.set(key, { at: Date.now(), product: exactFromSearch });
+      return exactFromSearch;
+    }
+    return null;
   }
 
   function markRapidInputKey(event, targetRef = scannerKeyTimesRef) {
@@ -1548,7 +1640,7 @@ export default function BillingTerminalView({ isActive = true }) {
     const normalized = cleaned.toUpperCase();
     if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
 
-    scannerReadQueueRef.current.push({ barcode: normalized, quantity });
+    scannerReadQueueRef.current.push({ barcode: normalized, quantity, attempts: 0 });
     if (scannerInputModeRef.current !== 'scan') {
       resetScannerBuffer();
     }
@@ -1631,14 +1723,22 @@ export default function BillingTerminalView({ isActive = true }) {
       while (scannerReadQueueRef.current.length > 0) {
         const scanRead = scannerReadQueueRef.current.shift();
         try {
-          const exactProduct = await findExactProductFast(scanRead.barcode);
+          const exactProduct = await findProductForScan(scanRead.barcode);
           if (exactProduct) {
             addProduct(exactProduct, scanRead.quantity);
           } else {
             addUnknownProductLine(scanRead.barcode, scanRead.quantity);
           }
         } catch (err) {
-          addUnknownProductLine(scanRead.barcode, scanRead.quantity);
+          if (toNumber(scanRead.attempts) < 2) {
+            scannerReadQueueRef.current.unshift({
+              ...scanRead,
+              attempts: toNumber(scanRead.attempts) + 1
+            });
+            await new Promise((resolve) => setTimeout(resolve, 180));
+            continue;
+          }
+          setErrorMessage(`Product lookup failed for ${scanRead.barcode}. Check network and scan again.`);
         }
       }
     } finally {
@@ -1714,9 +1814,38 @@ export default function BillingTerminalView({ isActive = true }) {
       });
       if (existingIndex >= 0) {
         setSelectedCartIndex(existingIndex);
-        return current.map((item, index) => (
-          index === existingIndex ? { ...item, quantity: toNumber(item.quantity, 1) + addQty } : item
-        ));
+        return current.map((item, index) => {
+          if (index !== existingIndex) return item;
+
+          if (item.isUnknown) {
+            return {
+              ...product,
+              barcode: productBarcode || product.barcode,
+              product_name: String(product.product_name || '').toUpperCase(),
+              quantity: toNumber(item.quantity, 1),
+              sale_price: toNumber(product.sale_price || product.mrp),
+              wholesale_price: toNumber(product.wholesale_price || product.sale_price || product.mrp),
+              mrp: toNumber(product.mrp),
+              gst_percent: toNumber(product.gst_percent),
+              stock_qty: toNumber(product.stock_qty)
+            };
+          }
+
+          const refreshedSalePrice = toNumber(product.sale_price || product.mrp);
+          return {
+            ...item,
+            ...product,
+            barcode: productBarcode || product.barcode,
+            product_name: String(product.product_name || item.product_name || '').toUpperCase(),
+            quantity: toNumber(item.quantity, 1) + addQty,
+            sale_price: refreshedSalePrice,
+            unitPrice: refreshedSalePrice,
+            wholesale_price: toNumber(product.wholesale_price || product.sale_price || product.mrp),
+            mrp: toNumber(product.mrp),
+            gst_percent: toNumber(product.gst_percent),
+            stock_qty: toNumber(product.stock_qty)
+          };
+        });
       }
 
       setSelectedCartIndex(current.length);
@@ -2025,7 +2154,6 @@ export default function BillingTerminalView({ isActive = true }) {
           || String(product.product_code || '').toUpperCase() === cleaned.toUpperCase()
         ));
         if (exactFromSearch) {
-          exactProductCacheRef.current.set(cleaned.toUpperCase(), exactFromSearch);
           addProduct(exactFromSearch, quantity);
           return;
         }
@@ -2528,6 +2656,7 @@ export default function BillingTerminalView({ isActive = true }) {
   function resetBill(options = {}) {
     const { closeActiveWindow = true } = options;
     hideHoverBillPreview();
+    suppressDraftPersistenceRef.current = true;
     clearActivePosDraft();
     if (closeActiveWindow && activeBillWindowId) {
       setBillWindows((current) => current.filter((billWindow) => billWindow.id !== activeBillWindowId));
@@ -3593,6 +3722,9 @@ export default function BillingTerminalView({ isActive = true }) {
 
       await waitForFrameAssets(doc);
 
+      let thermalDirectPrintHtml = '';
+      let thermalDirectPrintHeightMm = 0;
+
       if (mode === 'Thermal') {
         const printHost = doc.querySelector('.print-host-thermal');
         if (printHost) {
@@ -3603,11 +3735,12 @@ export default function BillingTerminalView({ isActive = true }) {
             printHost.scrollHeight || 0
           );
           const contentHeightMm = Math.max(40, Math.ceil((contentHeightPx * 25.4) / 96));
+          const printPageHeightMm = contentHeightMm + thermalFeedMarginMm;
           const dynamicPrintStyle = doc.createElement('style');
           dynamicPrintStyle.textContent = `
             @media print {
-              @page { size: ${thermalWidthMm}mm ${contentHeightMm}mm; margin: 0; }
-              @page thermal-receipt { size: ${thermalWidthMm}mm ${contentHeightMm}mm; margin: 0; }
+              @page { size: ${thermalWidthMm}mm ${printPageHeightMm}mm; margin: 0; }
+              @page thermal-receipt { size: ${thermalWidthMm}mm ${printPageHeightMm}mm; margin: 0; }
               html.printing-thermal,
               html.printing-thermal body,
               html.printing-thermal #root {
@@ -3617,13 +3750,13 @@ export default function BillingTerminalView({ isActive = true }) {
                 margin: 0 !important;
                 padding: 0 !important;
                 box-sizing: border-box !important;
-                height: auto !important;
-                min-height: 0 !important;
-                max-height: none !important;
+                height: ${printPageHeightMm}mm !important;
+                min-height: ${printPageHeightMm}mm !important;
+                max-height: ${printPageHeightMm}mm !important;
                 display: block !important;
                 align-items: flex-start !important;
                 justify-content: flex-start !important;
-                overflow: visible !important;
+                overflow: hidden !important;
               }
               html.printing-thermal .print-host-thermal,
               body.printing-thermal .print-host-thermal {
@@ -3636,10 +3769,10 @@ export default function BillingTerminalView({ isActive = true }) {
                 margin: 0 !important;
                 padding: 0 !important;
                 box-sizing: border-box !important;
-                height: auto !important;
+                height: ${printPageHeightMm}mm !important;
                 min-height: 0 !important;
-                max-height: none !important;
-                overflow: visible !important;
+                max-height: ${printPageHeightMm}mm !important;
+                overflow: hidden !important;
               }
               html.printing-thermal .thermal-paper,
               body.printing-thermal .thermal-paper {
@@ -3651,37 +3784,35 @@ export default function BillingTerminalView({ isActive = true }) {
                 box-sizing: border-box !important;
                 height: auto !important;
                 min-height: 0 !important;
-                max-height: none !important;
-                overflow: visible !important;
+                max-height: ${printPageHeightMm}mm !important;
+                overflow: hidden !important;
                 padding-bottom: ${thermalFeedMarginMm}mm !important;
               }
             }
           `;
           doc.head.appendChild(dynamicPrintStyle);
 
-          if (canUseElectronThermalPrint) {
-            try {
-              await waitForFrameAssets(doc);
-              const receiptMarkup = receipt?.outerHTML || printHost.innerHTML;
-              const printHtml = `<!doctype html>
+          const receiptMarkup = receipt?.outerHTML || printHost.innerHTML;
+          thermalDirectPrintHeightMm = printPageHeightMm;
+          thermalDirectPrintHtml = `<!doctype html>
 <html class="printing-thermal">
 <head>
   <meta charset="utf-8" />
   <base href="${window.location.origin}/" />
   ${styleMarkup}
   <style>
-    @page { size: ${thermalWidthMm}mm ${contentHeightMm}mm; margin: 0; }
+    @page { size: ${thermalWidthMm}mm ${printPageHeightMm}mm; margin: 0; }
     html,
     body {
       width: ${thermalWidthMm}mm !important;
       min-width: ${thermalWidthMm}mm !important;
       max-width: ${thermalWidthMm}mm !important;
-      height: auto !important;
-      min-height: 0 !important;
-      max-height: none !important;
+      height: ${printPageHeightMm}mm !important;
+      min-height: ${printPageHeightMm}mm !important;
+      max-height: ${printPageHeightMm}mm !important;
       margin: 0 !important;
       padding: 0 !important;
-      overflow: visible !important;
+      overflow: hidden !important;
       background: #fff !important;
       display: block !important;
       align-items: flex-start !important;
@@ -3691,6 +3822,11 @@ export default function BillingTerminalView({ isActive = true }) {
       visibility: visible !important;
       box-sizing: border-box !important;
     }
+    body *,
+    .thermal-paper,
+    .thermal-paper * {
+      visibility: visible !important;
+    }
     .thermal-paper {
       display: block !important;
       position: static !important;
@@ -3699,10 +3835,10 @@ export default function BillingTerminalView({ isActive = true }) {
       max-width: ${thermalContentWidthMm}mm !important;
       height: auto !important;
       min-height: 0 !important;
-      max-height: none !important;
+      max-height: ${printPageHeightMm}mm !important;
       margin: 0 auto !important;
       padding: 0 1.5mm ${thermalFeedMarginMm}mm !important;
-      overflow: visible !important;
+      overflow: hidden !important;
       page-break-before: avoid !important;
       page-break-after: auto !important;
       page-break-inside: auto !important;
@@ -3850,10 +3986,14 @@ export default function BillingTerminalView({ isActive = true }) {
 </head>
 <body class="printing-thermal">${receiptMarkup}</body>
 </html>`;
+
+          if (canUseElectronThermalPrint) {
+            try {
+              await waitForFrameAssets(doc);
               await window.badizoDesktop.printThermalHtml({
-                html: printHtml,
+                html: thermalDirectPrintHtml,
                 widthMm: thermalWidthMm,
-                heightMm: contentHeightMm,
+                heightMm: printPageHeightMm,
                 feedMarginMm: 0
               });
               cleanup();
@@ -3864,6 +4004,17 @@ export default function BillingTerminalView({ isActive = true }) {
             }
           }
         }
+      }
+
+      if (mode === 'Thermal' && thermalDirectPrintHtml && !canUseElectronThermalPrint) {
+        doc.open();
+        doc.write(thermalDirectPrintHtml);
+        doc.close();
+        printFrame.style.height = `${thermalDirectPrintHeightMm || 80}mm`;
+        printFrame.style.visibility = 'visible';
+        printFrame.style.opacity = '1';
+        printFrame.style.pointerEvents = 'none';
+        await waitForFrameAssets(doc);
       }
 
       frameWindow.addEventListener('afterprint', cleanup, { once: true });
@@ -3996,14 +4147,26 @@ export default function BillingTerminalView({ isActive = true }) {
   }
 
   function preparePayment(mode, submitAfterContact = false) {
+    const isDigitalMode = mode !== 'Cash' && mode !== 'Mixed';
+    if (isDigitalMode && cart.length > 0 && !isDigitalPaymentContactReady(customerPhone)) {
+      openDigitalContactModal(mode, submitAfterContact);
+      return;
+    }
+
     if (
       submitAfterContact
-      && mode !== 'Cash'
-      && mode !== 'Mixed'
+      && isDigitalMode
       && cart.length > 0
-      && !isDigitalPaymentContactReady(customerPhone)
     ) {
-      openDigitalContactModal(mode, true);
+      setPaymentMode(mode);
+      setPaymentConfirmed(true);
+      setErrorMessage('');
+      setStatusMessage('');
+      submitCheckout(mode, {
+        customerPhone,
+        paymentReference,
+        paymentConfirmed: true
+      });
       return;
     }
 
@@ -4400,6 +4563,83 @@ export default function BillingTerminalView({ isActive = true }) {
     checkoutInFlightRef.current = true;
     setIsCheckoutSubmitting(true);
 
+    const completeSuccessfulCheckout = (savedInvoiceNo, freeItems = [], recovered = false) => {
+      const freeInvoiceItems = freeItems.map((item) => ({
+        ...item,
+        product_name: String(item.product_name || '').toUpperCase(),
+        quantity: toNumber(item.quantity, 1),
+        unitPrice: 0,
+        sale_price: 0,
+        mrp: 0,
+        unit_type: item.unit_type || item.unit || 'Nos',
+        gst_percent: 0,
+        lineTotal: 0,
+        taxableRate: 0,
+        taxAmount: 0,
+        is_free_bonus: true
+      }));
+
+      const completedInvoice = {
+        ...printableDraft,
+        invoiceNo: savedInvoiceNo || invoiceNo,
+        customerName: effectiveCustomerName,
+        customerPhone: effectiveCustomerPhone,
+        paymentReference: activePaymentMode === 'Cash' || activePaymentMode === 'Mixed' ? '' : effectivePaymentReference,
+        paymentMode: activePaymentMode,
+        paymentSplits: activePaymentMode === 'Mixed' ? [
+          { mode: 'Cash', amount: toNumber(effectiveMixedPayment.cash) },
+          { mode: 'UPI', amount: toNumber(effectiveMixedPayment.upi), reference: effectiveMixedPayment.upi_reference || '' },
+          { mode: 'Card', amount: toNumber(effectiveMixedPayment.card), reference: effectiveMixedPayment.card_reference || '' }
+        ].filter((row) => row.amount > 0) : [],
+        cashReceived: received,
+        changeReturned: Math.max(receivedPaise - payablePaiseForCheckout, 0) / 100,
+        totals: {
+          ...printableDraft.totals
+        },
+        items: [...printableDraft.items, ...freeInvoiceItems],
+        itemCount: printableDraft.itemCount + freeInvoiceItems.reduce((sum, item) => sum + toNumber(item.quantity), 0),
+        exchangeItems: printableDraft.exchangeItems
+      };
+
+      setPrintableInvoice(completedInvoice);
+      setInvoiceHistory((current) => [
+        {
+          invoice_no: completedInvoice.invoiceNo,
+          customer_name: completedInvoice.customerName,
+          customer_phone: completedInvoice.customerPhone,
+          grand_total: completedInvoice.totals.grand,
+          cash_received: completedInvoice.cashReceived,
+          change_returned: completedInvoice.changeReturned,
+          billing_counter: `Counter ${completedInvoice.counterNo}`,
+          payment_status: 'PAID',
+          payment_reference: completedInvoice.paymentReference,
+          payment_mode: completedInvoice.paymentMode,
+          transaction_type: mode.transactionType,
+          billing_tier: mode.tier,
+          tax_type: mode.taxType,
+          invoice_status: 'PAID',
+          created_at: new Date().toISOString()
+        },
+        ...current.filter((invoice) => invoice.invoice_no !== completedInvoice.invoiceNo)
+      ].slice(0, 500));
+      setStatusMessage(
+        recovered
+          ? `Invoice ${completedInvoice.invoiceNo} already saved. Printing recovered bill. Change due: ${formatMoney(completedInvoice.changeReturned)}`
+          : `Invoice ${completedInvoice.invoiceNo} saved. Change due: ${formatMoney(completedInvoice.changeReturned)}`
+      );
+      setCashReceived('');
+      setPaymentMode('Cash');
+      setMixedPayment(EMPTY_MIXED_PAYMENT);
+      setPaymentReference('');
+      setPaymentConfirmed(false);
+      setUseLoyaltyPoints(false);
+      setLoyaltyRedeemPoints('');
+      resetBill();
+      schedulePrint(printMode, () => {
+        refreshHistory(false);
+      }, completedInvoice);
+    };
+
     try {
       const checkoutResult = await checkout({
         counter_no: counterNo,
@@ -4451,77 +4691,29 @@ export default function BillingTerminalView({ isActive = true }) {
         print_mode: printMode
       });
 
-      const freeInvoiceItems = (checkoutResult.free_items || []).map((item) => ({
-        ...item,
-        product_name: String(item.product_name || '').toUpperCase(),
-        quantity: toNumber(item.quantity, 1),
-        unitPrice: 0,
-        sale_price: 0,
-        mrp: 0,
-        unit_type: item.unit_type || item.unit || 'Nos',
-        gst_percent: 0,
-        lineTotal: 0,
-        taxableRate: 0,
-        taxAmount: 0,
-        is_free_bonus: true
-      }));
-
-      const completedInvoice = {
-        ...printableDraft,
-        invoiceNo: checkoutResult.invoice_no || invoiceNo,
-        customerName: effectiveCustomerName,
-        customerPhone: effectiveCustomerPhone,
-        paymentReference: activePaymentMode === 'Cash' || activePaymentMode === 'Mixed' ? '' : effectivePaymentReference,
-        paymentMode: activePaymentMode,
-        paymentSplits: activePaymentMode === 'Mixed' ? [
-          { mode: 'Cash', amount: toNumber(effectiveMixedPayment.cash) },
-          { mode: 'UPI', amount: toNumber(effectiveMixedPayment.upi), reference: effectiveMixedPayment.upi_reference || '' },
-          { mode: 'Card', amount: toNumber(effectiveMixedPayment.card), reference: effectiveMixedPayment.card_reference || '' }
-        ].filter((row) => row.amount > 0) : [],
-        cashReceived: received,
-        changeReturned: Math.max(receivedPaise - payablePaiseForCheckout, 0) / 100,
-        totals: {
-          ...printableDraft.totals
-        },
-        items: [...printableDraft.items, ...freeInvoiceItems],
-        itemCount: printableDraft.itemCount + freeInvoiceItems.reduce((sum, item) => sum + toNumber(item.quantity), 0),
-        exchangeItems: printableDraft.exchangeItems
-      };
-      setPrintableInvoice(completedInvoice);
-      setInvoiceHistory((current) => [
-        {
-          invoice_no: completedInvoice.invoiceNo,
-          customer_name: completedInvoice.customerName,
-          customer_phone: completedInvoice.customerPhone,
-          grand_total: completedInvoice.totals.grand,
-          cash_received: completedInvoice.cashReceived,
-          change_returned: completedInvoice.changeReturned,
-          billing_counter: `Counter ${completedInvoice.counterNo}`,
-          payment_status: 'PAID',
-          payment_reference: completedInvoice.paymentReference,
-          payment_mode: completedInvoice.paymentMode,
-          transaction_type: mode.transactionType,
-          billing_tier: mode.tier,
-          tax_type: mode.taxType,
-          invoice_status: 'PAID',
-          created_at: new Date().toISOString()
-        },
-        ...current.filter((invoice) => invoice.invoice_no !== completedInvoice.invoiceNo)
-      ].slice(0, 500));
-      setStatusMessage(`Invoice ${checkoutResult.invoice_no || invoiceNo} saved. Change due: ${formatMoney(Math.max(receivedPaise - payablePaiseForCheckout, 0) / 100)}`);
-      setCashReceived('');
-      setPaymentMode('Cash');
-      setMixedPayment(EMPTY_MIXED_PAYMENT);
-      setPaymentReference('');
-      setPaymentConfirmed(false);
-      setUseLoyaltyPoints(false);
-      setLoyaltyRedeemPoints('');
-      resetBill();
-      schedulePrint(printMode, () => {
-        refreshHistory(false);
-      }, completedInvoice);
+      completeSuccessfulCheckout(checkoutResult.invoice_no || invoiceNo, checkoutResult.free_items || []);
     } catch (err) {
-      setErrorMessage(err.response?.data?.error || 'Checkout failed.');
+      try {
+        const details = await fetchInvoiceDetails(invoiceNo);
+        const savedInvoice = details?.invoice || {};
+        const savedTotalPaise = moneyToPaise(savedInvoice.grand_total);
+        const savedCounter = String(savedInvoice.billing_counter || '').trim().toLowerCase();
+        const expectedCounter = `counter ${counterNo}`.toLowerCase();
+        const sameInvoice = String(savedInvoice.invoice_no || '') === String(invoiceNo);
+        const sameCounter = !savedCounter || savedCounter === expectedCounter;
+        const sameTotal = Math.abs(savedTotalPaise - payablePaiseForCheckout) <= 1;
+
+        if (sameInvoice && sameCounter && sameTotal && savedInvoice.invoice_status !== 'VOID') {
+          const recoveredFreeItems = Array.isArray(details?.items)
+            ? details.items.filter((item) => Number(item.is_free_bonus) === 1)
+            : [];
+          completeSuccessfulCheckout(savedInvoice.invoice_no, recoveredFreeItems, true);
+          return;
+        }
+      } catch (recoveryErr) {
+        // Keep the original checkout error below; recovery is only for confirmed saved invoices.
+      }
+      setErrorMessage(err.response?.data?.error || err.message || 'Checkout failed.');
     } finally {
       checkoutInFlightRef.current = false;
       setIsCheckoutSubmitting(false);
@@ -5296,8 +5488,8 @@ export default function BillingTerminalView({ isActive = true }) {
               </button>
               <div className="quick-actions">
                 <button className="secondary-button" onClick={prepareExactCashPayment} disabled={isCheckoutSubmitting}>F12 Cash</button>
-                <button className="secondary-button" onClick={() => preparePayment('UPI')}>F11 UPI</button>
-                <button className="secondary-button" onClick={() => preparePayment('Card')}>F10 Card</button>
+                <button className="secondary-button" onClick={() => preparePayment('UPI', true)} disabled={isCheckoutSubmitting}>F11 UPI</button>
+                <button className="secondary-button" onClick={() => preparePayment('Card', true)} disabled={isCheckoutSubmitting}>F10 Card</button>
                 <button className="secondary-button" onClick={() => preparePayment('Mixed')}>Mixed</button>
                 <button
                   className="secondary-button"

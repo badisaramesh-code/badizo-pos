@@ -3032,14 +3032,21 @@ router.get('/exact/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'
     const q = safeDecodeParam(req.params.query).trim().toUpperCase();
     if (!q) return res.status(400).json({ error: 'Barcode or product code is required.' });
 
-    const [rows] = await db.query(
+    const [barcodeRows] = await db.query(
       `SELECT * FROM products
-       WHERE barcode = ? OR product_code = ?
-       ORDER BY CASE WHEN barcode = ? THEN 0 ELSE 1 END
+       WHERE barcode = ?
        LIMIT 1`,
-      [q, q, q]
+      [q]
     );
-    if (rows.length) return res.json(toProduct(rows[0]));
+    if (barcodeRows.length) return res.json(toProduct(barcodeRows[0]));
+
+    const [codeRows] = await db.query(
+      `SELECT * FROM products
+       WHERE product_code = ?
+       LIMIT 1`,
+      [q]
+    );
+    if (codeRows.length) return res.json(toProduct(codeRows[0]));
 
     return res.status(404).json({ error: 'Product not found.' });
   } catch (err) {

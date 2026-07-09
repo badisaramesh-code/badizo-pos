@@ -39,6 +39,7 @@ api.interceptors.request.use((config) => {
 function shouldRetryRequest(error) {
   const method = String(error.config?.method || 'get').toLowerCase();
   if (method !== 'get') return false;
+  if (String(error.config?.url || '').includes('/products/exact/')) return false;
   if (error.code === 'ECONNABORTED' || error.message?.toLowerCase().includes('timeout')) return true;
   if (!error.response && error.request) return true;
   return false;
@@ -132,6 +133,23 @@ export async function fetchSessionEvents(options = 200) {
   };
 }
 
+export async function pingBackendHealth(timeoutMs = 2500) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const baseUrl = String(api.defaults.baseURL || '').replace(/\/api\/?$/, '');
+    const response = await fetch(`${baseUrl}/api/health?_=${Date.now()}`, {
+      cache: 'no-store',
+      signal: controller.signal
+    });
+    return response.ok;
+  } catch (err) {
+    return false;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 export async function fetchGatePassEntries({ from, to, movementType = '', status = '', search = '' } = {}) {
   const { data } = await api.get('/gate-pass', {
     params: { from, to, movement_type: movementType, status, search }
@@ -161,15 +179,32 @@ export async function lookupExactProduct(query) {
   const trimmed = String(query || '').trim();
   if (!trimmed) return null;
 
-  try {
+  const fetchExact = async () => {
     const { data } = await api.get(`/products/exact/${encodeURIComponent(trimmed)}`, {
       params: { _: Date.now() },
-      timeout: 30000
+      timeout: 12000
     });
     return data || null;
+  };
+
+  try {
+    return await fetchExact();
   } catch (err) {
     if (err.response?.status === 404) return null;
-    throw err;
+    const isTransientLookupFailure = (
+      err.code === 'ECONNABORTED'
+      || err.message?.toLowerCase().includes('timeout')
+      || (!err.response && err.request)
+    );
+    if (!isTransientLookupFailure) throw err;
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    try {
+      return await fetchExact();
+    } catch (retryErr) {
+      if (retryErr.response?.status === 404) return null;
+      throw retryErr;
+    }
   }
 }
 
@@ -513,7 +548,7 @@ export async function fetchReprintReport({ from, to, counter = '', search = '' }
 }
 
 export async function checkout(payload) {
-  const { data } = await api.post('/billing/checkout', payload);
+  const { data } = await api.post('/billing/checkout', payload, { timeout: 6000 });
   return data;
 }
 

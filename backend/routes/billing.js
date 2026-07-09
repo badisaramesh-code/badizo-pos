@@ -406,6 +406,24 @@ async function restoreProductFreePromotionQuantity(connection, invoiceItemId, qu
   );
 }
 
+function createCheckoutTimer() {
+  const start = Date.now();
+  let last = start;
+  const steps = [];
+
+  return {
+    mark(label) {
+      const now = Date.now();
+      steps.push({ label, ms: now - last, totalMs: now - start });
+      last = now;
+    },
+    totalMs() {
+      return Date.now() - start;
+    },
+    steps
+  };
+}
+
 router.get('/invoice/next', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     const counterCount = await getCounterCount();
@@ -437,8 +455,13 @@ router.get('/invoice/next', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'
 
 router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   const connection = await db.getConnection();
+  const checkoutTimer = createCheckoutTimer();
+  let invoiceNo = '';
 
   try {
+    await connection.query('SET SESSION innodb_lock_wait_timeout = 5');
+    checkoutTimer.mark('set-lock-timeout');
+
     const {
       counter_no,
       customer_name,
@@ -473,10 +496,12 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     }
 
     await connection.beginTransaction();
+    checkoutTimer.mark('begin-transaction');
     const counterCount = await getCounterCount(connection);
     const counterNo = normalizeCounterNo(requestedCounterForUser(req.user, counter_no), counterCount);
     const allocatedInvoice = await allocateInvoiceNo(connection, counterNo);
-    const invoiceNo = allocatedInvoice.invoiceNo;
+    invoiceNo = allocatedInvoice.invoiceNo;
+    checkoutTimer.mark('invoice-allocated');
     const normalizedExchangeItems = Array.isArray(exchange_items)
       ? exchange_items
         .map((item) => ({
@@ -492,6 +517,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       : [];
     const exchangeTotal = normalizedExchangeItems.reduce((total, item) => total + item.line_total, 0) || parseMoney(exchange_total);
     const loyaltySettings = await getLoyaltySettings(connection);
+    checkoutTimer.mark('loyalty-settings');
     const saleGrandBeforeRedeem = parseCurrency(loyalty_base_total || grand_total);
     const loyaltyRedeemResult = await redeemLoyaltyPoints(
       connection,
@@ -501,6 +527,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       saleGrandBeforeRedeem,
       loyaltySettings
     );
+    checkoutTimer.mark('loyalty-redeem');
     const normalizedPaymentMode = normalizePaymentMode(payment_mode);
     const grandTotal = Math.round(parseCurrency(saleGrandBeforeRedeem - loyaltyRedeemResult.amount));
     const paymentSplits = normalizePaymentSplits(normalizedPaymentMode, payment_splits, grandTotal, payment_reference);
@@ -553,6 +580,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         parseCurrency(loyaltyRedeemResult.amount)
       ]
     );
+    checkoutTimer.mark('invoice-inserted');
 
     for (const payment of paymentSplits) {
       await connection.query(
@@ -561,6 +589,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         [invoiceNo, payment.payment_mode, payment.amount, payment.payment_reference || null]
       );
     }
+    checkoutTimer.mark('payments-inserted');
 
     const soldBatchAllocations = [];
     const soldItemsForPromotions = [];
@@ -615,10 +644,13 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       const allocations = await consumeBatchStock(connection, invoiceItemResult.insertId, invoiceNo, item.barcode, quantity);
       soldBatchAllocations.push(...allocations);
       soldItemsForPromotions.push({ barcode: item.barcode, quantity });
+      checkoutTimer.mark(`item-${item.barcode}`);
     }
 
     const productPromotionFreeItems = await applyProductFreePromotions(connection, invoiceNo, soldItemsForPromotions);
+    checkoutTimer.mark('product-promotions');
     const batchFreeItems = await applyBatchFreeOffers(connection, invoiceNo, soldBatchAllocations);
+    checkoutTimer.mark('batch-free-offers');
     const freeItems = [...productPromotionFreeItems, ...batchFreeItems];
 
     for (const item of normalizedExchangeItems) {
@@ -634,6 +666,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         throw new Error(`Exchange product not found for barcode ${item.barcode}.`);
       }
     }
+    checkoutTimer.mark('exchange-items');
 
     await writeAuditLog({
       user: req.user,
@@ -653,6 +686,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       },
       connection
     });
+    checkoutTimer.mark('invoice-audit');
 
     const loyaltyResult = await awardLoyaltyPoints(
       connection,
@@ -663,8 +697,18 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       req.user,
       loyaltySettings
     );
+    checkoutTimer.mark('loyalty-award');
 
     await connection.commit();
+    checkoutTimer.mark('commit');
+    if (checkoutTimer.totalMs() > 2000) {
+      logInfo('Slow checkout completed', {
+        invoiceNo,
+        counterNo,
+        totalMs: checkoutTimer.totalMs(),
+        steps: checkoutTimer.steps
+      });
+    }
     const notificationDetails = {
       invoiceNo,
       customerName: customer_name || customer_company_name || 'Customer',
@@ -699,6 +743,12 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     });
   } catch (err) {
     await connection.rollback();
+    checkoutTimer.mark('rollback');
+    logError('Checkout rollback', err, {
+      invoiceNo,
+      totalMs: checkoutTimer.totalMs(),
+      steps: checkoutTimer.steps
+    });
     console.error('Checkout rollback:', err.message);
     res.status(500).json({ error: err.message });
   } finally {

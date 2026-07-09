@@ -130,7 +130,7 @@ function Write-CounterConfig {
     discoveryEnabled = $true
     discoveryTimeoutMs = 12000
     backendPort = 5000
-    frontendPort = 3000
+    frontendPort = 5000
     startBackend = $false
     startFrontend = $false
     loginMode = 'counter'
