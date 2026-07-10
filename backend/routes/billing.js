@@ -1124,6 +1124,7 @@ router.get('/hold/list', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     const from = String(req.query.from || '').trim();
     const to = String(req.query.to || '').trim();
     const search = String(req.query.search || '').trim();
+    const paymentMode = String(req.query.payment_mode || '').trim();
     const hasDateRange = from && to;
     const where = [];
     const params = [];
@@ -1146,11 +1147,18 @@ router.get('/hold/list', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       params.push(searchLike, searchLike, searchLike, searchLike);
     }
 
+    if (paymentMode === 'Exchange') {
+      where.push('exchange_total > 0');
+    } else if (['Cash', 'UPI', 'Card', 'Mixed'].includes(paymentMode)) {
+      where.push('payment_mode = ?');
+      params.push(paymentMode);
+    }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const limitSql = hasDateRange ? 'LIMIT 500' : 'LIMIT 25';
     const [rows] = await db.query(
       `SELECT invoice_no, customer_name, customer_phone, grand_total, cash_received, change_returned, billing_counter,
-              payment_status, payment_reference,
+              payment_status, payment_reference, exchange_total,
               payment_mode, transaction_type, billing_tier, tax_type, invoice_status, reprint_count,
               einvoice_status, einvoice_irn, einvoice_ack_no, ewaybill_status, ewaybill_no, created_at
        FROM invoices

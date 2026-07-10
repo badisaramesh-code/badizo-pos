@@ -448,6 +448,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [errorMessage, setErrorMessage] = useState('');
   const [invoiceHistory, setInvoiceHistory] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
+  const [historyPaymentMode, setHistoryPaymentMode] = useState('');
   const [historyFromDate, setHistoryFromDate] = useState(localIsoDate());
   const [historyToDate, setHistoryToDate] = useState(localIsoDate());
   const [selectedHistoryInvoice, setSelectedHistoryInvoice] = useState(null);
@@ -1162,9 +1163,15 @@ export default function BillingTerminalView({ isActive = true }) {
         displayDate
       ].filter(Boolean).join(' ').toLowerCase();
 
-      return !search || searchableText.includes(search);
+      const matchesSearch = !search || searchableText.includes(search);
+      const matchesPaymentMode = !historyPaymentMode
+        || (historyPaymentMode === 'Exchange'
+          ? Number(invoice.exchange_total || 0) > 0
+          : String(invoice.payment_mode || '').toLowerCase() === historyPaymentMode.toLowerCase());
+
+      return matchesSearch && matchesPaymentMode;
     });
-  }, [historySearch, invoiceHistory]);
+  }, [historySearch, historyPaymentMode, invoiceHistory]);
   const invoiceDate = useMemo(() => {
     const now = new Date();
     return {
@@ -2904,7 +2911,9 @@ export default function BillingTerminalView({ isActive = true }) {
       from,
       to,
       reportType: saleReportType,
-      counterNo: saleReportScope === 'CURRENT' ? counterNo : ''
+      counterNo: saleReportScope === 'CURRENT'
+        ? counterNo
+        : (saleReportScope === 'ALL' ? '' : saleReportScope)
     };
   }
 
@@ -4212,12 +4221,14 @@ export default function BillingTerminalView({ isActive = true }) {
     const nextFromDate = filters.from ?? historyFromDate;
     const nextToDate = filters.to ?? historyToDate;
     const nextSearch = filters.search ?? historySearch.trim();
+    const nextPaymentMode = filters.paymentMode ?? historyPaymentMode;
     setIsHistoryLoading(true);
     try {
       const rows = await fetchInvoiceHistory({
         from: nextFromDate,
         to: nextToDate,
-        search: nextSearch
+        search: nextSearch,
+        paymentMode: nextPaymentMode
       });
       setInvoiceHistory(rows);
       setSelectedHistoryInvoice(null);
@@ -5632,8 +5643,14 @@ export default function BillingTerminalView({ isActive = true }) {
                   <label>
                     <span className="field-label">Counter</span>
                     <select className="select" value={saleReportScope} onChange={(event) => setSaleReportScope(event.target.value)}>
-                      <option value="CURRENT">Current Counter</option>
                       <option value="ALL">All Counters</option>
+                      <option value="CURRENT">Current Counter</option>
+                      <option value="1">Counter 1</option>
+                      <option value="2">Counter 2</option>
+                      <option value="3">Counter 3</option>
+                      <option value="4">Counter 4</option>
+                      <option value="5">Counter 5</option>
+                      <option value="6">Counter 6</option>
                     </select>
                   </label>
                   <div className="sale-report-actions">
@@ -5928,6 +5945,21 @@ export default function BillingTerminalView({ isActive = true }) {
                   />
                 </label>
                 <label>
+                  <span className="field-label">Payment</span>
+                  <select
+                    className="field"
+                    value={historyPaymentMode}
+                    onChange={(event) => setHistoryPaymentMode(event.target.value)}
+                  >
+                    <option value="">All</option>
+                    <option value="UPI">UPI</option>
+                    <option value="Cash">Cash</option>
+                    <option value="Card">Card</option>
+                    <option value="Mixed">Mixed</option>
+                    <option value="Exchange">Exchange</option>
+                  </select>
+                </label>
+                <label>
                   <span className="field-label">From Date</span>
                   <input
                     className="field"
@@ -5950,6 +5982,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 </button>
                 <button className="secondary-button" onClick={() => {
                   setHistorySearch('');
+                  setHistoryPaymentMode('');
                   setHistoryFromDate(localIsoDate());
                   setHistoryToDate(localIsoDate());
                   setSelectedHistoryInvoice(null);

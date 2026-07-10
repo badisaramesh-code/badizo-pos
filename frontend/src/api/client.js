@@ -615,9 +615,9 @@ export async function restoreBackup(file, confirmation) {
   return data;
 }
 
-export async function fetchInvoiceHistory({ from, to, search } = {}) {
+export async function fetchInvoiceHistory({ from, to, search, paymentMode } = {}) {
   const { data } = await api.get('/billing/hold/list', {
-    params: { from, to, search }
+    params: { from, to, search, payment_mode: paymentMode }
   });
   return Array.isArray(data) ? data : [];
 }

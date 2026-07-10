@@ -688,9 +688,9 @@ export default function CounterClosingView() {
       <span>${escapeHtml(moneyWords(cashBalance))}</span>
     </div>
     <div class="signatures">
-      <span>Recived Signature.</span>
-      <span>Checked</span>
-      <span>Counter Person Signature</span>
+      <span>Taken Over By<br /><strong>${escapeHtml(takenOverBy || '-')}</strong></span>
+      <span>Checked Signature</span>
+      <span>Handed Over By<br /><strong>${escapeHtml(handedOverBy || '-')}</strong></span>
     </div>
   </div>
 </body>
@@ -1168,9 +1168,9 @@ export default function CounterClosingView() {
             <span>{moneyWords(cashBalance)}</span>
           </div>
           <div className="handover-signatures">
-            <span>Received Signature.</span>
-            <span>Checked</span>
-            <span>Counter Person Signature</span>
+            <span>Taken Over By<br /><strong>{takenOverBy || '-'}</strong></span>
+            <span>Checked Signature</span>
+            <span>Handed Over By<br /><strong>{handedOverBy || '-'}</strong></span>
           </div>
         </div>
       </div>

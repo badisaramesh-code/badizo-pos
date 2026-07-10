@@ -388,41 +388,49 @@ router.post('/handover', async (req, res) => {
         [sheetId]
       );
 
-      let ledgerEntryCount = 0;
-      for (const entry of closingEntries) {
+      if (closingEntries.length) {
+        const handoverEntryRows = closingEntries.map((entry) => [
+          sheetId, entry.line_no, entry.entry_type, entry.details, entry.remarks, entry.direction, entry.amount
+        ]);
         await connection.query(
           `INSERT INTO counter_handover_entries
            (sheet_id, line_no, entry_type, details, remarks, direction, amount)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [sheetId, entry.line_no, entry.entry_type, entry.details, entry.remarks, entry.direction, entry.amount]
+           VALUES ?`,
+          [handoverEntryRows]
         );
+
+        const ledgerRows = closingEntries.map((entry) => [
+          date,
+          counterNo,
+          sheetId,
+          entry.entry_type === 'EXPENSE' ? `Expense - ${entry.details}` : entry.details,
+          entry.remarks || `${sheetNo} Counter ${counterNo}`,
+          entry.direction,
+          entry.amount,
+          entry.entry_type,
+          req.user.username
+        ]);
         await connection.query(
           `INSERT INTO counter_cash_ledger_entries
            (entry_date, counter_no, source_type, source_id, account_name, details, direction, amount, payment_mode, created_by)
-           VALUES (?, ?, 'COUNTER_HANDOVER', ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            date,
-            counterNo,
-            sheetId,
-            entry.entry_type === 'EXPENSE' ? `Expense - ${entry.details}` : entry.details,
-            entry.remarks || `${sheetNo} Counter ${counterNo}`,
-            entry.direction,
-            entry.amount,
-            entry.entry_type,
-            req.user.username
-          ]
+           VALUES ?`,
+          [ledgerRows.map((row) => [row[0], row[1], 'COUNTER_HANDOVER', ...row.slice(2)])]
         );
-        ledgerEntryCount += 1;
       }
 
-      for (const row of denominationRows) {
+      if (denominationRows.length) {
+        const savedDenominationRows = denominationRows.map((row) => [
+          sheetId, row.denomination_label, row.denomination_value, row.quantity, row.amount
+        ]);
         await connection.query(
           `INSERT INTO counter_handover_denominations
            (sheet_id, denomination_label, denomination_value, quantity, amount)
-           VALUES (?, ?, ?, ?, ?)`,
-          [sheetId, row.denomination_label, row.denomination_value, row.quantity, row.amount]
+           VALUES ?`,
+          [savedDenominationRows]
         );
       }
+
+      let ledgerEntryCount = closingEntries.length;
 
       if (cashBalance > 0) {
         await connection.query(
@@ -442,15 +450,16 @@ router.post('/handover', async (req, res) => {
         ledgerEntryCount += 1;
       }
 
-      await connection.commit();
-
       await writeAuditLog({
         user: req.user,
         action: 'COUNTER_HANDOVER_SAVED',
         entityType: 'COUNTER_HANDOVER',
         entityId: sheetNo,
-        details: { counterNo, drTotal, crTotal, cashBalance, varianceAmount }
+        details: { counterNo, drTotal, crTotal, cashBalance, varianceAmount },
+        connection
       });
+
+      await connection.commit();
 
       res.json({
         success: true,

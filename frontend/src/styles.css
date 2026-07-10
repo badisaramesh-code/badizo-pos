@@ -1934,7 +1934,7 @@ button:disabled {
 
 .history-search-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 155px 155px auto auto auto;
+  grid-template-columns: minmax(220px, 1fr) 130px 155px 155px auto auto auto;
   gap: 10px;
   align-items: end;
   margin-bottom: 12px;
