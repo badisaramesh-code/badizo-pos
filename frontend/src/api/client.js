@@ -39,6 +39,7 @@ api.interceptors.request.use((config) => {
 function shouldRetryRequest(error) {
   const method = String(error.config?.method || 'get').toLowerCase();
   if (method !== 'get') return false;
+  if (error.config?.__badizoNoRetry) return false;
   if (String(error.config?.url || '').includes('/products/exact/')) return false;
   if (error.code === 'ECONNABORTED' || error.message?.toLowerCase().includes('timeout')) return true;
   if (!error.response && error.request) return true;
@@ -93,7 +94,11 @@ export async function login(username, password, personName = '') {
 }
 
 export async function logout() {
-  await api.post('/auth/logout');
+  const token = getAuthStorage().getItem(AUTH_TOKEN_KEY);
+  await api.post('/auth/logout', {}, {
+    timeout: 1500,
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined
+  });
 }
 
 export function recordLogoutOnExit() {
@@ -167,11 +172,15 @@ export async function approveSensitiveBillingMode({ username, password, reason }
   return data;
 }
 
-export async function searchProducts(query) {
+export async function searchProducts(query, options = {}) {
   const trimmed = String(query || '').trim();
   if (!trimmed) return [];
 
-  const { data } = await api.get(`/products/search/${encodeURIComponent(trimmed)}`, { timeout: 30000 });
+  const { data } = await api.get(`/products/search/${encodeURIComponent(trimmed)}`, {
+    params: { limit: Number(options.limit) > 0 ? Number(options.limit) : 50 },
+    timeout: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 30000,
+    __badizoNoRetry: options.retry === false
+  });
   return Array.isArray(data) ? data : [];
 }
 
@@ -182,7 +191,7 @@ export async function lookupExactProduct(query) {
   const fetchExact = async () => {
     const { data } = await api.get(`/products/exact/${encodeURIComponent(trimmed)}`, {
       params: { _: Date.now() },
-      timeout: 12000
+      timeout: 2500
     });
     return data || null;
   };
@@ -198,13 +207,7 @@ export async function lookupExactProduct(query) {
     );
     if (!isTransientLookupFailure) throw err;
 
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    try {
-      return await fetchExact();
-    } catch (retryErr) {
-      if (retryErr.response?.status === 404) return null;
-      throw retryErr;
-    }
+    throw err;
   }
 }
 
@@ -548,8 +551,16 @@ export async function fetchReprintReport({ from, to, counter = '', search = '' }
 }
 
 export async function checkout(payload) {
-  const { data } = await api.post('/billing/checkout', payload, { timeout: 30000 });
-  return data;
+  try {
+    const { data } = await api.post('/billing/checkout', payload, { timeout: 30000 });
+    return data;
+  } catch (error) {
+    // A timed-out POST may already have committed on the server. Retrying with
+    // the same checkout_request_id is safe and returns that committed invoice.
+    if (error?.code !== 'ECONNABORTED' && !/timeout/i.test(String(error?.message || ''))) throw error;
+    const { data } = await api.post('/billing/checkout', payload, { timeout: 10000 });
+    return data;
+  }
 }
 
 export async function fetchNextInvoice(counterNo = 1) {

@@ -1010,13 +1010,13 @@ function renderSection(section, invoice, template) {
     case 'freeProducts':
       return <ThermalFreeProducts invoice={invoice} title={section.title} />;
     case 'thermalTotals':
-      return <><SectionLine /><ThermalTotals invoice={invoice} /></>;
+      return <div className="thermal-summary-section thermal-total-summary"><SectionLine /><div className="print-center thermal-summary-title"><strong>Total Summary</strong></div><ThermalTotals invoice={invoice} /></div>;
     case 'amountWords':
       return <><SectionLine /><p><strong>({amountInWords(invoice.totals.grand)})</strong></p></>;
     case 'discountLine':
       return invoice.totals.discount > 0 ? <><SectionLine /><div className="print-row print-discount-row"><span>You Have Gained Discount Amount</span><strong>{formatPlainMoney(invoice.totals.discount)}</strong></div></> : null;
     case 'gstSummary':
-      return <><SectionLine /><div className="print-center"><strong>{invoice.taxType === 'INTERSTATE' ? 'IGST Summary' : 'GST Summary'}</strong></div><GstSummary invoice={invoice} /></>;
+      return <div className="thermal-summary-section thermal-gst-summary"><SectionLine /><div className="print-center thermal-summary-title"><strong>{invoice.taxType === 'INTERSTATE' ? 'IGST Summary' : 'GST Summary'}</strong></div><GstSummary invoice={invoice} /></div>;
     case 'terms': {
       const terms = getThermalTerms(invoice, template);
       return <><SectionLine /><div className="print-terms">{terms.map((term, index) => <p key={`${index}-${term}`}>{term}</p>)}</div></>;

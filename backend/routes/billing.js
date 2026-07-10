@@ -488,11 +488,41 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       exchange_items,
       exchange_total,
       loyalty_base_total,
-      loyalty_redeem_points
+      loyalty_redeem_points,
+      checkout_request_id
     } = req.body;
+
+    const checkoutRequestId = String(checkout_request_id || '').trim();
+    if (checkoutRequestId && !/^[A-Za-z0-9_-]{12,64}$/.test(checkoutRequestId)) {
+      return res.status(400).json({ error: 'A valid checkout request ID is required.' });
+    }
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'Cart must contain at least one item.' });
+    }
+
+    const [existingCheckoutRows] = checkoutRequestId
+      ? await connection.query(
+        `SELECT invoice_no, grand_total, billing_counter
+         FROM invoices
+         WHERE checkout_request_id = ?
+         LIMIT 1`,
+        [checkoutRequestId]
+      )
+      : [[]];
+    if (existingCheckoutRows.length) {
+      const existing = existingCheckoutRows[0];
+      const requestedTotal = Math.round(parseCurrency(grand_total));
+      if (Math.abs(moneyToPaise(existing.grand_total) - moneyToPaise(requestedTotal)) > 1) {
+        return res.status(409).json({ error: 'This checkout was already saved with a different total.' });
+      }
+      return res.json({
+        success: true,
+        duplicate_prevented: true,
+        message: 'Invoice was already committed successfully.',
+        invoice_no: existing.invoice_no,
+        free_items: []
+      });
     }
 
     await connection.beginTransaction();
@@ -547,14 +577,15 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
 
     await connection.query(
       `INSERT INTO invoices
-       (invoice_no, customer_name, customer_address, customer_phone, sub_total, gst_total, grand_total,
+       (invoice_no, checkout_request_id, customer_name, customer_address, customer_phone, sub_total, gst_total, grand_total,
         cash_received, change_returned, payment_mode, payment_status, payment_reference, billing_counter, transaction_type, billing_tier, tax_type,
         customer_company_name, customer_gstin, total_cgst, total_sgst, total_igst, exchange_total, exchange_items_json,
         loyalty_redeemed_points, loyalty_redeemed_amount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        invoiceNo,
-        customer_name || 'Walk-in Customer',
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       [
+         invoiceNo,
+         checkoutRequestId || null,
+         customer_name || 'Walk-in Customer',
         customer_address || null,
         customer_phone || '',
         parseCurrency(sub_total),
@@ -744,6 +775,24 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
   } catch (err) {
     await connection.rollback();
     checkoutTimer.mark('rollback');
+    if (err?.code === 'ER_DUP_ENTRY') {
+      const checkoutRequestId = String(req.body?.checkout_request_id || '').trim();
+      if (checkoutRequestId) {
+        const [savedRows] = await connection.query(
+          `SELECT invoice_no FROM invoices WHERE checkout_request_id = ? LIMIT 1`,
+          [checkoutRequestId]
+        );
+        if (savedRows.length) {
+          return res.json({
+            success: true,
+            duplicate_prevented: true,
+            message: 'Invoice was already committed successfully.',
+            invoice_no: savedRows[0].invoice_no,
+            free_items: []
+          });
+        }
+      }
+    }
     logError('Checkout rollback', err, {
       invoiceNo,
       totalMs: checkoutTimer.totalMs(),

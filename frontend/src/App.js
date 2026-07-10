@@ -83,6 +83,20 @@ export default function App() {
     };
   }, [currentUser]);
 
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    const keepServerConnectionWarm = () => {
+      pingBackendHealth(1500).catch(() => false);
+    };
+    keepServerConnectionWarm();
+    const timer = window.setInterval(keepServerConnectionWarm, 60000);
+    window.addEventListener('online', keepServerConnectionWarm);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('online', keepServerConnectionWarm);
+    };
+  }, [currentUser]);
+
   if (!currentUser) {
     return <LoginView onLogin={setCurrentUser} />;
   }
@@ -94,15 +108,12 @@ export default function App() {
     setWorkspaceNavigationKey((current) => current + 1);
   };
 
-  const handleLogout = async () => {
-    try {
-      await recordLogout();
-    } catch (err) {
-      // Local logout must still work if the server is temporarily unreachable.
-    } finally {
-      clearAuthSession();
-      setCurrentUser(null);
-    }
+  const handleLogout = () => {
+    recordLogout().catch(() => {
+      // The server audit is best-effort; local logout is immediate.
+    });
+    clearAuthSession();
+    setCurrentUser(null);
   };
 
   const views = {

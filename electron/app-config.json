@@ -5,6 +5,8 @@
   "frontendPort": 5000,
   "startBackend": false,
   "startFrontend": false,
+  "serverHosts": ["192.168.1.9"],
+  "discoveryTimeoutMs": 15000,
   "kiosk": false,
   "devTools": false
 }

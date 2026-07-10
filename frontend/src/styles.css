@@ -4087,8 +4087,103 @@ button:disabled {
 }
 
 .product-form-panel {
-  width: min(860px, 100%);
+  width: min(1180px, 100%);
   margin-inline: auto;
+}
+
+.product-form-panel .product-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 14px;
+  align-items: end;
+  padding: 12px 16px 14px;
+}
+
+.product-edit-grid > .alert-box,
+.product-edit-grid > .change-box:not(label),
+.product-edit-grid > .product-date-strip,
+.product-edit-grid > .segmented {
+  grid-column: 1 / -1;
+}
+
+.product-edit-grid > label {
+  min-width: 0;
+  margin: 0;
+}
+
+.product-edit-grid > label:not(.change-box) {
+  display: grid;
+  grid-template-columns: minmax(120px, 31%) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.product-edit-grid .field-label {
+  margin-bottom: 0;
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+.product-edit-grid .field,
+.product-edit-grid .select {
+  min-height: 36px;
+  height: 36px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.product-edit-grid > label.change-box {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 7px 10px;
+}
+
+.product-edit-grid > .primary-button,
+.product-edit-grid > .secondary-button {
+  order: 40;
+  min-height: 38px;
+  margin-top: 2px;
+}
+
+.product-edit-grid > [class*="product-field-order-"] {
+  order: 10;
+}
+
+.product-edit-grid > .product-field-order-1 { order: 11; }
+.product-edit-grid > .product-field-order-2 { order: 12; }
+.product-edit-grid > .product-field-order-3 { order: 13; }
+.product-edit-grid > .product-field-order-4 { order: 14; }
+.product-edit-grid > .product-field-order-5 { order: 15; }
+.product-edit-grid > .product-field-order-6 { order: 16; }
+.product-edit-grid > .product-field-order-7 { order: 17; }
+.product-edit-grid > .product-field-order-8 { order: 18; }
+.product-edit-grid > .product-field-order-9 { order: 19; }
+.product-edit-grid > .product-field-order-10 { order: 20; }
+.product-edit-grid > .product-field-order-11 { order: 21; }
+.product-edit-grid > .product-field-order-12 { order: 22; }
+.product-edit-grid > .product-field-order-13 { order: 23; }
+.product-edit-grid > .product-field-order-14 { order: 24; }
+.product-edit-grid > .product-field-order-15 { order: 25; }
+.product-edit-grid > .product-field-order-16 { order: 26; }
+.product-edit-grid > .product-field-after { order: 30; }
+
+@media (max-width: 680px) {
+  .product-form-panel .product-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .product-edit-grid > label:not(.change-box) {
+    grid-template-columns: minmax(115px, 34%) minmax(0, 1fr);
+  }
+
+  .product-edit-grid > .alert-box,
+  .product-edit-grid > .change-box:not(label),
+  .product-edit-grid > .product-date-strip,
+  .product-edit-grid > .segmented {
+    grid-column: auto;
+  }
 }
 
 .billing-options,
@@ -6316,6 +6411,25 @@ button:disabled {
 .thermal-total-box strong {
   font-size: 13px;
   text-align: right;
+}
+
+.thermal-summary-section {
+  display: block;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.thermal-summary-title {
+  padding: 2px 0;
+  font-size: 10px;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.thermal-total-summary .thermal-total-box,
+.thermal-gst-summary .gst-summary-table {
+  border-top: 1px solid #111;
+  border-bottom: 1px solid #111;
 }
 
 .thermal-exchange-table th,

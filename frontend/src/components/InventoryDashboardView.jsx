@@ -502,6 +502,12 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   }, [activeProductSection]);
 
   useEffect(() => {
+    if (activeProductSection === PRODUCT_SECTIONS.FORM) {
+      focusProductField(barcodeRef);
+    }
+  }, [activeProductSection]);
+
+  useEffect(() => {
     if (ENABLE_BULK_EDIT && activeProductSection === PRODUCT_SECTIONS.BULK && bulkFocusVersion > 0 && !isBulkSaving) {
       focusBulkSearch(4);
     }
@@ -592,7 +598,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
   function resetProductForm() {
     setForm({ ...emptyForm, created_at: todayIso(), updated_at: '' });
-    focusProductField(productCodeRef);
+    focusProductField(barcodeRef);
   }
 
   function openNewProductForm() {
@@ -600,7 +606,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     setErrorMessage('');
     setForm({ ...emptyForm, created_at: todayIso(), updated_at: '' });
     setActiveProductSection(PRODUCT_SECTIONS.FORM);
-    focusProductField(productCodeRef);
+    focusProductField(barcodeRef);
   }
 
   function updateField(field, value) {
@@ -725,6 +731,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       updated_at: product.updated_at || ''
     });
     setActiveProductSection(PRODUCT_SECTIONS.FORM);
+    focusProductField(barcodeRef);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -1143,7 +1150,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
           <h2 className="panel-title">Add / Edit Product</h2>
           <button className="close-action-button" type="button" onClick={() => setActiveProductSection(PRODUCT_SECTIONS.LIST)}>Back to Products</button>
         </div>
-        <form className="panel-body form-stack" onSubmit={handleSubmit}>
+        <form className="panel-body form-stack product-edit-grid" onSubmit={handleSubmit}>
           {errorMessage && <div className="alert-box">{errorMessage}</div>}
           {statusMessage && <div className="change-box">{statusMessage}</div>}
           {!canManageProducts && <div className="alert-box">Login as Admin or Server to save/import products.</div>}
@@ -1157,23 +1164,24 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             <button type="button" className={form.code_mode === 'MANUAL' ? 'active' : ''} onClick={() => updateField('code_mode', 'MANUAL')}>Manual Code</button>
           </div>
 
-          <label>
+          <label className="product-field-order-14">
             <span className="field-label">Product Code</span>
             <input
               ref={productCodeRef}
               className="field"
               value={form.product_code}
               onChange={(event) => updateField('product_code', event.target.value.toUpperCase())}
-              onKeyDown={(event) => moveOnEnter(event, barcodeRef)}
+              onKeyDown={(event) => moveOnEnter(event, aliasNamesRef)}
               placeholder={form.code_mode === 'AUTO' ? 'Auto generated when empty' : 'Enter product code'}
               required={form.code_mode === 'MANUAL'}
             />
           </label>
 
-          <label>
-            <span className="field-label">Barcode 128 (0-9, A-Z)</span>
+          <label className="product-field-order-1">
+            <span className="field-label">Product Code 128 (0-9, A-Z)</span>
             <input
               ref={barcodeRef}
+              autoFocus
               className="field"
               value={form.barcode}
               onChange={(event) => updateField('barcode', event.target.value.toUpperCase())}
@@ -1183,37 +1191,37 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             />
           </label>
 
-          <label>
+          <label className="product-field-order-2">
             <span className="field-label">Product name</span>
-            <input ref={productNameRef} className="field" value={form.product_name} onChange={(event) => updateField('product_name', event.target.value)} onKeyDown={(event) => moveOnEnter(event, aliasNamesRef)} required />
+            <input ref={productNameRef} className="field" value={form.product_name} onChange={(event) => updateField('product_name', event.target.value)} onKeyDown={(event) => moveOnEnter(event, hsnRef)} required />
           </label>
 
-          <label>
+          <label className="product-field-order-15">
             <span className="field-label">Alias / invoice names</span>
             <input
               ref={aliasNamesRef}
               className="field"
               value={form.alias_names}
               onChange={(event) => updateField('alias_names', event.target.value)}
-              onKeyDown={(event) => moveOnEnter(event, hsnRef)}
+              onKeyDown={(event) => moveOnEnter(event, purchaseUnitSizeRef)}
               placeholder="Supplier invoice names, comma separated"
             />
           </label>
 
-          <label>
+          <label className="product-field-order-3">
             <span className="field-label">HSN code</span>
             <input ref={hsnRef} className="field" value={form.hsn_code} onChange={(event) => updateField('hsn_code', event.target.value)} onKeyDown={(event) => moveOnEnter(event, gstRef)} required />
           </label>
 
-          <label>
+          <label className="product-field-order-4">
             <span className="field-label">GST percent</span>
-            <select ref={gstRef} className="select" value={form.gst_percent} onChange={(event) => updateField('gst_percent', event.target.value)} onKeyDown={(event) => moveOnEnter(event, unitRef)}>
+            <select ref={gstRef} className="select" value={form.gst_percent} onChange={(event) => updateField('gst_percent', event.target.value)} onKeyDown={(event) => moveOnEnter(event, mrpRef)}>
               <option value="">Select GST</option>
               {GST_OPTIONS.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
             </select>
           </label>
 
-          <label>
+          <label className="product-field-order-9">
             <span className="field-label">Selling / stock unit</span>
             <select ref={unitRef} className="select" value={form.unit_type} onChange={(event) => updateField('unit_type', event.target.value)} onKeyDown={(event) => moveOnEnter(event, purchaseUnitRef)}>
               <option value="">Select Unit</option>
@@ -1221,14 +1229,14 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             </select>
           </label>
 
-          <label>
+          <label className="product-field-order-10">
             <span className="field-label">Purchase unit</span>
-            <select ref={purchaseUnitRef} className="select" value={form.purchase_unit_type} onChange={(event) => updateField('purchase_unit_type', event.target.value)} onKeyDown={(event) => moveOnEnter(event, purchaseUnitSizeRef)}>
+            <select ref={purchaseUnitRef} className="select" value={form.purchase_unit_type} onChange={(event) => updateField('purchase_unit_type', event.target.value)} onKeyDown={(event) => moveOnEnter(event, discountTypeRef)}>
               {PURCHASE_UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
             </select>
           </label>
 
-          <label>
+          <label className="product-field-order-16">
             <span className="field-label">Stock per purchase unit</span>
             <input
               ref={purchaseUnitSizeRef}
@@ -1238,33 +1246,33 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
               min="0.001"
               value={form.purchase_unit_size}
               onChange={(event) => updateField('purchase_unit_size', event.target.value)}
-              onKeyDown={(event) => moveOnEnter(event, mrpRef)}
+              onKeyDown={(event) => moveOnEnter(event, stockRef)}
               placeholder="Carton 72 Nos / Bag 50 Kg"
               required
             />
           </label>
 
-          <label>
+          <label className="product-field-order-5">
             <span className="field-label">MRP</span>
             <input ref={mrpRef} className="field" type="number" step="0.01" min="0" value={form.mrp} onChange={(event) => updateField('mrp', event.target.value)} onKeyDown={(event) => moveOnEnter(event, purchasePriceRef)} required />
           </label>
 
-          <label>
+          <label className="product-field-order-6">
             <span className="field-label">Purchase price / Cost</span>
             <input ref={purchasePriceRef} className="field" type="number" step="0.01" min="0" value={form.purchase_price} onChange={(event) => updateField('purchase_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, salePriceRef)} placeholder="Cost to store" required />
           </label>
 
-          <label>
+          <label className="product-field-order-7">
             <span className="field-label">Retail sale price</span>
             <input ref={salePriceRef} className="field" type="number" step="0.01" min="0" value={form.sale_price} onChange={(event) => updateField('sale_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, wholesalePriceRef)} required />
           </label>
 
-          <label>
+          <label className="product-field-order-8">
             <span className="field-label">Wholesale price</span>
-            <input ref={wholesalePriceRef} className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, discountTypeRef)} placeholder="Defaults to retail price" required />
+            <input ref={wholesalePriceRef} className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, unitRef)} placeholder="Defaults to retail price" required />
           </label>
 
-          <label>
+          <label className="product-field-order-11">
             <span className="field-label">Discount Type</span>
             <select ref={discountTypeRef} className="select" value={form.discount_type} onChange={(event) => updateField('discount_type', event.target.value)} onKeyDown={(event) => moveOnEnter(event, discountRef)}>
               <option value="PERCENT">Percent</option>
@@ -1272,47 +1280,47 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             </select>
           </label>
 
-          <label>
+          <label className="product-field-order-12">
             <span className="field-label">Discount</span>
             <input ref={discountRef} className="field" type="number" step="0.01" min="0" value={form.discount_value} onChange={(event) => updateField('discount_value', event.target.value)} onKeyDown={(event) => moveOnEnter(event, wholesaleDiscountRef)} required />
           </label>
 
-          <label>
+          <label className="product-field-order-13">
             <span className="field-label">Wholesale Discount</span>
-            <input ref={wholesaleDiscountRef} className="field" type="number" step="0.01" min="0" value={form.bulk_discount_value} onChange={(event) => updateField('bulk_discount_value', event.target.value)} onKeyDown={(event) => moveOnEnter(event, stockRef)} required />
+            <input ref={wholesaleDiscountRef} className="field" type="number" step="0.01" min="0" value={form.bulk_discount_value} onChange={(event) => updateField('bulk_discount_value', event.target.value)} onKeyDown={(event) => moveOnEnter(event, productCodeRef)} required />
           </label>
 
-          <label className="change-box">
+          <label className="change-box product-field-after">
             <input type="checkbox" checked={form.is_free_item} onChange={(event) => updateField('is_free_item', event.target.checked)} /> Free product entry
           </label>
 
-          <label className="change-box">
+          <label className="change-box product-field-after">
             <input type="checkbox" checked={form.free_promo_enabled} onChange={(event) => updateField('free_promo_enabled', event.target.checked)} /> Free promotion on this product
           </label>
 
           {form.free_promo_enabled && (
             <>
-              <label>
+              <label className="product-field-after">
                 <span className="field-label">Free item name on bill</span>
                 <input className="field" value={form.free_promo_name} onChange={(event) => updateField('free_promo_name', event.target.value.toUpperCase())} placeholder="CRICKET BALL FREE" />
               </label>
-              <label>
+              <label className="product-field-after">
                 <span className="field-label">Free qty per sale qty</span>
                 <input className="field" type="number" step="0.001" min="0.001" value={form.free_promo_qty_per_sale} onChange={(event) => updateField('free_promo_qty_per_sale', event.target.value)} />
               </label>
-              <label>
+              <label className="product-field-after">
                 <span className="field-label">Total promo count</span>
                 <input className="field" type="number" step="0.01" min="0" value={form.free_promo_total_qty} onChange={(event) => updateField('free_promo_total_qty', event.target.value)} placeholder="0 or blank = no limit" />
               </label>
             </>
           )}
 
-          <label>
+          <label className="product-field-after">
             <span className="field-label">Current stock</span>
             <input ref={stockRef} className="field" type="number" step="0.01" min="0" value={form.stock_qty} onChange={(event) => updateField('stock_qty', event.target.value)} onKeyDown={(event) => moveOnEnter(event, lowStockRef)} required />
           </label>
 
-          <label>
+          <label className="product-field-after">
             <span className="field-label">Low stock alert</span>
             <input ref={lowStockRef} className="field" type="number" step="0.01" min="0" value={form.min_stock_alert} onChange={(event) => updateField('min_stock_alert', event.target.value)} onKeyDown={(event) => moveOnEnter(event, saveButtonRef)} required />
           </label>

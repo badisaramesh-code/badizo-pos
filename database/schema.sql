@@ -47,6 +47,7 @@ CREATE TABLE products (
 CREATE TABLE invoices (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     invoice_no VARCHAR(50) NOT NULL UNIQUE,
+    checkout_request_id VARCHAR(64) DEFAULT NULL UNIQUE,
     customer_phone VARCHAR(15) DEFAULT NULL,
     customer_name VARCHAR(150) DEFAULT 'Walk-in Customer',
     sub_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,

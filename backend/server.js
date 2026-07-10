@@ -42,23 +42,29 @@ mountRoutes(app);
 
 const frontendBuildPath = path.resolve(__dirname, '..', 'frontend', 'build');
 const frontendIndexPath = path.join(frontendBuildPath, 'index.html');
-if (fs.existsSync(frontendIndexPath)) {
-  app.use(express.static(frontendBuildPath, {
-    index: false,
-    maxAge: 0,
-    setHeaders(res, filePath) {
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-    }
-  }));
-  app.get(/^\/(?!api\/).*/, (_req, res) => {
+// Register frontend routes even while a production build is being replaced.
+// Otherwise, if the backend starts during the brief period where index.html is
+// absent, the API stays healthy but the UI remains unavailable until restart.
+app.use(express.static(frontendBuildPath, {
+  index: false,
+  maxAge: 0,
+  setHeaders(res) {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
-    res.sendFile(frontendIndexPath);
-  });
-}
+  }
+}));
+app.get(/^\/(?!api\/).*/, (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
+  if (!fs.existsSync(frontendIndexPath)) {
+    return res.status(503).send('Badizo frontend is being updated. Please try again shortly.');
+  }
+
+  return res.sendFile(frontendIndexPath);
+});
 
 function normalizePort(value, fallback = 5000) {
   const port = Number.parseInt(value, 10);

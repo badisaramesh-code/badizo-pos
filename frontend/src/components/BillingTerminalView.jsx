@@ -66,7 +66,7 @@ const SCANNER_WAKE_BLOCK_MS = 120;
 const TYPED_SEARCH_DEBOUNCE_MS = 160;
 const TYPED_BARCODE_AUTO_ADD_MS = 300;
 const EXACT_PRODUCT_CACHE_TTL_MS = 2000;
-const POS_SUGGESTION_LIMIT = 2000;
+const POS_SUGGESTION_LIMIT = 50;
 const MIN_VISIBLE_BILL_ROWS = 12;
 const FIXED_THERMAL_RECEIPT_WIDTH_MM = 80;
 const FIXED_THERMAL_CONTENT_WIDTH_MM = 72;
@@ -506,6 +506,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const holdBillShortcutKeysRef = useRef({ ctrl: false, alt: false });
   const holdBillShortcutPressedRef = useRef(false);
   const checkoutInFlightRef = useRef(false);
+  const checkoutRequestIdRef = useRef('');
   const previousExchangeModeRef = useRef(exchangeMode);
   const priceCheckKeyTimesRef = useRef([]);
   const lastPriceCheckScanRef = useRef('');
@@ -1576,12 +1577,13 @@ export default function BillingTerminalView({ isActive = true }) {
     if (!key) return null;
 
     try {
-      return await findExactProductFast(key);
+      const exactProduct = await findExactProductFast(key);
+      if (exactProduct) return exactProduct;
     } catch (exactErr) {
       console.warn('Exact product lookup failed, trying search fallback:', exactErr.message || exactErr);
     }
 
-    const results = await searchProducts(key);
+    const results = await searchProducts(key, { timeoutMs: 3500, retry: false });
     const exactFromSearch = results.find((product) => (
       String(product.barcode || '').toUpperCase() === key
       || String(product.product_code || '').toUpperCase() === key
@@ -2644,6 +2646,7 @@ export default function BillingTerminalView({ isActive = true }) {
     const { closeActiveWindow = true } = options;
     hideHoverBillPreview();
     suppressDraftPersistenceRef.current = true;
+    checkoutRequestIdRef.current = '';
     clearActivePosDraft();
     if (closeActiveWindow && activeBillWindowId) {
       setBillWindows((current) => current.filter((billWindow) => billWindow.id !== activeBillWindowId));
@@ -4552,6 +4555,10 @@ export default function BillingTerminalView({ isActive = true }) {
     const mode = BILLING_MODES[billingMode];
     if (checkoutInFlightRef.current) return;
     checkoutInFlightRef.current = true;
+    if (!checkoutRequestIdRef.current) {
+      checkoutRequestIdRef.current = globalThis.crypto?.randomUUID?.()
+        || `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
     setIsCheckoutSubmitting(true);
 
     const completeSuccessfulCheckout = (savedInvoiceNo, freeItems = [], recovered = false) => {
@@ -4633,6 +4640,7 @@ export default function BillingTerminalView({ isActive = true }) {
 
     try {
       const checkoutResult = await checkout({
+        checkout_request_id: checkoutRequestIdRef.current,
         counter_no: counterNo,
         customer_name: effectiveCustomerName || 'Walk-in Customer',
         customer_phone: effectiveCustomerPhone,

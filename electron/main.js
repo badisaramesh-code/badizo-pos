@@ -185,11 +185,21 @@ function getLocalSubnetCandidates() {
 }
 
 async function findReachableHealthUrl(urls, timeoutMs) {
-  for (const url of urls) {
-    logMessage(`Trying Badizo health ${url}`);
-    if (await isReachable(url, Math.min(1800, timeoutMs))) return url;
-  }
-  return '';
+  const uniqueUrls = [];
+  const seen = new Set();
+  urls.forEach((url) => {
+    const key = String(url || '').trim().toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    uniqueUrls.push(url);
+  });
+  const attemptTimeoutMs = Math.min(1800, Math.max(500, timeoutMs));
+  uniqueUrls.forEach((url) => logMessage(`Trying Badizo health ${url}`));
+  const results = await Promise.all(uniqueUrls.map(async (url) => ({
+    url,
+    reachable: await isReachable(url, attemptTimeoutMs)
+  })));
+  return results.find((result) => result.reachable)?.url || '';
 }
 
 async function scanSubnetForHealth(port, timeoutMs) {
@@ -244,10 +254,23 @@ async function resolveRemoteServer(config) {
   const discoveryTimeoutMs = Number.isFinite(config.discoveryTimeoutMs)
     ? Math.max(3000, config.discoveryTimeoutMs)
     : DEFAULT_DISCOVERY_TIMEOUT_MS;
-  let healthUrl = await findReachableHealthUrl([...new Set(healthUrls)], discoveryTimeoutMs);
+  const preferredHealthUrls = [...new Set(healthUrls)];
+  let healthUrl = '';
+  // Wi-Fi/LAN adapters can take a few seconds to become ready when a counter
+  // wakes or the app starts. Retry known server addresses before declaring the
+  // server unavailable or scanning the subnet.
+  const preferredDeadline = Date.now() + Math.max(10000, discoveryTimeoutMs);
+  while (!healthUrl && Date.now() < preferredDeadline) {
+    healthUrl = await findReachableHealthUrl(preferredHealthUrls, 2500);
+    if (!healthUrl) await new Promise((resolve) => setTimeout(resolve, 750));
+  }
   if (!healthUrl && config.discoveryEnabled) {
     logMessage('Configured Badizo server was not reachable; scanning local LAN.');
     healthUrl = await scanSubnetForHealth(healthPort, discoveryTimeoutMs);
+  }
+
+  if (!healthUrl) {
+    healthUrl = await findReachableHealthUrl(preferredHealthUrls, 3000);
   }
 
   if (!healthUrl) {
@@ -351,6 +374,7 @@ function showStartupError(error, appUrl) {
 
 function createWindow(config) {
   const appUrl = withLoginParams(config.appUrl, config.loginMode, config.loginUser);
+  let reconnectTimer = null;
   logMessage(`Creating window for ${appUrl}`);
   const iconPath = resolveResourcePath('assets', 'badizo.ico');
   const { workAreaSize } = screen.getPrimaryDisplay();
@@ -384,12 +408,32 @@ function createWindow(config) {
     if (config.devTools) mainWindow.webContents.openDevTools({ mode: 'detach' });
   });
 
+  const retryLoad = (reason) => {
+    if (!mainWindow || mainWindow.isDestroyed() || reconnectTimer) return;
+    logMessage(`Scheduling automatic reconnect: ${reason}`);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.loadURL(appUrl).catch((error) => retryLoad(error.message || error));
+    }, 2000);
+  };
+
+  // Keep the application visible and retry forever instead of closing a busy
+  // counter because of a brief LAN/server interruption.
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.maximize();
+      mainWindow.show();
+    }
+  }, 2500);
+
   mainWindow.webContents.on('dom-ready', () => {
     mainWindow.webContents.setZoomFactor(1);
     mainWindow.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {});
   });
 
   mainWindow.on('closed', () => {
+    if (reconnectTimer) clearTimeout(reconnectTimer);
     logMessage('Window closed');
     mainWindow = null;
   });
@@ -399,14 +443,20 @@ function createWindow(config) {
     return { action: 'deny' };
   });
 
-  mainWindow.webContents.on('did-fail-load', (_event, _errorCode, errorDescription) => {
+  mainWindow.webContents.on('did-fail-load', (_event, _errorCode, errorDescription, _validatedUrl, isMainFrame) => {
     logMessage(`Window failed load: ${errorDescription}`);
-    showStartupError(new Error(errorDescription), appUrl);
+    if (isMainFrame !== false) retryLoad(errorDescription);
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    logMessage('Window connected successfully');
   });
 
   mainWindow.loadURL(appUrl).catch((error) => {
     logMessage(`loadURL failed: ${error.message || error}`);
-    showStartupError(error, appUrl);
+    retryLoad(error.message || error);
   });
 }
 
@@ -615,8 +665,19 @@ app.whenReady().then(async () => {
     createWindow(config);
   } catch (err) {
     logMessage(`Startup error: ${err.stack || err.message || err}`);
-    showStartupError(err, config.appUrl);
-    app.quit();
+    if (config.startFrontend === false) {
+      const fallbackHost = config.serverHosts[0] || getUrlHost(config.appUrl) || getUrlHost(config.apiHealthUrl);
+      const fallbackConfig = {
+        ...config,
+        appUrl: buildUrl(fallbackHost, config.backendPort, '/'),
+        apiHealthUrl: buildUrl(fallbackHost, config.backendPort, '/api/health')
+      };
+      logMessage(`Starting persistent reconnect window for ${fallbackConfig.appUrl}`);
+      createWindow(fallbackConfig);
+    } else {
+      showStartupError(err, config.appUrl);
+      app.quit();
+    }
   }
 });
 

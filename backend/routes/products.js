@@ -16,7 +16,8 @@ const PRICE_LIST_SEARCH_LIMIT = 500;
 const PRICE_LIST_UPDATE_LIMIT = 5000;
 const PRICE_LIST_UPDATE_BATCH_SIZE = 100;
 const PRICE_LIST_BACKGROUND_BATCH_SIZE = 100;
-const POS_PRODUCT_SEARCH_LIMIT = 2000;
+const POS_PRODUCT_SEARCH_LIMIT = 50;
+const POS_PRODUCT_SEARCH_MAX_LIMIT = 200;
 const DEFAULT_GST_SLABS = [0, 3, 5, 12, 18, 28, 40];
 const PRODUCT_IMPORT_ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING']);
 const PRICE_LIST_JOB_ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING']);
@@ -2961,6 +2962,10 @@ router.post('/price-list/update', authenticate, authorize('SERVER', 'ADMIN'), as
 router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     const q = safeDecodeParam(req.params.query).trim();
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const resultLimit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(requestedLimit, 1), POS_PRODUCT_SEARCH_MAX_LIMIT)
+      : POS_PRODUCT_SEARCH_LIMIT;
 
     if (!q) {
       return res.status(400).json({ error: 'Search query is required.' });
@@ -2999,7 +3004,7 @@ router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER
          product_name ASC,
          id DESC
          LIMIT ?`,
-        [prefix, prefix, prefix, prefix, prefix, POS_PRODUCT_SEARCH_LIMIT]
+        [prefix, prefix, prefix, prefix, prefix, resultLimit]
       );
 
       if (prefixRows && prefixRows.length > 0) {
@@ -3014,7 +3019,7 @@ router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER
          WHERE ${where.join(' AND ')}
          ORDER BY product_name ASC
          LIMIT ?`,
-        [...values, POS_PRODUCT_SEARCH_LIMIT]
+        [...values, resultLimit]
       );
       return res.json((rows || []).map(toProduct));
     }

@@ -22,11 +22,6 @@ function Test-BackendHealth {
   }
 }
 
-if (Test-BackendHealth) {
-  Write-BackendLog 'Backend already running on port 5000.'
-  exit 0
-}
-
 if (!(Test-Path $nodeExe)) {
   $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
   if (!$nodeCommand) {
@@ -36,23 +31,48 @@ if (!(Test-Path $nodeExe)) {
   $nodeExe = $nodeCommand.Source
 }
 
-Write-BackendLog "Starting backend from $backendDir with $nodeExe"
-$processInfo = New-Object System.Diagnostics.ProcessStartInfo
-$processInfo.FileName = $nodeExe
-$processInfo.Arguments = 'server.js'
-$processInfo.WorkingDirectory = $backendDir
-$processInfo.UseShellExecute = $false
-$processInfo.CreateNoWindow = $true
-$process = New-Object System.Diagnostics.Process
-$process.StartInfo = $processInfo
-[void]$process.Start()
-
-Start-Sleep -Seconds 5
-
-if (Test-BackendHealth) {
-  Write-BackendLog 'Backend started successfully.'
+$createdNew = $false
+$watchdogMutex = New-Object System.Threading.Mutex($true, 'Local\BadizoPOSBackendWatchdog', [ref]$createdNew)
+if (!$createdNew) {
+  Write-BackendLog 'Backend watchdog is already running.'
   exit 0
 }
 
-Write-BackendLog 'Backend did not respond after startup. Run node server.js from the backend folder to see startup output.'
-exit 1
+function Start-BadizoBackend {
+  Write-BackendLog "Starting backend from $backendDir with $nodeExe"
+  $processInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $processInfo.FileName = $nodeExe
+  $processInfo.Arguments = 'server.js'
+  $processInfo.WorkingDirectory = $backendDir
+  $processInfo.UseShellExecute = $false
+  $processInfo.CreateNoWindow = $true
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = $processInfo
+  [void]$process.Start()
+
+  for ($attempt = 1; $attempt -le 15; $attempt++) {
+    Start-Sleep -Seconds 1
+    if (Test-BackendHealth) {
+      Write-BackendLog "Backend healthy. PID=$($process.Id)"
+      return $true
+    }
+  }
+
+  Write-BackendLog 'Backend did not become healthy; watchdog will retry.'
+  return $false
+}
+
+try {
+  Write-BackendLog 'Backend watchdog started.'
+  while ($true) {
+    if (!(Test-BackendHealth)) {
+      [void](Start-BadizoBackend)
+    }
+    Start-Sleep -Seconds 10
+  }
+} finally {
+  if ($watchdogMutex) {
+    $watchdogMutex.ReleaseMutex()
+    $watchdogMutex.Dispose()
+  }
+}
