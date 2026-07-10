@@ -15,7 +15,7 @@ import ProductImportHistoryView from './components/ProductImportHistoryView';
 import ReportsView from './components/ReportsView';
 import StaffPayrollView from './components/StaffPayrollView';
 import SystemView from './components/SystemView';
-import { clearAuthSession, getStoredUser, logout as recordLogout, recordLogoutOnExit } from './api/client';
+import { clearAuthSession, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
 import { APP_TABS, canAccessTab } from './config/navigation';
 import './styles.css';
 
@@ -40,6 +40,32 @@ export default function App() {
     if (allowedTabs.some((tab) => tab.key === activeWorkspace) || !allowedTabs[0]) return;
     setActiveWorkspace(allowedTabs[0].key);
   }, [activeWorkspace, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return undefined;
+
+    let pingInFlight = false;
+    const keepLanSessionWarm = async () => {
+      if (document.visibilityState === 'hidden' || pingInFlight) return;
+      pingInFlight = true;
+      try {
+        await pingBackendHealth(2000);
+      } finally {
+        pingInFlight = false;
+      }
+    };
+
+    keepLanSessionWarm();
+    const heartbeatTimer = window.setInterval(keepLanSessionWarm, 10000);
+    window.addEventListener('focus', keepLanSessionWarm);
+    document.addEventListener('visibilitychange', keepLanSessionWarm);
+
+    return () => {
+      window.clearInterval(heartbeatTimer);
+      window.removeEventListener('focus', keepLanSessionWarm);
+      document.removeEventListener('visibilitychange', keepLanSessionWarm);
+    };
+  }, [currentUser]);
 
   useEffect(() => {
     if (!currentUser) return undefined;

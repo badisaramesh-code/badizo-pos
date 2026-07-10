@@ -3,14 +3,84 @@ const crypto = require('crypto');
 const { logError, logInfo } = require('../services/logger');
 require('dotenv').config();
 
+const DB_CONNECTION_LIMIT = Number.parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 20;
+const DB_IDLE_TIMEOUT_MS = Number.parseInt(process.env.DB_IDLE_TIMEOUT_MS, 10) || 30000;
+const DB_CONNECT_TIMEOUT_MS = Number.parseInt(process.env.DB_CONNECT_TIMEOUT_MS, 10) || 10000;
+const DB_RETRY_DELAY_MS = Number.parseInt(process.env.DB_RETRY_DELAY_MS, 10) || 250;
+const DB_RETRYABLE_ERRORS = new Set([
+  'PROTOCOL_CONNECTION_LOST',
+  'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EPIPE'
+]);
+
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '1234',
   database: process.env.DB_NAME || 'badizo_pos',
   waitForConnections: true,
-  connectionLimit: Number.parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 25,
+  connectionLimit: DB_CONNECTION_LIMIT,
+  maxIdle: DB_CONNECTION_LIMIT,
+  idleTimeout: DB_IDLE_TIMEOUT_MS,
+  connectTimeout: DB_CONNECT_TIMEOUT_MS,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0,
   queueLimit: 0
+});
+
+const rawQuery = pool.query.bind(pool);
+const rawExecute = pool.execute.bind(pool);
+const rawGetConnection = pool.getConnection.bind(pool);
+
+function isRetryableDbError(err) {
+  return Boolean(err && (DB_RETRYABLE_ERRORS.has(err.code) || err.fatal === true));
+}
+
+function isReadOnlySql(sql) {
+  if (typeof sql === 'string') {
+    return /^(SELECT|SHOW|DESCRIBE|EXPLAIN)\b/i.test(sql.trim());
+  }
+
+  if (sql && typeof sql.sql === 'string') {
+    return isReadOnlySql(sql.sql);
+  }
+
+  return false;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function runWithReconnect(operationName, operation, shouldRetry = true) {
+  try {
+    return await operation();
+  } catch (err) {
+    if (!shouldRetry || !isRetryableDbError(err)) {
+      throw err;
+    }
+
+    logError(`Database ${operationName} connection dropped; retrying once`, err);
+    await wait(DB_RETRY_DELAY_MS);
+    return operation();
+  }
+}
+
+pool.query = (...args) => runWithReconnect('query', () => rawQuery(...args), isReadOnlySql(args[0]));
+pool.execute = (...args) => runWithReconnect('execute', () => rawExecute(...args), isReadOnlySql(args[0]));
+pool.getConnection = () => runWithReconnect('connection checkout', async () => {
+  const connection = await rawGetConnection();
+
+  try {
+    await connection.ping();
+    return connection;
+  } catch (err) {
+    connection.destroy();
+    throw err;
+  }
 });
 
 async function ensureColumn(connection, tableName, columnName, definition) {

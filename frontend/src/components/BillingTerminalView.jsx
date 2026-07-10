@@ -17,7 +17,6 @@ import {
   holdBill,
   lookupExactProduct,
   lookupCustomer,
-  pingBackendHealth,
   recordInvoiceReprint,
   saveCustomer,
   voidInvoice,
@@ -738,25 +737,6 @@ export default function BillingTerminalView({ isActive = true }) {
     setLiveTime(new Date());
     const timer = window.setInterval(() => setLiveTime(new Date()), 1000);
     return () => window.clearInterval(timer);
-  }, [isActive]);
-
-  useEffect(() => {
-    if (!isActive) return undefined;
-
-    const keepCounterWarm = () => {
-      if (document.visibilityState === 'hidden') return;
-      pingBackendHealth();
-    };
-
-    keepCounterWarm();
-    const interval = window.setInterval(keepCounterWarm, 20000);
-    window.addEventListener('focus', keepCounterWarm);
-    document.addEventListener('visibilitychange', keepCounterWarm);
-    return () => {
-      window.clearInterval(interval);
-      window.removeEventListener('focus', keepCounterWarm);
-      document.removeEventListener('visibilitychange', keepCounterWarm);
-    };
   }, [isActive]);
 
   useEffect(() => {

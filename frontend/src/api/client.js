@@ -548,7 +548,7 @@ export async function fetchReprintReport({ from, to, counter = '', search = '' }
 }
 
 export async function checkout(payload) {
-  const { data } = await api.post('/billing/checkout', payload, { timeout: 6000 });
+  const { data } = await api.post('/billing/checkout', payload, { timeout: 30000 });
   return data;
 }
 

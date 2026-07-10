@@ -60,9 +60,28 @@ if (fs.existsSync(frontendIndexPath)) {
   });
 }
 
-const PORT = process.env.PORT || 5000;
-const HOST = process.env.HOST || '0.0.0.0';
-const LEGACY_FRONTEND_PORT = Number(process.env.BADIZO_LEGACY_FRONTEND_PORT || 3000);
+function normalizePort(value, fallback = 5000) {
+  const port = Number.parseInt(value, 10);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : fallback;
+}
+
+function normalizeHost(value) {
+  const host = String(value || '').trim();
+  if (!host || ['localhost', '127.0.0.1', '::1'].includes(host.toLowerCase())) {
+    return '0.0.0.0';
+  }
+  return host;
+}
+
+function tuneHttpServer(server) {
+  server.keepAliveTimeout = Number.parseInt(process.env.BADIZO_KEEP_ALIVE_TIMEOUT_MS, 10) || 65000;
+  server.headersTimeout = Number.parseInt(process.env.BADIZO_HEADERS_TIMEOUT_MS, 10) || 66000;
+  server.requestTimeout = Number.parseInt(process.env.BADIZO_REQUEST_TIMEOUT_MS, 10) || 120000;
+}
+
+const PORT = normalizePort(process.env.PORT, 5000);
+const HOST = normalizeHost(process.env.HOST);
+const LEGACY_FRONTEND_PORT = normalizePort(process.env.BADIZO_LEGACY_FRONTEND_PORT, 3000);
 
 function getRedirectHost(reqHost, targetPort) {
   const host = String(reqHost || '').split(':')[0] || 'localhost';
@@ -99,6 +118,8 @@ function startLegacyFrontendRedirect(targetPort) {
     logError('Legacy frontend redirect failed', err, { port: LEGACY_FRONTEND_PORT });
   });
 
+  tuneHttpServer(redirectServer);
+
   redirectServer.listen(LEGACY_FRONTEND_PORT, HOST, () => {
     console.log(`BADIZO legacy port ${LEGACY_FRONTEND_PORT} redirects to ${targetPort}`);
     logInfo('Legacy frontend redirect started', {
@@ -113,15 +134,17 @@ function startLegacyFrontendRedirect(targetPort) {
 
 function startServer(port = PORT) {
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, HOST, () => {
-      console.log(`BADIZO POS API running on http://${HOST}:${port}`);
-      logInfo('Backend started', { host: HOST, port });
-      startLegacyFrontendRedirect(port);
+    const listenPort = normalizePort(port, PORT);
+    const server = app.listen(listenPort, HOST, () => {
+      console.log(`BADIZO POS API running on http://${HOST}:${listenPort}`);
+      logInfo('Backend started', { host: HOST, port: listenPort });
+      startLegacyFrontendRedirect(listenPort);
       scheduleDailyBackup();
       scheduleDailySaleAlerts();
       resolve(server);
     });
 
+    tuneHttpServer(server);
     server.on('error', reject);
   });
 }

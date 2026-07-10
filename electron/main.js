@@ -158,6 +158,11 @@ function isRemoteHost(host) {
   return !getLocalHosts().has(normalizedHost);
 }
 
+function isLoopbackHost(host) {
+  const normalizedHost = String(host || '').trim().toLowerCase();
+  return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(normalizedHost);
+}
+
 function buildUrl(host, port, pathname = '/') {
   const hostname = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
   return `http://${hostname}:${port}${pathname}`;
@@ -216,6 +221,7 @@ async function resolveRemoteServer(config) {
   const apiHost = getUrlHost(config.apiHealthUrl);
   const appHost = getUrlHost(config.appUrl);
   const healthPort = getUrlPort(config.apiHealthUrl, config.backendPort);
+  const clientOnlyMode = config.startBackend === false && config.startFrontend === false;
   const hosts = [
     ...config.serverHosts,
     appHost,
@@ -225,10 +231,13 @@ async function resolveRemoteServer(config) {
     'BADIZO-SERVER',
     'server',
     'SERVER'
-  ].filter(Boolean);
+  ].filter((host) => {
+    if (!host) return false;
+    return !clientOnlyMode || !isLoopbackHost(host);
+  });
 
   const healthUrls = [
-    config.apiHealthUrl,
+    ...(!clientOnlyMode || !isLoopbackHost(apiHost) ? [config.apiHealthUrl] : []),
     ...[...new Set(hosts)].map((host) => buildUrl(host, healthPort, '/api/health'))
   ];
 
