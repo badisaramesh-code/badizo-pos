@@ -40,7 +40,6 @@ function shouldRetryRequest(error) {
   const method = String(error.config?.method || 'get').toLowerCase();
   if (method !== 'get') return false;
   if (error.config?.__badizoNoRetry) return false;
-  if (String(error.config?.url || '').includes('/products/exact/')) return false;
   if (error.code === 'ECONNABORTED' || error.message?.toLowerCase().includes('timeout')) return true;
   if (!error.response && error.request) return true;
   return false;
@@ -143,7 +142,20 @@ export async function pingBackendHealth(timeoutMs = 2500) {
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     const baseUrl = String(api.defaults.baseURL || '').replace(/\/api\/?$/, '');
-    const response = await fetch(`${baseUrl}/api/health?_=${Date.now()}`, {
+    let user = {};
+    try {
+      user = JSON.parse(getAuthStorage().getItem(AUTH_USER_KEY) || '{}') || {};
+    } catch (_err) {
+      user = {};
+    }
+    const params = new URLSearchParams({
+      _: String(Date.now()),
+      source: 'billing-heartbeat',
+      user: String(user.username || ''),
+      role: String(user.role || ''),
+      counter: String(user.counter_no || user.counterNo || '')
+    });
+    const response = await fetch(`${baseUrl}/api/health?${params.toString()}`, {
       cache: 'no-store',
       signal: controller.signal
     });
@@ -207,7 +219,8 @@ export async function lookupExactProduct(query) {
     );
     if (!isTransientLookupFailure) throw err;
 
-    throw err;
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    return await fetchExact();
   }
 }
 
@@ -633,9 +646,13 @@ export async function fetchInvoiceHistory({ from, to, search, paymentMode } = {}
   return Array.isArray(data) ? data : [];
 }
 
-export async function fetchInvoiceDetails(invoiceNo) {
+export async function fetchInvoiceDetails(invoiceNo, options = {}) {
   const { data } = await api.get('/billing/invoice/details', {
-    params: { invoice_no: invoiceNo }
+    params: {
+      invoice_no: invoiceNo,
+      checkout_request_id: options.checkoutRequestId || ''
+    },
+    timeout: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 25000
   });
   return data;
 }

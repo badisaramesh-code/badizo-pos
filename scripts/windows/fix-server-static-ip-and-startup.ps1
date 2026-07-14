@@ -70,19 +70,14 @@ function Set-ServerStaticIp {
   $currentAddresses = @(Get-NetIPAddress -InterfaceAlias $InterfaceAlias -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Where-Object { $_.IPAddress -notlike '169.254.*' })
 
-  if ($currentAddresses.IPAddress -contains $TargetIp) {
-    Write-Host "Server already has static/active IP: $TargetIp" -ForegroundColor Green
-  } else {
-    Write-Host "Setting $InterfaceAlias to static IP $TargetIp/$PrefixLength gateway $Gateway" -ForegroundColor Yellow
+  $mask = if ($PrefixLength -eq 24) { '255.255.255.0' } else { throw "Unsupported prefix length: $PrefixLength" }
+  Write-Host "Persisting $InterfaceAlias as static IP $TargetIp/$PrefixLength gateway $Gateway" -ForegroundColor Yellow
 
-    foreach ($address in $currentAddresses) {
-      Remove-NetIPAddress -InterfaceAlias $InterfaceAlias -IPAddress $address.IPAddress -Confirm:$false -ErrorAction SilentlyContinue
-    }
-
-    Get-NetRoute -InterfaceAlias $InterfaceAlias -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
-      Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
-
-    New-NetIPAddress -InterfaceAlias $InterfaceAlias -IPAddress $TargetIp -PrefixLength $PrefixLength -DefaultGateway $Gateway | Out-Null
+  # Do not treat an active DHCP lease as a static address. `netsh ... store=persistent`
+  # converts the existing address as well as new addresses into a reboot-safe static config.
+  & netsh.exe interface ipv4 set address name="$InterfaceAlias" source=static address="$TargetIp" mask="$mask" gateway="$Gateway" store=persistent | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to set persistent static IP on '$InterfaceAlias'."
   }
 
   Set-DnsClientServerAddress -InterfaceAlias $InterfaceAlias -ServerAddresses $DnsServers

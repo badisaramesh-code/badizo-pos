@@ -9,6 +9,7 @@ const { scheduleDailySaleAlerts } = require('./services/saleAlertService');
 const { logError, logInfo } = require('./services/logger');
 
 const app = express();
+const heartbeatLogPath = path.join(__dirname, 'logs', 'heartbeat.log');
 
 function getCorsOptions() {
   const allowedOrigins = String(process.env.BADIZO_CORS_ORIGINS || '')
@@ -34,7 +35,26 @@ function getCorsOptions() {
 app.use(cors(getCorsOptions()));
 app.use(express.json({ limit: process.env.BADIZO_JSON_LIMIT || '250mb' }));
 
-app.get('/api/health', (_req, res) => {
+function recordHealthPing(req) {
+  try {
+    fs.mkdirSync(path.dirname(heartbeatLogPath), { recursive: true });
+    const entry = {
+      at: new Date().toISOString(),
+      at_local: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true }),
+      ip: req.ip || req.socket?.remoteAddress || '',
+      user: String(req.query?.user || '').slice(0, 40),
+      role: String(req.query?.role || '').slice(0, 20),
+      counter: String(req.query?.counter || '').slice(0, 10),
+      source: String(req.query?.source || 'health').slice(0, 30)
+    };
+    fs.appendFile(heartbeatLogPath, `${JSON.stringify(entry)}\n`, () => {});
+  } catch (_err) {
+    // Health must stay fast and reliable even if ping logging fails.
+  }
+}
+
+app.get('/api/health', (req, res) => {
+  recordHealthPing(req);
   res.json({ ok: true });
 });
 

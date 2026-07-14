@@ -145,6 +145,11 @@ export default function App() {
       <header className="topbar">
         <div className="brand-wrap">
           <img className="brand-image" src="/badizo-logo-transparent.png" alt="Badizo" />
+          <span className="brand-pulse-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
         </div>
 
         <nav className="nav-tabs" aria-label="Workspace">

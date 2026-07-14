@@ -17,6 +17,7 @@ import {
   holdBill,
   lookupExactProduct,
   lookupCustomer,
+  pingBackendHealth,
   recordInvoiceReprint,
   saveCustomer,
   voidInvoice,
@@ -382,6 +383,8 @@ export default function BillingTerminalView({ isActive = true }) {
   const initialDraft = readActivePosDraft(currentUser?.username);
   const [invoiceNo, setInvoiceNo] = useState(initialDraft?.invoiceNo || 'Loading...');
   const [liveTime, setLiveTime] = useState(new Date());
+  const [backendPingOk, setBackendPingOk] = useState(null);
+  const [lastBackendPingAt, setLastBackendPingAt] = useState(null);
   const [counterNo, setCounterNo] = useState(Number(initialDraft?.counterNo || 1));
   const [counterCount, setCounterCount] = useState(6);
   const [shopSettings, setShopSettings] = useState({
@@ -507,6 +510,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const holdBillShortcutPressedRef = useRef(false);
   const checkoutInFlightRef = useRef(false);
   const checkoutRequestIdRef = useRef('');
+  const backendPingFailCountRef = useRef(0);
   const previousExchangeModeRef = useRef(exchangeMode);
   const priceCheckKeyTimesRef = useRef([]);
   const lastPriceCheckScanRef = useRef('');
@@ -741,6 +745,48 @@ export default function BillingTerminalView({ isActive = true }) {
   }, [isActive]);
 
   useEffect(() => {
+    if (!isActive) return undefined;
+    let cancelled = false;
+    const keepBackendWarm = () => {
+      pingBackendHealth(8000)
+        .then((ok) => {
+          if (!cancelled) {
+            if (ok) {
+              backendPingFailCountRef.current = 0;
+              setBackendPingOk(true);
+            } else {
+              backendPingFailCountRef.current += 1;
+              if (backendPingFailCountRef.current >= 3) setBackendPingOk(false);
+            }
+            setLastBackendPingAt(new Date());
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            backendPingFailCountRef.current += 1;
+            if (backendPingFailCountRef.current >= 3) setBackendPingOk(false);
+            setLastBackendPingAt(new Date());
+          }
+        });
+    };
+    keepBackendWarm();
+    const timer = window.setInterval(keepBackendWarm, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [isActive]);
+
+  useEffect(() => {
+    document.body.classList.toggle('badizo-ping-fail', backendPingOk === false);
+    document.body.classList.toggle('badizo-ping-ok', backendPingOk === true);
+    return () => {
+      document.body.classList.remove('badizo-ping-fail');
+      document.body.classList.remove('badizo-ping-ok');
+    };
+  }, [backendPingOk]);
+
+  useEffect(() => {
     refreshInvoicePreview(counterNo);
     refreshHeldBills(counterNo);
   }, [counterNo]);
@@ -825,7 +871,8 @@ export default function BillingTerminalView({ isActive = true }) {
         if (String(scannerRef.current?.value || '').trim().toUpperCase() !== cleaned.toUpperCase()) return;
         addProduct(exactProduct, quantity);
       } catch (err) {
-        setErrorMessage(`Product lookup failed for ${cleaned}. Check network and scan again.`);
+        addUnknownProductLine(cleaned, quantity);
+        setErrorMessage(`Product lookup failed for ${cleaned}. Delete this line or scan again after network is ready.`);
       }
     }, TYPED_BARCODE_AUTO_ADD_MS);
 
@@ -1727,7 +1774,8 @@ export default function BillingTerminalView({ isActive = true }) {
             await new Promise((resolve) => setTimeout(resolve, 180));
             continue;
           }
-          setErrorMessage(`Product lookup failed for ${scanRead.barcode}. Check network and scan again.`);
+          addUnknownProductLine(scanRead.barcode, scanRead.quantity);
+          setErrorMessage(`Product lookup failed for ${scanRead.barcode}. Delete this line or scan again after network is ready.`);
         }
       }
     } finally {
@@ -4638,61 +4686,88 @@ export default function BillingTerminalView({ isActive = true }) {
       }, completedInvoice);
     };
 
-    try {
-      const checkoutResult = await checkout({
-        checkout_request_id: checkoutRequestIdRef.current,
-        counter_no: counterNo,
-        customer_name: effectiveCustomerName || 'Walk-in Customer',
-        customer_phone: effectiveCustomerPhone,
-        items: cart.map((item) => ({
-          ...item,
-          sale_price: getUnitPrice(item, billingMode)
-        })),
-        sub_total: totals.taxable.toFixed(2),
-        gst_total: totals.tax.toFixed(2),
-        grand_total: totals.grand.toFixed(2),
-        loyalty_base_total: totals.loyaltyBaseTotal.toFixed(2),
-        loyalty_redeem_points: totals.loyaltyRedeemPoints,
-        payment_mode: activePaymentMode,
-        payment_status: 'PAID',
-        payment_reference: activePaymentMode === 'Cash'
+    const checkoutRequestId = checkoutRequestIdRef.current;
+    const checkoutPayload = {
+      checkout_request_id: checkoutRequestId,
+      counter_no: counterNo,
+      customer_name: effectiveCustomerName || 'Walk-in Customer',
+      customer_phone: effectiveCustomerPhone,
+      items: cart.map((item) => ({
+        ...item,
+        sale_price: getUnitPrice(item, billingMode)
+      })),
+      sub_total: totals.taxable.toFixed(2),
+      gst_total: totals.tax.toFixed(2),
+      grand_total: totals.grand.toFixed(2),
+      loyalty_base_total: totals.loyaltyBaseTotal.toFixed(2),
+      loyalty_redeem_points: totals.loyaltyRedeemPoints,
+      payment_mode: activePaymentMode,
+      payment_status: 'PAID',
+      payment_reference: activePaymentMode === 'Cash'
+        ? null
+        : activePaymentMode === 'Mixed'
           ? null
-          : activePaymentMode === 'Mixed'
-            ? null
-            : effectivePaymentReference,
-        payment_splits: activePaymentMode === 'Mixed' ? {
-          cash: toNumber(effectiveMixedPayment.cash).toFixed(2),
-          upi: toNumber(effectiveMixedPayment.upi).toFixed(2),
-          card: toNumber(effectiveMixedPayment.card).toFixed(2),
-          upi_reference: effectiveMixedPayment.upi_reference || '',
-          card_reference: effectiveMixedPayment.card_reference || ''
-        } : undefined,
-        cash_received: received.toFixed(2),
-        change_returned: (Math.max(receivedPaise - payablePaiseForCheckout, 0) / 100).toFixed(2),
-        transaction_type: mode.transactionType,
-        billing_tier: mode.tier,
-        tax_type: mode.taxType,
-        customer_company_name: isBusinessBillingMode(billingMode) ? effectiveCustomerName : null,
-        customer_gstin: mode.taxType === 'INTERSTATE' ? customerGstin : null,
-        total_cgst: totals.cgst.toFixed(2),
-        total_sgst: totals.sgst.toFixed(2),
-        total_igst: totals.igst.toFixed(2),
-        exchange_total: totals.exchangeTotal.toFixed(2),
-        exchange_items: exchangeItems.map((item) => ({
-          barcode: item.barcode,
-          product_name: item.product_name,
-          hsn_code: item.hsn_code || '',
-          unit_type: item.unit_type || item.unit || '',
-          quantity: toNumber(item.quantity, 1),
-          sale_price: toNumber(item.unitPrice || item.sale_price || item.mrp),
-          gst_percent: toNumber(item.gst_percent)
-        })),
-        print_mode: printMode
+          : effectivePaymentReference,
+      payment_splits: activePaymentMode === 'Mixed' ? {
+        cash: toNumber(effectiveMixedPayment.cash).toFixed(2),
+        upi: toNumber(effectiveMixedPayment.upi).toFixed(2),
+        card: toNumber(effectiveMixedPayment.card).toFixed(2),
+        upi_reference: effectiveMixedPayment.upi_reference || '',
+        card_reference: effectiveMixedPayment.card_reference || ''
+      } : undefined,
+      cash_received: received.toFixed(2),
+      change_returned: (Math.max(receivedPaise - payablePaiseForCheckout, 0) / 100).toFixed(2),
+      transaction_type: mode.transactionType,
+      billing_tier: mode.tier,
+      tax_type: mode.taxType,
+      customer_company_name: isBusinessBillingMode(billingMode) ? effectiveCustomerName : null,
+      customer_gstin: mode.taxType === 'INTERSTATE' ? customerGstin : null,
+      total_cgst: totals.cgst.toFixed(2),
+      total_sgst: totals.sgst.toFixed(2),
+      total_igst: totals.igst.toFixed(2),
+      exchange_total: totals.exchangeTotal.toFixed(2),
+      exchange_items: exchangeItems.map((item) => ({
+        barcode: item.barcode,
+        product_name: item.product_name,
+        hsn_code: item.hsn_code || '',
+        unit_type: item.unit_type || item.unit || '',
+        quantity: toNumber(item.quantity, 1),
+        sale_price: toNumber(item.unitPrice || item.sale_price || item.mrp),
+        gst_percent: toNumber(item.gst_percent)
+      })),
+      print_mode: printMode
+    };
+
+    async function recoverCommittedCheckout() {
+      const details = await fetchInvoiceDetails('', {
+        checkoutRequestId,
+        timeoutMs: 8000
       });
+      const savedInvoice = details?.invoice || {};
+      const savedTotalPaise = moneyToPaise(savedInvoice.grand_total);
+      const savedCounter = String(savedInvoice.billing_counter || '').trim().toLowerCase();
+      const expectedCounter = `counter ${counterNo}`.toLowerCase();
+      const sameCounter = !savedCounter || savedCounter === expectedCounter;
+      const sameTotal = Math.abs(savedTotalPaise - payablePaiseForCheckout) <= 1;
+
+      if (savedInvoice.invoice_no && sameCounter && sameTotal && savedInvoice.invoice_status !== 'VOID') {
+        const recoveredFreeItems = Array.isArray(details?.items)
+          ? details.items.filter((item) => Number(item.is_free_bonus) === 1)
+          : [];
+        completeSuccessfulCheckout(savedInvoice.invoice_no, recoveredFreeItems, true);
+        return true;
+      }
+
+      return false;
+    }
+
+    try {
+      const checkoutResult = await checkout(checkoutPayload);
 
       completeSuccessfulCheckout(checkoutResult.invoice_no || invoiceNo, checkoutResult.free_items || []);
     } catch (err) {
       try {
+        if (checkoutRequestId && await recoverCommittedCheckout()) return;
         const details = await fetchInvoiceDetails(invoiceNo);
         const savedInvoice = details?.invoice || {};
         const savedTotalPaise = moneyToPaise(savedInvoice.grand_total);
@@ -4719,6 +4794,11 @@ export default function BillingTerminalView({ isActive = true }) {
     }
   }
 
+  const backendPingLabel = backendPingOk === null ? 'PING ...' : backendPingOk ? 'PING OK' : 'PING FAIL';
+  const backendPingTitle = lastBackendPingAt
+    ? `Last ping ${lastBackendPingAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}`
+    : 'Checking server connection';
+
   return (
     <div className={`billing-grid ${isSensitiveBillingMode(billingMode) ? 'sensitive-billing-active' : ''}`}>
       <section className="panel billing-main-panel">
@@ -4733,6 +4813,13 @@ export default function BillingTerminalView({ isActive = true }) {
                 Counter Sale
               </button>
               <div className="billing-header-meta">
+                <span
+                  className={`ping-status-chip ${backendPingOk === false ? 'danger' : backendPingOk === true ? 'success' : 'checking'}`}
+                  title={backendPingTitle}
+                >
+                  <span className="ping-status-dot" />
+                  {backendPingLabel}
+                </span>
                 <span className="live-time-chip">{liveTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
                 <span className="invoice-chip">Invoice {invoiceNo}</span>
               </div>
@@ -5147,7 +5234,13 @@ export default function BillingTerminalView({ isActive = true }) {
         <section className="panel usage-side-panel">
           <div className="panel-header compact-panel-header">
             <h2 className="panel-title">Usage Details</h2>
-            <span className="status-chip">Active</span>
+            <span
+              className={`ping-status-chip compact ${backendPingOk === false ? 'danger' : backendPingOk === true ? 'success' : 'checking'}`}
+              title={backendPingTitle}
+            >
+              <span className="ping-status-dot" />
+              {backendPingLabel}
+            </span>
           </div>
           <div className="usage-detail-grid">
             <span>User</span><strong>{currentUser?.username || '-'}</strong>

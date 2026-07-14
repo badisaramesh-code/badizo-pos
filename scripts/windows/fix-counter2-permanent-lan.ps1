@@ -35,6 +35,7 @@ function Get-LocalSubnetIps {
 
   $candidates = New-Object System.Collections.Generic.List[string]
   foreach ($ip in $localIps) {
+    $candidates.Add($ip)
     $parts = $ip.Split('.')
     if ($parts.Count -ne 4) { continue }
     for ($last = 1; $last -le 254; $last++) {
@@ -50,6 +51,8 @@ function Get-LocalSubnetIps {
 
 function Resolve-BadizoServer {
   $preferredHosts = @(
+    'localhost',
+    '127.0.0.1',
     'badizo-server.local',
     'badizo-server',
     'server',
@@ -147,6 +150,22 @@ function Write-CounterConfig {
     Write-Host "Config written: $configPath" -ForegroundColor Green
   }
 
+  $installedConfigCandidates = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs\Badizo\resources\app-config.json'),
+    (Join-Path $env:ProgramFiles 'Badizo\resources\app-config.json'),
+    (Join-Path ${env:ProgramFiles(x86)} 'Badizo\resources\app-config.json')
+  )
+
+  foreach ($configPath in $installedConfigCandidates) {
+    if ([string]::IsNullOrWhiteSpace($configPath) -or !(Test-Path (Split-Path -Parent $configPath))) { continue }
+    try {
+      $config | ConvertTo-Json -Depth 4 | Set-Content -Path $configPath -Encoding UTF8
+      Write-Host "Installed app config written: $configPath" -ForegroundColor Green
+    } catch {
+      Write-Host "Could not update installed app config: $configPath" -ForegroundColor Yellow
+    }
+  }
+
   return $counterAppUrl
 }
 
@@ -200,7 +219,7 @@ function Write-CounterLauncher {
 `$ErrorActionPreference = 'SilentlyContinue'
 `$appExe = '$($appExe.Replace("'", "''"))'
 `$loginUser = '$($LoginUser.Replace("'", "''"))'
-`$preferredHosts = @('$($ServerHost.Replace("'", "''"))', 'badizo-server.local', 'badizo-server', 'server', 'SERVER') | Where-Object { `$_ } | Select-Object -Unique
+`$preferredHosts = @('$($ServerHost.Replace("'", "''"))', 'localhost', '127.0.0.1', 'badizo-server.local', 'badizo-server', 'server', 'SERVER') | Where-Object { `$_ } | Select-Object -Unique
 
 function Test-BadizoHealth {
   param([string]`$HostName, [int]`$TimeoutSec = 2)
@@ -218,6 +237,7 @@ function Get-LocalSubnetIps {
     Select-Object -ExpandProperty IPAddress)
 
   foreach (`$ip in `$ips) {
+    `$ip
     `$parts = `$ip.Split('.')
     if (`$parts.Count -ne 4) { continue }
     for (`$last = 1; `$last -le 254; `$last++) {

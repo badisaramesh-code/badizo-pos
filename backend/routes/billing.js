@@ -807,18 +807,27 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
 
 router.get('/invoice/details', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   const invoiceNo = String(req.query.invoice_no || '').trim();
-  if (!invoiceNo) {
-    return res.status(400).json({ error: 'Invoice number is required.' });
+  const checkoutRequestId = String(req.query.checkout_request_id || '').trim();
+  if (!invoiceNo && !checkoutRequestId) {
+    return res.status(400).json({ error: 'Invoice number or checkout request ID is required.' });
   }
 
   try {
-    const [invoiceRows] = await db.query(
-      `SELECT *
-       FROM invoices
-       WHERE invoice_no = ?
-       LIMIT 1`,
-      [invoiceNo]
-    );
+    const [invoiceRows] = checkoutRequestId
+      ? await db.query(
+        `SELECT *
+         FROM invoices
+         WHERE checkout_request_id = ?
+         LIMIT 1`,
+        [checkoutRequestId]
+      )
+      : await db.query(
+        `SELECT *
+         FROM invoices
+         WHERE invoice_no = ?
+         LIMIT 1`,
+        [invoiceNo]
+      );
 
     if (!invoiceRows.length) {
       return res.status(404).json({ error: 'Invoice not found.' });
@@ -834,7 +843,7 @@ router.get('/invoice/details', authenticate, authorize('SERVER', 'ADMIN', 'COUNT
        LEFT JOIN products p ON p.barcode = ii.barcode
        WHERE ii.invoice_no = ?
        ORDER BY ii.id ASC`,
-      [invoiceNo]
+      [invoiceRows[0].invoice_no]
     );
 
     const [paymentRows] = await db.query(
@@ -842,7 +851,7 @@ router.get('/invoice/details', authenticate, authorize('SERVER', 'ADMIN', 'COUNT
        FROM invoice_payments
        WHERE invoice_no = ?
        ORDER BY id ASC`,
-      [invoiceNo]
+      [invoiceRows[0].invoice_no]
     );
 
     res.json({

@@ -33,14 +33,20 @@ function readJsonIfExists(filePath) {
 }
 
 function getConfig() {
+  const packagedConfigPath = process.resourcesPath ? path.join(process.resourcesPath, 'app-config.json') : '';
+  const packagedConfig = readJsonIfExists(packagedConfigPath);
   const configPaths = [
     path.join(app.getPath('userData'), 'app-config.json'),
     path.join(process.cwd(), 'app-config.json'),
     path.join(__dirname, 'app-config.json'),
-    process.resourcesPath ? path.join(process.resourcesPath, 'app-config.json') : ''
+    packagedConfigPath
   ];
 
-  const config = configPaths.map(readJsonIfExists).find(Boolean) || {};
+  // Dedicated counter/admin installers must not inherit a stale server address
+  // from a previous installation's userData config.
+  const config = packagedConfig?.forcePackagedConfig
+    ? packagedConfig
+    : (configPaths.map(readJsonIfExists).find(Boolean) || {});
   const configuredAppUrl = process.env.BADIZO_APP_URL || config.appUrl || DEFAULT_APP_URL;
   const configuredApiHealthUrl = process.env.BADIZO_API_HEALTH_URL || config.apiHealthUrl || DEFAULT_API_URL;
   const loginFromUrl = getLoginParamsFromUrl(configuredAppUrl);

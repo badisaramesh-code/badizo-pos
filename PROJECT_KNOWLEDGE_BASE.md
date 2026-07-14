@@ -1245,4 +1245,11 @@ Books issue          -> BooksView.jsx, books.js
 - Barcode PRN coordinates depend on physical sticker roll and printer calibration.
 - Schema changes are automatic but only run when backend starts.
 - Avoid deleting/reverting unknown local changes without checking `git status`.
+## Permanent shortcut branding rule
+
+- Every Badizo desktop shortcut must use the official Badizo **B** logo.
+- Never leave a Badizo shortcut with a generic monitor, browser, CMD, or blank-file icon.
+- Preferred Windows shortcut icon: `electron/assets/badizo.ico`.
+- Available source artwork: `frontend/public/badizo-logo.jpg` and `frontend/public/badizo-logo-transparent.png`.
+- This rule applies to Server, Admin, Counter, Security, setup, and future Badizo shortcuts.
 

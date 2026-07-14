@@ -105,8 +105,8 @@ button:disabled {
 
 .brand-wrap {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  align-items: flex-end;
+  gap: 6px;
 }
 
 .brand-image {
@@ -114,6 +114,69 @@ button:disabled {
   height: 42px;
   display: block;
   object-fit: contain;
+}
+
+.brand-pulse-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.brand-pulse-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  opacity: 1;
+  transform: scale(0.9);
+  background: #dc2626;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.14);
+  animation: none;
+}
+
+body.badizo-ping-ok .brand-pulse-dots span {
+  opacity: 0.35;
+  transform: scale(0.78);
+  box-shadow: none;
+  animation: brandPulseDot 1.4s ease-in-out infinite;
+}
+
+body.badizo-ping-ok .brand-pulse-dots span:nth-child(1) {
+  background: #e34b78;
+}
+
+body.badizo-ping-ok .brand-pulse-dots span:nth-child(2) {
+  background: #267f32;
+  animation-delay: 0.18s;
+}
+
+body.badizo-ping-ok .brand-pulse-dots span:nth-child(3) {
+  background: #155f22;
+  animation-delay: 0.36s;
+}
+
+body.badizo-ping-fail .brand-pulse-dots span {
+  animation: none;
+  opacity: 1;
+  transform: scale(0.9);
+  background: #dc2626;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.14);
+}
+
+body.badizo-ping-fail .brand-pulse-dots span:nth-child(2),
+body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
+  opacity: 0.45;
+}
+
+@keyframes brandPulseDot {
+  0%, 70%, 100% {
+    opacity: 0.35;
+    transform: scale(0.78);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .login-logo-wrap {
@@ -563,6 +626,63 @@ button:disabled {
   font-size: 13px;
   font-weight: 900;
   white-space: nowrap;
+}
+
+.ping-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.ping-status-chip.compact {
+  min-height: 26px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.ping-status-chip.success {
+  border-color: #12803c;
+  background: #dcfce7;
+  color: #14532d;
+}
+
+.ping-status-chip.danger {
+  border-color: #b91c1c;
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+
+.ping-status-chip.checking {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.ping-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #64748b;
+  box-shadow: 0 0 0 2px rgba(100, 116, 139, 0.12);
+}
+
+.ping-status-chip.success .ping-status-dot {
+  background: #16a34a;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.18);
+}
+
+.ping-status-chip.danger .ping-status-dot {
+  background: #dc2626;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.18);
 }
 
 .billing-panel-body {

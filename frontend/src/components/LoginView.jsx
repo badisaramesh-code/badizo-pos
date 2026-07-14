@@ -163,7 +163,7 @@ export default function LoginView({ onLogin }) {
                 value={username}
                 onChange={(event) => {
                   setUsername(event.target.value);
-                  setPassword(defaultPasswordForUsername(event.target.value));
+                  setPassword('');
                 }}
                 autoFocus
               >

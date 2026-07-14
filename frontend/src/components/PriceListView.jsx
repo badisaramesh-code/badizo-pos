@@ -5,7 +5,9 @@ const DEFAULT_GST_OPTIONS = ['0', '3', '5', '12', '18', '28', '40'];
 const DEFAULT_GROUPS = ['ALL PRODUCTS', 'FMG', 'PLASTIC', 'FOOD', 'GENERAL'];
 const UNIT_OPTIONS = ['Nos', 'Gm', 'Kg', 'Ml', 'Ltr', 'Pack'];
 const DISCOUNT_TYPE_OPTIONS = ['PERCENT', 'VALUE'];
-const PRICE_LIST_PAGE_SIZE = 500;
+// Keep the Mass Update DOM small enough for older counter/admin PCs. Rendering
+// 500 rows with 16 columns creates ~8,000 table cells and can freeze Electron.
+const PRICE_LIST_PAGE_SIZE = 100;
 
 const PROPERTY_OPTIONS = [
   { key: 'gst_percent', label: 'GST Slab', type: 'gst', newField: 'new_gst_slab', oldField: 'gst_slab' },
@@ -355,7 +357,7 @@ export default function PriceListView() {
             <div className="inventory-stats">
               <span className="status-chip">Total Products {lastQuery.total}</span>
               <span className="status-chip">Page {lastQuery.page} of {totalPages}</span>
-              <span className="status-chip">Loaded {rows.length} / 500</span>
+              <span className="status-chip">Loaded {rows.length} / {PRICE_LIST_PAGE_SIZE}</span>
               <span className="status-chip">Selected {selectedBarcodes.length}</span>
             </div>
           </div>
@@ -418,9 +420,9 @@ export default function PriceListView() {
             </div>
           )}
           <div className="price-list-pagebar">
-            <button className="secondary-button" type="button" disabled={isLoading || lastQuery.page <= 1} onClick={() => reloadPage(lastQuery.page - 1)}>Previous 500</button>
+            <button className="secondary-button" type="button" disabled={isLoading || lastQuery.page <= 1} onClick={() => reloadPage(lastQuery.page - 1)}>Previous {PRICE_LIST_PAGE_SIZE}</button>
             <strong>{lastQuery.total ? `${((lastQuery.page - 1) * PRICE_LIST_PAGE_SIZE) + 1}-${Math.min(lastQuery.page * PRICE_LIST_PAGE_SIZE, lastQuery.total)} of ${lastQuery.total}` : '0 products'}</strong>
-            <button className="secondary-button" type="button" disabled={isLoading || lastQuery.page >= totalPages} onClick={() => reloadPage(lastQuery.page + 1)}>Next 500</button>
+            <button className="secondary-button" type="button" disabled={isLoading || lastQuery.page >= totalPages} onClick={() => reloadPage(lastQuery.page + 1)}>Next {PRICE_LIST_PAGE_SIZE}</button>
           </div>
           {previewMeta && (
             <div className="price-list-preview-banner">
