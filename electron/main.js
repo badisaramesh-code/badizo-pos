@@ -661,6 +661,73 @@ ipcMain.handle('badizo:print-html', async (_event, payload) => {
   return printHtml(payload || {});
 });
 
+function safePdfFileName(value) {
+  const base = String(value || 'badizo-bill')
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+  return `${base || 'badizo-bill'}.pdf`;
+}
+
+async function saveA4PdfHtml({ html, filename }) {
+  if (!html || typeof html !== 'string') {
+    throw new Error('A4 PDF HTML is empty.');
+  }
+
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save A4 Bill PDF',
+    defaultPath: safePdfFileName(filename),
+    filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+  });
+
+  if (canceled || !filePath) {
+    return { ok: false, canceled: true };
+  }
+
+  const pdfWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+
+  try {
+    await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    await pdfWindow.webContents.executeJavaScript('document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true');
+    await pdfWindow.webContents.executeJavaScript(`
+      Promise.all(Array.from(document.images || []).map((image) => {
+        if (image.complete) return true;
+        return new Promise((resolve) => {
+          image.addEventListener('load', resolve, { once: true });
+          image.addEventListener('error', resolve, { once: true });
+        });
+      })).then(() => true)
+    `);
+
+    const pdf = await pdfWindow.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+      marginsType: 1,
+      pageSize: 'A4',
+      landscape: false
+    });
+
+    fs.writeFileSync(filePath, pdf);
+    shell.showItemInFolder(filePath);
+    logMessage(`A4 bill PDF saved: ${filePath}`);
+    return { ok: true, filePath };
+  } finally {
+    if (!pdfWindow.isDestroyed()) pdfWindow.destroy();
+  }
+}
+
+ipcMain.handle('badizo:save-a4-pdf-html', async (_event, payload) => {
+  return saveA4PdfHtml(payload || {});
+});
+
 app.whenReady().then(async () => {
   let config = getConfig();
   logMessage('App ready');

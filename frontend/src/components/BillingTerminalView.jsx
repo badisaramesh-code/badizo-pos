@@ -3525,6 +3525,52 @@ export default function BillingTerminalView({ isActive = true }) {
     body.printing-a4 .a4-paper.a4-one-page {
       overflow: hidden !important;
     }
+    html.printing-a4:has(.a4-multi-page),
+    html.printing-a4:has(.a4-multi-page) body,
+    body.printing-a4:has(.a4-multi-page) {
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      overflow: visible !important;
+    }
+    body.printing-a4 .print-host-a4:has(.a4-multi-page) {
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      overflow: visible !important;
+      page-break-before: avoid !important;
+      page-break-after: auto !important;
+      page-break-inside: auto !important;
+      break-before: avoid !important;
+      break-after: auto !important;
+      break-inside: auto !important;
+    }
+    body.printing-a4 .a4-multi-page {
+      display: block !important;
+      width: 190mm !important;
+      min-width: 190mm !important;
+      max-width: 190mm !important;
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
+    }
+    body.printing-a4 .a4-page-sheet {
+      width: 190mm !important;
+      min-width: 190mm !important;
+      max-width: 190mm !important;
+      height: 260mm !important;
+      min-height: 260mm !important;
+      max-height: 260mm !important;
+      overflow: hidden !important;
+      page-break-after: always !important;
+      break-after: page !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+    body.printing-a4 .a4-page-sheet:last-child {
+      page-break-after: avoid !important;
+      break-after: avoid !important;
+    }
     html.printing-thermal,
     html.printing-thermal body,
     body.printing-thermal {
@@ -3721,6 +3767,52 @@ export default function BillingTerminalView({ isActive = true }) {
         break-before: avoid !important;
         break-after: avoid !important;
         break-inside: avoid !important;
+      }
+      html.printing-a4:has(.a4-multi-page),
+      html.printing-a4:has(.a4-multi-page) body,
+      body.printing-a4:has(.a4-multi-page) {
+        height: auto !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        overflow: visible !important;
+      }
+      body.printing-a4 .print-host-a4:has(.a4-multi-page) {
+        height: auto !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        overflow: visible !important;
+        page-break-before: avoid !important;
+        page-break-after: auto !important;
+        page-break-inside: auto !important;
+        break-before: avoid !important;
+        break-after: auto !important;
+        break-inside: auto !important;
+      }
+      body.printing-a4 .a4-multi-page {
+        display: block !important;
+        width: 190mm !important;
+        min-width: 190mm !important;
+        max-width: 190mm !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+      }
+      body.printing-a4 .a4-page-sheet {
+        width: 190mm !important;
+        min-width: 190mm !important;
+        max-width: 190mm !important;
+        height: 260mm !important;
+        min-height: 260mm !important;
+        max-height: 260mm !important;
+        overflow: hidden !important;
+        page-break-after: always !important;
+        break-after: page !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+      body.printing-a4 .a4-page-sheet:last-child {
+        page-break-after: avoid !important;
+        break-after: avoid !important;
       }
       body.${printClass} .print-host * {
         visibility: visible !important;
@@ -4063,6 +4155,119 @@ export default function BillingTerminalView({ isActive = true }) {
     };
 
     window.setTimeout(startPrint, 350);
+  }
+
+  function buildA4InvoiceHtml(invoiceForPdf) {
+    const styleMarkup = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+      .map((node) => node.outerHTML)
+      .join('\n');
+    const invoiceMarkup = renderToStaticMarkup(<PrintableInvoice invoice={invoiceForPdf} mode="A4" />);
+
+    return `<!doctype html>
+<html class="printing-a4">
+<head>
+  <meta charset="utf-8" />
+  <title>${invoiceForPdf.invoiceNo || 'Badizo Bill'} A4 PDF</title>
+  <base href="${window.location.origin}/" />
+  ${styleMarkup}
+  <style>
+    @page { size: A4 portrait; margin: 0; }
+    html,
+    body {
+      width: 210mm !important;
+      min-width: 210mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      background: #fff !important;
+    }
+    .print-host-a4 {
+      display: block !important;
+      width: 190mm !important;
+      min-width: 190mm !important;
+      max-width: 190mm !important;
+      margin: 0 auto !important;
+      background: #fff !important;
+      visibility: visible !important;
+    }
+    .print-host-a4 * {
+      visibility: visible !important;
+    }
+    html:has(.a4-multi-page),
+    html:has(.a4-multi-page) body,
+    body:has(.a4-multi-page) {
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      overflow: visible !important;
+    }
+    .print-host-a4:has(.a4-multi-page) {
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      overflow: visible !important;
+      page-break-inside: auto !important;
+      break-inside: auto !important;
+    }
+    .a4-multi-page {
+      display: block !important;
+      width: 190mm !important;
+      min-width: 190mm !important;
+      max-width: 190mm !important;
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
+    }
+    .a4-page-sheet {
+      width: 190mm !important;
+      min-width: 190mm !important;
+      max-width: 190mm !important;
+      height: 260mm !important;
+      min-height: 260mm !important;
+      max-height: 260mm !important;
+      overflow: hidden !important;
+      page-break-after: always !important;
+      break-after: page !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+    .a4-page-sheet:last-child {
+      page-break-after: avoid !important;
+      break-after: avoid !important;
+    }
+  </style>
+</head>
+<body class="printing-a4">
+  <div class="print-host print-host-a4">${invoiceMarkup}</div>
+</body>
+</html>`;
+  }
+
+  async function handleDownloadA4Pdf(invoiceNoForPdf) {
+    if (!window.badizoDesktop?.saveA4PdfHtml) {
+      setErrorMessage('A4 PDF download works in BADIZO desktop app only. Use A4 Print and choose Save as PDF in browser.');
+      return;
+    }
+
+    setIsHistoryInvoiceLoading(true);
+    try {
+      const details = await fetchInvoiceDetails(invoiceNoForPdf);
+      const invoiceForPdf = invoiceDetailsToPrintable(details, true);
+      const result = await window.badizoDesktop.saveA4PdfHtml({
+        html: buildA4InvoiceHtml(invoiceForPdf),
+        filename: `BADIZO-${invoiceForPdf.invoiceNo || invoiceNoForPdf}-A4`
+      });
+      if (result?.canceled) {
+        setStatusMessage('A4 PDF save cancelled.');
+        return;
+      }
+      await recordInvoiceReprint(invoiceNoForPdf, 'A4');
+      setStatusMessage(`${invoiceNoForPdf} A4 PDF saved. Forward/share the saved file from that folder.`);
+      refreshHistory(false);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || err.message || 'Unable to save A4 PDF.');
+    } finally {
+      setIsHistoryInvoiceLoading(false);
+    }
   }
 
   function focusInput(ref, delay = 0) {
@@ -6112,6 +6317,7 @@ export default function BillingTerminalView({ isActive = true }) {
                             </button>
                             <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no, 'Thermal')}>Reprint</button>
                             <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no, 'A4')}>A4 Reprint</button>
+                            <button className="secondary-button" disabled={isHistoryInvoiceLoading} onClick={() => handleDownloadA4Pdf(invoice.invoice_no)}>A4 PDF</button>
                             <button className="secondary-button" disabled={isHistoryInvoiceLoading} onClick={() => handleViewGatePass(invoice.invoice_no)}>Gate Pass</button>
                             {canManageInvoice && invoice.invoice_status !== 'CANCELLED' && invoice.invoice_status !== 'RETURNED' && (
                               <button className="secondary-button" onClick={() => openReturnInvoice(invoice.invoice_no)}>Return</button>
@@ -6259,6 +6465,14 @@ export default function BillingTerminalView({ isActive = true }) {
                 onClick={() => handleReprint(selectedHistoryInvoice.invoiceNo, 'A4')}
               >
                 A4 Print
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={isHistoryInvoiceLoading}
+                onClick={() => handleDownloadA4Pdf(selectedHistoryInvoice.invoiceNo)}
+              >
+                Download A4 PDF
               </button>
               <button
                 className="secondary-button"

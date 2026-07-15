@@ -1871,7 +1871,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
           {isLoading && <div className="change-box" style={{ marginBottom: 12 }}>Loading products from database...</div>}
 
-          <div style={{ overflowX: 'auto' }}>
+          <div className="inventory-table-wrap">
             <table className="inventory-table">
               <thead>
                 <tr>

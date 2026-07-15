@@ -4200,6 +4200,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  min-height: 0;
 }
 
 .product-list-panel {
@@ -4213,7 +4214,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .product-form-panel .product-edit-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px 14px;
   align-items: end;
   padding: 12px 16px 14px;
@@ -4233,7 +4234,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .product-edit-grid > label:not(.change-box) {
   display: grid;
-  grid-template-columns: minmax(120px, 31%) minmax(0, 1fr);
+  grid-template-columns: minmax(112px, 34%) minmax(0, 1fr);
   gap: 8px;
   align-items: center;
 }
@@ -4246,8 +4247,8 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .product-edit-grid .field,
 .product-edit-grid .select {
-  min-height: 36px;
-  height: 36px;
+  min-height: 34px;
+  height: 34px;
   padding-top: 6px;
   padding-bottom: 6px;
 }
@@ -4263,7 +4264,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .product-edit-grid > .primary-button,
 .product-edit-grid > .secondary-button {
   order: 40;
-  min-height: 38px;
+  min-height: 36px;
   margin-top: 2px;
 }
 
@@ -4288,6 +4289,12 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .product-edit-grid > .product-field-order-15 { order: 25; }
 .product-edit-grid > .product-field-order-16 { order: 26; }
 .product-edit-grid > .product-field-after { order: 30; }
+
+@media (max-width: 1180px) {
+  .product-form-panel .product-edit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 
 @media (max-width: 680px) {
   .product-form-panel .product-edit-grid {
@@ -6013,6 +6020,20 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.inventory-table-wrap {
+  width: 100%;
+  max-height: calc(100vh - 330px);
+  min-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.inventory-table-wrap .inventory-table {
+  min-width: 1320px;
 }
 
 .product-section-tabs {
