@@ -2052,6 +2052,56 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   font-weight: 800;
 }
 
+.sortable-report-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+}
+
+.sort-arrow-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sort-arrow-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #238336;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #145322;
+  font-size: 0;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sort-arrow-button::before {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.sort-arrow-up::before {
+  content: "\2191";
+}
+
+.sort-arrow-down::before {
+  content: "\2193";
+}
+
+.sort-arrow-button:hover,
+.sort-arrow-button.active {
+  background: #ff8a00;
+  border-color: #d86f00;
+  color: #ffffff;
+}
+
 .history-search-row {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) 130px 155px 155px auto auto auto;

@@ -76,6 +76,10 @@ const DEFAULT_HSN_FILTERS = {
 const HSN_VISIBLE_ROW_LIMIT = 500;
 const HANDOVER_AUTO_ENTRY_DETAILS = new Set(['Counter Closing Cash', 'Today Sale']);
 const HANDOVER_DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
+const TOP_PRODUCT_SORT_LABELS = {
+  quantity: 'Qty',
+  total: 'Total'
+};
 
 function isHandoverAutoEntry(entry) {
   return HANDOVER_AUTO_ENTRY_DETAILS.has(String(entry?.details || '').trim());
@@ -84,6 +88,11 @@ function isHandoverAutoEntry(entry) {
 function getHsnNumber(value) {
   const match = String(value || '').match(/\d+/);
   return match ? Number(match[0]) : null;
+}
+
+function getReportNumber(value) {
+  const number = Number(String(value ?? 0).replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(number) ? number : 0;
 }
 
 function ReportHeader({ title, onExcel, onPdf }) {
@@ -131,6 +140,7 @@ export default function ReportsView({ isActive = true, onClose }) {
   const [monthlyReport, setMonthlyReport] = useState({ rows: [] });
   const [stockReport, setStockReport] = useState([]);
   const [topProducts, setTopProducts] = useState({ rows: [] });
+  const [topProductSort, setTopProductSort] = useState({ key: 'quantity', direction: 'desc' });
   const [taxSummary, setTaxSummary] = useState({ rows: [] });
   const [gstr1Report, setGstr1Report] = useState({ b2b: [], b2cl: [], b2c: [], hsn: [], hsnB2b: [], hsnB2c: [], nilExempt: [], documents: {}, totals: {} });
   const [gstr2Report, setGstr2Report] = useState({ b2b: [], hsn: [], totals: {} });
@@ -187,6 +197,18 @@ export default function ReportsView({ isActive = true, onClose }) {
   }, [deferredHsnProductSearch, hsnFilters.gstPercent, hsnFilters.hsnRange, hsnFilters.qtySort, hsnReport.rows]);
 
   const visibleHsnRows = useMemo(() => filteredHsnRows.slice(0, HSN_VISIBLE_ROW_LIMIT), [filteredHsnRows]);
+
+  const sortedTopProductRows = useMemo(() => {
+    const rows = topProducts.rows || [];
+    const sortKey = topProductSort.key;
+    const direction = topProductSort.direction === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const aValue = getReportNumber(a[sortKey]);
+      const bValue = getReportNumber(b[sortKey]);
+      if (aValue !== bValue) return (aValue - bValue) * direction;
+      return String(a.product_name || '').localeCompare(String(b.product_name || ''));
+    });
+  }, [topProductSort.direction, topProductSort.key, topProducts.rows]);
 
   const gstCheckIssueCount = useMemo(() => Object.values(gstr3Report.checks || {}).reduce((total, rows) => (
     total + (Array.isArray(rows) ? rows.length : 0)
@@ -387,6 +409,41 @@ export default function ReportsView({ isActive = true, onClose }) {
     loadReports();
   }
 
+  function setTopProductsSort(key, direction) {
+    setTopProductSort({ key, direction });
+  }
+
+  function renderTopProductSortHeader(key) {
+    const label = TOP_PRODUCT_SORT_LABELS[key];
+    const isAscActive = topProductSort.key === key && topProductSort.direction === 'asc';
+    const isDescActive = topProductSort.key === key && topProductSort.direction === 'desc';
+    return (
+      <div className="sortable-report-header">
+        <span>{label}</span>
+        <span className="sort-arrow-group" aria-label={`${label} sort`}>
+          <button
+            className={`sort-arrow-button sort-arrow-up ${isDescActive ? 'active' : ''}`}
+            type="button"
+            title={`${label} high to low`}
+            aria-label={`${label} high to low`}
+            onClick={() => setTopProductsSort(key, 'desc')}
+          >
+            ↑
+          </button>
+          <button
+            className={`sort-arrow-button sort-arrow-down ${isAscActive ? 'active' : ''}`}
+            type="button"
+            title={`${label} low to high`}
+            aria-label={`${label} low to high`}
+            onClick={() => setTopProductsSort(key, 'asc')}
+          >
+            ↓
+          </button>
+        </span>
+      </div>
+    );
+  }
+
   function printReport() {
     document.documentElement.classList.add('printing-reports');
     document.body.classList.add('printing-reports');
@@ -494,7 +551,7 @@ export default function ReportsView({ isActive = true, onClose }) {
   }
 
   function exportTopProductsExcel() {
-    exportRows('top_products', topProducts.rows.map((row) => ({
+    exportRows('top_products', sortedTopProductRows.map((row) => ({
       Barcode: row.barcode,
       Product: row.product_name,
       Qty: Number(row.quantity || 0),
@@ -1077,10 +1134,10 @@ export default function ReportsView({ isActive = true, onClose }) {
             <ReportHeader title="Top Products" onExcel={exportTopProductsExcel} onPdf={exportPdf} />
             <div className="panel-body">
               <table className="history-table">
-                <thead><tr><th>Barcode</th><th>Product</th><th>Qty</th><th>Total</th></tr></thead>
+                <thead><tr><th>Barcode</th><th>Product</th><th>{renderTopProductSortHeader('quantity')}</th><th>{renderTopProductSortHeader('total')}</th></tr></thead>
                 <tbody>
-                  {topProducts.rows.length === 0 ? <tr><td colSpan="4">No product movement data.</td></tr> : topProducts.rows.map((row) => (
-                    <tr key={row.barcode}><td className="mono">{row.barcode}</td><td>{row.product_name}</td><td>{Number(row.quantity || 0)}</td><td>{formatMoney(row.total)}</td></tr>
+                  {sortedTopProductRows.length === 0 ? <tr><td colSpan="4">No product movement data.</td></tr> : sortedTopProductRows.map((row, index) => (
+                    <tr key={`${row.barcode || 'no-barcode'}-${row.product_name || 'product'}-${index}`}><td className="mono">{row.barcode}</td><td>{row.product_name}</td><td>{Number(row.quantity || 0)}</td><td>{formatMoney(row.total)}</td></tr>
                   ))}
                 </tbody>
               </table>
