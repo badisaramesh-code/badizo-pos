@@ -732,24 +732,27 @@ function getA4BankDetails(shop, template) {
   return details.length ? details : template.bankDetails;
 }
 
-const A4_FIRST_PAGE_ITEMS = 14;
-const A4_CONTINUATION_PAGE_ITEMS = 28;
-const A4_LAST_PAGE_ITEMS = 13;
+// Product-only sheets can use almost the full printable height. The final sheet
+// reserves room for totals, GST, bank details and signatures.
+const A4_PRODUCT_PAGE_ITEMS = 45;
+const A4_LAST_PAGE_ITEMS = 24;
 
 function splitA4Items(items) {
-  if (items.length <= A4_FIRST_PAGE_ITEMS) {
+  if (items.length <= A4_LAST_PAGE_ITEMS) {
     return [{ type: 'single', startIndex: 0, items }];
   }
 
   const pages = [];
   let cursor = 0;
-  pages.push({ type: 'first', startIndex: cursor, items: items.slice(cursor, cursor + A4_FIRST_PAGE_ITEMS) });
-  cursor += A4_FIRST_PAGE_ITEMS;
-
   while (items.length - cursor > A4_LAST_PAGE_ITEMS) {
+    const isFirst = cursor === 0;
     const remaining = items.length - cursor;
-    const take = Math.min(A4_CONTINUATION_PAGE_ITEMS, remaining - A4_LAST_PAGE_ITEMS);
-    pages.push({ type: 'middle', startIndex: cursor, items: items.slice(cursor, cursor + take) });
+    const take = Math.min(A4_PRODUCT_PAGE_ITEMS, remaining);
+    pages.push({
+      type: isFirst ? 'first' : 'middle',
+      startIndex: cursor,
+      items: items.slice(cursor, cursor + take)
+    });
     cursor += take;
   }
 
@@ -791,6 +794,17 @@ function A4StoreTop({ invoice }) {
         <span>Counter</span><strong>{invoice.counterNo || '-'}</strong>
         <span>Bill Type</span><strong>{taxBillLabel}</strong>
       </div>
+    </div>
+  );
+}
+
+function A4ContinuationHeader({ invoice }) {
+  return (
+    <div className="a4-continuation-header">
+      <strong>{invoice.shop.shop_name}</strong>
+      <span>Invoice No. {invoice.invoiceNo}</span>
+      <span>Date {invoice.date}</span>
+      <span>Counter {invoice.counterNo || '-'} | {getTaxBillLabel(invoice)}</span>
     </div>
   );
 }
@@ -953,7 +967,9 @@ function A4OnePageInvoice({ invoice, template }) {
           const pageNo = index + 1;
           const isFirst = index === 0;
           const isLast = index === pages.length - 1;
-          const lastPageBlankRows = isLast ? Math.max(1, A4_LAST_PAGE_ITEMS - page.items.length) : 0;
+          const lastPageBlankRows = isLast && page.items.length
+            ? Math.max(1, A4_LAST_PAGE_ITEMS - page.items.length)
+            : 0;
           return (
             <div className={`a4-paper a4-page-sheet a4-store-invoice ${isLast ? 'a4-last-page' : ''}`} key={`${page.type}-${page.startIndex}`}>
               <A4StoreTitle taxBillLabel={taxBillLabel} pageNo={pageNo} pageCount={pages.length} />
@@ -963,12 +979,7 @@ function A4OnePageInvoice({ invoice, template }) {
                   <A4StoreCustomer invoice={invoice} />
                 </>
               ) : (
-                <div className="a4-continuation-header">
-                  <strong>{invoice.shop.shop_name}</strong>
-                  <span>Invoice No. {invoice.invoiceNo}</span>
-                  <span>Date {invoice.date}</span>
-                  <span>Continued from previous page</span>
-                </div>
+                <A4ContinuationHeader invoice={invoice} />
               )}
               <A4StoreItemsTable rows={page.items} freeItems={freeItems} startIndex={page.startIndex} blankRowCount={lastPageBlankRows} />
               {!isLast && <div className="a4-continue-note">Continued on next page...</div>}
