@@ -732,10 +732,10 @@ function getA4BankDetails(shop, template) {
   return details.length ? details : template.bankDetails;
 }
 
-// Product-only sheets can use almost the full printable height. The final sheet
-// reserves room for totals, GST, bank details and signatures.
-const A4_PRODUCT_PAGE_ITEMS = 45;
-const A4_LAST_PAGE_ITEMS = 24;
+// Every sheet repeats the complete invoice heading. Product-only sheets still
+// use the available height, while the final sheet reserves room for the footer.
+const A4_PRODUCT_PAGE_ITEMS = 32;
+const A4_LAST_PAGE_ITEMS = 25;
 
 function splitA4Items(items) {
   if (items.length <= A4_LAST_PAGE_ITEMS) {
@@ -794,17 +794,6 @@ function A4StoreTop({ invoice }) {
         <span>Counter</span><strong>{invoice.counterNo || '-'}</strong>
         <span>Bill Type</span><strong>{taxBillLabel}</strong>
       </div>
-    </div>
-  );
-}
-
-function A4ContinuationHeader({ invoice }) {
-  return (
-    <div className="a4-continuation-header">
-      <strong>{invoice.shop.shop_name}</strong>
-      <span>Invoice No. {invoice.invoiceNo}</span>
-      <span>Date {invoice.date}</span>
-      <span>Counter {invoice.counterNo || '-'} | {getTaxBillLabel(invoice)}</span>
     </div>
   );
 }
@@ -965,7 +954,6 @@ function A4OnePageInvoice({ invoice, template }) {
       <div className={`print-invoice a4-multi-page ${isInterstate ? 'a4-igst-invoice' : 'a4-gst-invoice'}`}>
         {pages.map((page, index) => {
           const pageNo = index + 1;
-          const isFirst = index === 0;
           const isLast = index === pages.length - 1;
           const lastPageBlankRows = isLast && page.items.length
             ? Math.max(1, A4_LAST_PAGE_ITEMS - page.items.length)
@@ -973,14 +961,8 @@ function A4OnePageInvoice({ invoice, template }) {
           return (
             <div className={`a4-paper a4-page-sheet a4-store-invoice ${isLast ? 'a4-last-page' : ''}`} key={`${page.type}-${page.startIndex}`}>
               <A4StoreTitle taxBillLabel={taxBillLabel} pageNo={pageNo} pageCount={pages.length} />
-              {isFirst ? (
-                <>
-                  <A4StoreTop invoice={invoice} />
-                  <A4StoreCustomer invoice={invoice} />
-                </>
-              ) : (
-                <A4ContinuationHeader invoice={invoice} />
-              )}
+              <A4StoreTop invoice={invoice} />
+              <A4StoreCustomer invoice={invoice} />
               <A4StoreItemsTable rows={page.items} freeItems={freeItems} startIndex={page.startIndex} blankRowCount={lastPageBlankRows} />
               {!isLast && <div className="a4-continue-note">Continued on next page...</div>}
               {isLast && renderBottom()}
@@ -1021,13 +1003,13 @@ function renderSection(section, invoice, template) {
     case 'freeProducts':
       return <ThermalFreeProducts invoice={invoice} title={section.title} />;
     case 'thermalTotals':
-      return <div className="thermal-summary-section thermal-total-summary"><SectionLine /><div className="print-center thermal-summary-title"><strong>Total Summary</strong></div><ThermalTotals invoice={invoice} /></div>;
+      return <><SectionLine /><div className="print-center thermal-summary-title"><strong>Total Summary</strong></div><ThermalTotals invoice={invoice} /></>;
     case 'amountWords':
       return <><SectionLine /><p><strong>({amountInWords(invoice.totals.grand)})</strong></p></>;
     case 'discountLine':
       return invoice.totals.discount > 0 ? <><SectionLine /><div className="print-row print-discount-row"><span>You Have Gained Discount Amount</span><strong>{formatPlainMoney(invoice.totals.discount)}</strong></div></> : null;
     case 'gstSummary':
-      return <div className="thermal-summary-section thermal-gst-summary"><SectionLine /><div className="print-center thermal-summary-title"><strong>{invoice.taxType === 'INTERSTATE' ? 'IGST Summary' : 'GST Summary'}</strong></div><GstSummary invoice={invoice} /></div>;
+      return <><SectionLine /><div className="print-center thermal-summary-title"><strong>{invoice.taxType === 'INTERSTATE' ? 'IGST Summary' : 'GST Summary'}</strong></div><GstSummary invoice={invoice} /></>;
     case 'terms': {
       const terms = getThermalTerms(invoice, template);
       return <><SectionLine /><div className="print-terms">{terms.map((term, index) => <p key={`${index}-${term}`}>{term}</p>)}</div></>;

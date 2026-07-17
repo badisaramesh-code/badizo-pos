@@ -3829,6 +3829,21 @@ export default function BillingTerminalView({ isActive = true }) {
     cleanupTimer = window.setTimeout(cleanup, 120000);
 
     const waitForFrameAssets = async (doc) => {
+      const stylesheets = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
+      await Promise.all(stylesheets.map((link) => {
+        if (link.sheet) return Promise.resolve();
+        return new Promise((resolve) => {
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+          };
+          link.addEventListener('load', finish, { once: true });
+          link.addEventListener('error', finish, { once: true });
+          window.setTimeout(finish, 5000);
+        });
+      }));
       try {
         await doc.fonts?.ready;
       } catch (err) {
@@ -4645,6 +4660,8 @@ export default function BillingTerminalView({ isActive = true }) {
 
   async function handleViewHistoryInvoice(invoiceNoForView) {
     setIsHistoryInvoiceLoading(true);
+    setGatePassPreview(null);
+    setErrorMessage('');
     try {
       const details = await fetchInvoiceDetails(invoiceNoForView);
       setSelectedHistoryInvoice(invoiceDetailsToPrintable(details, false));
@@ -6295,7 +6312,17 @@ export default function BillingTerminalView({ isActive = true }) {
                   ) : (
                     filteredInvoiceHistory.map((invoice) => (
                       <tr key={invoice.invoice_no}>
-                        <td className="mono">{invoice.invoice_no}</td>
+                        <td className="mono">
+                          <button
+                            className="link-button mono"
+                            type="button"
+                            disabled={isHistoryInvoiceLoading}
+                            onClick={() => handleViewHistoryInvoice(invoice.invoice_no)}
+                            title={`View ${invoice.invoice_no}`}
+                          >
+                            {invoice.invoice_no}
+                          </button>
+                        </td>
                         <td>{invoice.customer_name || 'Walk-in Customer'}</td>
                         <td><strong>{formatMoney(invoice.grand_total)}</strong></td>
                         <td>{invoice.payment_mode}</td>
