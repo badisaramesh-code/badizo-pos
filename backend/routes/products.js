@@ -115,6 +115,9 @@ function toProduct(row) {
     free_promo_remaining_qty: Number(row.free_promo_remaining_qty || 0),
     stock_qty: Number(row.stock_qty || 0),
     min_stock_alert: Number(row.min_stock_alert || 10),
+    default_batch_no: row.default_batch_no || '',
+    default_mfd_date: row.default_mfd_date,
+    default_expiry_date: row.default_expiry_date,
     created_at: row.created_at,
     updated_at: row.updated_at
   };
@@ -150,7 +153,10 @@ function productSnapshot(row) {
     free_promo_total_qty: Number(row.free_promo_total_qty || 0),
     free_promo_remaining_qty: Number(row.free_promo_remaining_qty || 0),
     stock_qty: Number(row.stock_qty || 0),
-    min_stock_alert: Number(row.min_stock_alert || 10)
+    min_stock_alert: Number(row.min_stock_alert || 10),
+    default_batch_no: row.default_batch_no || '',
+    default_mfd_date: row.default_mfd_date || null,
+    default_expiry_date: row.default_expiry_date || null
   };
 }
 
@@ -282,6 +288,13 @@ function normalizeAliasNames(value) {
     .filter(Boolean)
     .filter((name, index, list) => list.indexOf(name) === index)
     .join(', ');
+}
+
+function normalizeOptionalDate(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  return text;
 }
 
 function parseImportNumber(value, fallback = 0) {
@@ -2412,8 +2425,8 @@ async function restoreProductSnapshot(connection, snapshot) {
      (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, sales_sgst_percent, sales_cgst_percent, sales_igst_percent,
       unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price,
       discount_type, discount_value, bulk_discount_value, is_free_item, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
-      free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert, default_batch_no, default_mfd_date, default_expiry_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        product_code = VALUES(product_code),
        product_name = VALUES(product_name),
@@ -2440,7 +2453,10 @@ async function restoreProductSnapshot(connection, snapshot) {
        free_promo_total_qty = VALUES(free_promo_total_qty),
        free_promo_remaining_qty = VALUES(free_promo_remaining_qty),
        stock_qty = VALUES(stock_qty),
-       min_stock_alert = VALUES(min_stock_alert)`,
+       min_stock_alert = VALUES(min_stock_alert),
+       default_batch_no = VALUES(default_batch_no),
+       default_mfd_date = VALUES(default_mfd_date),
+       default_expiry_date = VALUES(default_expiry_date)`,
     [
       snapshot.product_code,
       snapshot.barcode,
@@ -2468,7 +2484,10 @@ async function restoreProductSnapshot(connection, snapshot) {
       snapshot.free_promo_total_qty,
       snapshot.free_promo_remaining_qty,
       snapshot.stock_qty,
-      snapshot.min_stock_alert
+      snapshot.min_stock_alert,
+      snapshot.default_batch_no,
+      snapshot.default_mfd_date,
+      snapshot.default_expiry_date
     ]
   );
 }
@@ -3086,7 +3105,10 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     free_promo_qty_per_sale,
     free_promo_total_qty,
     stock_qty,
-    min_stock_alert
+    min_stock_alert,
+    default_batch_no,
+    default_mfd_date,
+    default_expiry_date
   } = req.body;
 
   if (!barcode || !product_name) {
@@ -3115,7 +3137,10 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       freePromoQtyPerSale: Math.max(Number(free_promo_qty_per_sale) || 1, 0.001),
       freePromoTotalQty: Math.max(Number(free_promo_total_qty) || 0, 0),
       stockQty: Number(stock_qty) || 0,
-      minStockAlert: Number(min_stock_alert) || 10
+      minStockAlert: Number(min_stock_alert) || 10,
+      defaultBatchNo: String(default_batch_no || '').trim().toUpperCase(),
+      defaultMfdDate: normalizeOptionalDate(default_mfd_date),
+      defaultExpiryDate: normalizeOptionalDate(default_expiry_date)
     };
 
     const requiredErrors = [];
@@ -3154,6 +3179,10 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       return res.status(400).json({ error: 'Purchase price cannot be negative.' });
     }
 
+    if (values.defaultMfdDate && values.defaultExpiryDate && values.defaultMfdDate >= values.defaultExpiryDate) {
+      return res.status(400).json({ error: 'MFD date must be before expiry date.' });
+    }
+
     const finalBarcode = String(barcode || '').trim().toUpperCase();
     let finalProductCode = String(product_code || '').trim().toUpperCase();
     if (!finalProductCode && code_mode !== 'MANUAL') {
@@ -3185,7 +3214,10 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       values.freePromoEnabled ? values.freePromoTotalQty : 0,
       values.freePromoEnabled ? values.freePromoTotalQty : 0,
       values.stockQty,
-      values.minStockAlert
+      values.minStockAlert,
+      values.defaultBatchNo,
+      values.defaultMfdDate,
+      values.defaultExpiryDate
     ];
 
     if (finalProductCode) {
@@ -3234,6 +3266,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
              free_promo_remaining_qty = ?,
              stock_qty = ?,
              min_stock_alert = ?,
+             default_batch_no = ?,
+             default_mfd_date = ?,
+             default_expiry_date = ?,
              updated_at = CURRENT_TIMESTAMP
          WHERE barcode = ?`,
         [...saveValues, originalBarcode]
@@ -3247,8 +3282,8 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
         `INSERT INTO products
          (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price,
           discount_type, discount_value, bulk_discount_value, is_free_item, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
-          free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert, default_batch_no, default_mfd_date, default_expiry_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            product_code = VALUES(product_code),
            product_name = VALUES(product_name),
@@ -3273,6 +3308,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
            free_promo_remaining_qty = VALUES(free_promo_remaining_qty),
            stock_qty = VALUES(stock_qty),
            min_stock_alert = VALUES(min_stock_alert),
+           default_batch_no = VALUES(default_batch_no),
+           default_mfd_date = VALUES(default_mfd_date),
+           default_expiry_date = VALUES(default_expiry_date),
            updated_at = CURRENT_TIMESTAMP`,
         saveValues
       );

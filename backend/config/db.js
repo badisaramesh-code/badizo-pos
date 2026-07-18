@@ -167,6 +167,9 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         free_promo_remaining_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         stock_qty DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         min_stock_alert DECIMAL(10,2) NOT NULL DEFAULT 10.00,
+        default_batch_no VARCHAR(80) DEFAULT '',
+        default_mfd_date DATE DEFAULT NULL,
+        default_expiry_date DATE DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_product_code (product_code),
@@ -1188,7 +1191,10 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'products', 'free_promo_total_qty', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER free_promo_qty_per_sale');
     await ensureColumn(connection, 'products', 'free_promo_remaining_qty', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER free_promo_total_qty');
     await ensureColumn(connection, 'products', 'min_stock_alert', 'DECIMAL(10,2) NOT NULL DEFAULT 10.00 AFTER stock_qty');
-    await ensureColumn(connection, 'products', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER min_stock_alert');
+    await ensureColumn(connection, 'products', 'default_batch_no', "VARCHAR(80) DEFAULT '' AFTER min_stock_alert");
+    await ensureColumn(connection, 'products', 'default_mfd_date', 'DATE DEFAULT NULL AFTER default_batch_no');
+    await ensureColumn(connection, 'products', 'default_expiry_date', 'DATE DEFAULT NULL AFTER default_mfd_date');
+    await ensureColumn(connection, 'products', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER default_expiry_date');
     await ensureColumn(connection, 'products', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at');
     await connection.query("ALTER TABLE product_import_jobs MODIFY status ENUM('QUEUED', 'RUNNING', 'SUCCESS', 'FAILED', 'PARTIAL SUCCESS', 'ROLLED BACK') NOT NULL DEFAULT 'QUEUED'");
     await ensureColumn(connection, 'invoices', 'transaction_type', "ENUM('B2C', 'B2B') NOT NULL DEFAULT 'B2C' AFTER created_at");

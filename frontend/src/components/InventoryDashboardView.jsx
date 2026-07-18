@@ -47,6 +47,9 @@ const emptyForm = {
   free_promo_total_qty: '',
   stock_qty: '100',
   min_stock_alert: '10',
+  default_batch_no: '',
+  default_mfd_date: '',
+  default_expiry_date: '',
   created_at: '',
   updated_at: ''
 };
@@ -144,6 +147,15 @@ function formatProductDate(value) {
 
 function todayIso() {
   return new Date().toISOString();
+}
+
+function dateInputValue(value) {
+  if (!value) return '';
+  const text = String(value);
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
 }
 
 function productImportSummaryFromJob(job = {}) {
@@ -423,6 +435,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   const wholesaleDiscountRef = useRef(null);
   const stockRef = useRef(null);
   const lowStockRef = useRef(null);
+  const batchNumberRef = useRef(null);
+  const mfdDateRef = useRef(null);
+  const expiryDateRef = useRef(null);
   const saveButtonRef = useRef(null);
   const didMountFilterRef = useRef(false);
   const pageRef = useRef(page);
@@ -652,6 +667,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   function normalizedProductForm(source = form) {
     return {
       ...source,
+      default_batch_no: String(source.default_batch_no ?? '').trim().toUpperCase(),
+      default_mfd_date: dateInputValue(source.default_mfd_date),
+      default_expiry_date: dateInputValue(source.default_expiry_date),
       wholesale_price: String(source.wholesale_price ?? '').trim() === '' ? source.sale_price : source.wholesale_price,
       discount_value: String(source.discount_value ?? '').trim() === '' ? '0' : source.discount_value,
       bulk_discount_value: String(source.bulk_discount_value ?? '').trim() === '' ? '0' : source.bulk_discount_value,
@@ -697,6 +715,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     if (purchasePrice < 0) return 'Purchase price cannot be negative.';
     if (purchaseUnitSize <= 0) return 'Stock per purchase unit must be greater than zero.';
     if (productForm.free_promo_enabled && !uppercaseProductName(productForm.free_promo_name)) return 'Enter free item name for product promotion.';
+    if (productForm.default_mfd_date && productForm.default_expiry_date && productForm.default_mfd_date >= productForm.default_expiry_date) {
+      return 'MFD date must be before expiry date.';
+    }
     return '';
   }
 
@@ -727,6 +748,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       free_promo_total_qty: String(product.free_promo_total_qty ?? ''),
       stock_qty: String(product.stock_qty ?? '0'),
       min_stock_alert: String(product.min_stock_alert ?? '10'),
+      default_batch_no: product.default_batch_no || '',
+      default_mfd_date: dateInputValue(product.default_mfd_date),
+      default_expiry_date: dateInputValue(product.default_expiry_date),
       created_at: product.created_at || product.updated_at || todayIso(),
       updated_at: product.updated_at || ''
     });
@@ -1322,7 +1346,45 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
           <label className="product-field-after">
             <span className="field-label">Low stock alert</span>
-            <input ref={lowStockRef} className="field" type="number" step="0.01" min="0" value={form.min_stock_alert} onChange={(event) => updateField('min_stock_alert', event.target.value)} onKeyDown={(event) => moveOnEnter(event, saveButtonRef)} required />
+            <input ref={lowStockRef} className="field" type="number" step="0.01" min="0" value={form.min_stock_alert} onChange={(event) => updateField('min_stock_alert', event.target.value)} onKeyDown={(event) => moveOnEnter(event, batchNumberRef)} required />
+          </label>
+
+          <label className="product-field-after">
+            <span className="field-label">Batch number</span>
+            <input
+              ref={batchNumberRef}
+              className="field"
+              value={form.default_batch_no}
+              onChange={(event) => updateField('default_batch_no', event.target.value.toUpperCase())}
+              onKeyDown={(event) => moveOnEnter(event, mfdDateRef)}
+              placeholder="Optional default"
+            />
+          </label>
+
+          <label className="product-field-after">
+            <span className="field-label">MFD date</span>
+            <input
+              ref={mfdDateRef}
+              className="field"
+              type="date"
+              max={form.default_expiry_date || undefined}
+              value={form.default_mfd_date}
+              onChange={(event) => updateField('default_mfd_date', event.target.value)}
+              onKeyDown={(event) => moveOnEnter(event, expiryDateRef)}
+            />
+          </label>
+
+          <label className="product-field-after">
+            <span className="field-label">Expiry date</span>
+            <input
+              ref={expiryDateRef}
+              className="field"
+              type="date"
+              min={form.default_mfd_date || undefined}
+              value={form.default_expiry_date}
+              onChange={(event) => updateField('default_expiry_date', event.target.value)}
+              onKeyDown={(event) => moveOnEnter(event, saveButtonRef)}
+            />
           </label>
 
           <button ref={saveButtonRef} className="primary-button" type="submit" disabled={!canManageProducts}>Save Product</button>
