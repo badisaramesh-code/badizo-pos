@@ -670,19 +670,39 @@ function safePdfFileName(value) {
   return `${base || 'badizo-bill'}.pdf`;
 }
 
-async function saveA4PdfHtml({ html, filename }) {
+function uniqueFilePath(directory, filename) {
+  const parsed = path.parse(filename);
+  let candidate = path.join(directory, filename);
+  let counter = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(directory, `${parsed.name} ${counter}${parsed.ext}`);
+    counter += 1;
+  }
+  return candidate;
+}
+
+async function saveA4PdfHtml({ html, filename, showSaveDialog = false }) {
   if (!html || typeof html !== 'string') {
     throw new Error('A4 PDF HTML is empty.');
   }
 
-  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
-    title: 'Save A4 Bill PDF',
-    defaultPath: safePdfFileName(filename),
-    filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
-  });
+  let filePath = '';
+  if (showSaveDialog) {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save A4 Bill PDF',
+      defaultPath: safePdfFileName(filename),
+      filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+    });
 
-  if (canceled || !filePath) {
-    return { ok: false, canceled: true };
+    if (result.canceled || !result.filePath) {
+      return { ok: false, canceled: true };
+    }
+
+    filePath = result.filePath;
+  } else {
+    const outputDir = path.join(app.getPath('desktop'), 'Badizo A4 Bills');
+    fs.mkdirSync(outputDir, { recursive: true });
+    filePath = uniqueFilePath(outputDir, safePdfFileName(filename));
   }
 
   const pdfWindow = new BrowserWindow({
@@ -725,7 +745,12 @@ async function saveA4PdfHtml({ html, filename }) {
 }
 
 ipcMain.handle('badizo:save-a4-pdf-html', async (_event, payload) => {
-  return saveA4PdfHtml(payload || {});
+  try {
+    return await saveA4PdfHtml(payload || {});
+  } catch (err) {
+    logMessage(`A4 bill PDF save failed: ${err.stack || err.message || err}`);
+    throw err;
+  }
 });
 
 app.whenReady().then(async () => {

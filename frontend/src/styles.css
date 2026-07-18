@@ -2182,6 +2182,21 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
 }
 
+.a4-pdf-preview-modal {
+  width: min(980px, calc(100vw - 36px));
+  max-height: min(92vh, 920px);
+}
+
+.a4-pdf-preview-scroll {
+  max-height: none;
+  background: #edf1f5;
+}
+
+.a4-pdf-preview-scroll .print-invoice {
+  width: 190mm;
+  max-width: none;
+}
+
 .gate-pass-preview-scroll .gate-pass-slip {
   width: 80mm;
   max-width: 100%;
@@ -7121,8 +7136,8 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   flex-direction: column;
   border: 1.5px solid #111;
   padding: 0;
-  font-size: 9.5px;
-  line-height: 1.15;
+  font-size: 8.4px;
+  line-height: 1.06;
 }
 
 .a4-store-title {
@@ -7133,13 +7148,13 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   padding: 4px;
   border-bottom: 1px solid #111;
   text-align: center;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 900;
 }
 
 .a4-store-title span {
   min-width: 44mm;
-  font-size: 10px;
+  font-size: 8.5px;
   font-weight: 900;
 }
 
@@ -7158,12 +7173,15 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .a4-page-sheet {
   width: 190mm;
-  min-height: 260mm;
-  max-height: 260mm;
+  min-height: 277mm;
+  max-height: 277mm;
   margin: 0 auto;
   padding: 3mm;
   box-sizing: border-box;
   overflow: hidden;
+  background: #fff;
+  outline: 0.35mm solid #c9c9c9;
+  outline-offset: -0.35mm;
   page-break-after: always;
   break-after: page;
 }
@@ -7194,10 +7212,10 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .a4-continue-note {
   margin-top: auto;
-  padding: 5px 6px;
+  padding: 2px 6px;
   border-top: 1px solid #111;
   text-align: right;
-  font-size: 10px;
+  font-size: 8.5px;
   font-weight: 800;
 }
 
@@ -7205,7 +7223,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   display: grid;
   grid-template-columns: 1.32fr 0.78fr;
   border-bottom: 1px solid #111;
-  min-height: 29mm;
+  min-height: 21mm;
 }
 
 .a4-store-shop {
@@ -7213,16 +7231,16 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   grid-template-columns: 23mm 1fr;
   justify-content: center;
   align-items: center;
-  gap: 4px;
-  padding: 3px 6px;
+  gap: 3px;
+  padding: 2px 5px;
   border-right: 1px solid #111;
   text-align: center;
-  font-size: 10.8px;
-  line-height: 1.22;
+  font-size: 8.5px;
+  line-height: 1.08;
 }
 
 .a4-store-shop strong {
-  font-size: 13px;
+  font-size: 10px;
   text-transform: uppercase;
 }
 
@@ -7230,8 +7248,8 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 21mm;
-  height: 21mm;
+  width: 18mm;
+  height: 18mm;
   border: 1px solid #111;
   background: #fff;
 }
@@ -7239,14 +7257,14 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .a4-store-shop-text {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
   align-items: center;
   justify-content: center;
 }
 
 .a4-bill-qr {
-  width: 18mm;
-  height: 18mm;
+  width: 15mm;
+  height: 15mm;
 }
 
 .a4-store-meta {
@@ -7257,20 +7275,20 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .a4-store-meta span,
 .a4-store-meta strong {
-  min-height: 4.8mm;
-  padding: 2px 4px;
+  min-height: 3.5mm;
+  padding: 1px 3px;
   border-bottom: 1px solid #111;
 }
 
 .a4-store-meta span {
   border-right: 1px solid #111;
-  font-size: 10px;
+  font-size: 8px;
 }
 
 .a4-store-customer {
   display: grid;
   grid-template-columns: 1.35fr 0.75fr;
-  min-height: 18mm;
+  min-height: 12mm;
   border-bottom: 1px solid #111;
 }
 
@@ -7283,23 +7301,30 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .a4-store-customer span,
 .a4-store-customer strong {
-  min-height: 4.4mm;
+  min-height: 3mm;
   padding: 1px 4px;
 }
 
 .a4-store-items {
   width: 100%;
   border-collapse: collapse;
+  border-spacing: 0;
+  empty-cells: show;
   table-layout: fixed;
-  font-size: 8.8px;
+  font-size: 7.2px;
+  border-left: 1px solid #111;
+  border-right: 1px solid #111;
+  border-bottom: 1px solid #111;
 }
 
 .a4-store-items th,
 .a4-store-items td {
-  padding: 1.5px 3px;
-  border-right: 1px solid #111;
-  border-bottom: 1px solid #111;
+  height: 4.15mm;
+  padding: 0.5px 2px;
+  border: 1px solid #111;
+  border-top: 0;
   vertical-align: top;
+  overflow: hidden;
 }
 
 .a4-store-items th:last-child,
@@ -7308,8 +7333,11 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 }
 
 .a4-store-items th {
+  height: 3.8mm;
   text-align: center;
-  font-size: 9.5px;
+  font-size: 7.8px;
+  background: #f5f5f5;
+  border-top: 0;
 }
 
 .a4-store-items th:nth-child(1) { width: 7mm; }
@@ -7332,7 +7360,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .a4-store-items .a4-free-inline-row td {
   background: #f7f7f7;
-  font-size: 9.5px;
+  font-size: 7.5px;
   text-align: left;
 }
 
@@ -7346,7 +7374,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 }
 
 .a4-store-empty-row td {
-  height: 4.5mm;
+  height: 4.15mm;
 }
 
 .a4-free-products {
@@ -7389,11 +7417,11 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .a4-store-discount,
 .a4-store-words {
-  min-height: 5.5mm;
-  padding: 2px 4px;
+  min-height: 4mm;
+  padding: 1px 4px;
   border-bottom: 1px solid #111;
   text-align: center;
-  font-size: 10px;
+  font-size: 8px;
 }
 
 .a4-store-bottom {
@@ -7408,16 +7436,16 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   flex-direction: column;
   justify-content: center;
   gap: 3px;
-  padding: 4px 6px;
+  padding: 2px 5px;
   border-right: 1px solid #111;
   border-bottom: 1px solid #111;
   text-align: center;
-  font-size: 10.5px;
+  font-size: 8px;
   line-height: 1.18;
 }
 
 .a4-store-bank strong {
-  font-size: 11px;
+  font-size: 8.5px;
 }
 
 .a4-store-right-bottom {
@@ -7430,7 +7458,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .a4-store-payment-summary {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  grid-auto-rows: 6mm;
+  grid-auto-rows: 4.4mm;
   border-bottom: 1px solid #111;
 }
 
@@ -7453,18 +7481,36 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 }
 
 .a4-store-payment-summary span {
-  font-size: 7.4px;
+  font-size: 6.4px;
 }
 
 .a4-store-payment-summary strong {
-  font-size: 8.8px;
+  font-size: 7.3px;
+}
+
+.a4-store-payment-summary .a4-store-bill-amount {
+  background: #f1f5f9;
+  box-shadow: inset 0 0 0 1px #111;
+  font-weight: 900;
+}
+
+.a4-store-payment-summary .a4-store-bill-amount span {
+  color: #111;
+  font-size: 7px;
+  font-weight: 900;
+}
+
+.a4-store-payment-summary .a4-store-bill-amount strong {
+  color: #000;
+  font-size: 9.4px;
+  font-weight: 950;
 }
 
 .a4-store-gst {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 7.2px;
+  font-size: 6.5px;
 }
 
 .a4-store-gst caption {
@@ -7476,7 +7522,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .a4-store-gst th,
 .a4-store-gst td {
-  padding: 1px 2px;
+  padding: 0.5px 2px;
   border-right: 1px solid #111;
   border-bottom: 1px solid #111;
   text-align: right;
@@ -7535,9 +7581,9 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   }
 
   body.printing-a4 {
-    width: 190mm !important;
-    min-width: 190mm !important;
-    max-width: 190mm !important;
+    width: 210mm !important;
+    min-width: 210mm !important;
+    max-width: 210mm !important;
   }
 
   body.printing-thermal {
@@ -7570,12 +7616,12 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
   html.printing-a4,
   html.printing-a4 body {
-    width: 190mm !important;
-    min-width: 190mm !important;
-    max-width: 190mm !important;
-    height: 260mm !important;
-    min-height: 260mm !important;
-    max-height: 260mm !important;
+    width: 210mm !important;
+    min-width: 210mm !important;
+    max-width: 210mm !important;
+    height: 297mm !important;
+    min-height: 297mm !important;
+    max-height: 297mm !important;
     overflow: hidden !important;
   }
 
@@ -8042,8 +8088,9 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
     width: 190mm;
     min-width: 190mm;
     max-width: 190mm;
-    height: 260mm;
-    max-height: 260mm;
+    height: 277mm;
+    max-height: 277mm;
+    margin: 0 auto;
     overflow: hidden !important;
     page-break-after: avoid;
     break-after: avoid;
@@ -8103,10 +8150,10 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
     width: 190mm !important;
     min-width: 190mm !important;
     max-width: 190mm !important;
-    height: 260mm !important;
-    min-height: 260mm !important;
-    max-height: 260mm !important;
-    margin: 0 !important;
+    height: 277mm !important;
+    min-height: 277mm !important;
+    max-height: 277mm !important;
+    margin: 0 auto !important;
     padding: 0 !important;
     overflow: hidden !important;
     page-break-before: avoid !important;
@@ -8156,8 +8203,8 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
   .a4-paper {
     width: 190mm;
-    height: 260mm;
-    max-height: 260mm;
+    height: 277mm;
+    max-height: 277mm;
     min-height: auto;
     box-sizing: border-box;
     overflow: hidden !important;
@@ -8165,8 +8212,8 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
   .a4-one-page {
     width: 190mm;
-    height: 260mm;
-    max-height: 260mm;
+    height: 277mm;
+    max-height: 277mm;
     overflow: hidden !important;
   }
 
@@ -8178,9 +8225,9 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
     width: 190mm !important;
     min-width: 190mm !important;
     max-width: 190mm !important;
-    height: 260mm !important;
+    height: 277mm !important;
     min-height: 0 !important;
-    max-height: 260mm !important;
+    max-height: 277mm !important;
     overflow: hidden !important;
   }
 
@@ -8202,9 +8249,9 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
     width: 190mm !important;
     min-width: 190mm !important;
     max-width: 190mm !important;
-    height: 260mm !important;
-    min-height: 260mm !important;
-    max-height: 260mm !important;
+    height: 277mm !important;
+    min-height: 277mm !important;
+    max-height: 277mm !important;
     overflow: hidden !important;
     page-break-before: avoid !important;
     page-break-after: avoid !important;
@@ -8216,8 +8263,8 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
   body.printing-a4 .a4-paper.a4-one-page {
     width: 190mm !important;
-    height: 260mm !important;
-    max-height: 260mm !important;
+    height: 277mm !important;
+    max-height: 277mm !important;
     padding: 3mm !important;
     transform: none !important;
     overflow: hidden !important;
@@ -8241,12 +8288,14 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
     width: 190mm !important;
     min-width: 190mm !important;
     max-width: 190mm !important;
-    height: 260mm !important;
-    min-height: 260mm !important;
-    max-height: 260mm !important;
-    margin: 0 !important;
+    height: 277mm !important;
+    min-height: 277mm !important;
+    max-height: 277mm !important;
+    margin: 0 auto !important;
     padding: 3mm !important;
     overflow: hidden !important;
+    outline: 0.35mm solid #c9c9c9 !important;
+    outline-offset: -0.35mm !important;
     page-break-after: always !important;
     break-after: page !important;
     page-break-inside: avoid !important;

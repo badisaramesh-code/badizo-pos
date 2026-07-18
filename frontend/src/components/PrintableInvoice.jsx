@@ -732,38 +732,32 @@ function getA4BankDetails(shop, template) {
   return details.length ? details : template.bankDetails;
 }
 
-// Every sheet repeats the complete invoice heading. Product-only sheets still
-// use the available height, while the final sheet reserves room for the footer.
-const A4_PRODUCT_PAGE_ITEMS = 32;
-const A4_LAST_PAGE_ITEMS = 25;
+const A4_ITEMS_PER_PAGE = 40;
 
 function splitA4Items(items) {
-  if (items.length <= A4_LAST_PAGE_ITEMS) {
-    return [{ type: 'single', startIndex: 0, items }];
-  }
-
   const pages = [];
   let cursor = 0;
-  while (items.length - cursor > A4_LAST_PAGE_ITEMS) {
-    const isFirst = cursor === 0;
-    const remaining = items.length - cursor;
-    const take = Math.min(A4_PRODUCT_PAGE_ITEMS, remaining);
+  while (cursor < items.length) {
     pages.push({
-      type: isFirst ? 'first' : 'middle',
+      type: cursor === 0 ? 'first' : 'middle',
       startIndex: cursor,
-      items: items.slice(cursor, cursor + take)
+      items: items.slice(cursor, cursor + A4_ITEMS_PER_PAGE)
     });
-    cursor += take;
+    cursor += A4_ITEMS_PER_PAGE;
   }
 
-  pages.push({ type: 'last', startIndex: cursor, items: items.slice(cursor) });
+  if (pages.length === 0) {
+    return [{ type: 'single', startIndex: 0, items: [] }];
+  }
+
+  pages[pages.length - 1] = { ...pages[pages.length - 1], type: pages.length === 1 ? 'single' : 'last' };
   return pages;
 }
 
 function A4StoreTitle({ taxBillLabel, pageNo, pageCount }) {
   return (
     <div className="a4-store-title">
-      <span>{pageCount > 1 ? `Page ${pageNo} / ${pageCount}` : ''}</span>
+      <span>{`Page No. ${pageNo}-${pageCount}`}</span>
       <strong>TAX INVOICE</strong>
       <span>{taxBillLabel}</span>
     </div>
@@ -856,7 +850,9 @@ function A4StoreItemsTable({ rows, freeItems = [], startIndex, blankRowCount = 0
           );
         })}
         {Array.from({ length: blankRowCount }).map((_, index) => (
-          <tr className="a4-store-empty-row" key={`blank-${index}`}><td colSpan="9" /></tr>
+          <tr className="a4-store-empty-row" key={`blank-${index}`}>
+            {Array.from({ length: 9 }).map((__, cellIndex) => <td key={`blank-${index}-${cellIndex}`}>&nbsp;</td>)}
+          </tr>
         ))}
       </tbody>
     </table>
@@ -887,9 +883,7 @@ function A4OnePageInvoice({ invoice, template }) {
     const discount = Math.max(toNumber(item.mrp) - toNumber(item.unitPrice), 0) * toNumber(item.quantity);
     return sum + discount;
   }, 0);
-  const exchangeItemCount = Array.isArray(invoice.exchangeItems) ? invoice.exchangeItems.length : 0;
-  const bottomReserveRows = exchangeItemCount > 0 || gstRows.length > 2 || freeItems.length > 0 ? 4 : 7;
-  const blankRowCount = Math.max(1, bottomReserveRows - saleItems.length);
+  const blankRowCount = Math.max(0, A4_ITEMS_PER_PAGE - saleItems.length);
   const pages = splitA4Items(saleItems);
   const isMultiPage = pages.length > 1;
 
@@ -911,7 +905,7 @@ function A4OnePageInvoice({ invoice, template }) {
             {loyaltyRedeemAmount > 0 && (
               <div><span>Less Loyalty Amount ({formatPlainMoney(loyaltyRedeemPoints)} pts)</span><strong>-{formatPlainMoney(loyaltyRedeemAmount)}</strong></div>
             )}
-            <div><span>Bill Amount</span><strong>{formatPlainMoney(billingTotal)}</strong></div>
+            <div className="a4-store-bill-amount"><span>Bill Amount</span><strong>{formatPlainMoney(billingTotal)}</strong></div>
             <div><span>Qty Total</span><strong>{formatPlainMoney(qtyTotal)}</strong></div>
             {invoice.paymentMode === 'Mixed' && getPaymentSplits(invoice).map((payment) => (
               <div key={payment.mode}><span>{payment.mode} Paid</span><strong>{formatPlainMoney(payment.amount)}</strong></div>
@@ -955,15 +949,17 @@ function A4OnePageInvoice({ invoice, template }) {
         {pages.map((page, index) => {
           const pageNo = index + 1;
           const isLast = index === pages.length - 1;
-          const lastPageBlankRows = isLast && page.items.length
-            ? Math.max(1, A4_LAST_PAGE_ITEMS - page.items.length)
-            : 0;
           return (
             <div className={`a4-paper a4-page-sheet a4-store-invoice ${isLast ? 'a4-last-page' : ''}`} key={`${page.type}-${page.startIndex}`}>
               <A4StoreTitle taxBillLabel={taxBillLabel} pageNo={pageNo} pageCount={pages.length} />
               <A4StoreTop invoice={invoice} />
               <A4StoreCustomer invoice={invoice} />
-              <A4StoreItemsTable rows={page.items} freeItems={freeItems} startIndex={page.startIndex} blankRowCount={lastPageBlankRows} />
+              <A4StoreItemsTable
+                rows={page.items}
+                freeItems={freeItems}
+                startIndex={page.startIndex}
+                blankRowCount={Math.max(0, A4_ITEMS_PER_PAGE - page.items.length)}
+              />
               {!isLast && <div className="a4-continue-note">Continued on next page...</div>}
               {isLast && renderBottom()}
             </div>

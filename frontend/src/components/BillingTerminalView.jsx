@@ -454,6 +454,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [historyFromDate, setHistoryFromDate] = useState(localIsoDate());
   const [historyToDate, setHistoryToDate] = useState(localIsoDate());
   const [selectedHistoryInvoice, setSelectedHistoryInvoice] = useState(null);
+  const [a4PdfPreviewInvoice, setA4PdfPreviewInvoice] = useState(null);
   const [gatePassPreview, setGatePassPreview] = useState(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [isHistoryInvoiceLoading, setIsHistoryInvoiceLoading] = useState(false);
@@ -3444,7 +3445,7 @@ export default function BillingTerminalView({ isActive = true }) {
     printFrame.style.left = '-10000px';
     printFrame.style.top = '0';
     printFrame.style.width = mode === 'A4' ? '210mm' : `${thermalWidthMm}mm`;
-    printFrame.style.height = mode === 'A4' ? '260mm' : '360mm';
+    printFrame.style.height = mode === 'A4' ? '297mm' : '360mm';
     printFrame.style.border = '0';
     printFrame.style.visibility = 'hidden';
     document.body.appendChild(printFrame);
@@ -3497,6 +3498,7 @@ export default function BillingTerminalView({ isActive = true }) {
       height: auto !important;
       min-height: 0 !important;
       max-height: none !important;
+      margin: 0 auto !important;
       overflow: hidden !important;
     }
     html.printing-a4,
@@ -3505,16 +3507,16 @@ export default function BillingTerminalView({ isActive = true }) {
       width: 210mm !important;
       min-width: 210mm !important;
       max-width: 210mm !important;
-      height: 250mm !important;
-      min-height: 250mm !important;
-      max-height: 250mm !important;
+      height: 277mm !important;
+      min-height: 277mm !important;
+      max-height: 277mm !important;
       overflow: hidden !important;
     }
     body.printing-a4 .print-host-a4,
     body.printing-a4 .a4-paper.a4-one-page {
-      height: 250mm !important;
+      height: 277mm !important;
       min-height: 0 !important;
-      max-height: 250mm !important;
+      max-height: 277mm !important;
       page-break-before: avoid !important;
       page-break-after: avoid !important;
       page-break-inside: avoid !important;
@@ -3558,10 +3560,13 @@ export default function BillingTerminalView({ isActive = true }) {
       width: 190mm !important;
       min-width: 190mm !important;
       max-width: 190mm !important;
-      height: 260mm !important;
-      min-height: 260mm !important;
-      max-height: 260mm !important;
+      height: 277mm !important;
+      min-height: 277mm !important;
+      max-height: 277mm !important;
       overflow: hidden !important;
+      margin: 0 auto !important;
+      outline: 0.35mm solid #c9c9c9 !important;
+      outline-offset: -0.35mm !important;
       page-break-after: always !important;
       break-after: page !important;
       page-break-inside: avoid !important;
@@ -3740,9 +3745,9 @@ export default function BillingTerminalView({ isActive = true }) {
         width: 210mm !important;
         min-width: 210mm !important;
         max-width: 210mm !important;
-        height: 250mm !important;
-        min-height: 250mm !important;
-        max-height: 250mm !important;
+        height: 277mm !important;
+        min-height: 277mm !important;
+        max-height: 277mm !important;
         overflow: hidden !important;
       }
       body.${printClass} .print-host {
@@ -3757,9 +3762,9 @@ export default function BillingTerminalView({ isActive = true }) {
       }
       body.printing-a4 .print-host-a4,
       body.printing-a4 .a4-paper.a4-one-page {
-        height: 250mm !important;
+        height: 277mm !important;
         min-height: 0 !important;
-        max-height: 250mm !important;
+        max-height: 277mm !important;
         overflow: hidden !important;
         page-break-before: avoid !important;
         page-break-after: avoid !important;
@@ -3801,10 +3806,13 @@ export default function BillingTerminalView({ isActive = true }) {
         width: 190mm !important;
         min-width: 190mm !important;
         max-width: 190mm !important;
-        height: 260mm !important;
-        min-height: 260mm !important;
-        max-height: 260mm !important;
+        height: 277mm !important;
+        min-height: 277mm !important;
+        max-height: 277mm !important;
         overflow: hidden !important;
+        margin: 0 auto !important;
+        outline: 0.35mm solid #c9c9c9 !important;
+        outline-offset: -0.35mm !important;
         page-break-after: always !important;
         break-after: page !important;
         page-break-inside: avoid !important;
@@ -4236,10 +4244,13 @@ export default function BillingTerminalView({ isActive = true }) {
       width: 190mm !important;
       min-width: 190mm !important;
       max-width: 190mm !important;
-      height: 260mm !important;
-      min-height: 260mm !important;
-      max-height: 260mm !important;
+      height: 277mm !important;
+      min-height: 277mm !important;
+      max-height: 277mm !important;
+      margin: 0 auto !important;
       overflow: hidden !important;
+      outline: 0.35mm solid #c9c9c9 !important;
+      outline-offset: -0.35mm !important;
       page-break-after: always !important;
       break-after: page !important;
       page-break-inside: avoid !important;
@@ -4257,16 +4268,33 @@ export default function BillingTerminalView({ isActive = true }) {
 </html>`;
   }
 
-  async function handleDownloadA4Pdf(invoiceNoForPdf) {
+  async function handleOpenA4PdfPreview(invoiceNoForPdf) {
+    setIsHistoryInvoiceLoading(true);
+    setErrorMessage('');
+    try {
+      const details = await fetchInvoiceDetails(invoiceNoForPdf);
+      setA4PdfPreviewInvoice(invoiceDetailsToPrintable(details, true));
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || err.message || 'Unable to load A4 PDF preview.');
+    } finally {
+      setIsHistoryInvoiceLoading(false);
+    }
+  }
+
+  async function handleDownloadA4Pdf(invoiceNoForPdf, preparedInvoice = null) {
     if (!window.badizoDesktop?.saveA4PdfHtml) {
       setErrorMessage('A4 PDF download works in BADIZO desktop app only. Use A4 Print and choose Save as PDF in browser.');
       return;
     }
 
     setIsHistoryInvoiceLoading(true);
+    setErrorMessage('');
     try {
-      const details = await fetchInvoiceDetails(invoiceNoForPdf);
-      const invoiceForPdf = invoiceDetailsToPrintable(details, true);
+      let invoiceForPdf = preparedInvoice;
+      if (!invoiceForPdf) {
+        const details = await fetchInvoiceDetails(invoiceNoForPdf);
+        invoiceForPdf = invoiceDetailsToPrintable(details, true);
+      }
       const result = await window.badizoDesktop.saveA4PdfHtml({
         html: buildA4InvoiceHtml(invoiceForPdf),
         filename: `BADIZO-${invoiceForPdf.invoiceNo || invoiceNoForPdf}-A4`
@@ -4276,7 +4304,7 @@ export default function BillingTerminalView({ isActive = true }) {
         return;
       }
       await recordInvoiceReprint(invoiceNoForPdf, 'A4');
-      setStatusMessage(`${invoiceNoForPdf} A4 PDF saved. Forward/share the saved file from that folder.`);
+      setStatusMessage(`${invoiceNoForPdf} A4 PDF saved in Desktop > Badizo A4 Bills. Forward/share the saved file from that folder.`);
       refreshHistory(false);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || err.message || 'Unable to save A4 PDF.');
@@ -6344,7 +6372,7 @@ export default function BillingTerminalView({ isActive = true }) {
                             </button>
                             <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no, 'Thermal')}>Reprint</button>
                             <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no, 'A4')}>A4 Reprint</button>
-                            <button className="secondary-button" disabled={isHistoryInvoiceLoading} onClick={() => handleDownloadA4Pdf(invoice.invoice_no)}>A4 PDF</button>
+                            <button className="secondary-button" disabled={isHistoryInvoiceLoading} onClick={() => handleOpenA4PdfPreview(invoice.invoice_no)}>A4 PDF</button>
                             <button className="secondary-button" disabled={isHistoryInvoiceLoading} onClick={() => handleViewGatePass(invoice.invoice_no)}>Gate Pass</button>
                             {canManageInvoice && invoice.invoice_status !== 'CANCELLED' && invoice.invoice_status !== 'RETURNED' && (
                               <button className="secondary-button" onClick={() => openReturnInvoice(invoice.invoice_no)}>Return</button>
@@ -6497,7 +6525,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 className="secondary-button"
                 type="button"
                 disabled={isHistoryInvoiceLoading}
-                onClick={() => handleDownloadA4Pdf(selectedHistoryInvoice.invoiceNo)}
+                onClick={() => handleOpenA4PdfPreview(selectedHistoryInvoice.invoiceNo)}
               >
                 Download A4 PDF
               </button>
@@ -6507,6 +6535,52 @@ export default function BillingTerminalView({ isActive = true }) {
                 onClick={() => handleViewGatePass(selectedHistoryInvoice.invoiceNo)}
               >
                 Gate Pass
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {a4PdfPreviewInvoice && (
+        <div
+          className="modal-backdrop preview-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setA4PdfPreviewInvoice(null);
+            }
+          }}
+        >
+          <div className="modal preview-modal a4-pdf-preview-modal">
+            <div className="reprint-preview-header">
+              <div>
+                <span className="field-label">A4 PDF View</span>
+                <strong className="mono">{a4PdfPreviewInvoice.invoiceNo}</strong>
+              </div>
+              <button className="close-action-button" type="button" onClick={() => setA4PdfPreviewInvoice(null)}>Close</button>
+            </div>
+            <div className="reprint-preview-meta">
+              <span>{a4PdfPreviewInvoice.customerName || 'Walk-in Customer'}</span>
+              <span>{a4PdfPreviewInvoice.date || '-'} {a4PdfPreviewInvoice.time || ''}</span>
+              <strong>{formatMoney(a4PdfPreviewInvoice.totals?.grand || 0)}</strong>
+            </div>
+            <div className="reprint-preview-scroll a4-pdf-preview-scroll">
+              <PrintableInvoice invoice={a4PdfPreviewInvoice} mode="A4" />
+            </div>
+            <div className="gate-pass-preview-actions">
+              <button
+                className="primary-button"
+                type="button"
+                disabled={isHistoryInvoiceLoading}
+                onClick={() => handleDownloadA4Pdf(a4PdfPreviewInvoice.invoiceNo, a4PdfPreviewInvoice)}
+              >
+                Save A4 PDF
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => handleReprint(a4PdfPreviewInvoice.invoiceNo, 'A4')}
+              >
+                A4 Print
               </button>
             </div>
           </div>
