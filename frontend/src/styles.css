@@ -2104,18 +2104,34 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .history-search-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 130px 155px 155px auto auto auto;
-  gap: 10px;
+  grid-template-columns: minmax(150px, 1fr) 90px 135px 135px 58px 58px 58px;
+  gap: 6px;
   align-items: end;
-  margin-bottom: 12px;
-  padding: 10px;
+  margin-bottom: 8px;
+  padding: 7px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f8fcf9;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.08);
 }
 
 .history-search-row .secondary-button {
-  padding: 9px 12px;
+  padding: 7px 8px;
+}
+
+.history-search-row .close-action-button {
+  padding: 7px 8px;
+}
+
+.history-search-row .field {
+  padding: 7px 8px;
+}
+
+.history-search-row .field-label {
+  font-size: 11px;
 }
 
 .reprint-preview-box {
@@ -2128,6 +2144,25 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .preview-modal-backdrop {
   z-index: 130;
+}
+
+.history-reprint-modal {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.history-reprint-modal > .panel-header {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
+  padding: 8px 12px;
+}
+
+.history-reprint-modal > .panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .preview-modal {
@@ -7417,11 +7452,11 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .a4-store-discount,
 .a4-store-words {
-  min-height: 4mm;
-  padding: 1px 4px;
+  min-height: 5.5mm;
+  padding: 2px 4px;
   border-bottom: 1px solid #111;
   text-align: center;
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .a4-store-bottom {
@@ -7436,16 +7471,16 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   flex-direction: column;
   justify-content: center;
   gap: 3px;
-  padding: 2px 5px;
+  padding: 4px 6px;
   border-right: 1px solid #111;
   border-bottom: 1px solid #111;
   text-align: center;
-  font-size: 8px;
+  font-size: 10.5px;
   line-height: 1.18;
 }
 
 .a4-store-bank strong {
-  font-size: 8.5px;
+  font-size: 11px;
 }
 
 .a4-store-right-bottom {
@@ -7458,7 +7493,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .a4-store-payment-summary {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  grid-auto-rows: 4.4mm;
+  grid-auto-rows: 6mm;
   border-bottom: 1px solid #111;
 }
 
@@ -7481,36 +7516,33 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 }
 
 .a4-store-payment-summary span {
-  font-size: 6.4px;
+  font-size: 7.4px;
+}
+
+.thermal-bottom-summary-group {
+  display: block;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.handover-ledger-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
 }
 
 .a4-store-payment-summary strong {
-  font-size: 7.3px;
-}
-
-.a4-store-payment-summary .a4-store-bill-amount {
-  background: #f1f5f9;
-  box-shadow: inset 0 0 0 1px #111;
-  font-weight: 900;
-}
-
-.a4-store-payment-summary .a4-store-bill-amount span {
-  color: #111;
-  font-size: 7px;
-  font-weight: 900;
-}
-
-.a4-store-payment-summary .a4-store-bill-amount strong {
-  color: #000;
-  font-size: 9.4px;
-  font-weight: 950;
+  font-size: 8.8px;
 }
 
 .a4-store-gst {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 6.5px;
+  font-size: 7.2px;
 }
 
 .a4-store-gst caption {
@@ -7522,7 +7554,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .a4-store-gst th,
 .a4-store-gst td {
-  padding: 0.5px 2px;
+  padding: 1px 2px;
   border-right: 1px solid #111;
   border-bottom: 1px solid #111;
   text-align: right;

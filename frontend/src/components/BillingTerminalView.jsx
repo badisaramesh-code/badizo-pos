@@ -6265,20 +6265,10 @@ export default function BillingTerminalView({ isActive = true }) {
             }
           }}
         >
-          <div className="modal">
+          <div className="modal history-reprint-modal">
             <div className="panel-header">
               <h2 className="panel-title">Old Bills / Reprint</h2>
-              <button
-                className="close-action-button"
-                type="button"
-                onClick={() => {
-                  setShowHistory(false);
-                  setSelectedHistoryInvoice(null);
-                  setGatePassPreview(null);
-                }}
-              >
-                Close
-              </button>
+              <span className="status-chip">{filteredInvoiceHistory.length} bills</span>
             </div>
             <div className="panel-body">
               <form className="history-search-row" onSubmit={(event) => {
@@ -6339,7 +6329,17 @@ export default function BillingTerminalView({ isActive = true }) {
                   setSelectedHistoryInvoice(null);
                   setGatePassPreview(null);
                 }} type="button">Clear</button>
-                <span className="status-chip">{filteredInvoiceHistory.length} bills</span>
+                <button
+                  className="close-action-button"
+                  type="button"
+                  onClick={() => {
+                    setShowHistory(false);
+                    setSelectedHistoryInvoice(null);
+                    setGatePassPreview(null);
+                  }}
+                >
+                  Close
+                </button>
               </form>
               <table className="history-table">
                 <thead>

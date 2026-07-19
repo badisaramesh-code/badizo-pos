@@ -95,7 +95,7 @@ function getReportNumber(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
-function ReportHeader({ title, onExcel, onPdf }) {
+function ReportHeader({ title, onExcel, onPdf, onClose }) {
   return (
     <div className="panel-header green">
       <h2 className="panel-title">{title}</h2>
@@ -103,6 +103,7 @@ function ReportHeader({ title, onExcel, onPdf }) {
         <button className="header-print-button report-print-trigger" type="button">Print Report</button>
         <button className="header-print-button" type="button" onClick={onExcel}>Export Excel</button>
         <button className="header-print-button" type="button" onClick={onPdf}>Export PDF</button>
+        {onClose && <button className="close-action-button" type="button" onClick={onClose}>Close</button>}
       </div>
     </div>
   );
@@ -1614,7 +1615,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       default:
         return (
           <section className="panel">
-            <ReportHeader title="Daily Sales Report" onExcel={exportDailyExcel} onPdf={exportPdf} />
+            <ReportHeader title="Daily Sales Report" onExcel={exportDailyExcel} onPdf={exportPdf} onClose={onClose} />
             <div className="panel-body form-stack">
               <section className="report-summary-strip">
                 <span>Bills: <strong>{Number(dailyReport.totals.billCount || 0)}</strong></span>

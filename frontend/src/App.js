@@ -119,7 +119,7 @@ export default function App() {
   const views = {
     dashboard: <DashboardView setActiveWorkspace={setActiveWorkspace} />,
     billing: <BillingTerminalView isActive={activeWorkspace === 'billing'} />,
-    closing: <CounterClosingView />,
+    closing: <CounterClosingView onClose={() => setActiveWorkspace('billing')} />,
     cashLedger: <CounterCashLedgerView />,
     gatePass: <GatePassView />,
     inventory: (

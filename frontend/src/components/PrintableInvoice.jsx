@@ -905,7 +905,7 @@ function A4OnePageInvoice({ invoice, template }) {
             {loyaltyRedeemAmount > 0 && (
               <div><span>Less Loyalty Amount ({formatPlainMoney(loyaltyRedeemPoints)} pts)</span><strong>-{formatPlainMoney(loyaltyRedeemAmount)}</strong></div>
             )}
-            <div className="a4-store-bill-amount"><span>Bill Amount</span><strong>{formatPlainMoney(billingTotal)}</strong></div>
+            <div><span>Bill Amount</span><strong>{formatPlainMoney(billingTotal)}</strong></div>
             <div><span>Qty Total</span><strong>{formatPlainMoney(qtyTotal)}</strong></div>
             {invoice.paymentMode === 'Mixed' && getPaymentSplits(invoice).map((payment) => (
               <div key={payment.mode}><span>{payment.mode} Paid</span><strong>{formatPlainMoney(payment.amount)}</strong></div>
@@ -999,13 +999,13 @@ function renderSection(section, invoice, template) {
     case 'freeProducts':
       return <ThermalFreeProducts invoice={invoice} title={section.title} />;
     case 'thermalTotals':
-      return <><SectionLine /><div className="print-center thermal-summary-title"><strong>Total Summary</strong></div><ThermalTotals invoice={invoice} /></>;
+      return <div className="thermal-summary-section thermal-total-summary"><SectionLine /><div className="print-center thermal-summary-title"><strong>Total Summary</strong></div><ThermalTotals invoice={invoice} /></div>;
     case 'amountWords':
       return <><SectionLine /><p><strong>({amountInWords(invoice.totals.grand)})</strong></p></>;
     case 'discountLine':
       return invoice.totals.discount > 0 ? <><SectionLine /><div className="print-row print-discount-row"><span>You Have Gained Discount Amount</span><strong>{formatPlainMoney(invoice.totals.discount)}</strong></div></> : null;
     case 'gstSummary':
-      return <><SectionLine /><div className="print-center thermal-summary-title"><strong>{invoice.taxType === 'INTERSTATE' ? 'IGST Summary' : 'GST Summary'}</strong></div><GstSummary invoice={invoice} /></>;
+      return <div className="thermal-summary-section thermal-gst-summary"><SectionLine /><div className="print-center thermal-summary-title"><strong>{invoice.taxType === 'INTERSTATE' ? 'IGST Summary' : 'GST Summary'}</strong></div><GstSummary invoice={invoice} /></div>;
     case 'terms': {
       const terms = getThermalTerms(invoice, template);
       return <><SectionLine /><div className="print-terms">{terms.map((term, index) => <p key={`${index}-${term}`}>{term}</p>)}</div></>;
@@ -1043,14 +1043,31 @@ export default function PrintableInvoice({ invoice, mode }) {
     return <A4OnePageInvoice invoice={invoice} template={template} />;
   }
 
+  const thermalSummaryStart = template.sections.findIndex((section) => section.id === 'billing-total');
+  const thermalSummaryEnd = template.sections.findIndex((section) => section.id === 'gst-summary');
+
   return (
     <div className={`print-invoice ${template.paperClass}`}>
       <div className="thermal-brand-edge">Badizo</div>
-      {template.sections.map((section) => (
-        <React.Fragment key={section.id}>
-          {renderSection(section, invoice, template)}
-        </React.Fragment>
-      ))}
+      {template.sections.map((section, index) => {
+        if (index === thermalSummaryStart && thermalSummaryEnd >= thermalSummaryStart) {
+          return (
+            <div className="thermal-bottom-summary-group" key="thermal-bottom-summary-group">
+              {template.sections.slice(thermalSummaryStart, thermalSummaryEnd + 1).map((summarySection) => (
+                <React.Fragment key={summarySection.id}>
+                  {renderSection(summarySection, invoice, template)}
+                </React.Fragment>
+              ))}
+            </div>
+          );
+        }
+        if (index > thermalSummaryStart && index <= thermalSummaryEnd) return null;
+        return (
+          <React.Fragment key={section.id}>
+            {renderSection(section, invoice, template)}
+          </React.Fragment>
+        );
+      })}
       <SectionLine />
       <div className="thermal-bill-qr-wrap">
         <BillQrCode invoice={invoice} className="thermal-bill-qr" />

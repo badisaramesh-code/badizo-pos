@@ -157,7 +157,7 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-export default function CounterClosingView() {
+export default function CounterClosingView({ onClose }) {
   const currentUser = getStoredUser();
   const isCounterUser = currentUser?.role === 'COUNTER';
   const userCounterNo = currentUser?.counter_no || 1;
@@ -1085,12 +1085,15 @@ export default function CounterClosingView() {
         <section className="panel" ref={historySectionRef}>
           <div className="panel-header green">
             <h2 className="panel-title">Daily Handover Sheets Ledger</h2>
-            <form className="report-filter-row" onSubmit={(event) => { event.preventDefault(); loadHistory(); }}>
-              <label className="date-range-field"><span className="field-label">From</span><input className="field report-date-input" type="date" value={normalizeDateInput(historyFrom)} onChange={(event) => setHistoryFrom(normalizeDateInput(event.target.value))} /></label>
-              <label className="date-range-field"><span className="field-label">To</span><input className="field report-date-input" type="date" value={normalizeDateInput(historyTo)} onChange={(event) => setHistoryTo(normalizeDateInput(event.target.value))} /></label>
-              <button className="secondary-button" type="submit">Load</button>
-              <button className="secondary-button" type="button" onClick={exportHistoryExcel}>Export Excel</button>
-            </form>
+            <div className="handover-ledger-header-actions">
+              <form className="report-filter-row" onSubmit={(event) => { event.preventDefault(); loadHistory(); }}>
+                <label className="date-range-field"><span className="field-label">From</span><input className="field report-date-input" type="date" value={normalizeDateInput(historyFrom)} onChange={(event) => setHistoryFrom(normalizeDateInput(event.target.value))} /></label>
+                <label className="date-range-field"><span className="field-label">To</span><input className="field report-date-input" type="date" value={normalizeDateInput(historyTo)} onChange={(event) => setHistoryTo(normalizeDateInput(event.target.value))} /></label>
+                <button className="secondary-button" type="submit">Load</button>
+                <button className="secondary-button" type="button" onClick={exportHistoryExcel}>Export Excel</button>
+              </form>
+              {onClose && <button className="close-action-button" type="button" onClick={onClose}>Close</button>}
+            </div>
           </div>
           <div className="panel-body table-scroll">
             <table className="history-table">
