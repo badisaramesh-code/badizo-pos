@@ -218,6 +218,20 @@ function counterDisplayLabel(value, fallbackCounterNo = 1) {
   return `Counter ${fallbackCounterNo}`;
 }
 
+function billingCounterLabelForUser(user, counterNo) {
+  const normalizedCounter = Number(counterNo || 1);
+  const username = String(user?.username || '').trim().toLowerCase();
+  const usernameSystemMatch = username.match(/^counter([1-6])$/);
+  const systemNo = Number(user?.system_no || user?.login_counter_no || usernameSystemMatch?.[1] || 0);
+  if (user?.role === 'COUNTER' && systemNo > 0) return `S${systemNo}/Counter${normalizedCounter}`;
+
+  if (username === 'server' || user?.role === 'SERVER') return `SER/Counter${normalizedCounter}`;
+  const adminMatch = username.match(/^admin(\d+)$/);
+  if (adminMatch) return `AD${adminMatch[1]}/Counter${normalizedCounter}`;
+  if (username === 'admin' || user?.role === 'ADMIN') return `AD/Counter${normalizedCounter}`;
+  return `Counter ${normalizedCounter}`;
+}
+
 function counterLabelMatches(savedCounter, counterNo) {
   const text = String(savedCounter || '').trim().toLowerCase();
   const normalizedCounter = Number(counterNo || 1);
@@ -239,7 +253,7 @@ function CounterSaleSlip({ slip, shop, printedAt }) {
       </div>
       <div className="counter-sale-slip-rule" />
       <div className="counter-sale-slip-heading">COUNTER SALE</div>
-      <div className="counter-sale-slip-line"><span>Counter Detail</span><strong>Counter {slip?.counterNo || '-'}</strong></div>
+      <div className="counter-sale-slip-line"><span>Counter Detail</span><strong>{slip?.counterLabel || `Counter ${slip?.counterNo || '-'}`}</strong></div>
       <div className="counter-sale-slip-rule counter-detail-rule" />
       <div className="counter-sale-slip-line"><span>Bills</span><strong>{Number(counter.billCount || 0)}</strong></div>
       <div className="counter-sale-slip-line"><span>UPI Sale</span><strong>{formatSlipAmount(counter.upiSale)}</strong></div>
@@ -1234,7 +1248,7 @@ export default function BillingTerminalView({ isActive = true }) {
     return {
       invoiceNo,
       counterNo,
-      counterLabel: currentUser?.role === 'COUNTER' && currentUser?.system_no ? `S${currentUser.system_no}/Counter${counterNo}` : `Counter ${counterNo}`,
+      counterLabel: billingCounterLabelForUser(currentUser, counterNo),
       date: invoiceDate.date,
       time: invoiceDate.time,
       shop: shopSettings,
@@ -1283,7 +1297,7 @@ export default function BillingTerminalView({ isActive = true }) {
         igst: isInterstate ? totals.tax : 0
       }
     };
-  }, [billingMode, cart, cashReceived, changeDue, companyName, counterNo, currentUser?.role, currentUser?.system_no, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, invoiceDate, invoiceNo, mixedPaidTotal, mixedPayment, paymentMode, shopSettings, totals]);
+  }, [billingMode, cart, cashReceived, changeDue, companyName, counterNo, currentUser?.login_counter_no, currentUser?.role, currentUser?.system_no, currentUser?.username, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, invoiceDate, invoiceNo, mixedPaidTotal, mixedPayment, paymentMode, shopSettings, totals]);
 
   function closeBillingActivityPanels() {
     setShowHistory(false);
@@ -2768,7 +2782,8 @@ export default function BillingTerminalView({ isActive = true }) {
       const defaultSlipHeightMm = 125;
       const thermalFeedMarginMm = getThermalFeedMarginMm(shopSettings);
       const slip = await fetchCounterSaleSlip({ date: localIsoDate(printedAt), counterNo });
-      const slipMarkup = renderToStaticMarkup(<CounterSaleSlip slip={slip} shop={shopSettings} printedAt={printedAt} />);
+      const counterLabel = billingCounterLabelForUser(currentUser, counterNo);
+      const slipMarkup = renderToStaticMarkup(<CounterSaleSlip slip={{ ...slip, counterLabel }} shop={shopSettings} printedAt={printedAt} />);
       const slipPrintHtml = `<!doctype html>
 <html>
 <head>
@@ -2976,10 +2991,14 @@ export default function BillingTerminalView({ isActive = true }) {
     setSaleReportError('');
     setErrorMessage('');
     try {
-      const report = await fetchPosSaleReport(getSaleReportRequest(event));
-      setSaleReport(report);
+      const reportRequest = getSaleReportRequest(event);
+      const report = await fetchPosSaleReport(reportRequest);
+      const reportWithCounterLabel = reportRequest.counterNo
+        ? { ...report, counter: billingCounterLabelForUser(currentUser, reportRequest.counterNo) }
+        : report;
+      setSaleReport(reportWithCounterLabel);
       setStatusMessage(`Sale report loaded: ${report.from} to ${report.to}.`);
-      return report;
+      return reportWithCounterLabel;
     } catch (err) {
       const message = err.response?.data?.error || err.message || 'Unable to load sale report.';
       setSaleReportError(message);
@@ -5515,7 +5534,7 @@ export default function BillingTerminalView({ isActive = true }) {
           <div className="usage-detail-grid">
             <span>User</span><strong>{currentUser?.username || '-'}</strong>
             <span>Role</span><strong>{currentUser?.role || '-'}</strong>
-            <span>Counter</span><strong>{currentUser?.role === 'COUNTER' && currentUser?.system_no ? `S${currentUser.system_no}/Counter${counterNo}` : `Counter ${counterNo}`}</strong>
+            <span>Counter</span><strong>{billingCounterLabelForUser(currentUser, counterNo)}</strong>
             <span>Mode</span><strong>{activeMode.shortLabel || activeMode.label}</strong>
             <span>Print</span><strong>{printMode}</strong>
           </div>

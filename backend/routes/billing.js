@@ -167,9 +167,21 @@ function requestedCounterForUser(user, requestedCounterNo) {
 
 function billingCounterLabel(user, counterNo) {
   const normalizedCounter = Number.parseInt(counterNo, 10) || 1;
-  const systemNo = Number.parseInt(user?.system_no, 10) || 0;
+  const username = String(user?.username || '').trim().toLowerCase();
+  const usernameSystemMatch = username.match(/^counter([1-6])$/);
+  const systemNo = Number.parseInt(user?.system_no || user?.login_counter_no || usernameSystemMatch?.[1], 10) || 0;
   if (user?.role === 'COUNTER' && systemNo > 0) {
     return `S${systemNo}/Counter${normalizedCounter}`;
+  }
+  if (username === 'server' || user?.role === 'SERVER') {
+    return `SER/Counter${normalizedCounter}`;
+  }
+  const adminMatch = username.match(/^admin(\d+)$/);
+  if (adminMatch) {
+    return `AD${adminMatch[1]}/Counter${normalizedCounter}`;
+  }
+  if (username === 'admin' || user?.role === 'ADMIN') {
+    return `AD/Counter${normalizedCounter}`;
   }
   return `Counter ${normalizedCounter}`;
 }

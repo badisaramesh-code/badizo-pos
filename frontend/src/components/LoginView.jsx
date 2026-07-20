@@ -14,7 +14,6 @@ const FALLBACK_LOGIN_OPTIONS = [
   { label: 'Security 1', username: 'security1' },
   { label: 'Security 2', username: 'security2' }
 ];
-const SYSTEM_OPTIONS = [1, 2, 3, 4, 5, 6];
 const COUNTER_OPTIONS = [1, 2, 3, 4, 5, 6];
 
 function loginModeFromUrl() {
@@ -62,13 +61,15 @@ function mergeLoginOptions(options) {
 export default function LoginView({ onLogin }) {
   const loginMode = loginModeFromUrl();
   const fixedLoginUser = fixedLoginUserFromUrl();
+  const fixedSystemMatch = fixedLoginUser.match(/^counter([1-6])$/i);
+  const assignedSystemNo = fixedSystemMatch?.[1] || '1';
   const isSecurityLogin = loginMode === 'security';
   const initialOptions = useMemo(() => {
     const modeOptions = filterLoginOptions(FALLBACK_LOGIN_OPTIONS, loginMode);
     return fixedLoginUser ? modeOptions.filter((option) => option.username === fixedLoginUser) : modeOptions;
   }, [loginMode, fixedLoginUser]);
   const [username, setUsername] = useState(initialOptions[0]?.username || fixedLoginUser || 'admin1');
-  const [systemNo, setSystemNo] = useState('1');
+  const [systemNo] = useState(assignedSystemNo);
   const [selectedCounterNo, setSelectedCounterNo] = useState('1');
   const [personName, setPersonName] = useState('');
   const [password, setPassword] = useState('');
@@ -123,7 +124,8 @@ export default function LoginView({ onLogin }) {
     setIsLoading(true);
 
     try {
-      const user = await login(username, password, effectivePersonName, isCounterLogin ? {
+      const loginUsername = isCounterLogin ? `counter${systemNo}` : username;
+      const user = await login(loginUsername, password, effectivePersonName, isCounterLogin ? {
         systemNo,
         counterNo: selectedCounterNo
       } : {});
@@ -152,24 +154,16 @@ export default function LoginView({ onLogin }) {
           <>
             <div className="fixed-login-role">
               <span className="field-label">Login</span>
-              <strong>{isCounterLogin ? `System ${systemNo} / Counter ${selectedCounterNo}` : (selectedLogin?.label || username)}</strong>
+              <strong>{isCounterLogin ? `System ${systemNo}` : (selectedLogin?.label || username)}</strong>
             </div>
 
             {isCounterLogin && (
-              <>
-                <label>
-                  <span className="field-label">System Login</span>
-                  <select className="field" value={systemNo} onChange={(event) => setSystemNo(event.target.value)}>
-                    {SYSTEM_OPTIONS.map((number) => <option key={number} value={number}>System {number}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span className="field-label">Billing Counter</span>
-                  <select className="field" value={selectedCounterNo} onChange={(event) => setSelectedCounterNo(event.target.value)}>
-                    {COUNTER_OPTIONS.map((number) => <option key={number} value={number}>Counter {number}</option>)}
-                  </select>
-                </label>
-              </>
+              <label>
+                <span className="field-label">Select Counter</span>
+                <select className="field" value={selectedCounterNo} onChange={(event) => setSelectedCounterNo(event.target.value)}>
+                  {COUNTER_OPTIONS.map((number) => <option key={number} value={number}>Counter {number}</option>)}
+                </select>
+              </label>
             )}
 
             <label>
@@ -178,7 +172,7 @@ export default function LoginView({ onLogin }) {
                 className="field"
                 value={personName}
                 onChange={(event) => setPersonName(event.target.value)}
-                placeholder="Enter duty person name"
+                placeholder={isCounterLogin ? 'Enter counter person name or code' : 'Enter duty person name'}
                 autoFocus
               />
             </label>
@@ -187,15 +181,13 @@ export default function LoginView({ onLogin }) {
           <>
             {isCounterLogin ? (
               <>
+                <div className="fixed-login-role">
+                  <span className="field-label">Login</span>
+                  <strong>System {systemNo}</strong>
+                </div>
                 <label>
-                  <span className="field-label">System Login</span>
-                  <select className="field" value={systemNo} onChange={(event) => setSystemNo(event.target.value)} autoFocus>
-                    {SYSTEM_OPTIONS.map((number) => <option key={number} value={number}>System {number}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span className="field-label">Billing Counter</span>
-                  <select className="field" value={selectedCounterNo} onChange={(event) => setSelectedCounterNo(event.target.value)}>
+                  <span className="field-label">Select Counter</span>
+                  <select className="field" value={selectedCounterNo} onChange={(event) => setSelectedCounterNo(event.target.value)} autoFocus>
                     {COUNTER_OPTIONS.map((number) => <option key={number} value={number}>Counter {number}</option>)}
                   </select>
                 </label>
@@ -207,21 +199,6 @@ export default function LoginView({ onLogin }) {
                     onChange={(event) => setPersonName(event.target.value)}
                     placeholder="Enter counter person name or code"
                   />
-                </label>
-                <label>
-                  <span className="field-label">Counter password login</span>
-                  <select
-                    className="field"
-                    value={username}
-                    onChange={(event) => {
-                      setUsername(event.target.value);
-                      setPassword('');
-                    }}
-                  >
-                    {loginOptions.filter((role) => isCounterLoginOption(role)).map((role) => (
-                      <option key={role.username} value={role.username}>{role.label}</option>
-                    ))}
-                  </select>
                 </label>
               </>
             ) : (
