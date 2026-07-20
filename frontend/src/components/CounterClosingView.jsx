@@ -94,6 +94,13 @@ function makeDefaultEntries() {
   return normalizeEntryCount([]);
 }
 
+function counterDisplayLabel(currentUser, counterNo) {
+  if (currentUser?.role === 'COUNTER' && currentUser?.system_no) {
+    return `S${currentUser.system_no}/Counter${counterNo}`;
+  }
+  return `Counter ${counterNo}`;
+}
+
 function normalizeSnapshot(source) {
   const counterSales = toNumber(source?.counter_sales);
   const cashSales = toNumber(source?.cash_sales);
@@ -159,6 +166,7 @@ export default function CounterClosingView() {
   const [historyFrom, setHistoryFrom] = useState(todayIso());
   const [historyTo, setHistoryTo] = useState(todayIso());
   const [counterNo, setCounterNo] = useState(userCounterNo);
+  const currentCounterLabel = counterDisplayLabel(currentUser, counterNo);
   const [counterCount, setCounterCount] = useState(6);
   const [shopName, setShopName] = useState('Hyper Fresh Mart LLP');
   const [sheetNo, setSheetNo] = useState('');
@@ -345,7 +353,7 @@ export default function CounterClosingView() {
           if (nextSnapshot.counter_sales > 0) {
             setStatusMessage('Sales details loaded for selected sale date and counter.');
           } else if (nextSnapshot.all_counter_sales > 0) {
-            setStatusMessage(`No bills found for Counter ${counterNo} on ${formatDisplayDate(saleDate)}. All counters have sales for this date.`);
+            setStatusMessage(`No bills found for ${currentCounterLabel} on ${formatDisplayDate(saleDate)}. All counters have sales for this date.`);
           } else {
             const latestBillDate = nextSnapshot.latest_invoice_date
               ? ` Latest bill date in this database is ${formatDisplayDate(nextSnapshot.latest_invoice_date)}.`
@@ -657,10 +665,10 @@ export default function CounterClosingView() {
     <div class="meta">
       <span>Date : ${escapeHtml(formatDisplayDate(date))}</span>
       <strong>Counter Handover Daily Sheet</strong>
-      <span>Counter : ${escapeHtml(counterNo)}</span>
+      <span>Counter : ${escapeHtml(currentCounterLabel)}</span>
     </div>
     <div class="sale-row">
-      <strong>Counter ${escapeHtml(counterNo)} sale Rs. ${normalizeAmount(snapshot.counter_sales).toFixed(2)}</strong>
+      <strong>${escapeHtml(currentCounterLabel)} sale Rs. ${normalizeAmount(snapshot.counter_sales).toFixed(2)}</strong>
       <strong>All Counters sale Rs : ${normalizeAmount(snapshot.all_counter_sales).toFixed(2)}</strong>
     </div>
     <div class="sale-row">
@@ -889,7 +897,7 @@ export default function CounterClosingView() {
             <span className="handover-heading-title">Accounting DR / CR Transactions</span>
             <span className="handover-heading-chip">Sale Date: {formatDisplayDate(date)}</span>
             <span className="handover-heading-chip">Sheet: {sheetNo || '-'}</span>
-            <span className="handover-heading-chip">Counter: {counterNo}</span>
+            <span className="handover-heading-chip">Counter: {currentCounterLabel}</span>
             <span className="handover-heading-chip">Added: {formatDateTime(sheetMeta.created_at)}</span>
             <span className="handover-heading-chip">Edited: {formatDateTime(sheetMeta.updated_at)}</span>
           </div>
@@ -1119,10 +1127,10 @@ export default function CounterClosingView() {
           <div className="handover-print-meta">
             <span>Date : {formatDisplayDate(date)}</span>
             <strong>Counter Handover Daily Sheet</strong>
-            <span>Counter: {counterNo}</span>
+            <span>Counter: {currentCounterLabel}</span>
           </div>
           <div className="handover-print-sale-row">
-            <strong>Counter {counterNo} sale Rs. {normalizeAmount(snapshot.counter_sales).toFixed(2)}</strong>
+            <strong>{currentCounterLabel} sale Rs. {normalizeAmount(snapshot.counter_sales).toFixed(2)}</strong>
             <strong>All Counters sale Rs : {normalizeAmount(snapshot.all_counter_sales).toFixed(2)}</strong>
           </div>
           <div className="handover-print-sale-row">

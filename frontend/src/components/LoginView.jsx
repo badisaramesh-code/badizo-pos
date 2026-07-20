@@ -14,6 +14,8 @@ const FALLBACK_LOGIN_OPTIONS = [
   { label: 'Security 1', username: 'security1' },
   { label: 'Security 2', username: 'security2' }
 ];
+const SYSTEM_OPTIONS = [1, 2, 3, 4, 5, 6];
+const COUNTER_OPTIONS = [1, 2, 3, 4, 5, 6];
 
 function loginModeFromUrl() {
   const params = new URLSearchParams(window.location.search || '');
@@ -43,6 +45,10 @@ function filterLoginOptions(options, mode) {
   return options;
 }
 
+function isCounterLoginOption(option, username = '') {
+  return option?.role === 'COUNTER' || /^counter[1-6]$/i.test(String(option?.username || username || ''));
+}
+
 function mergeLoginOptions(options) {
   const merged = [...(Array.isArray(options) ? options : [])];
   FALLBACK_LOGIN_OPTIONS.forEach((fallback) => {
@@ -62,6 +68,8 @@ export default function LoginView({ onLogin }) {
     return fixedLoginUser ? modeOptions.filter((option) => option.username === fixedLoginUser) : modeOptions;
   }, [loginMode, fixedLoginUser]);
   const [username, setUsername] = useState(initialOptions[0]?.username || fixedLoginUser || 'admin1');
+  const [systemNo, setSystemNo] = useState('1');
+  const [selectedCounterNo, setSelectedCounterNo] = useState('1');
   const [personName, setPersonName] = useState('');
   const [password, setPassword] = useState('');
   const [loginOptions, setLoginOptions] = useState(initialOptions.length ? initialOptions : FALLBACK_LOGIN_OPTIONS);
@@ -69,6 +77,7 @@ export default function LoginView({ onLogin }) {
   const [isLoading, setIsLoading] = useState(false);
   const selectedLogin = loginOptions.find((option) => option.username === username);
   const isFixedLogin = Boolean(fixedLoginUser);
+  const isCounterLogin = loginMode === 'counter' || isCounterLoginOption(selectedLogin, username);
 
   useEffect(() => {
     let isMounted = true;
@@ -114,7 +123,10 @@ export default function LoginView({ onLogin }) {
     setIsLoading(true);
 
     try {
-      const user = await login(username, password, effectivePersonName);
+      const user = await login(username, password, effectivePersonName, isCounterLogin ? {
+        systemNo,
+        counterNo: selectedCounterNo
+      } : {});
       onLogin(user);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to login.');
@@ -140,11 +152,28 @@ export default function LoginView({ onLogin }) {
           <>
             <div className="fixed-login-role">
               <span className="field-label">Login</span>
-              <strong>{selectedLogin?.label || username}</strong>
+              <strong>{isCounterLogin ? `System ${systemNo} / Counter ${selectedCounterNo}` : (selectedLogin?.label || username)}</strong>
             </div>
 
+            {isCounterLogin && (
+              <>
+                <label>
+                  <span className="field-label">System Login</span>
+                  <select className="field" value={systemNo} onChange={(event) => setSystemNo(event.target.value)}>
+                    {SYSTEM_OPTIONS.map((number) => <option key={number} value={number}>System {number}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span className="field-label">Billing Counter</span>
+                  <select className="field" value={selectedCounterNo} onChange={(event) => setSelectedCounterNo(event.target.value)}>
+                    {COUNTER_OPTIONS.map((number) => <option key={number} value={number}>Counter {number}</option>)}
+                  </select>
+                </label>
+              </>
+            )}
+
             <label>
-              <span className="field-label">Person Name</span>
+              <span className="field-label">{isCounterLogin ? 'Counter person name / code' : 'Person Name'}</span>
               <input
                 className="field"
                 value={personName}
@@ -156,32 +185,75 @@ export default function LoginView({ onLogin }) {
           </>
         ) : (
           <>
-            <label>
-              <span className="field-label">Role</span>
-              <select
-                className="field"
-                value={username}
-                onChange={(event) => {
-                  setUsername(event.target.value);
-                  setPassword('');
-                }}
-                autoFocus
-              >
-                {loginOptions.map((role) => (
-                  <option key={role.username} value={role.username}>{role.label}</option>
-                ))}
-              </select>
-            </label>
+            {isCounterLogin ? (
+              <>
+                <label>
+                  <span className="field-label">System Login</span>
+                  <select className="field" value={systemNo} onChange={(event) => setSystemNo(event.target.value)} autoFocus>
+                    {SYSTEM_OPTIONS.map((number) => <option key={number} value={number}>System {number}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span className="field-label">Billing Counter</span>
+                  <select className="field" value={selectedCounterNo} onChange={(event) => setSelectedCounterNo(event.target.value)}>
+                    {COUNTER_OPTIONS.map((number) => <option key={number} value={number}>Counter {number}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span className="field-label">Counter person name / code</span>
+                  <input
+                    className="field"
+                    value={personName}
+                    onChange={(event) => setPersonName(event.target.value)}
+                    placeholder="Enter counter person name or code"
+                  />
+                </label>
+                <label>
+                  <span className="field-label">Counter password login</span>
+                  <select
+                    className="field"
+                    value={username}
+                    onChange={(event) => {
+                      setUsername(event.target.value);
+                      setPassword('');
+                    }}
+                  >
+                    {loginOptions.filter((role) => isCounterLoginOption(role)).map((role) => (
+                      <option key={role.username} value={role.username}>{role.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            ) : (
+              <>
+                <label>
+                  <span className="field-label">Role</span>
+                  <select
+                    className="field"
+                    value={username}
+                    onChange={(event) => {
+                      setUsername(event.target.value);
+                      setPassword('');
+                    }}
+                    autoFocus
+                  >
+                    {loginOptions.map((role) => (
+                      <option key={role.username} value={role.username}>{role.label}</option>
+                    ))}
+                  </select>
+                </label>
 
-            <label>
-              <span className="field-label">Person Name</span>
-              <input
-                className="field"
-                value={personName}
-                onChange={(event) => setPersonName(event.target.value)}
-                placeholder="Enter duty person name"
-              />
-            </label>
+                <label>
+                  <span className="field-label">Person Name</span>
+                  <input
+                    className="field"
+                    value={personName}
+                    onChange={(event) => setPersonName(event.target.value)}
+                    placeholder="Enter duty person name"
+                  />
+                </label>
+              </>
+            )}
           </>
         )}
 

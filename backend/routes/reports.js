@@ -6,13 +6,22 @@ const { csvLine, normalizeDate, todayIso } = require('../utils/formatters');
 
 function normalizeCounter(value) {
   const text = String(value || '').trim();
-  return /^Counter \d+$/.test(text) ? text : '';
+  return /^Counter\s*\d+$/i.test(text) ? text.replace(/^Counter\s*/i, 'Counter ') : '';
 }
 
 function normalizeCounterNoFromLabel(value) {
   const text = String(value || '').trim();
-  const match = text.match(/^Counter\s+(\d+)$/i);
+  const match = text.match(/(?:^|\/)Counter\s*(\d+)$/i);
   return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+function counterRegexForNo(counterNo) {
+  const number = Number.parseInt(counterNo, 10) || 0;
+  return number > 0 ? `(^|/)Counter[[:space:]]*${number}$` : '';
+}
+
+function counterRegexForLabel(label) {
+  return counterRegexForNo(normalizeCounterNoFromLabel(label));
 }
 
 function nextIsoDate(dateText) {
@@ -155,8 +164,8 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
     let counterSql = '';
 
     if (counter) {
-      counterSql = 'AND i.billing_counter = ?';
-      values.push(counter);
+      counterSql = 'AND i.billing_counter REGEXP ?';
+      values.push(counterRegexForLabel(counter));
     }
 
     const [rows] = await db.query(
@@ -254,8 +263,8 @@ router.get('/reprints', authorize('SERVER', 'ADMIN'), async (req, res) => {
     const filters = ['DATE(al.created_at) BETWEEN ? AND ?'];
 
     if (counter) {
-      filters.push('i.billing_counter = ?');
-      values.push(counter);
+      filters.push('i.billing_counter REGEXP ?');
+      values.push(counterRegexForLabel(counter));
     }
 
     if (search) {
@@ -330,19 +339,19 @@ router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async 
          FROM invoice_payments ip
          INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
           WHERE DATE(i.created_at) = ?
-            AND i.billing_counter = ?
+            AND i.billing_counter REGEXP ?
             AND i.invoice_status <> 'CANCELLED'
          UNION ALL
          SELECT i.invoice_no, i.payment_mode, i.grand_total AS amount
          FROM invoices i
          LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
           WHERE DATE(i.created_at) = ?
-            AND i.billing_counter = ?
+            AND i.billing_counter REGEXP ?
             AND i.invoice_status <> 'CANCELLED'
             AND ip.id IS NULL
        ) payments
        GROUP BY payment_mode`,
-      [date, `Counter ${counterNo}`, date, `Counter ${counterNo}`]
+      [date, counterRegexForNo(counterNo), date, counterRegexForNo(counterNo)]
     );
 
     const [counterBillRows] = await db.query(
@@ -353,9 +362,9 @@ router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async 
               COALESCE(SUM(CASE WHEN exchange_total > 0 THEN grand_total ELSE 0 END), 0) AS exchange_net_total
        FROM invoices
         WHERE DATE(created_at) = ?
-          AND billing_counter = ?
+          AND billing_counter REGEXP ?
           AND invoice_status <> 'CANCELLED'`,
-      [date, `Counter ${counterNo}`]
+      [date, counterRegexForNo(counterNo)]
     );
 
     const [allRows] = await db.query(
@@ -455,10 +464,11 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
     let counterSql = '';
 
     if (counter) {
-      counterSql = 'AND i.billing_counter = ?';
-      paymentValues.push(counter);
-      invoiceValues.push(counter);
-      gstValues.push(counter);
+      counterSql = 'AND i.billing_counter REGEXP ?';
+      const counterRegex = counterRegexForLabel(counter);
+      paymentValues.push(counterRegex);
+      invoiceValues.push(counterRegex);
+      gstValues.push(counterRegex);
     }
 
     const [paymentRows] = await db.query(
@@ -508,7 +518,7 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
            FROM invoices first_bill
            WHERE first_bill.created_at >= ? AND first_bill.created_at < ?
              AND first_bill.invoice_status <> 'CANCELLED'
-             ${counter ? 'AND first_bill.billing_counter = ?' : ''}
+             ${counter ? 'AND first_bill.billing_counter REGEXP ?' : ''}
            ORDER BY first_bill.created_at ASC, first_bill.id ASC
            LIMIT 1
          ) AS starting_invoice_no,
@@ -517,11 +527,11 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
            FROM invoices last_bill
            WHERE last_bill.created_at >= ? AND last_bill.created_at < ?
              AND last_bill.invoice_status <> 'CANCELLED'
-             ${counter ? 'AND last_bill.billing_counter = ?' : ''}
+             ${counter ? 'AND last_bill.billing_counter REGEXP ?' : ''}
            ORDER BY last_bill.created_at DESC, last_bill.id DESC
            LIMIT 1
          ) AS ending_invoice_no`,
-      counter ? [start, nextEnd, counter, start, nextEnd, counter] : [start, nextEnd, start, nextEnd]
+      counter ? [start, nextEnd, counterRegexForLabel(counter), start, nextEnd, counterRegexForLabel(counter)] : [start, nextEnd, start, nextEnd]
     );
 
     const [gstRows] = await db.query(
@@ -711,8 +721,8 @@ async function getDailySalesForExport(from, to, counter) {
   const values = [from, to];
   let counterSql = '';
   if (counter) {
-    counterSql = 'AND i.billing_counter = ?';
-    values.push(counter);
+    counterSql = 'AND i.billing_counter REGEXP ?';
+    values.push(counterRegexForLabel(counter));
   }
 
   const [rows] = await db.query(
@@ -957,8 +967,8 @@ router.get('/exchange-bills', authorize('SERVER', 'ADMIN'), async (req, res) => 
     let counterSql = '';
 
     if (counter) {
-      counterSql = 'AND i.billing_counter = ?';
-      values.push(counter);
+      counterSql = 'AND i.billing_counter REGEXP ?';
+      values.push(counterRegexForLabel(counter));
     }
 
     const [rows] = await db.query(

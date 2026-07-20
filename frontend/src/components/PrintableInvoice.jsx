@@ -224,7 +224,7 @@ function MetaGrid({ invoice }) {
   return (
     <div className="print-meta-grid">
       <span>INVOICE NO. {invoice.invoiceNo}</span>
-      <span>Counter - {invoice.counterNo}</span>
+      <span>Counter - {invoice.counterLabel || invoice.counterNo}</span>
       <span>Date : {invoice.date}</span>
       <span>Time : {invoice.time}</span>
       <span>Bill Type : {taxBillLabel}</span>
@@ -785,7 +785,7 @@ function A4StoreTop({ invoice }) {
         <span>Date</span><strong>{invoice.date}</strong>
         <span>payment mode</span><strong>{invoice.paymentMode}</strong>
         <span>Transaction ID</span><strong>{invoice.paymentReference || '-'}</strong>
-        <span>Counter</span><strong>{invoice.counterNo || '-'}</strong>
+        <span>Counter</span><strong>{invoice.counterLabel || invoice.counterNo || '-'}</strong>
         <span>Bill Type</span><strong>{taxBillLabel}</strong>
       </div>
     </div>

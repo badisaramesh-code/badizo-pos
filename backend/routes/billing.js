@@ -165,6 +165,21 @@ function requestedCounterForUser(user, requestedCounterNo) {
   return requestedCounterNo;
 }
 
+function billingCounterLabel(user, counterNo) {
+  const normalizedCounter = Number.parseInt(counterNo, 10) || 1;
+  const systemNo = Number.parseInt(user?.system_no, 10) || 0;
+  if (user?.role === 'COUNTER' && systemNo > 0) {
+    return `S${systemNo}/Counter${normalizedCounter}`;
+  }
+  return `Counter ${normalizedCounter}`;
+}
+
+function billingCounterMatches(savedCounter, counterNo) {
+  const text = String(savedCounter || '').trim().toLowerCase();
+  const normalizedCounter = Number.parseInt(counterNo, 10) || 1;
+  return !text || text === `counter ${normalizedCounter}` || text === `counter${normalizedCounter}` || text.endsWith(`/counter${normalizedCounter}`);
+}
+
 function enforceSavedStateCounter(user, savedState, counterNo) {
   if (user?.role !== 'COUNTER') return savedState;
   return { ...savedState, counterNo };
@@ -529,6 +544,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     checkoutTimer.mark('begin-transaction');
     const counterCount = await getCounterCount(connection);
     const counterNo = normalizeCounterNo(requestedCounterForUser(req.user, counter_no), counterCount);
+    const counterLabel = billingCounterLabel(req.user, counterNo);
     const allocatedInvoice = await allocateInvoiceNo(connection, counterNo);
     invoiceNo = allocatedInvoice.invoiceNo;
     checkoutTimer.mark('invoice-allocated');
@@ -596,7 +612,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         normalizedPaymentMode,
         payment_status || 'PAID',
         referenceText,
-        `Counter ${counterNo}`,
+        counterLabel,
         transaction_type || 'B2C',
         billing_tier || 'RETAIL',
         tax_type || 'LOCAL',

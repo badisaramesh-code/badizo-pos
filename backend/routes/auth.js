@@ -22,7 +22,9 @@ function publicUser(row) {
     id: row.id,
     username: row.username,
     role: row.role,
-    counter_no: row.counter_no
+    counter_no: row.counter_no,
+    system_no: row.system_no || null,
+    login_counter_no: row.login_counter_no || row.counter_no || null
   };
 }
 
@@ -39,12 +41,21 @@ function requestUserAgent(req) {
 
 function counterLabel(user) {
   const counterNo = Number(user?.counter_no || 0);
-  if (user?.role === 'COUNTER' && counterNo > 0) return `Counter ${counterNo}`;
+  const systemNo = Number(user?.system_no || 0);
+  if (user?.role === 'COUNTER' && counterNo > 0) {
+    return systemNo > 0 ? `S${systemNo}/Counter${counterNo}` : `Counter ${counterNo}`;
+  }
 
   const counterMatch = String(user?.username || '').match(/^counter([1-9]\d*)$/i);
   if (counterMatch) return `Counter ${counterMatch[1]}`;
 
   return String(user?.role || user?.username || 'User').toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
+}
+
+function normalizeLoginNumber(value, min = 1, max = 6) {
+  const number = Number.parseInt(value, 10);
+  if (!Number.isFinite(number)) return min;
+  return Math.min(Math.max(number, min), max);
 }
 
 async function getLoginAlertPhone() {
@@ -163,7 +174,7 @@ router.get('/login-options', async (req, res) => {
 });
 
 router.post('/login', async (req, res) => {
-  const { username, password, person_name: personName } = req.body || {};
+  const { username, password, person_name: personName, system_no, counter_no } = req.body || {};
 
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required.' });
@@ -189,6 +200,11 @@ router.post('/login', async (req, res) => {
 
     const safeUser = publicUser(user);
     safeUser.person_name = cleanPersonName.slice(0, 120);
+    if (safeUser.role === 'COUNTER') {
+      safeUser.system_no = normalizeLoginNumber(system_no, 1, 6);
+      safeUser.counter_no = normalizeLoginNumber(counter_no || user.counter_no, 1, 6);
+      safeUser.login_counter_no = user.counter_no || null;
+    }
     const sessionId = crypto.randomUUID();
     await recordSessionEvent(req, safeUser, sessionId, 'LOGIN');
     const token = jwt.sign({ ...safeUser, session_id: sessionId }, JWT_SECRET, { expiresIn: '12h' });

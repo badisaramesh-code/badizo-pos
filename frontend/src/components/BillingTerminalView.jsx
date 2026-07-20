@@ -203,6 +203,27 @@ function buildHoldToken({ invoiceNo, counterNo, customerLabel }) {
   return `${stableBillLabel} - ${customerText.toUpperCase()}`.slice(0, 80);
 }
 
+function parseCounterNoFromLabel(value, fallback = 1) {
+  const text = String(value || '').trim();
+  const match = text.match(/(?:^|\/)Counter\s*(\d+)/i);
+  if (match) return Number(match[1]) || fallback;
+  const plain = text.match(/^Counter\s*(\d+)$/i);
+  if (plain) return Number(plain[1]) || fallback;
+  return fallback;
+}
+
+function counterDisplayLabel(value, fallbackCounterNo = 1) {
+  const text = String(value || '').trim();
+  if (text) return text;
+  return `Counter ${fallbackCounterNo}`;
+}
+
+function counterLabelMatches(savedCounter, counterNo) {
+  const text = String(savedCounter || '').trim().toLowerCase();
+  const normalizedCounter = Number(counterNo || 1);
+  return !text || text === `counter ${normalizedCounter}` || text === `counter${normalizedCounter}` || text.endsWith(`/counter${normalizedCounter}`);
+}
+
 function CounterSaleSlip({ slip, shop, printedAt }) {
   const printedDate = printedAt.toLocaleDateString('en-IN');
   const printedTime = printedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
@@ -327,7 +348,7 @@ function GatePassSlip({ invoice, printedAt }) {
       </div>
       <div className="gate-pass-rule" />
       <div className="gate-pass-row"><span>Bill No</span><strong>{invoice?.invoiceNo || '-'}</strong></div>
-      <div className="gate-pass-row"><span>Counter</span><strong>Counter {invoice?.counterNo || '-'}</strong></div>
+      <div className="gate-pass-row"><span>Counter</span><strong>{invoice?.counterLabel || `Counter ${invoice?.counterNo || '-'}`}</strong></div>
       <div className="gate-pass-row"><span>Bill Date</span><strong>{invoice?.date || '-'}</strong></div>
       <div className="gate-pass-row"><span>Bill Time</span><strong>{invoice?.time || '-'}</strong></div>
       <div className="gate-pass-row"><span>Printed</span><strong>{printedDate} {printedTime}</strong></div>
@@ -1156,8 +1177,7 @@ export default function BillingTerminalView({ isActive = true }) {
         const savedInvoice = details?.invoice || {};
         const sameInvoice = String(savedInvoice.invoice_no || '') === restoredInvoiceNo;
         const savedCounter = String(savedInvoice.billing_counter || '').trim().toLowerCase();
-        const expectedCounter = `counter ${counterNo}`.toLowerCase();
-        const sameCounter = !savedCounter || savedCounter === expectedCounter;
+        const sameCounter = counterLabelMatches(savedCounter, counterNo);
         const sameTotal = Math.abs(moneyToPaise(savedInvoice.grand_total) - moneyToPaise(totals.grand)) <= 1;
         const savedStatus = String(savedInvoice.invoice_status || '').toUpperCase();
 
@@ -1214,6 +1234,7 @@ export default function BillingTerminalView({ isActive = true }) {
     return {
       invoiceNo,
       counterNo,
+      counterLabel: currentUser?.role === 'COUNTER' && currentUser?.system_no ? `S${currentUser.system_no}/Counter${counterNo}` : `Counter ${counterNo}`,
       date: invoiceDate.date,
       time: invoiceDate.time,
       shop: shopSettings,
@@ -1262,7 +1283,7 @@ export default function BillingTerminalView({ isActive = true }) {
         igst: isInterstate ? totals.tax : 0
       }
     };
-  }, [billingMode, cart, cashReceived, changeDue, companyName, counterNo, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, invoiceDate, invoiceNo, mixedPaidTotal, mixedPayment, paymentMode, shopSettings, totals]);
+  }, [billingMode, cart, cashReceived, changeDue, companyName, counterNo, currentUser?.role, currentUser?.system_no, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, invoiceDate, invoiceNo, mixedPaidTotal, mixedPayment, paymentMode, shopSettings, totals]);
 
   function closeBillingActivityPanels() {
     setShowHistory(false);
@@ -1360,7 +1381,8 @@ export default function BillingTerminalView({ isActive = true }) {
     return {
       invoiceNo: invoice.invoice_no,
       isDuplicate: duplicate,
-      counterNo: String(invoice.billing_counter || '').replace(/\D/g, '') || 1,
+      counterNo: parseCounterNoFromLabel(invoice.billing_counter, 1),
+      counterLabel: counterDisplayLabel(invoice.billing_counter),
       date: invoice.created_at ? new Date(invoice.created_at).toLocaleDateString('en-IN') : '',
       time: invoice.created_at ? new Date(invoice.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '',
       shop: shopSettings,
@@ -4906,7 +4928,7 @@ export default function BillingTerminalView({ isActive = true }) {
           grand_total: completedInvoice.totals.grand,
           cash_received: completedInvoice.cashReceived,
           change_returned: completedInvoice.changeReturned,
-          billing_counter: `Counter ${completedInvoice.counterNo}`,
+          billing_counter: completedInvoice.counterLabel || `Counter ${completedInvoice.counterNo}`,
           payment_status: 'PAID',
           payment_reference: completedInvoice.paymentReference,
           payment_mode: completedInvoice.paymentMode,
@@ -4996,8 +5018,7 @@ export default function BillingTerminalView({ isActive = true }) {
       const savedInvoice = details?.invoice || {};
       const savedTotalPaise = moneyToPaise(savedInvoice.grand_total);
       const savedCounter = String(savedInvoice.billing_counter || '').trim().toLowerCase();
-      const expectedCounter = `counter ${counterNo}`.toLowerCase();
-      const sameCounter = !savedCounter || savedCounter === expectedCounter;
+      const sameCounter = counterLabelMatches(savedCounter, counterNo);
       const sameTotal = Math.abs(savedTotalPaise - payablePaiseForCheckout) <= 1;
 
       if (savedInvoice.invoice_no && sameCounter && sameTotal && savedInvoice.invoice_status !== 'VOID') {
@@ -5022,9 +5043,8 @@ export default function BillingTerminalView({ isActive = true }) {
         const savedInvoice = details?.invoice || {};
         const savedTotalPaise = moneyToPaise(savedInvoice.grand_total);
         const savedCounter = String(savedInvoice.billing_counter || '').trim().toLowerCase();
-        const expectedCounter = `counter ${counterNo}`.toLowerCase();
         const sameInvoice = String(savedInvoice.invoice_no || '') === String(invoiceNo);
-        const sameCounter = !savedCounter || savedCounter === expectedCounter;
+        const sameCounter = counterLabelMatches(savedCounter, counterNo);
         const sameTotal = Math.abs(savedTotalPaise - payablePaiseForCheckout) <= 1;
 
         if (sameInvoice && sameCounter && sameTotal && savedInvoice.invoice_status !== 'VOID') {
@@ -5495,7 +5515,7 @@ export default function BillingTerminalView({ isActive = true }) {
           <div className="usage-detail-grid">
             <span>User</span><strong>{currentUser?.username || '-'}</strong>
             <span>Role</span><strong>{currentUser?.role || '-'}</strong>
-            <span>Counter</span><strong>Counter {counterNo}</strong>
+            <span>Counter</span><strong>{currentUser?.role === 'COUNTER' && currentUser?.system_no ? `S${currentUser.system_no}/Counter${counterNo}` : `Counter ${counterNo}`}</strong>
             <span>Mode</span><strong>{activeMode.shortLabel || activeMode.label}</strong>
             <span>Print</span><strong>{printMode}</strong>
           </div>

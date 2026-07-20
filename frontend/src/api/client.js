@@ -85,8 +85,14 @@ export function getStoredUser() {
   }
 }
 
-export async function login(username, password, personName = '') {
-  const { data } = await api.post('/auth/login', { username, password, person_name: personName });
+export async function login(username, password, personName = '', options = {}) {
+  const { data } = await api.post('/auth/login', {
+    username,
+    password,
+    person_name: personName,
+    system_no: options.systemNo,
+    counter_no: options.counterNo
+  });
   exitLogoutSent = false;
   setAuthSession(data.token, data.user);
   return data.user;

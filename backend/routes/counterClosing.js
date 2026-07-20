@@ -47,6 +47,11 @@ function makeSheetNo(date, counterNo) {
   return `CH-${String(date).replace(/-/g, '')}-C${counterNo}`;
 }
 
+function counterRegexForNo(counterNo) {
+  const number = Number.parseInt(counterNo, 10) || 1;
+  return `(^|/)Counter[[:space:]]*${number}$`;
+}
+
 function normalizeEntries(entries) {
   if (!Array.isArray(entries)) return [];
   return entries
@@ -92,18 +97,18 @@ async function getSalesSnapshot(date, counterNo) {
        FROM invoice_payments ip
        INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
        WHERE DATE(i.created_at) = ?
-         AND i.billing_counter = ?
+         AND i.billing_counter REGEXP ?
          AND i.invoice_status <> 'CANCELLED'
        UNION ALL
        SELECT i.payment_mode, i.grand_total AS amount
        FROM invoices i
        LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
        WHERE DATE(i.created_at) = ?
-         AND i.billing_counter = ?
+         AND i.billing_counter REGEXP ?
          AND i.invoice_status <> 'CANCELLED'
          AND ip.id IS NULL
      ) payments`,
-    [date, `Counter ${counterNo}`, date, `Counter ${counterNo}`]
+    [date, counterRegexForNo(counterNo), date, counterRegexForNo(counterNo)]
   );
   const [allRows] = await db.query(
     `SELECT COALESCE(SUM(amount), 0) AS total
@@ -131,9 +136,9 @@ async function getSalesSnapshot(date, counterNo) {
        COALESCE(SUM(CASE WHEN exchange_total > 0 THEN grand_total ELSE 0 END), 0) AS exchange_net_total
      FROM invoices
      WHERE created_at >= ? AND created_at < ?
-       AND billing_counter = ?
+       AND billing_counter REGEXP ?
        AND invoice_status <> 'CANCELLED'`,
-    [date, nextDate, `Counter ${counterNo}`]
+    [date, nextDate, counterRegexForNo(counterNo)]
   );
   const [allExchangeRows] = await db.query(
     `SELECT
@@ -215,19 +220,19 @@ async function getExpectedTotals(date, counterNo) {
        FROM invoice_payments ip
        INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
        WHERE DATE(i.created_at) = ?
-         AND i.billing_counter = ?
+         AND i.billing_counter REGEXP ?
          AND i.invoice_status <> 'CANCELLED'
        UNION ALL
        SELECT i.payment_mode, i.grand_total AS amount
        FROM invoices i
        LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
        WHERE DATE(i.created_at) = ?
-         AND i.billing_counter = ?
+         AND i.billing_counter REGEXP ?
          AND i.invoice_status <> 'CANCELLED'
          AND ip.id IS NULL
      ) payments
      GROUP BY payment_mode`,
-    [date, `Counter ${counterNo}`, date, `Counter ${counterNo}`]
+    [date, counterRegexForNo(counterNo), date, counterRegexForNo(counterNo)]
   );
 
   const totals = { Cash: 0, UPI: 0, Card: 0 };
