@@ -380,10 +380,19 @@ export default function BarcodeStickersView() {
       }
 
       try {
-        const printResult = await printBarcodePrn({
-          output_name: result.output_name,
-          template_name: result.template_name
-        });
+        const localSharePath = (selectedPrinterConfig.shares || []).find((share) => /^\\\\localhost\\/i.test(String(share || '')));
+        const isAdmin1Local33x25 = result.template_name === 'tsc-244-1-33x25-single.prn'
+          || /TSC\s*TE244/i.test(String(selectedPrinterName || result.printer_name || ''));
+        const localShareName = isAdmin1Local33x25
+          ? 'TSC-244-2'
+          : localSharePath ? String(localSharePath).replace(/^\\\\localhost\\/i, '') : '';
+        const printResult = window.badizoDesktop?.printBarcodePrn && localShareName
+          ? await window.badizoDesktop.printBarcodePrn({ prn: result.prn, shareName: localShareName })
+          : await printBarcodePrn({
+            output_name: result.output_name,
+            template_name: result.template_name,
+            printer_name: selectedPrinterName
+          });
         setOutputInfo({ ...result, ...printResult });
         setStatusMessage(`Sticker sent to ${printResult.printer_name || selectedPrinterName}. File: ${result.output_name}`);
       } catch (printErr) {

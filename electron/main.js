@@ -1,10 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const Module = require('module');
 const express = require('express');
 const { app, BrowserWindow, dialog, ipcMain, screen, shell } = require('electron');
 const { print: printPdf } = require('pdf-to-printer');
+
+const execFileAsync = promisify(execFile);
 
 const DEFAULT_APP_URL = 'http://localhost:5000';
 const DEFAULT_API_URL = 'http://localhost:5000/api/health';
@@ -659,6 +663,29 @@ async function printHtml({ html, mode, widthMm, heightMm, printerName, silent })
 
 ipcMain.handle('badizo:print-html', async (_event, payload) => {
   return printHtml(payload || {});
+});
+
+ipcMain.handle('badizo:print-barcode-prn', async (_event, payload) => {
+  const prn = String(payload?.prn || '');
+  if (!prn) throw new Error('Barcode PRN data is empty.');
+
+  const shareName = String(payload?.shareName || 'TSC-244-2').trim();
+  if (!/^[A-Za-z0-9 _.-]{1,80}$/.test(shareName)) {
+    throw new Error('Barcode printer share name is invalid.');
+  }
+
+  const tempPath = path.join(os.tmpdir(), `badizo-barcode-${Date.now()}.prn`);
+  const printerShare = `\\\\localhost\\${shareName}`;
+  try {
+    fs.writeFileSync(tempPath, prn, 'ascii');
+    await execFileAsync('cmd.exe', ['/c', 'copy', '/b', tempPath, printerShare], {
+      windowsHide: true,
+      timeout: 15000
+    });
+    return { ok: true, printed: true, printerName: shareName, printer_share: printerShare, method: 'electron-local-prn' };
+  } finally {
+    try { fs.unlinkSync(tempPath); } catch (_err) {}
+  }
 });
 
 function safePdfFileName(value) {
