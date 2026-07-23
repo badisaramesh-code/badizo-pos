@@ -111,6 +111,7 @@ function ReportHeader({ title, onExcel, onPdf, onClose }) {
 
 export default function ReportsView({ isActive = true, onClose }) {
   const [activeReport, setActiveReport] = useState('daily');
+  const [isReportOpen, setIsReportOpen] = useState(false);
   const [fromDate, setFromDate] = useState(todayIso());
   const [toDate, setToDate] = useState(todayIso());
   const [counter, setCounter] = useState('');
@@ -162,6 +163,19 @@ export default function ReportsView({ isActive = true, onClose }) {
   useEffect(() => {
     if (isActive) refreshSelectedReport(activeReport);
   }, [activeReport, isActive]);
+
+  useEffect(() => {
+    if (!isActive) setIsReportOpen(false);
+  }, [isActive]);
+
+  useEffect(() => {
+    if (!isReportOpen) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setIsReportOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isReportOpen]);
 
   const filteredHsnRows = useMemo(() => {
     const productSearch = deferredHsnProductSearch.trim().toLowerCase();
@@ -407,7 +421,12 @@ export default function ReportsView({ isActive = true, onClose }) {
 
   function handleReportFilterSubmit(event) {
     event.preventDefault();
-    loadReports();
+    openSelectedReport(loadReports);
+  }
+
+  async function openSelectedReport(loader = () => refreshSelectedReport(activeReport)) {
+    setIsReportOpen(true);
+    await loader();
   }
 
   function setTopProductsSort(key, direction) {
@@ -941,7 +960,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'hsn':
         return (
           <section className="panel">
-            <ReportHeader title="GST HSN-wise Summary" onExcel={exportHsnExcel} onPdf={exportPdf} />
+            <ReportHeader title="GST HSN-wise Summary" onExcel={exportHsnExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body">
               <div className="report-filter-row hsn-summary-controls">
                 <label className="hsn-summary-field">
@@ -1100,7 +1119,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'monthly':
         return (
           <section className="panel">
-            <ReportHeader title="Monthly Sales" onExcel={exportMonthlyExcel} onPdf={exportPdf} />
+            <ReportHeader title="Monthly Sales" onExcel={exportMonthlyExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body">
               <table className="history-table">
                 <thead><tr><th>Date</th><th>Bills</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
@@ -1116,7 +1135,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'stock':
         return (
           <section className="panel">
-            <ReportHeader title="Stock Report" onExcel={exportStockExcel} onPdf={exportPdf} />
+            <ReportHeader title="Stock Report" onExcel={exportStockExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body">
               <table className="history-table">
                 <thead><tr><th>Barcode</th><th>Product</th><th>HSN</th><th>GST%</th><th>Purchase</th><th>Sale</th><th>Stock</th><th>Value</th></tr></thead>
@@ -1132,7 +1151,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'top':
         return (
           <section className="panel">
-            <ReportHeader title="Top Products" onExcel={exportTopProductsExcel} onPdf={exportPdf} />
+            <ReportHeader title="Top Products" onExcel={exportTopProductsExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body">
               <table className="history-table">
                 <thead><tr><th>Barcode</th><th>Product</th><th>{renderTopProductSortHeader('quantity')}</th><th>{renderTopProductSortHeader('total')}</th></tr></thead>
@@ -1148,7 +1167,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'tax':
         return (
           <section className="panel">
-            <ReportHeader title="Tax Summary" onExcel={exportTaxExcel} onPdf={exportPdf} />
+            <ReportHeader title="Tax Summary" onExcel={exportTaxExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body">
               <table className="history-table">
                 <thead><tr><th>GST %</th><th>Gross</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total Tax</th></tr></thead>
@@ -1165,7 +1184,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'gstr1':
         return (
           <section className="panel">
-            <ReportHeader title="GSTR-1, GSTR-2, GSTR-3B Returns" onExcel={exportGstrReturnsExcel} onPdf={exportPdf} />
+            <ReportHeader title="GSTR-1, GSTR-2, GSTR-3B Returns" onExcel={exportGstrReturnsExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body form-stack">
               <div className="alert-box">
                 GST filing review format: verify GSTIN, supplier invoices, place of supply, HSN/UQC, input tax credit and payable values before uploading to GST portal/offline utility.
@@ -1353,7 +1372,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'returns':
         return (
           <section className="panel">
-            <ReportHeader title="Returns" onExcel={exportReturnsExcel} onPdf={exportPdf} />
+            <ReportHeader title="Returns" onExcel={exportReturnsExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body">
               <table className="history-table">
                 <thead><tr><th>Return No</th><th>Invoice No</th><th>Reason</th><th>Mode</th><th>Total</th><th>By</th><th>Date</th></tr></thead>
@@ -1369,7 +1388,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'exchange':
         return (
           <section className="panel">
-            <ReportHeader title="Exchange Bills Report" onExcel={exportExchangeExcel} onPdf={exportPdf} />
+            <ReportHeader title="Exchange Bills Report" onExcel={exportExchangeExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body form-stack">
               <section className="report-summary-strip">
                 <span>Bills: <strong>{Number(exchangeReport.totals?.billCount || 0)}</strong></span>
@@ -1411,7 +1430,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'handover':
         return (
           <section className="panel">
-            <ReportHeader title="Counter Handover Report" onExcel={exportCounterHandoverExcel} onPdf={exportPdf} />
+            <ReportHeader title="Counter Handover Report" onExcel={exportCounterHandoverExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body form-stack">
               <section className="report-summary-strip">
                 <span>Sheets: <strong>{Number(counterHandoverReport.totals?.sheets || 0)}</strong></span>
@@ -1506,7 +1525,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'barcodePrints':
         return (
           <section className="panel">
-            <ReportHeader title="Barcode Sticker Print Report" onExcel={exportBarcodePrintsExcel} onPdf={exportPdf} />
+            <ReportHeader title="Barcode Sticker Print Report" onExcel={exportBarcodePrintsExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body form-stack">
               <section className="report-summary-strip">
                 <span>Print Runs: <strong>{Number(barcodePrintReport.totals?.prints || 0)}</strong></span>
@@ -1554,7 +1573,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'reprints':
         return (
           <section className="panel">
-            <ReportHeader title="Bill Reprints Report" onExcel={exportReprintsExcel} onPdf={exportPdf} />
+            <ReportHeader title="Bill Reprints Report" onExcel={exportReprintsExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body form-stack">
               <section className="report-summary-strip">
                 <span>Total Reprints: <strong>{Number(reprintReport.totals?.count || 0)}</strong></span>
@@ -1599,7 +1618,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'cancelled':
         return (
           <section className="panel">
-            <ReportHeader title="Cancelled Bills" onExcel={exportCancelledExcel} onPdf={exportPdf} />
+            <ReportHeader title="Cancelled Bills" onExcel={exportCancelledExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body">
               <table className="history-table">
                 <thead><tr><th>Invoice No</th><th>Customer</th><th>Total</th><th>Reason</th><th>By</th><th>Date</th></tr></thead>
@@ -1615,7 +1634,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       default:
         return (
           <section className="panel">
-            <ReportHeader title="Daily Sales Report" onExcel={exportDailyExcel} onPdf={exportPdf} onClose={onClose} />
+            <ReportHeader title="Daily Sales Report" onExcel={exportDailyExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body form-stack">
               <section className="report-summary-strip">
                 <span>Bills: <strong>{Number(dailyReport.totals.billCount || 0)}</strong></span>
@@ -1689,7 +1708,7 @@ export default function ReportsView({ isActive = true, onClose }) {
                 placeholder="Invoice / customer / barcode / user"
               />
             </label>
-            <button className="secondary-button" type="button" onClick={loadReports} disabled={isReportLoading}>
+            <button className="secondary-button" type="button" onClick={() => openSelectedReport(loadReports)} disabled={isReportLoading}>
               {isReportLoading ? 'Loading...' : 'View'}
             </button>
             <button className="close-action-button" type="button" onClick={onClose}>Close</button>
@@ -1716,7 +1735,7 @@ export default function ReportsView({ isActive = true, onClose }) {
           </div>
           <div className="report-selector-actions">
             <span className="selected-report-label">Selected: <strong>{selectedReportOption.title}</strong></span>
-            <button className="primary-button" type="button" onClick={() => refreshSelectedReport(activeReport)} disabled={isReportLoading}>
+            <button className="primary-button" type="button" onClick={() => openSelectedReport()} disabled={isReportLoading}>
               {isReportLoading ? 'Loading...' : 'View'}
             </button>
             <button className="close-action-button" type="button" onClick={onClose}>Close</button>
@@ -1724,13 +1743,38 @@ export default function ReportsView({ isActive = true, onClose }) {
         </div>
       </section>
 
-      <div className="reports-print-area" onClick={(event) => {
-        if (event.target.closest('.report-print-trigger')) {
-          printReport();
-        }
-      }}>
-        {renderSelectedReport()}
-      </div>
+      {isReportOpen && <div
+        className="reports-print-area report-view-modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${selectedReportOption.title} report view`}
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setIsReportOpen(false);
+        }}
+      >
+        <div className="report-view-modal">
+          <div className="report-view-sticky-toolbar">
+            <strong className="report-view-modal-title">{selectedReportOption.title}</strong>
+            <label className="report-view-date-field">
+              <span>From Date</span>
+              <input className="field report-date-input" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+            </label>
+            <label className="report-view-date-field">
+              <span>To Date</span>
+              <input className="field report-date-input" type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+            </label>
+            <button className="primary-button" type="button" onClick={() => openSelectedReport(loadReports)} disabled={isReportLoading}>
+              {isReportLoading ? 'Loading...' : 'View Dates'}
+            </button>
+            <button className="close-action-button" type="button" onClick={() => setIsReportOpen(false)}>Close</button>
+          </div>
+          <div className="report-view-scroll" onClick={(event) => {
+            if (event.target.closest('.report-print-trigger')) printReport();
+          }}>
+            {renderSelectedReport()}
+          </div>
+        </div>
+      </div>}
     </div>
   );
 }

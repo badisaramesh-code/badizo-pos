@@ -1683,6 +1683,78 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   flex-wrap: wrap;
 }
 
+.report-view-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.58);
+}
+
+.report-view-modal {
+  display: flex;
+  width: min(1500px, 96vw);
+  height: min(900px, 92vh);
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.32);
+}
+
+.report-view-sticky-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: end;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #f4fbf5;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+
+.report-view-modal-title {
+  margin-right: auto;
+  align-self: center;
+  color: var(--brand-dark);
+  font-size: 16px;
+}
+
+.report-view-date-field {
+  display: grid;
+  min-width: 155px;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.report-view-date-field .field {
+  min-height: 36px;
+  padding: 6px 8px;
+}
+
+.report-view-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  padding: 12px;
+  overscroll-behavior: contain;
+}
+
+.report-view-scroll > .panel {
+  min-width: 1080px;
+  margin: 0;
+}
+
 .report-selector-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -7880,6 +7952,35 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   body.printing-reports .reports-print-area,
   body.printing-reports .reports-print-area * {
     visibility: visible !important;
+  }
+
+  body.printing-reports .report-view-modal-backdrop,
+  body.printing-reports .report-view-modal,
+  body.printing-reports .report-view-scroll {
+    position: static !important;
+    display: block !important;
+    width: 190mm !important;
+    min-width: 190mm !important;
+    max-width: 190mm !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+  }
+
+  body.printing-reports .report-view-sticky-toolbar {
+    display: none !important;
+  }
+
+  body.printing-reports .report-view-scroll > .panel {
+    width: 190mm !important;
+    min-width: 190mm !important;
+    max-width: 190mm !important;
   }
 
   body.printing-reports .reports-print-area .panel,
