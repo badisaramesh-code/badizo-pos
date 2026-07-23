@@ -233,6 +233,15 @@ export default function BooksView({ setActiveWorkspace }) {
   }, []);
 
   useEffect(() => {
+    if (!isReportOpen) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setIsReportOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isReportOpen]);
+
+  useEffect(() => {
     if (activeBook !== 'sundryCreditors') {
       setAccountSuggestions([]);
       setIsAccountSuggestionOpen(false);
@@ -563,13 +572,33 @@ export default function BooksView({ setActiveWorkspace }) {
         </div>
       </section>
 
-      <section className="panel books-report-panel">
-        <div className="panel-header green">
+      <section
+        className={`panel books-report-panel ${isReportOpen ? 'books-report-modal-backdrop' : ''}`}
+        role={isReportOpen ? 'dialog' : undefined}
+        aria-modal={isReportOpen ? 'true' : undefined}
+        aria-label={isReportOpen ? `${activeReport?.title || 'Accounting Book'} report view` : undefined}
+        onMouseDown={(event) => {
+          if (isReportOpen && event.target === event.currentTarget) setIsReportOpen(false);
+        }}
+      >
+        <div className={isReportOpen ? 'books-report-modal' : ''}>
+        <div className="panel-header green books-report-sticky-toolbar">
           <div>
             <h2 className="panel-title">{activeReport?.title || 'Accounting Book'}</h2>
             <span className="muted">Date: {getOrderedRange(fromDate, toDate).from} to {getOrderedRange(fromDate, toDate).to}</span>
           </div>
-          <div className="report-header-actions">
+          <div className="report-header-actions books-report-actions">
+            {isReportOpen && <label className="books-report-date-field">
+              <span>From Date</span>
+              <input className="field report-date-input" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+            </label>}
+            {isReportOpen && <label className="books-report-date-field">
+              <span>To Date</span>
+              <input className="field report-date-input" type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+            </label>}
+            {isReportOpen && <button className="secondary-button" type="button" onClick={loadBooks}>Load</button>}
+            {isReportOpen && <button className="secondary-button" type="button" onClick={() => { setFromDate(financialYearStartIso()); setToDate(todayIso()); }}>Financial Year</button>}
+            {isReportOpen && <button className="header-print-button" type="button" onClick={exportAllExcel}>Export All Excel</button>}
             {isReportOpen && <button className="header-print-button" type="button" onClick={exportSelectedExcel}>Export Excel</button>}
             {isReportOpen && <button className="header-print-button" type="button" onClick={printSelectedBook}>Print / PDF</button>}
             <button
@@ -581,7 +610,7 @@ export default function BooksView({ setActiveWorkspace }) {
             </button>
           </div>
         </div>
-        {isReportOpen && <div className="panel-body books-print-area">
+        {isReportOpen && <div className="panel-body books-print-area books-report-scroll">
           {activeReport && (
             <>
               <div className="books-print-heading">
@@ -816,6 +845,7 @@ export default function BooksView({ setActiveWorkspace }) {
             </>
           )}
         </div>}
+        </div>
       </section>
     </div>
   );
