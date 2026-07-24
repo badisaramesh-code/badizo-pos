@@ -70,7 +70,7 @@ export default function LoginView({ onLogin }) {
   }, [loginMode, fixedLoginUser]);
   const [username, setUsername] = useState(initialOptions[0]?.username || fixedLoginUser || 'admin1');
   const [systemNo] = useState(assignedSystemNo);
-  const [selectedCounterNo, setSelectedCounterNo] = useState('1');
+  const [selectedCounterNo, setSelectedCounterNo] = useState(assignedSystemNo);
   const [personName, setPersonName] = useState('');
   const [password, setPassword] = useState('');
   const [loginOptions, setLoginOptions] = useState(initialOptions.length ? initialOptions : FALLBACK_LOGIN_OPTIONS);

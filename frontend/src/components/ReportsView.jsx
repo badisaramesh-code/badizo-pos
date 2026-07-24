@@ -13,6 +13,7 @@ import {
   fetchGstr2Report,
   fetchGstr3Report,
   fetchMonthlySalesReport,
+  fetchProductSalesReport,
   fetchReprintReport,
   fetchStockReport,
   fetchTaxSummaryReport,
@@ -139,6 +140,12 @@ export default function ReportsView({ isActive = true, onClose }) {
   const [hsnProductDetailLoading, setHsnProductDetailLoading] = useState(false);
   const [hsnProductSuggestions, setHsnProductSuggestions] = useState([]);
   const [isHsnProductSuggestionOpen, setIsHsnProductSuggestionOpen] = useState(false);
+  const [productSalesSearch, setProductSalesSearch] = useState('');
+  const [productSalesReport, setProductSalesReport] = useState({ rows: [], totals: { bills: 0, quantity: 0, gross: 0, cash: 0, upi: 0, card: 0, other: 0 } });
+  const [productSalesError, setProductSalesError] = useState('');
+  const [productSalesLoading, setProductSalesLoading] = useState(false);
+  const [productSalesSuggestions, setProductSalesSuggestions] = useState([]);
+  const [isProductSalesSuggestionOpen, setIsProductSalesSuggestionOpen] = useState(false);
   const [monthlyReport, setMonthlyReport] = useState({ rows: [] });
   const [stockReport, setStockReport] = useState([]);
   const [topProducts, setTopProducts] = useState({ rows: [] });
@@ -272,6 +279,42 @@ export default function ReportsView({ isActive = true, onClose }) {
     };
   }, [activeReport, hsnProductSearch]);
 
+  useEffect(() => {
+    if (activeReport !== 'productSales') {
+      setProductSalesSuggestions([]);
+      setIsProductSalesSuggestionOpen(false);
+      return undefined;
+    }
+
+    const query = productSalesSearch.trim();
+    if (query.length < 3) {
+      setProductSalesSuggestions([]);
+      setIsProductSalesSuggestionOpen(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const rows = await searchProducts(query);
+        if (!cancelled) {
+          setProductSalesSuggestions(rows.slice(0, 6));
+          setIsProductSalesSuggestionOpen(rows.length > 0);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setProductSalesSuggestions([]);
+          setIsProductSalesSuggestionOpen(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeReport, productSalesSearch]);
+
   async function selectHsnProduct(product) {
     const searchText = product.barcode || product.product_code || product.product_name || '';
     setHsnProductSearch(searchText);
@@ -316,6 +359,43 @@ export default function ReportsView({ isActive = true, onClose }) {
     }
   }
 
+  async function loadProductSales(searchText = productSalesSearch) {
+    const search = String(searchText || '').trim();
+    if (!search) {
+      setProductSalesError('Enter product code, barcode, or product name.');
+      setProductSalesReport({ rows: [], totals: { bills: 0, quantity: 0, gross: 0, cash: 0, upi: 0, card: 0, other: 0 } });
+      return;
+    }
+
+    const { from, to } = getOrderedRange(fromDate, toDate);
+    setProductSalesLoading(true);
+    setProductSalesError('');
+    try {
+      const data = await fetchProductSalesReport({ from, to, search });
+      setProductSalesReport({
+        rows: data.rows || [],
+        totals: data.totals || { bills: 0, quantity: 0, gross: 0, cash: 0, upi: 0, card: 0, other: 0 }
+      });
+    } catch (err) {
+      setProductSalesError(err.response?.data?.error || err.message || 'Unable to load product sales.');
+    } finally {
+      setProductSalesLoading(false);
+    }
+  }
+
+  async function handleProductSalesSubmit(event) {
+    event.preventDefault();
+    await loadProductSales();
+  }
+
+  async function selectProductSalesSuggestion(product) {
+    const searchText = product.barcode || product.product_code || product.product_name || '';
+    setProductSalesSearch(searchText);
+    setProductSalesSuggestions([]);
+    setIsProductSalesSuggestionOpen(false);
+    await loadProductSales(searchText);
+  }
+
   async function loadSelectedReport(reportKey = activeReport, range = getOrderedRange(fromDate, toDate)) {
     const { from, to } = range;
     switch (reportKey) {
@@ -337,6 +417,12 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'top': {
         const top = await fetchTopProductsReport({ from, to });
         setTopProducts(top);
+        return;
+      }
+      case 'productSales': {
+        if (productSalesSearch.trim()) {
+          await loadProductSales(productSalesSearch);
+        }
         return;
       }
       case 'tax': {
@@ -489,6 +575,7 @@ export default function ReportsView({ isActive = true, onClose }) {
     { key: 'monthly', title: 'Monthly Sales', note: `${monthlyReport.rows.length} days` },
     { key: 'stock', title: 'Stock Report', note: `${stockReport.length} products` },
     { key: 'top', title: 'Top Products', note: `${topProducts.rows.length} products` },
+    { key: 'productSales', title: 'Product Sales', note: `${productSalesReport.rows.length} entries` },
     { key: 'tax', title: 'Tax Summary', note: `${taxSummary.rows.length} GST slabs` },
     { key: 'gstr', title: 'GSTR-1, 2, 3B Returns', note: `${(gstr1Report.b2b?.length || 0) + (gstr1Report.b2cl?.length || 0) + (gstr1Report.b2c?.length || 0) + (gstr2Report.b2b?.length || 0) + (gstr3Report.outward?.length || 0) + (gstr3Report.inward?.length || 0)} rows${gstCheckIssueCount ? `, ${gstCheckIssueCount} checks` : ''}` },
     { key: 'handover', title: 'Counter Handover', note: `${counterHandoverReport.totals?.sheets || 0} sheets` },
@@ -576,6 +663,26 @@ export default function ReportsView({ isActive = true, onClose }) {
       Product: row.product_name,
       Qty: Number(row.quantity || 0),
       Total: Number(row.total || 0)
+    })));
+  }
+
+  function exportProductSalesExcel() {
+    exportRows('product_sales', (productSalesReport.rows || []).map((row) => ({
+      Date: row.sale_date || '',
+      Time: row.sale_time || '',
+      'Bill No': row.invoice_no || '',
+      Counter: row.billing_counter || '',
+      Payment: row.payment_mode || '',
+      Barcode: row.barcode || '',
+      'Product Code': row.product_code || '',
+      Product: row.product_name || '',
+      Qty: Number(row.quantity || 0),
+      Rate: Number(row.sale_price || 0),
+      Total: Number(row.gross_total || 0),
+      Cash: Number(row.cash_amount || 0),
+      UPI: Number(row.upi_amount || 0),
+      Card: Number(row.card_amount || 0),
+      Other: Number(row.other_amount || 0)
     })));
   }
 
@@ -1160,6 +1267,84 @@ export default function ReportsView({ isActive = true, onClose }) {
                     <tr key={`${row.barcode || 'no-barcode'}-${row.product_name || 'product'}-${index}`}><td className="mono">{row.barcode}</td><td>{row.product_name}</td><td>{Number(row.quantity || 0)}</td><td>{formatMoney(row.total)}</td></tr>
                   ))}
                 </tbody>
+              </table>
+            </div>
+          </section>
+        );
+      case 'productSales':
+        return (
+          <section className="panel">
+            <ReportHeader title="Product Sales" onExcel={exportProductSalesExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
+            <div className="panel-body form-stack">
+              <form className="report-filter-row hsn-product-detail-form" onSubmit={handleProductSalesSubmit}>
+                <label className="hsn-product-detail-search supplier-lookup-field">
+                  <span className="field-label">Product Code / Name</span>
+                  <input
+                    className="field"
+                    value={productSalesSearch}
+                    onChange={(event) => {
+                      setProductSalesSearch(event.target.value);
+                      setIsProductSalesSuggestionOpen(event.target.value.trim().length >= 3);
+                    }}
+                    onFocus={() => {
+                      if (productSalesSuggestions.length) setIsProductSalesSuggestionOpen(true);
+                    }}
+                    placeholder="Scan/type barcode, code, or product name"
+                  />
+                  {isProductSalesSuggestionOpen && productSalesSuggestions.length > 0 && (
+                    <div className="supplier-suggestions">
+                      {productSalesSuggestions.map((product) => (
+                        <button key={product.barcode} type="button" className="supplier-suggestion-row" onClick={() => selectProductSalesSuggestion(product)}>
+                          <strong>{product.product_name}</strong>
+                          <span>{product.barcode} | Code {product.product_code || '-'} | GST {Number(product.gst_percent || 0)}%</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </label>
+                <button className="secondary-button" type="submit" disabled={productSalesLoading}>
+                  {productSalesLoading ? 'Loading...' : 'View'}
+                </button>
+                <button className="secondary-button" type="button" onClick={() => {
+                  setProductSalesSearch('');
+                  setProductSalesReport({ rows: [], totals: { bills: 0, quantity: 0, gross: 0, cash: 0, upi: 0, card: 0, other: 0 } });
+                  setProductSalesError('');
+                  setProductSalesSuggestions([]);
+                  setIsProductSalesSuggestionOpen(false);
+                }}>Clear</button>
+                <span className="status-chip">{productSalesReport.rows.length} entries</span>
+                <div className="hsn-summary-total-box"><span>Bills</span><strong>{Number(productSalesReport.totals?.bills || 0)}</strong></div>
+                <div className="hsn-summary-total-box"><span>Qty</span><strong>{Number(productSalesReport.totals?.quantity || 0)}</strong></div>
+                <div className="hsn-summary-total-box"><span>Total</span><strong>{formatMoney(productSalesReport.totals?.gross)}</strong></div>
+                <div className="hsn-summary-total-box"><span>Cash</span><strong>{formatMoney(productSalesReport.totals?.cash)}</strong></div>
+                <div className="hsn-summary-total-box"><span>UPI</span><strong>{formatMoney(productSalesReport.totals?.upi)}</strong></div>
+                <div className="hsn-summary-total-box"><span>Card</span><strong>{formatMoney(productSalesReport.totals?.card)}</strong></div>
+              </form>
+              {productSalesError ? <div className="error-banner">{productSalesError}</div> : null}
+              <table className="history-table hsn-product-detail-table">
+                <thead><tr><th>Date</th><th>Time</th><th>Bill No</th><th>Counter</th><th>Payment</th><th>Product Code</th><th>Product</th><th>Qty</th><th>Rate</th><th>Total</th><th>Cash</th><th>UPI</th><th>Card</th></tr></thead>
+                <tbody>
+                  {productSalesReport.rows.length === 0 ? (
+                    <tr><td colSpan="13">Search product code, barcode, or product name to view sale history.</td></tr>
+                  ) : productSalesReport.rows.map((row, index) => (
+                    <tr key={`${row.invoice_no}-${row.barcode}-${row.sale_time}-${index}`}>
+                      <td>{row.sale_date || '-'}</td>
+                      <td>{row.sale_time || '-'}</td>
+                      <td className="mono">{row.invoice_no || '-'}</td>
+                      <td>{row.billing_counter || '-'}</td>
+                      <td>{row.payment_mode || '-'}</td>
+                      <td>{row.product_code || row.barcode || '-'}</td>
+                      <td>{row.product_name || '-'}</td>
+                      <td>{Number(row.quantity || 0)}</td>
+                      <td>{formatMoney(row.sale_price)}</td>
+                      <td><strong>{formatMoney(row.gross_total)}</strong></td>
+                      <td>{formatMoney(row.cash_amount)}</td>
+                      <td>{formatMoney(row.upi_amount)}</td>
+                      <td>{formatMoney(row.card_amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot><tr><th>Total</th><th></th><th>{Number(productSalesReport.totals?.bills || 0)} bills</th><th></th><th></th><th></th><th></th><th>{Number(productSalesReport.totals?.quantity || 0)}</th><th></th><th>{formatMoney(productSalesReport.totals?.gross)}</th><th>{formatMoney(productSalesReport.totals?.cash)}</th><th>{formatMoney(productSalesReport.totals?.upi)}</th><th>{formatMoney(productSalesReport.totals?.card)}</th></tr></tfoot>
               </table>
             </div>
           </section>

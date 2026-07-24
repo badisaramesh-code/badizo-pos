@@ -870,6 +870,87 @@ router.get('/gst-hsn/product-details', authorize('SERVER', 'ADMIN'), async (req,
   }
 });
 
+router.get('/product-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const from = normalizeDate(req.query.from, todayIso());
+    const to = normalizeDate(req.query.to, from);
+    const search = String(req.query.search || '').trim();
+
+    if (!search) {
+      return res.json({
+        from,
+        to,
+        search,
+        rows: [],
+        totals: { bills: 0, quantity: 0, gross: 0, cash: 0, upi: 0, card: 0, other: 0 }
+      });
+    }
+
+    const like = `%${search}%`;
+    const [rows] = await db.query(
+      `SELECT
+         DATE_FORMAT(i.created_at, '%Y-%m-%d') AS sale_date,
+         TIME_FORMAT(i.created_at, '%H:%i:%s') AS sale_time,
+         i.invoice_no,
+         i.billing_counter,
+         i.payment_mode,
+         ii.barcode,
+         COALESCE(NULLIF(p.product_code, ''), ii.barcode, '') AS product_code,
+         COALESCE(NULLIF(ii.product_name, ''), NULLIF(p.product_name, ''), '') AS product_name,
+         ii.quantity,
+         ii.sale_price,
+         (ii.quantity * ii.sale_price) AS gross_total,
+         COALESCE(pay.cash_amount, CASE WHEN UPPER(i.payment_mode) = 'CASH' THEN i.grand_total ELSE 0 END, 0) AS cash_amount,
+         COALESCE(pay.upi_amount, CASE WHEN UPPER(i.payment_mode) = 'UPI' THEN i.grand_total ELSE 0 END, 0) AS upi_amount,
+         COALESCE(pay.card_amount, CASE WHEN UPPER(i.payment_mode) = 'CARD' THEN i.grand_total ELSE 0 END, 0) AS card_amount,
+         COALESCE(pay.other_amount, CASE WHEN UPPER(i.payment_mode) NOT IN ('CASH', 'UPI', 'CARD') THEN i.grand_total ELSE 0 END, 0) AS other_amount
+       FROM invoice_items ii
+       INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
+       LEFT JOIN products p ON p.barcode = ii.barcode
+       LEFT JOIN (
+         SELECT
+           invoice_no,
+           SUM(CASE WHEN UPPER(payment_mode) = 'CASH' THEN amount ELSE 0 END) AS cash_amount,
+           SUM(CASE WHEN UPPER(payment_mode) = 'UPI' THEN amount ELSE 0 END) AS upi_amount,
+           SUM(CASE WHEN UPPER(payment_mode) = 'CARD' THEN amount ELSE 0 END) AS card_amount,
+           SUM(CASE WHEN UPPER(payment_mode) NOT IN ('CASH', 'UPI', 'CARD') THEN amount ELSE 0 END) AS other_amount
+         FROM invoice_payments
+         GROUP BY invoice_no
+       ) pay ON pay.invoice_no = i.invoice_no
+       WHERE DATE(i.created_at) BETWEEN ? AND ?
+         AND i.invoice_status <> 'CANCELLED'
+         AND (
+           ii.barcode LIKE ?
+           OR COALESCE(p.product_code, '') LIKE ?
+           OR COALESCE(ii.product_name, '') LIKE ?
+           OR COALESCE(p.product_name, '') LIKE ?
+         )
+       ORDER BY i.created_at DESC, i.invoice_no DESC, ii.id DESC
+       LIMIT 1000`,
+      [from, to, like, like, like, like]
+    );
+
+    const billSet = new Set();
+    const totals = rows.reduce((acc, row) => {
+      billSet.add(row.invoice_no);
+      return {
+        bills: billSet.size,
+        quantity: acc.quantity + Number(row.quantity || 0),
+        gross: acc.gross + Number(row.gross_total || 0),
+        cash: acc.cash + Number(row.cash_amount || 0),
+        upi: acc.upi + Number(row.upi_amount || 0),
+        card: acc.card + Number(row.card_amount || 0),
+        other: acc.other + Number(row.other_amount || 0)
+      };
+    }, { bills: 0, quantity: 0, gross: 0, cash: 0, upi: 0, card: 0, other: 0 });
+
+    res.json({ from, to, search, rows, totals });
+  } catch (err) {
+    console.error('Product sales report failed:', err.message);
+    res.status(500).json({ error: 'Unable to load product sales report.' });
+  }
+});
+
 router.get('/monthly-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
   try {
     const month = String(req.query.month || todayIso().slice(0, 7));

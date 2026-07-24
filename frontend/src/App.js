@@ -19,6 +19,17 @@ import { clearAuthSession, getStoredUser, logout as recordLogout, pingBackendHea
 import { APP_TABS, canAccessTab } from './config/navigation';
 import './styles.css';
 
+function currentSessionLabel(user) {
+  if (!user) return '';
+  const role = String(user.role || '').toUpperCase();
+  const counterNo = Number(user.counter_no || 0);
+  const systemNo = Number(user.system_no || 0);
+  if (role === 'COUNTER' && counterNo > 0) {
+    return systemNo > 0 ? `S${systemNo}/Counter${counterNo}` : `Counter${counterNo}`;
+  }
+  return user.username || role || 'User';
+}
+
 export default function App() {
   const [activeWorkspace, setActiveWorkspace] = useState('billing');
   const [workspaceNavigationKey, setWorkspaceNavigationKey] = useState(0);
@@ -115,6 +126,7 @@ export default function App() {
     clearAuthSession();
     setCurrentUser(null);
   };
+  const sessionLabel = currentSessionLabel(currentUser);
 
   const views = {
     dashboard: <DashboardView setActiveWorkspace={setActiveWorkspace} />,
@@ -162,11 +174,20 @@ export default function App() {
               {tab.label}
             </button>
           ))}
+          {currentUser.role === 'COUNTER' && (
+            <button
+              className="tab-button"
+              onClick={handleLogout}
+              title="Logout and select another counter for this system"
+            >
+              Change Counter ({sessionLabel})
+            </button>
+          )}
           <button
             className="tab-button logout-button"
             onClick={handleLogout}
           >
-            Logout ({currentUser.username})
+            Logout ({sessionLabel})
           </button>
         </nav>
       </header>

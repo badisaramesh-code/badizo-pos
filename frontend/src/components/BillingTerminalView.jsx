@@ -61,6 +61,7 @@ const RETAIL_MODE = 'RETAIL_LOCAL';
 const POS_DRAFT_KEY = 'badizo_pos_active_draft';
 const EMPTY_MIXED_PAYMENT = { cash: '', upi: '', card: '', upi_reference: '', card_reference: '' };
 const SCANNER_BARCODE_PATTERN = /^[A-Z0-9._-]+$/i;
+const SCANNER_MIN_BARCODE_LENGTH = 6;
 const SCANNER_SETTLE_MS = 240;
 const SCANNER_FAST_KEY_MS = 160;
 const SCANNER_WAKE_BLOCK_MS = 120;
@@ -73,12 +74,23 @@ const FIXED_THERMAL_RECEIPT_WIDTH_MM = 80;
 const FIXED_THERMAL_CONTENT_WIDTH_MM = 72;
 const FIXED_THERMAL_FEED_MARGIN_MM = 4;
 
-function readActivePosDraft(username) {
+function readActivePosDraft(user) {
   try {
     const raw = window.localStorage.getItem(POS_DRAFT_KEY);
     if (!raw) return null;
     const draft = JSON.parse(raw);
+    const username = String(user?.username || '').trim();
     if (draft.username && username && draft.username !== username) return null;
+    if (user?.role === 'COUNTER') {
+      const activeCounterNo = Number(user.counter_no || 1);
+      const draftCounterNo = Number(draft.counterNo || 1);
+      const activeSystemNo = Number(user.system_no || 0);
+      const draftSystemNo = Number(draft.systemNo || activeSystemNo || 0);
+      if (draftCounterNo !== activeCounterNo || (activeSystemNo > 0 && draftSystemNo > 0 && draftSystemNo !== activeSystemNo)) {
+        window.localStorage.removeItem(POS_DRAFT_KEY);
+        return null;
+      }
+    }
     const hasBillLines = Array.isArray(draft.cart) && draft.cart.length > 0;
     const hasExchangeLines = Array.isArray(draft.exchangeItems) && draft.exchangeItems.length > 0;
     if (!hasBillLines && !hasExchangeLines) {
@@ -424,12 +436,12 @@ function normalizeGatePassDetails(details = {}) {
 
 export default function BillingTerminalView({ isActive = true }) {
   const currentUser = getStoredUser();
-  const initialDraft = readActivePosDraft(currentUser?.username);
+  const initialDraft = readActivePosDraft(currentUser);
   const [invoiceNo, setInvoiceNo] = useState(initialDraft?.invoiceNo || 'Loading...');
   const [liveTime, setLiveTime] = useState(new Date());
   const [backendPingOk, setBackendPingOk] = useState(null);
   const [lastBackendPingAt, setLastBackendPingAt] = useState(null);
-  const [counterNo, setCounterNo] = useState(Number(initialDraft?.counterNo || 1));
+  const [counterNo, setCounterNo] = useState(Number(initialDraft?.counterNo || currentUser?.counter_no || 1));
   const [counterCount, setCounterCount] = useState(6);
   const [shopSettings, setShopSettings] = useState({
     shop_name: 'Hyper Fresh Mart LLP',
@@ -759,6 +771,8 @@ export default function BillingTerminalView({ isActive = true }) {
     try {
       window.localStorage.setItem(POS_DRAFT_KEY, JSON.stringify({
         username: currentUser?.username,
+        role: currentUser?.role,
+        systemNo: currentUser?.system_no || null,
         invoiceNo,
         counterNo,
         cart,
@@ -905,6 +919,7 @@ export default function BillingTerminalView({ isActive = true }) {
     if (isScannerWakeBlocked()) return undefined;
     const { search: cleaned, quantity } = parseQuantitySearch(query);
     if (!cleaned || !SCANNER_BARCODE_PATTERN.test(cleaned)) return undefined;
+    if (cleaned.length < SCANNER_MIN_BARCODE_LENGTH) return undefined;
     if (scannerInputModeRef.current !== 'keyboard' || suppressSuggestionsUntilKeyboardInputRef.current) return undefined;
 
     const timer = window.setTimeout(async () => {
@@ -916,7 +931,9 @@ export default function BillingTerminalView({ isActive = true }) {
         if (String(scannerRef.current?.value || '').trim().toUpperCase() !== cleaned.toUpperCase()) return;
         addProduct(exactProduct, quantity);
       } catch (err) {
-        addUnknownProductLine(cleaned, quantity);
+        setQuery(cleaned);
+        setSuggestions([]);
+        setSelectedSuggestion(0);
         setErrorMessage(`Product lookup failed for ${cleaned}. Delete this line or scan again after network is ready.`);
       }
     }, TYPED_BARCODE_AUTO_ADD_MS);
@@ -1702,9 +1719,9 @@ export default function BillingTerminalView({ isActive = true }) {
   function isLikelyScannerInput(value, targetRef = scannerKeyTimesRef) {
     const cleaned = String(value || '').trim();
     if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return false;
-    if (cleaned.length < 6) return false;
+    if (cleaned.length < SCANNER_MIN_BARCODE_LENGTH) return false;
     const times = targetRef.current;
-    if (times.length < Math.min(cleaned.length, 6)) return false;
+    if (times.length < Math.min(cleaned.length, SCANNER_MIN_BARCODE_LENGTH)) return false;
     const first = times[0];
     const last = times[times.length - 1];
     return last - first <= 350;
@@ -1726,6 +1743,7 @@ export default function BillingTerminalView({ isActive = true }) {
     const { search: cleaned, quantity } = parseQuantitySearch(rawValue);
     const normalized = cleaned.toUpperCase();
     if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
+    if (normalized.length < SCANNER_MIN_BARCODE_LENGTH) return;
 
     scannerReadQueueRef.current.push({ barcode: normalized, quantity, attempts: 0 });
     if (scannerInputModeRef.current !== 'scan') {
@@ -1754,6 +1772,7 @@ export default function BillingTerminalView({ isActive = true }) {
     resetScannerBuffer();
     const { search: cleaned } = parseQuantitySearch(bufferedValue);
     if (!SCANNER_BARCODE_PATTERN.test(cleaned)) return;
+    if (String(cleaned || '').trim().length < SCANNER_MIN_BARCODE_LENGTH) return;
     enqueueScannerRead(bufferedValue);
   }
 
@@ -1763,7 +1782,7 @@ export default function BillingTerminalView({ isActive = true }) {
     }
     scannerBufferTimerRef.current = window.setTimeout(() => {
       scannerBufferTimerRef.current = null;
-      if (scannerBufferRef.current.length >= 2) {
+      if (scannerBufferRef.current.length >= SCANNER_MIN_BARCODE_LENGTH) {
         commitScannerBuffer();
       }
     }, SCANNER_SETTLE_MS);
@@ -1791,7 +1810,7 @@ export default function BillingTerminalView({ isActive = true }) {
     }
     scannerBufferLastKeyAtRef.current = now;
 
-    if (scannerBufferRef.current.length >= 2 && (gap <= SCANNER_FAST_KEY_MS || scannerInputModeRef.current === 'scan')) {
+    if (scannerBufferRef.current.length >= SCANNER_MIN_BARCODE_LENGTH && (gap <= SCANNER_FAST_KEY_MS || scannerInputModeRef.current === 'scan')) {
       scannerInputModeRef.current = 'scan';
       suppressSuggestionsUntilKeyboardInputRef.current = true;
       setSuggestions([]);
@@ -1825,7 +1844,9 @@ export default function BillingTerminalView({ isActive = true }) {
             await new Promise((resolve) => setTimeout(resolve, 180));
             continue;
           }
-          addUnknownProductLine(scanRead.barcode, scanRead.quantity);
+          setQuery(scanRead.barcode);
+          setSuggestions([]);
+          setSelectedSuggestion(0);
           setErrorMessage(`Product lookup failed for ${scanRead.barcode}. Delete this line or scan again after network is ready.`);
         }
       }
@@ -2214,7 +2235,7 @@ export default function BillingTerminalView({ isActive = true }) {
           }
           setErrorMessage('Enter at least 3 letters for product search, or scan/enter an exact barcode.');
         } catch (err) {
-          addUnknownProductLine(cleaned, quantity);
+          setErrorMessage(`Product lookup failed for ${cleaned}. Check LAN and scan again.`);
         }
         return;
       }
@@ -2255,7 +2276,10 @@ export default function BillingTerminalView({ isActive = true }) {
         }
       } catch (err) {
         if (SCANNER_BARCODE_PATTERN.test(cleaned)) {
-          addUnknownProductLine(cleaned, quantity);
+          setQuery(cleaned);
+          setSuggestions([]);
+          setSelectedSuggestion(0);
+          setErrorMessage(`Product lookup failed for ${cleaned}. Check LAN and scan again.`);
         } else {
           setErrorMessage(err.response?.data?.error || 'Product lookup failed.');
         }

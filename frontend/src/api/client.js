@@ -514,6 +514,13 @@ export async function fetchGstHsnProductDetails({ from, to, search } = {}) {
   return data;
 }
 
+export async function fetchProductSalesReport({ from, to, search } = {}) {
+  const { data } = await api.get('/reports/product-sales', {
+    params: { from, to, search }
+  });
+  return data;
+}
+
 export async function fetchMonthlySalesReport(month) {
   const { data } = await api.get('/reports/monthly-sales', { params: { month } });
   return data;
