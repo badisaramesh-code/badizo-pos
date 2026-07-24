@@ -1241,7 +1241,7 @@ router.get('/hold/list', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const limitSql = hasDateRange ? 'LIMIT 500' : 'LIMIT 25';
+    const limitSql = hasDateRange ? 'LIMIT 1500' : 'LIMIT 50';
     const [rows] = await db.query(
       `SELECT invoice_no, customer_name, customer_phone, grand_total, cash_received, change_returned, billing_counter,
               payment_status, payment_reference, exchange_total,

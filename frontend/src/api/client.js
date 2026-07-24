@@ -143,20 +143,23 @@ export async function fetchSessionEvents(options = 200) {
   };
 }
 
-export async function pingBackendHealth(timeoutMs = 2500) {
+export async function pingBackendHealth(timeoutMs = 2500, options = {}) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     const baseUrl = String(api.defaults.baseURL || '').replace(/\/api\/?$/, '');
+    const includeUser = options.includeUser !== false;
     let user = {};
-    try {
-      user = JSON.parse(getAuthStorage().getItem(AUTH_USER_KEY) || '{}') || {};
-    } catch (_err) {
-      user = {};
+    if (includeUser) {
+      try {
+        user = JSON.parse(getAuthStorage().getItem(AUTH_USER_KEY) || '{}') || {};
+      } catch (_err) {
+        user = {};
+      }
     }
     const params = new URLSearchParams({
       _: String(Date.now()),
-      source: 'billing-heartbeat',
+      source: String(options.source || 'billing-heartbeat'),
       user: String(user.username || ''),
       role: String(user.role || ''),
       counter: String(user.counter_no || user.counterNo || '')

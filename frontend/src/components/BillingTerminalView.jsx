@@ -68,6 +68,9 @@ const SCANNER_TOTAL_KEY_MS = 140;
 const SCANNER_WAKE_BLOCK_MS = 120;
 const TYPED_SEARCH_DEBOUNCE_MS = 160;
 const TYPED_BARCODE_AUTO_ADD_MS = 300;
+const BACKEND_PING_TIMEOUT_MS = 12000;
+const BACKEND_PING_INTERVAL_MS = 15000;
+const BACKEND_PING_FAIL_THRESHOLD = 6;
 const EXACT_PRODUCT_CACHE_TTL_MS = 2000;
 const POS_SUGGESTION_LIMIT = 50;
 const MIN_VISIBLE_BILL_ROWS = 12;
@@ -808,7 +811,7 @@ export default function BillingTerminalView({ isActive = true }) {
     if (!isActive) return undefined;
     let cancelled = false;
     const keepBackendWarm = () => {
-      pingBackendHealth(8000)
+      pingBackendHealth(BACKEND_PING_TIMEOUT_MS, { includeUser: false, source: 'billing-ping-chip' })
         .then((ok) => {
           if (!cancelled) {
             if (ok) {
@@ -816,7 +819,7 @@ export default function BillingTerminalView({ isActive = true }) {
               setBackendPingOk(true);
             } else {
               backendPingFailCountRef.current += 1;
-              if (backendPingFailCountRef.current >= 3) setBackendPingOk(false);
+              if (backendPingFailCountRef.current >= BACKEND_PING_FAIL_THRESHOLD) setBackendPingOk(false);
             }
             setLastBackendPingAt(new Date());
           }
@@ -824,13 +827,13 @@ export default function BillingTerminalView({ isActive = true }) {
         .catch(() => {
           if (!cancelled) {
             backendPingFailCountRef.current += 1;
-            if (backendPingFailCountRef.current >= 3) setBackendPingOk(false);
+            if (backendPingFailCountRef.current >= BACKEND_PING_FAIL_THRESHOLD) setBackendPingOk(false);
             setLastBackendPingAt(new Date());
           }
         });
     };
     keepBackendWarm();
-    const timer = window.setInterval(keepBackendWarm, 10000);
+    const timer = window.setInterval(keepBackendWarm, BACKEND_PING_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
