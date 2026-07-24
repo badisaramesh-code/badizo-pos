@@ -63,7 +63,8 @@ const EMPTY_MIXED_PAYMENT = { cash: '', upi: '', card: '', upi_reference: '', ca
 const SCANNER_BARCODE_PATTERN = /^[A-Z0-9._-]+$/i;
 const SCANNER_MIN_BARCODE_LENGTH = 6;
 const SCANNER_SETTLE_MS = 240;
-const SCANNER_FAST_KEY_MS = 160;
+const SCANNER_FAST_KEY_MS = 45;
+const SCANNER_TOTAL_KEY_MS = 140;
 const SCANNER_WAKE_BLOCK_MS = 120;
 const TYPED_SEARCH_DEBOUNCE_MS = 160;
 const TYPED_BARCODE_AUTO_ADD_MS = 300;
@@ -1724,7 +1725,7 @@ export default function BillingTerminalView({ isActive = true }) {
     if (times.length < Math.min(cleaned.length, SCANNER_MIN_BARCODE_LENGTH)) return false;
     const first = times[0];
     const last = times[times.length - 1];
-    return last - first <= 350;
+    return last - first <= SCANNER_TOTAL_KEY_MS;
   }
 
   function scheduleScannedBarcodeAutoAdd(rawValue, options = {}) {
