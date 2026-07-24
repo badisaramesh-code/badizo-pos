@@ -100,6 +100,15 @@ function clearActivePosDraft() {
 }
 
 function getUnitPrice(item, mode) {
+  const quantity = toNumber(item.quantity, 1);
+  const qty3Price = toNumber(item.qty_3_price);
+  const qty6Price = toNumber(item.qty_6_price);
+  const qty12Price = toNumber(item.qty_12_price);
+  if (quantity >= 12) {
+    return toNumber(qty12Price || item.wholesale_price || qty6Price || qty3Price || item.sale_price || item.mrp);
+  }
+  if (quantity >= 6 && qty6Price > 0) return qty6Price;
+  if (quantity >= 3 && qty3Price > 0) return qty3Price;
   if (BILLING_MODES[mode]?.tier === 'WHOLESALE') {
     return toNumber(item.wholesale_price || item.sale_price || item.mrp);
   }
@@ -1387,6 +1396,11 @@ export default function BillingTerminalView({ isActive = true }) {
       };
     });
     const saleGrand = toNumber(invoice.sub_total) + toNumber(invoice.gst_total);
+    const customerGain = items.reduce((sum, item) => (
+      item.is_free_bonus
+        ? sum
+        : sum + Math.max(toNumber(item.mrp) - toNumber(item.unitPrice), 0) * toNumber(item.quantity, 1)
+    ), 0);
     const exchangeTotal = toNumber(invoice.exchange_total);
     const loyaltyRedeemAmount = toNumber(invoice.loyalty_redeemed_amount);
     const rawPayableTotal = Math.max(saleGrand - exchangeTotal - loyaltyRedeemAmount, 0);
@@ -1425,7 +1439,7 @@ export default function BillingTerminalView({ isActive = true }) {
       totals: {
         taxable: toNumber(invoice.sub_total),
         tax: toNumber(invoice.gst_total),
-        discount: 0,
+        discount: customerGain,
         saleGrand,
         exchangeTotal,
         loyaltyRedeemPoints: toNumber(invoice.loyalty_redeemed_points),
@@ -5267,7 +5281,8 @@ export default function BillingTerminalView({ isActive = true }) {
                   <thead><tr><th>Code</th><th>Product</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Del</th></tr></thead>
                   <tbody>
                     {exchangeItems.map((item, index) => {
-                      const lineAmount = toNumber(item.unitPrice || item.sale_price || item.mrp) * toNumber(item.quantity, 1);
+                      const lineUnitPrice = getUnitPrice(item, billingMode);
+                      const lineAmount = lineUnitPrice * toNumber(item.quantity, 1);
                       return (
                         <tr key={`${item.barcode}-${index}`}>
                           <td className="mono">{item.barcode}</td>
@@ -5282,7 +5297,7 @@ export default function BillingTerminalView({ isActive = true }) {
                               onChange={(event) => updateExchangeQuantity(index, event.target.value)}
                             />
                           </td>
-                          <td>{formatMoney(item.unitPrice || item.sale_price || item.mrp)}</td>
+                          <td>{formatMoney(lineUnitPrice)}</td>
                           <td><strong>{formatMoney(lineAmount)}</strong></td>
                           <td><button className="danger-button" onClick={() => removeExchangeLine(index)}>Del</button></td>
                         </tr>
@@ -6389,6 +6404,9 @@ export default function BillingTerminalView({ isActive = true }) {
                           >
                             {invoice.invoice_no}
                           </button>
+                          <span className="history-invoice-counter">
+                            {invoice.billing_counter || '-'}
+                          </span>
                         </td>
                         <td>{invoice.customer_name || 'Walk-in Customer'}</td>
                         <td><strong>{formatMoney(invoice.grand_total)}</strong></td>

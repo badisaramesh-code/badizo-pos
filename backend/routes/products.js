@@ -104,6 +104,9 @@ function toProduct(row) {
     purchase_price: Number(row.purchase_price || 0),
     sale_price: Number(row.sale_price || 0),
     wholesale_price: Number(row.wholesale_price || row.sale_price || 0),
+    qty_3_price: Number(row.qty_3_price || 0),
+    qty_6_price: Number(row.qty_6_price || 0),
+    qty_12_price: Number(row.qty_12_price || 0),
     discount_type: row.discount_type || 'PERCENT',
     discount_value: Number(row.discount_value || 0),
     bulk_discount_value: Number(row.bulk_discount_value || 0),
@@ -3096,6 +3099,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     purchase_price,
     sale_price,
     wholesale_price,
+    qty_3_price,
+    qty_6_price,
+    qty_12_price,
     discount_type,
     discount_value,
     bulk_discount_value,
@@ -3128,6 +3134,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       aliasNames: normalizeAliasNames(alias_names),
       salePrice: Number(sale_price) || 0,
       wholesalePrice: Number(wholesale_price || sale_price) || 0,
+      qty3Price: Number(qty_3_price) || 0,
+      qty6Price: Number(qty_6_price) || 0,
+      qty12Price: Number(qty_12_price) || 0,
       discountType: discount_type === 'VALUE' ? 'VALUE' : 'PERCENT',
       discountValue: Number(discount_value) || 0,
       bulkDiscountValue: Number(bulk_discount_value) || 0,
@@ -3144,7 +3153,6 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     };
 
     const requiredErrors = [];
-    if (code_mode === 'MANUAL' && !String(product_code || '').trim()) requiredErrors.push('Product code');
     if (!String(barcode || '').trim()) requiredErrors.push('Barcode');
     if (!values.productName) requiredErrors.push('Product name');
     if (!String(values.hsnCode || '').trim()) requiredErrors.push('HSN code');
@@ -3175,6 +3183,22 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       return res.status(400).json({ error: 'Wholesale price cannot be greater than MRP.' });
     }
 
+    if (values.qty3Price > values.mrp && values.mrp > 0) {
+      return res.status(400).json({ error: '3+ price cannot be greater than MRP.' });
+    }
+
+    if (values.qty6Price > values.mrp && values.mrp > 0) {
+      return res.status(400).json({ error: '6+ price cannot be greater than MRP.' });
+    }
+
+    if (values.qty12Price > values.mrp && values.mrp > 0) {
+      return res.status(400).json({ error: '12+ price cannot be greater than MRP.' });
+    }
+
+    if (values.qty3Price < 0 || values.qty6Price < 0 || values.qty12Price < 0) {
+      return res.status(400).json({ error: 'Quantity prices cannot be negative.' });
+    }
+
     if (values.purchasePrice < 0) {
       return res.status(400).json({ error: 'Purchase price cannot be negative.' });
     }
@@ -3188,6 +3212,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     if (!finalProductCode && code_mode !== 'MANUAL') {
       finalProductCode = `BDZ${Date.now().toString().slice(-8)}`;
     }
+    if (!finalProductCode) finalProductCode = null;
 
     const originalBarcode = String(original_barcode || '').trim().toUpperCase();
     const saveValues = [
@@ -3204,6 +3229,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       values.purchasePrice,
       values.salePrice,
       values.wholesalePrice,
+      values.qty3Price,
+      values.qty6Price,
+      values.qty12Price,
       values.discountType,
       values.discountValue,
       values.bulkDiscountValue,
@@ -3255,6 +3283,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
              purchase_price = ?,
              sale_price = ?,
              wholesale_price = ?,
+             qty_3_price = ?,
+             qty_6_price = ?,
+             qty_12_price = ?,
              discount_type = ?,
              discount_value = ?,
              bulk_discount_value = ?,
@@ -3280,10 +3311,10 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     } else {
       await db.query(
         `INSERT INTO products
-         (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price,
+         (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price, qty_3_price, qty_6_price, qty_12_price,
           discount_type, discount_value, bulk_discount_value, is_free_item, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
           free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert, default_batch_no, default_mfd_date, default_expiry_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            product_code = VALUES(product_code),
            product_name = VALUES(product_name),
@@ -3297,6 +3328,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
            purchase_price = VALUES(purchase_price),
            sale_price = VALUES(sale_price),
            wholesale_price = VALUES(wholesale_price),
+           qty_3_price = VALUES(qty_3_price),
+           qty_6_price = VALUES(qty_6_price),
+           qty_12_price = VALUES(qty_12_price),
            discount_type = VALUES(discount_type),
            discount_value = VALUES(discount_value),
            bulk_discount_value = VALUES(bulk_discount_value),

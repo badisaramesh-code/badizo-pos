@@ -49,6 +49,10 @@ const BARCODE_TEMPLATE_ROWS = [
     label: '33 x 25 mm Two-Up'
   },
   {
+    key: 'tsc-te244-40x40-two-up.prn',
+    label: '40 x 40 mm Two-Up'
+  },
+  {
     key: 'tsc-244-2-jewellery-100x15-tail.prn',
     label: '100 x 15 mm Jewellery Tail'
   }
@@ -64,6 +68,11 @@ const DEFAULT_BARCODE_PRINTER_TEMPLATES = {
     label: '33 x 25 mm Two-Up',
     printer: 'TSC TE244',
     shares: ['\\\\localhost\\TSC-244-2']
+  },
+  'tsc-te244-40x40-two-up.prn': {
+    label: '40 x 40 mm Two-Up',
+    printer: 'TSC TE244',
+    shares: ['\\\\localhost\\TSC TE244', '\\\\localhost\\TSC-244-2']
   },
   'tsc-244-2-jewellery-100x15-tail.prn': {
     label: '100 x 15 mm Jewellery Tail',

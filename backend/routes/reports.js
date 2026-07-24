@@ -6,7 +6,7 @@ const { csvLine, normalizeDate, todayIso } = require('../utils/formatters');
 
 function normalizeCounter(value) {
   const text = String(value || '').trim();
-  return /^Counter\s*\d+$/i.test(text) ? text.replace(/^Counter\s*/i, 'Counter ') : '';
+  return /^(.*\/)?Counter\s*\d+$/i.test(text) ? text : '';
 }
 
 function normalizeCounterNoFromLabel(value) {
@@ -164,8 +164,8 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
     let counterSql = '';
 
     if (counter) {
-      counterSql = 'AND i.billing_counter REGEXP ?';
-      values.push(counterRegexForLabel(counter));
+      counterSql = 'AND LOWER(TRIM(i.billing_counter)) = LOWER(?)';
+      values.push(counter);
     }
 
     const [rows] = await db.query(
@@ -721,8 +721,8 @@ async function getDailySalesForExport(from, to, counter) {
   const values = [from, to];
   let counterSql = '';
   if (counter) {
-    counterSql = 'AND i.billing_counter REGEXP ?';
-    values.push(counterRegexForLabel(counter));
+    counterSql = 'AND LOWER(TRIM(i.billing_counter)) = LOWER(?)';
+    values.push(counter);
   }
 
   const [rows] = await db.query(

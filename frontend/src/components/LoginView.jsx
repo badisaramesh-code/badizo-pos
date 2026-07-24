@@ -25,7 +25,7 @@ function loginModeFromUrl() {
 function fixedLoginUserFromUrl() {
   const params = new URLSearchParams(window.location.search || '');
   const username = String(params.get('loginUser') || params.get('user') || params.get('username') || '').trim().toLowerCase();
-  return /^(server|admin[1-9]\d*|counter[1-6]|security)$/.test(username) ? username : '';
+  return /^(server|admin[1-9]\d*|counter[1-6]|security[1-9]\d*)$/.test(username) ? username : '';
 }
 
 function filterLoginOptions(options, mode) {
@@ -124,6 +124,9 @@ export default function LoginView({ onLogin }) {
     setIsLoading(true);
 
     try {
+      // The installed counter app identifies the physical system account used
+      // for authentication. The selected counter is only the billing counter
+      // for this session, so every system can open any configured counter.
       const loginUsername = isCounterLogin ? `counter${systemNo}` : username;
       const user = await login(loginUsername, password, effectivePersonName, isCounterLogin ? {
         systemNo,

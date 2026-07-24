@@ -15,6 +15,7 @@ const DEFAULT_API_URL = 'http://localhost:5000/api/health';
 const DEFAULT_BACKEND_PORT = 5000;
 const DEFAULT_FRONTEND_PORT = 5000;
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 9000;
+const SERVER_CACHE_FILE = 'badizo-server-cache.json';
 const servers = [];
 let mainWindow = null;
 
@@ -33,6 +34,25 @@ function readJsonIfExists(filePath) {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
   } catch (_err) {
     return null;
+  }
+}
+
+function readCachedServerHost() {
+  const cached = readJsonIfExists(path.join(app.getPath('userData'), SERVER_CACHE_FILE));
+  return String(cached?.host || '').trim();
+}
+
+function saveCachedServerHost(host) {
+  const normalizedHost = String(host || '').trim();
+  if (!normalizedHost || isLoopbackHost(normalizedHost)) return;
+  try {
+    fs.writeFileSync(
+      path.join(app.getPath('userData'), SERVER_CACHE_FILE),
+      JSON.stringify({ host: normalizedHost, savedAt: new Date().toISOString() }, null, 2),
+      'utf8'
+    );
+  } catch (error) {
+    logMessage(`Unable to cache discovered server host: ${error.message || error}`);
   }
 }
 
@@ -64,7 +84,10 @@ function getConfig() {
     frontendPort: Number(process.env.BADIZO_FRONTEND_PORT || config.frontendPort || DEFAULT_FRONTEND_PORT),
     startBackend: usesRemoteServer ? false : config.startBackend !== false,
     startFrontend: usesRemoteServer ? false : config.startFrontend !== false,
-    serverHosts: parseServerHosts(process.env.BADIZO_SERVER_HOSTS || config.serverHosts || config.serverHost || ''),
+    serverHosts: [
+      readCachedServerHost(),
+      ...parseServerHosts(process.env.BADIZO_SERVER_HOSTS || config.serverHosts || config.serverHost || '')
+    ].filter(Boolean),
     discoveryEnabled: config.discoveryEnabled !== false,
     discoveryTimeoutMs: Number(config.discoveryTimeoutMs || DEFAULT_DISCOVERY_TIMEOUT_MS),
     loginMode: ['server', 'admin', 'counter', 'all'].includes(String(config.loginMode || '').toLowerCase())
@@ -288,6 +311,7 @@ async function resolveRemoteServer(config) {
   }
 
   const host = getUrlHost(healthUrl);
+  saveCachedServerHost(host);
   const appCandidates = [buildUrl(host, healthPort, '/')];
   const appUrl = await findReachableHealthUrl(appCandidates, 2500) || appCandidates[0];
   logMessage(`Resolved Badizo server appUrl=${appUrl} healthUrl=${healthUrl}`);
@@ -383,8 +407,12 @@ function showStartupError(error, appUrl) {
 }
 
 function createWindow(config) {
-  const appUrl = withLoginParams(config.appUrl, config.loginMode, config.loginUser);
+  let activeConfig = config;
+  let appUrl = withLoginParams(activeConfig.appUrl, activeConfig.loginMode, activeConfig.loginUser);
   let reconnectTimer = null;
+  let healthMonitor = null;
+  let rediscoveryRunning = false;
+  let consecutiveHealthFailures = 0;
   logMessage(`Creating window for ${appUrl}`);
   const iconPath = resolveResourcePath('assets', 'badizo.ico');
   const { workAreaSize } = screen.getPrimaryDisplay();
@@ -421,12 +449,35 @@ function createWindow(config) {
   const retryLoad = (reason) => {
     if (!mainWindow || mainWindow.isDestroyed() || reconnectTimer) return;
     logMessage(`Scheduling automatic reconnect: ${reason}`);
-    reconnectTimer = setTimeout(() => {
+    reconnectTimer = setTimeout(async () => {
       reconnectTimer = null;
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      mainWindow.loadURL(appUrl).catch((error) => retryLoad(error.message || error));
+      if (!mainWindow || mainWindow.isDestroyed() || rediscoveryRunning) return;
+      rediscoveryRunning = true;
+      try {
+        if (activeConfig.startFrontend === false) {
+          activeConfig = await resolveRemoteServer(activeConfig);
+          appUrl = withLoginParams(activeConfig.appUrl, activeConfig.loginMode, activeConfig.loginUser);
+        }
+        await mainWindow.loadURL(appUrl);
+        consecutiveHealthFailures = 0;
+      } catch (error) {
+        retryLoad(error.message || error);
+      } finally {
+        rediscoveryRunning = false;
+      }
     }, 2000);
   };
+
+  if (activeConfig.startFrontend === false) {
+    healthMonitor = setInterval(async () => {
+      if (!mainWindow || mainWindow.isDestroyed() || rediscoveryRunning) return;
+      const healthy = await isReachable(activeConfig.apiHealthUrl, 1800);
+      consecutiveHealthFailures = healthy ? 0 : consecutiveHealthFailures + 1;
+      if (consecutiveHealthFailures >= 2) {
+        retryLoad(`Server health unavailable at ${activeConfig.apiHealthUrl}`);
+      }
+    }, 10000);
+  }
 
   // Keep the application visible and retry forever instead of closing a busy
   // counter because of a brief LAN/server interruption.
@@ -444,6 +495,7 @@ function createWindow(config) {
 
   mainWindow.on('closed', () => {
     if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (healthMonitor) clearInterval(healthMonitor);
     logMessage('Window closed');
     mainWindow = null;
   });

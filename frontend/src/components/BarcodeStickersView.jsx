@@ -15,6 +15,12 @@ const TEMPLATE_OPTIONS = [
     help: 'One printer row prints two 33x25mm stickers side-by-side.'
   },
   {
+    name: 'tsc-te244-40x40-two-up.prn',
+    label: '40 x 40 mm Two-Up',
+    printer: 'TSC TE244',
+    help: 'One printer row prints two 40x40mm stickers side-by-side.'
+  },
+  {
     name: 'tsc-244-2-jewellery-100x15-tail.prn',
     label: '100 x 15 mm Jewellery Tail',
     printer: 'TSC 244-2',
@@ -24,6 +30,7 @@ const TEMPLATE_OPTIONS = [
 
 const BARCODE_STORE_SETTINGS_KEY = 'badizo_barcode_store_settings';
 const BARCODE_LABEL_FORMAT_KEY = 'badizo_barcode_label_format';
+const BARCODE_PRINTER_SELECTIONS_KEY = 'badizo_barcode_printer_selections';
 const DEFAULT_STORE_SETTINGS = {
   company: 'hyper fresh mart llp',
   address_line_1: 'H.NO: 3-41, Behind GV Mall, Morisetti Vari street',
@@ -77,6 +84,14 @@ function loadBarcodeLabelFormat() {
   }
 }
 
+function loadBarcodePrinterSelections() {
+  try {
+    return JSON.parse(window.localStorage.getItem(BARCODE_PRINTER_SELECTIONS_KEY) || '{}');
+  } catch (err) {
+    return {};
+  }
+}
+
 function displayNumber(value, decimals = 2) {
   const amount = Number(String(value ?? '').replace(/,/g, ''));
   if (!Number.isFinite(amount)) return '0.00';
@@ -115,9 +130,17 @@ export default function BarcodeStickersView() {
   const [errorMessage, setErrorMessage] = useState('');
   const [isPrinting, setIsPrinting] = useState(false);
   const [barcodePrinterTemplates, setBarcodePrinterTemplates] = useState({});
+  const [printerSelections, setPrinterSelections] = useState(loadBarcodePrinterSelections);
   const selectedTemplate = TEMPLATE_OPTIONS.find((option) => option.name === templateName) || TEMPLATE_OPTIONS[0];
   const selectedPrinterConfig = barcodePrinterTemplates[templateName] || {};
-  const selectedPrinterName = selectedPrinterConfig.printer || selectedTemplate.printer;
+  const printerOptions = useMemo(() => [...new Set([
+    ...Object.values(barcodePrinterTemplates).map((config) => String(config?.printer || '').trim()),
+    ...TEMPLATE_OPTIONS.map((option) => option.printer)
+  ].filter(Boolean))], [barcodePrinterTemplates]);
+  const configuredPrinterName = selectedPrinterConfig.printer || selectedTemplate.printer;
+  const selectedPrinterName = printerOptions.includes(printerSelections[templateName])
+    ? printerSelections[templateName]
+    : configuredPrinterName;
   const searchRef = useRef(null);
   const stickerCountRef = useRef(null);
   const selectedProductRef = useRef(null);
@@ -177,6 +200,14 @@ export default function BarcodeStickersView() {
     } catch (err) {
       setBarcodePrinterTemplates({});
     }
+  }
+
+  function changePrinterName(printerName) {
+    const nextSelections = { ...printerSelections, [templateName]: printerName };
+    setPrinterSelections(nextSelections);
+    window.localStorage.setItem(BARCODE_PRINTER_SELECTIONS_KEY, JSON.stringify(nextSelections));
+    setPrn('');
+    setOutputInfo(null);
   }
 
   async function loadTemplate() {
@@ -370,7 +401,8 @@ export default function BarcodeStickersView() {
         ...form,
         mrp: moneyTwoDecimals(form.mrp),
         sale_price: moneyTwoDecimals(form.sale_price),
-        template_name: templateName
+        template_name: templateName,
+        printer_name: selectedPrinterName
       });
       setPrn(result.prn || '');
       setOutputInfo(result);
@@ -525,7 +557,12 @@ export default function BarcodeStickersView() {
             </div>
 
             <div className="barcode-printer-card">
-              <label><span className="field-label">Printer Name</span><input className="field" value={selectedPrinterName} readOnly /></label>
+              <label>
+                <span className="field-label">Printer Name</span>
+                <select className="select" value={selectedPrinterName} onChange={(event) => changePrinterName(event.target.value)}>
+                  {printerOptions.map((printerName) => <option key={printerName} value={printerName}>{printerName}</option>)}
+                </select>
+              </label>
               <label><span className="field-label">System Name</span><input className="field" value={systemName} readOnly /></label>
               <label>
                 <span className="field-label">Label Format</span>

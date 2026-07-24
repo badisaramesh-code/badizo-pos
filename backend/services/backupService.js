@@ -7,6 +7,7 @@ const { logError, logInfo } = require('./logger');
 const {
   driveKeepCount,
   isDriveBackupEnabled,
+  listDriveBackups,
   pruneDriveBackups,
   uploadBackupToDrive
 } = require('./googleDriveBackupService');
@@ -237,6 +238,53 @@ function scheduleDailyBackup() {
   scheduleNext();
 }
 
+let cloudSyncRunning = false;
+
+async function syncPendingBackupsToDrive() {
+  if (!isDriveBackupEnabled() || cloudSyncRunning) return { enabled: isDriveBackupEnabled(), skipped: true };
+
+  cloudSyncRunning = true;
+  try {
+    const [localBackups, driveBackups] = await Promise.all([listBackups(), listDriveBackups()]);
+    const uploadedNames = new Set(driveBackups.map((backup) => String(backup.name || '')));
+    const pending = localBackups
+      .slice(0, driveKeepCount())
+      .filter((backup) => !uploadedNames.has(backup.file))
+      .reverse();
+    const uploaded = [];
+
+    for (const backup of pending) {
+      await uploadBackupToDrive({ ...backup, path: getBackupPath(backup.file) });
+      uploaded.push(backup.file);
+    }
+
+    if (uploaded.length) {
+      await pruneDriveBackups();
+      await pruneLocalBackups();
+      logInfo('Pending Google Drive backups synchronized', { uploaded });
+    }
+    return { enabled: true, uploaded };
+  } catch (err) {
+    // Internet can be unavailable for long periods. The POS remains fully local;
+    // this background sync simply tries again after the configured interval.
+    logError('Pending Google Drive backup sync deferred', err);
+    return { enabled: true, uploaded: [], deferred: true, error: err.message };
+  } finally {
+    cloudSyncRunning = false;
+  }
+}
+
+function scheduleCloudBackupSync() {
+  if (!isDriveBackupEnabled()) return null;
+  const intervalMinutes = Math.max(Number.parseInt(process.env.GOOGLE_DRIVE_RETRY_MINUTES, 10) || 10, 1);
+  const intervalMs = intervalMinutes * 60 * 1000;
+  const timer = setInterval(() => { syncPendingBackupsToDrive(); }, intervalMs);
+  setTimeout(() => { syncPendingBackupsToDrive(); }, 30 * 1000);
+  timer.unref?.();
+  logInfo('Google Drive backup retry scheduled', { intervalMinutes });
+  return timer;
+}
+
 module.exports = {
   backupDir,
   getBackupPath,
@@ -244,5 +292,7 @@ module.exports = {
   pruneLocalBackups,
   runDatabaseBackup,
   restoreDatabaseBackup,
-  scheduleDailyBackup
+  scheduleDailyBackup,
+  scheduleCloudBackupSync,
+  syncPendingBackupsToDrive
 };

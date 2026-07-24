@@ -24,7 +24,7 @@ import { formatMoney, toNumber } from '../utils/money';
 const emptyForm = {
   original_barcode: '',
   product_code: '',
-  code_mode: 'AUTO',
+  code_mode: 'MANUAL',
   barcode: '',
   product_name: '',
   alias_names: '',
@@ -37,6 +37,9 @@ const emptyForm = {
   purchase_price: '',
   sale_price: '',
   wholesale_price: '',
+  qty_3_price: '',
+  qty_6_price: '',
+  qty_12_price: '',
   discount_type: 'VALUE',
   discount_value: '',
   bulk_discount_value: '',
@@ -518,7 +521,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
   useEffect(() => {
     if (activeProductSection === PRODUCT_SECTIONS.FORM) {
-      focusProductField(barcodeRef);
+      focusBarcodeField();
     }
   }, [activeProductSection]);
 
@@ -556,6 +559,23 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       ref.current?.focus();
       ref.current?.select?.();
     }, 0);
+  }
+
+  function focusBarcodeField(attempts = 5) {
+    const focusAttempt = (remaining) => {
+      const input = barcodeRef.current;
+      if (!input) {
+        if (remaining > 1) window.setTimeout(() => focusAttempt(remaining - 1), 60);
+        return;
+      }
+      input.focus({ preventScroll: true });
+      const caretPosition = input.value.length;
+      input.setSelectionRange?.(caretPosition, caretPosition);
+      if (document.activeElement !== input && remaining > 1) {
+        window.setTimeout(() => focusAttempt(remaining - 1), 60);
+      }
+    };
+    window.requestAnimationFrame(() => focusAttempt(attempts));
   }
 
   function focusBulkSearch(attempts = 1) {
@@ -613,7 +633,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
   function resetProductForm() {
     setForm({ ...emptyForm, created_at: todayIso(), updated_at: '' });
-    focusProductField(barcodeRef);
+    focusBarcodeField();
   }
 
   function openNewProductForm() {
@@ -621,7 +641,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     setErrorMessage('');
     setForm({ ...emptyForm, created_at: todayIso(), updated_at: '' });
     setActiveProductSection(PRODUCT_SECTIONS.FORM);
-    focusProductField(barcodeRef);
+    focusBarcodeField();
   }
 
   function updateField(field, value) {
@@ -681,7 +701,6 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   function validateProductForm(source = form) {
     const productForm = normalizedProductForm(source);
     const requiredFields = [
-      ...(productForm.code_mode === 'MANUAL' ? [['product_code', 'Product Code']] : []),
       ['barcode', 'Barcode'],
       ['product_name', 'Product name'],
       ['hsn_code', 'HSN code'],
@@ -692,7 +711,6 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       ['mrp', 'MRP'],
       ['purchase_price', 'Purchase price'],
       ['sale_price', 'Retail sale price'],
-      ['wholesale_price', 'Wholesale price'],
       ['discount_value', 'Discount'],
       ['bulk_discount_value', 'Wholesale discount'],
       ['stock_qty', 'Current stock'],
@@ -707,11 +725,17 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     const mrp = toNumber(productForm.mrp);
     const salePrice = toNumber(productForm.sale_price);
     const wholesalePrice = toNumber(productForm.wholesale_price);
+    const qty3Price = toNumber(productForm.qty_3_price);
+    const qty6Price = toNumber(productForm.qty_6_price);
+    const qty12Price = toNumber(productForm.qty_12_price);
     const purchasePrice = toNumber(productForm.purchase_price);
     const purchaseUnitSize = toNumber(productForm.purchase_unit_size);
 
     if (salePrice > mrp && mrp > 0) return 'Retail sale price cannot be greater than MRP.';
     if (wholesalePrice > mrp && mrp > 0) return 'Wholesale price cannot be greater than MRP.';
+    if (qty3Price > mrp && mrp > 0) return '3+ price cannot be greater than MRP.';
+    if (qty6Price > mrp && mrp > 0) return '6+ price cannot be greater than MRP.';
+    if (qty12Price > mrp && mrp > 0) return '12+ price cannot be greater than MRP.';
     if (purchasePrice < 0) return 'Purchase price cannot be negative.';
     if (purchaseUnitSize <= 0) return 'Stock per purchase unit must be greater than zero.';
     if (productForm.free_promo_enabled && !uppercaseProductName(productForm.free_promo_name)) return 'Enter free item name for product promotion.';
@@ -738,6 +762,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       purchase_price: String(product.purchase_price ?? ''),
       sale_price: String(product.sale_price ?? ''),
       wholesale_price: String(product.wholesale_price ?? ''),
+      qty_3_price: Number(product.qty_3_price) > 0 ? String(product.qty_3_price) : '',
+      qty_6_price: Number(product.qty_6_price) > 0 ? String(product.qty_6_price) : '',
+      qty_12_price: Number(product.qty_12_price) > 0 ? String(product.qty_12_price) : '',
       discount_type: product.discount_type || 'PERCENT',
       discount_value: String(product.discount_value ?? ''),
       bulk_discount_value: String(product.bulk_discount_value ?? ''),
@@ -755,7 +782,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       updated_at: product.updated_at || ''
     });
     setActiveProductSection(PRODUCT_SECTIONS.FORM);
-    focusProductField(barcodeRef);
+    focusBarcodeField();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -1183,7 +1210,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             <span>Product Edit Date: <strong>{formatProductDate(form.updated_at || form.created_at)}</strong></span>
           </div>
 
-          <div className="segmented two">
+          <div className="segmented two product-code-mode-selector">
             <button type="button" className={form.code_mode === 'AUTO' ? 'active' : ''} onClick={() => updateField('code_mode', 'AUTO')}>Auto Code</button>
             <button type="button" className={form.code_mode === 'MANUAL' ? 'active' : ''} onClick={() => updateField('code_mode', 'MANUAL')}>Manual Code</button>
           </div>
@@ -1197,7 +1224,6 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
               onChange={(event) => updateField('product_code', event.target.value.toUpperCase())}
               onKeyDown={(event) => moveOnEnter(event, aliasNamesRef)}
               placeholder={form.code_mode === 'AUTO' ? 'Auto generated when empty' : 'Enter product code'}
-              required={form.code_mode === 'MANUAL'}
             />
           </label>
 
@@ -1292,8 +1318,23 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
           </label>
 
           <label className="product-field-order-8">
-            <span className="field-label">Wholesale price</span>
-            <input ref={wholesalePriceRef} className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, unitRef)} placeholder="Defaults to retail price" required />
+            <span className="field-label">Wholesale price (optional)</span>
+            <input ref={wholesalePriceRef} className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, unitRef)} placeholder="Defaults to retail price" />
+          </label>
+
+          <label className="product-field-order-8">
+            <span className="field-label">3+ Price (Qty 3–5, optional)</span>
+            <input className="field" type="number" step="0.01" min="0" value={form.qty_3_price} onChange={(event) => updateField('qty_3_price', event.target.value)} placeholder="Leave empty to use normal price" />
+          </label>
+
+          <label className="product-field-order-8">
+            <span className="field-label">6+ Price (Qty 6–11, optional)</span>
+            <input className="field" type="number" step="0.01" min="0" value={form.qty_6_price} onChange={(event) => updateField('qty_6_price', event.target.value)} placeholder="Leave empty to use normal price" />
+          </label>
+
+          <label className="product-field-order-8">
+            <span className="field-label">12+ Price (Qty 12+, optional)</span>
+            <input className="field" type="number" step="0.01" min="0" value={form.qty_12_price} onChange={(event) => updateField('qty_12_price', event.target.value)} placeholder="Leave empty to use wholesale price" />
           </label>
 
           <label className="product-field-order-11">

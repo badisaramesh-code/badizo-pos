@@ -1695,10 +1695,13 @@ export default function ReportsView({ isActive = true, onClose }) {
               <span className="field-label">To Date</span>
               <input className="field report-date-input" type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
             </label>
-            <select className="select" value={counter} onChange={(event) => setCounter(event.target.value)}>
-              <option value="">All Counters</option>
-              {counterOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
+            <label className="report-counter-field">
+              <span className="field-label">Counter</span>
+              <select className="select" value={counter} onChange={(event) => setCounter(event.target.value)}>
+                <option value="">All Counters</option>
+                {counterOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
             <label className="date-range-field">
               <span className="field-label">Search</span>
               <input

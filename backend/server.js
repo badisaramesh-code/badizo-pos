@@ -4,7 +4,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { mountRoutes } = require('./routes');
-const { scheduleDailyBackup } = require('./services/backupService');
+const { scheduleCloudBackupSync, scheduleDailyBackup } = require('./services/backupService');
 const { scheduleDailySaleAlerts } = require('./services/saleAlertService');
 const { logError, logInfo } = require('./services/logger');
 
@@ -166,6 +166,7 @@ function startServer(port = PORT) {
       logInfo('Backend started', { host: HOST, port: listenPort });
       startLegacyFrontendRedirect(listenPort);
       scheduleDailyBackup();
+      scheduleCloudBackupSync();
       scheduleDailySaleAlerts();
       resolve(server);
     });

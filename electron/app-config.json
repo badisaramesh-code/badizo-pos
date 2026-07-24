@@ -1,13 +1,16 @@
 {
-  "appUrl": "http://localhost:5000",
-  "apiHealthUrl": "http://localhost:5000/api/health",
+  "appUrl": "http://192.168.1.10:5000?loginMode=counter&loginUser=counter3",
+  "apiHealthUrl": "http://192.168.1.10:5000/api/health",
   "backendPort": 5000,
   "frontendPort": 5000,
   "startBackend": false,
   "startFrontend": false,
-  "serverHosts": [],
-  "discoveryEnabled": false,
+  "serverHosts": ["badizo-server.local", "badizo-server", "BADIZO-SERVER", "server", "SERVER", "192.168.1.10"],
+  "discoveryEnabled": true,
   "discoveryTimeoutMs": 15000,
   "kiosk": false,
+  "loginMode": "counter",
+  "loginUser": "counter3",
+  "forcePackagedConfig": true,
   "devTools": false
 }

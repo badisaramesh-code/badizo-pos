@@ -26,6 +26,11 @@ const TEMPLATE_META = {
     printer: 'TSC TTP-244 -1',
     shares: ['\\\\localhost\\TSC TTP-244 -1', '\\\\localhost\\TSC 244-1']
   },
+  'tsc-te244-40x40-two-up.prn': {
+    size: '40 x 40 mm Two-Up',
+    printer: 'TSC TE244',
+    shares: ['\\\\localhost\\TSC TE244', '\\\\localhost\\TSC TTP-244 -1', '\\\\localhost\\TSC 244-1']
+  },
   'tsc-244-2-jewellery-100x15-tail.prn': {
     size: '100 x 15 mm Jewellery Tail',
     printer: 'TSC 244-2',
@@ -68,6 +73,24 @@ async function getTemplateMeta(templateName) {
     return configuredMeta[templateName] || TEMPLATE_META[templateName] || { size: templateName, printer: '', shares: [] };
   } catch (err) {
     return TEMPLATE_META[templateName] || { size: templateName, printer: '', shares: [] };
+  }
+}
+
+async function getRequestedPrinterMeta(templateName, requestedPrinterName) {
+  const templateMeta = await getTemplateMeta(templateName);
+  const requested = String(requestedPrinterName || '').trim().toLowerCase();
+  if (!requested || requested === String(templateMeta.printer || '').trim().toLowerCase()) return templateMeta;
+
+  try {
+    const [rows] = await db.query(
+      `SELECT setting_value FROM app_settings WHERE setting_key = 'barcode_printer_templates' LIMIT 1`
+    );
+    const configuredMeta = normalizeTemplateMeta(rows[0]?.setting_value || '');
+    return Object.values(configuredMeta).find((meta) => (
+      String(meta.printer || '').trim().toLowerCase() === requested
+    )) || templateMeta;
+  } catch (err) {
+    return templateMeta;
   }
 }
 
@@ -247,7 +270,7 @@ router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) =>
   try {
     await fs.mkdir(OUTPUT_DIR, { recursive: true });
     const templateName = cleanTemplateName(req.body?.template_name);
-    const templateMeta = await getTemplateMeta(templateName);
+    const templateMeta = await getRequestedPrinterMeta(templateName, req.body?.printer_name);
     const templatePath = path.join(TEMPLATE_DIR, templateName);
     const template = await fs.readFile(templatePath, 'utf8');
     const prn = renderLabels(template, req.body || {});
@@ -307,7 +330,7 @@ router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) =>
 router.post('/print', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     const templateName = cleanTemplateName(req.body?.template_name);
-    const templateMeta = await getTemplateMeta(templateName);
+    const templateMeta = await getRequestedPrinterMeta(templateName, req.body?.printer_name);
     const outputName = path.basename(String(req.body?.output_name || ''));
 
     if (!outputName.endsWith('.prn')) {

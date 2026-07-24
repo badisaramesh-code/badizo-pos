@@ -74,6 +74,19 @@ function getChangeAmount(invoice) {
     : 0;
 }
 
+function getCustomerGain(invoice) {
+  const savedDiscount = toNumber(invoice?.totals?.discount);
+  if (savedDiscount > 0) return savedDiscount;
+
+  return (invoice?.items || []).reduce((total, item) => {
+    if (item.is_free_bonus) return total;
+    const quantity = toNumber(item.quantity, 1);
+    const mrp = toNumber(item.mrp);
+    const unitPrice = toNumber(item.unitPrice || item.sale_price);
+    return total + Math.max(mrp - unitPrice, 0) * quantity;
+  }, 0);
+}
+
 function buildBillQrPayload(invoice) {
   const billingTotal = toNumber(invoice?.totals?.grand);
   const exchangeTotal = toNumber(invoice?.totals?.exchangeTotal);
@@ -331,6 +344,7 @@ function ThermalFreeProducts({ invoice, title }) {
 
 function ThermalTotals({ invoice }) {
   const saleTotal = toNumber(invoice.totals.saleGrand || invoice.totals.grand);
+  const customerGain = getCustomerGain(invoice);
   const exchangeTotal = toNumber(invoice.totals.exchangeTotal);
   const loyaltyRedeemAmount = toNumber(invoice.totals.loyaltyRedeemAmount);
   const loyaltyRedeemPoints = toNumber(invoice.totals.loyaltyRedeemPoints);
@@ -340,6 +354,7 @@ function ThermalTotals({ invoice }) {
   return (
     <div className="thermal-total-box">
       <div><span>Billing Total</span><span /><strong>{formatPlainMoney(saleTotal)}</strong></div>
+      {customerGain > 0 && <div><span>Customer Gain</span><span /><strong>{formatPlainMoney(customerGain)}</strong></div>}
       {exchangeTotal > 0 && <div><span>Exchange Less</span><span /><strong>-{formatPlainMoney(exchangeTotal)}</strong></div>}
       {loyaltyRedeemAmount > 0 && (
         <div><span>Less Loyalty Amount ({formatPlainMoney(loyaltyRedeemPoints)} pts)</span><span /><strong>-{formatPlainMoney(loyaltyRedeemAmount)}</strong></div>
@@ -1003,7 +1018,7 @@ function renderSection(section, invoice, template) {
     case 'amountWords':
       return <><SectionLine /><p><strong>({amountInWords(invoice.totals.grand)})</strong></p></>;
     case 'discountLine':
-      return invoice.totals.discount > 0 ? <><SectionLine /><div className="print-row print-discount-row"><span>You Have Gained Discount Amount</span><strong>{formatPlainMoney(invoice.totals.discount)}</strong></div></> : null;
+      return getCustomerGain(invoice) > 0 ? <><SectionLine /><div className="print-row print-discount-row"><span>You Have Gained Discount Amount</span><strong>{formatPlainMoney(getCustomerGain(invoice))}</strong></div></> : null;
     case 'gstSummary':
       return <div className="thermal-summary-section thermal-gst-summary"><SectionLine /><div className="print-center thermal-summary-title"><strong>{invoice.taxType === 'INTERSTATE' ? 'IGST Summary' : 'GST Summary'}</strong></div><GstSummary invoice={invoice} /></div>;
     case 'terms': {

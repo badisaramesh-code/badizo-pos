@@ -437,6 +437,15 @@ export default function CounterClosingView({ onClose }) {
     setIsExistingSheet(false);
   }
 
+  function clearEntry(index) {
+    setEntries((current) => current.map((entry, rowIndex) => (
+      rowIndex === index ? blankEntry() : entry
+    )));
+    setActiveEntryIndex(index);
+    setIsExistingSheet(false);
+    focusEntryDetails(index);
+  }
+
   function startCashEntry(direction, details) {
     const nextDetails = details || (direction === 'DR' ? 'Cash Outgoing' : 'Cash Incoming');
     const emptyIndex = entries.findIndex((entry) => !isEntryFilled(entry));
@@ -939,12 +948,12 @@ export default function CounterClosingView({ onClose }) {
           </div>
 
           <section className="panel">
-            <div className="panel-body table-scroll">
+            <div className="panel-body table-scroll handover-entry-table-scroll">
               <table className="history-table handover-table">
-                <thead><tr><th>Sno</th><th>Details</th><th>Remarks</th><th>DR Rs</th><th>CR Rs</th></tr></thead>
+                <thead><tr><th>Sno</th><th>Details</th><th>Remarks</th><th>DR Rs</th><th>CR Rs</th><th>Clear</th></tr></thead>
                 <tbody>
                   {displayEntryRows.length === 0 && isExistingSheet ? (
-                    <tr><td colSpan="5">No manual entries saved for this sheet.</td></tr>
+                    <tr><td colSpan="6">No manual entries saved for this sheet.</td></tr>
                   ) : displayEntryRows.map(({ entry, index }) => (
                     <tr key={index}>
                       <td>{index + 1}</td>
@@ -1008,6 +1017,15 @@ export default function CounterClosingView({ onClose }) {
                           }}
                           onKeyDown={(event) => moveToNextEntryOnEnter(event, index)}
                         />
+                      </td>
+                      <td>
+                        <button
+                          className="handover-row-clear-button"
+                          type="button"
+                          onClick={() => clearEntry(index)}
+                        >
+                          Clear
+                        </button>
                       </td>
                     </tr>
                   ))}
