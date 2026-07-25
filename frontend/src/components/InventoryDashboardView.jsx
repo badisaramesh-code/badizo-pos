@@ -1174,7 +1174,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     }
   }
 
-  const showProductCodeColumn = filter.trim().length > 0;
+  const isProductSearchActive = filter.trim().length > 0;
+  const showProductCodeColumn = isProductSearchActive;
+  const visibleProducts = isProductSearchActive ? products : [];
   const inventoryColSpan = showProductCodeColumn ? 16 : 15;
   const selectedDropboxRows = dropboxRows.filter((row) => selectedDropboxBarcodes.includes(row.barcode));
   const importStatus = importSummary?.status || (activeImportId ? 'QUEUED' : '');
@@ -1443,7 +1445,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
               <span className="status-chip">Total SKUs {summary.totalSku}</span>
               <span className="status-chip">{summary.lowStock} low stock</span>
               <span className="status-chip">{formatMoney(summary.inventoryValue)} value</span>
-              <span className="status-chip">Showing {products.length} of {pagination.total}</span>
+              <span className="status-chip">Showing {visibleProducts.length} of {pagination.total}</span>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1948,13 +1950,23 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
           {activeProductSection === PRODUCT_SECTIONS.LIST && (
           <>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 120px', gap: 10, marginBottom: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px 140px 120px', gap: 10, marginBottom: 12 }}>
             <input
               className="field"
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
               placeholder="Search product name, alias, barcode, or product code"
             />
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                setFilter('');
+                setPage(1);
+              }}
+            >
+              Close
+            </button>
             <select className="select" value={gstFilter} onChange={(event) => { setGstFilter(event.target.value); setPage(1); }}>
               <option value="ALL">All GST</option>
               <option value="0">0%</option>
@@ -1997,10 +2009,12 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                 </tr>
               </thead>
               <tbody>
-                {products.length === 0 ? (
+                {!isProductSearchActive ? (
+                  <tr><td colSpan={inventoryColSpan}>&nbsp;</td></tr>
+                ) : visibleProducts.length === 0 ? (
                   <tr><td colSpan={inventoryColSpan}>No products found.</td></tr>
                 ) : (
-                  products.map((product) => {
+                  visibleProducts.map((product) => {
                     const isLow = toNumber(product.stock_qty) <= toNumber(product.min_stock_alert, 10);
                     return (
                       <tr key={product.barcode}>
@@ -2040,6 +2054,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             </table>
           </div>
 
+          {isProductSearchActive && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginTop: 14 }}>
             <button className="secondary-button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(current - 1, 1))}>
               Prev
@@ -2049,6 +2064,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
               Next
             </button>
           </div>
+          )}
           </>
           )}
         </div>

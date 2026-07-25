@@ -235,9 +235,8 @@ export default function CounterClosingView({ onClose }) {
       return indexedRows.filter(({ entry }) => isEntryFilled(entry) && !isAutoEntry(entry));
     }
 
-    const start = Math.max(Math.min(activeEntryIndex - 2, HANDOVER_TRANSACTION_ROWS - 3), 0);
-    return indexedRows.slice(start, start + 3);
-  }, [activeEntryIndex, entries, isExistingSheet]);
+    return indexedRows;
+  }, [entries, isExistingSheet]);
 
   const entryTotals = useMemo(() => {
     return enteredEntries.reduce((acc, entry) => {

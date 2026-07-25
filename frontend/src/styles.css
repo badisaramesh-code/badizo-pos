@@ -5826,10 +5826,11 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 }
 
 .handover-entry-table-scroll {
-  max-height: 310px;
+  max-height: min(430px, 52vh);
   overflow-x: auto;
-  overflow-y: scroll;
+  overflow-y: auto;
   scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 
 .handover-entry-table-scroll .handover-table thead th {
