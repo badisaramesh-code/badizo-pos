@@ -2,14 +2,7 @@
 setlocal
 
 set "APP_ROOT=%~dp0"
-set "SERVER_IP="
-
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' -and ($_.IPAddress -like '192.168.*' -or $_.IPAddress -like '10.*' -or $_.IPAddress -match '^172\.(1[6-9]|2[0-9]|3[0-1])\.') } | Select-Object -First 1 -ExpandProperty IPAddress"`) do set "SERVER_IP=%%I"
-
-if "%SERVER_IP%"=="" (
-  for /f "tokens=14 delims= " %%I in ('ipconfig ^| findstr /i "IPv4"') do (
-    set "SERVER_IP=%%I"
-    goto :server_ip_found
+set "SERVER_IP=192.168.1.10"\r\n\r\n:server_ip_found
   )
 )
 

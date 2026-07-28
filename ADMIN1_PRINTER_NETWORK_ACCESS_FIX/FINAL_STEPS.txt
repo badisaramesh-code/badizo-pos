@@ -1,0 +1,24 @@
+BADIZO ADMIN1 33x25 BARCODE PRINTER - FINAL FIX
+Date: 17-07-2026
+
+Verified configuration:
+- Admin1 computer: DESKTOP-MJL164I
+- Admin1 Wi-Fi IP: 192.168.1.23
+- Printer: TSC TE244
+- Printer share: TSC-244-2
+- Sticker format: 33 x 25 mm Two-Up
+- Badizo server: 192.168.1.10:5000
+
+On Admin1:
+1. Extract the ZIP completely.
+2. Right-click RUN_ON_ADMIN1_AS_ADMIN.bat.
+3. Select Run as administrator and accept Yes.
+4. Confirm the green SUCCESS message.
+5. Restart Admin1.
+
+On the server:
+1. Right-click D:\badizo-pos-main\START_BADIZO_SERVER.bat.
+2. Select Run as administrator.
+3. Wait for READY backend health.
+
+Then open Badizo on Admin1 and print a 33 x 25 mm Two-Up barcode label.

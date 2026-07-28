@@ -3,6 +3,7 @@ import { fetchLoginOptions, login } from '../api/client';
 
 const FALLBACK_LOGIN_OPTIONS = [
   { label: 'Server', username: 'server' },
+  { label: 'Admin', username: 'admin' },
   { label: 'Admin 1', username: 'admin1' },
   { label: 'Admin 2', username: 'admin2' },
   { label: 'Counter 1', username: 'counter1' },
@@ -11,6 +12,7 @@ const FALLBACK_LOGIN_OPTIONS = [
   { label: 'Counter 4', username: 'counter4' },
   { label: 'Counter 5', username: 'counter5' },
   { label: 'Counter 6', username: 'counter6' },
+  { label: 'Security', username: 'security' },
   { label: 'Security 1', username: 'security1' },
   { label: 'Security 2', username: 'security2' }
 ];
@@ -25,7 +27,7 @@ function loginModeFromUrl() {
 function fixedLoginUserFromUrl() {
   const params = new URLSearchParams(window.location.search || '');
   const username = String(params.get('loginUser') || params.get('user') || params.get('username') || '').trim().toLowerCase();
-  return /^(server|admin[1-9]\d*|counter[1-6]|security[1-9]\d*)$/.test(username) ? username : '';
+  return /^(server|admin(?:[1-9]\d*)?|counter[1-6]|security(?:[1-9]\d*)?)$/.test(username) ? username : '';
 }
 
 function filterLoginOptions(options, mode) {
@@ -33,7 +35,7 @@ function filterLoginOptions(options, mode) {
     return options.filter((option) => option.role === 'COUNTER' || /^counter[1-6]$/i.test(option.username));
   }
   if (mode === 'admin') {
-    return options.filter((option) => ['admin1', 'admin2'].includes(String(option.username || '').toLowerCase()));
+    return options.filter((option) => /^admin(?:[1-9]\d*)?$/i.test(String(option.username || '')));
   }
   if (mode === 'server') {
     return options.filter((option) => String(option.username || '').toLowerCase() === 'server');
@@ -71,7 +73,9 @@ export default function LoginView({ onLogin }) {
   const [username, setUsername] = useState(initialOptions[0]?.username || fixedLoginUser || 'admin1');
   const [systemNo] = useState(assignedSystemNo);
   const [selectedCounterNo, setSelectedCounterNo] = useState(assignedSystemNo);
-  const [personName, setPersonName] = useState('');
+  const [personName, setPersonName] = useState(
+    loginMode === 'counter' || fixedSystemMatch ? `counter${assignedSystemNo}` : ''
+  );
   const [password, setPassword] = useState('');
   const [loginOptions, setLoginOptions] = useState(initialOptions.length ? initialOptions : FALLBACK_LOGIN_OPTIONS);
   const [errorMessage, setErrorMessage] = useState('');
@@ -79,6 +83,16 @@ export default function LoginView({ onLogin }) {
   const selectedLogin = loginOptions.find((option) => option.username === username);
   const isFixedLogin = Boolean(fixedLoginUser);
   const isCounterLogin = loginMode === 'counter' || isCounterLoginOption(selectedLogin, username);
+
+  useEffect(() => {
+    if (!isCounterLogin) return;
+    setPersonName((currentName) => {
+      const cleanName = String(currentName || '').trim().toLowerCase();
+      return !cleanName || /^counter[1-6]$/.test(cleanName)
+        ? `counter${selectedCounterNo}`
+        : currentName;
+    });
+  }, [isCounterLogin, selectedCounterNo]);
 
   useEffect(() => {
     let isMounted = true;
@@ -117,17 +131,13 @@ export default function LoginView({ onLogin }) {
     event.preventDefault();
     setErrorMessage('');
     const effectivePersonName = personName.trim();
-    if (!effectivePersonName) {
-      setErrorMessage('Person name is required.');
-      return;
-    }
     setIsLoading(true);
 
     try {
       // The installed counter app identifies the physical system account used
       // for authentication. The selected counter is only the billing counter
       // for this session, so every system can open any configured counter.
-      const loginUsername = isCounterLogin ? `counter${systemNo}` : username;
+      const loginUsername = isCounterLogin ? `counter${selectedCounterNo}` : username;
       const user = await login(loginUsername, password, effectivePersonName, isCounterLogin ? {
         systemNo,
         counterNo: selectedCounterNo
@@ -175,7 +185,7 @@ export default function LoginView({ onLogin }) {
                 className="field"
                 value={personName}
                 onChange={(event) => setPersonName(event.target.value)}
-                placeholder={isCounterLogin ? 'Enter counter person name or code' : 'Enter duty person name'}
+                placeholder={isCounterLogin ? 'Counter person name or code' : 'Optional person name or code'}
                 autoFocus
               />
             </label>
@@ -200,7 +210,7 @@ export default function LoginView({ onLogin }) {
                     className="field"
                     value={personName}
                     onChange={(event) => setPersonName(event.target.value)}
-                    placeholder="Enter counter person name or code"
+                    placeholder="Counter person name or code"
                   />
                 </label>
               </>
@@ -229,7 +239,7 @@ export default function LoginView({ onLogin }) {
                     className="field"
                     value={personName}
                     onChange={(event) => setPersonName(event.target.value)}
-                    placeholder="Enter duty person name"
+                    placeholder="Optional person name or code"
                   />
                 </label>
               </>
@@ -248,7 +258,7 @@ export default function LoginView({ onLogin }) {
 
         {!isSecurityLogin && !isFixedLogin && (
           <div className="change-box">
-            Default passwords: Server server123, Admin admin123, Counters counter1 to counter6, Security admin123.
+            Default passwords: Server server123, Admin admin123, Counters counter1 to counter6, Security security123.
           </div>
         )}
       </form>

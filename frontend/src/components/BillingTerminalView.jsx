@@ -6403,7 +6403,7 @@ export default function BillingTerminalView({ isActive = true }) {
                   Close
                 </button>
               </form>
-              <table className="history-table">
+              <table className="history-table old-bills-compact-table">
                 <thead>
                   <tr>
                     <th>Invoice</th>
@@ -6413,15 +6413,15 @@ export default function BillingTerminalView({ isActive = true }) {
                     <th>Status</th>
                     <th>A4 GST API</th>
                     <th>Created</th>
-                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredInvoiceHistory.length === 0 ? (
-                    <tr><td colSpan="8">No invoices found.</td></tr>
+                    <tr><td colSpan="7">No invoices found.</td></tr>
                   ) : (
                     filteredInvoiceHistory.map((invoice) => (
-                      <tr key={invoice.invoice_no}>
+                      <React.Fragment key={invoice.invoice_no}>
+                      <tr className="old-bill-detail-row">
                         <td className="mono">
                           <button
                             className="link-button mono"
@@ -6445,8 +6445,10 @@ export default function BillingTerminalView({ isActive = true }) {
                           <span className="gst-api-status-line">EWB: {invoice.ewaybill_status || 'NOT_CREATED'}</span>
                         </td>
                         <td>{invoice.created_at ? new Date(invoice.created_at).toLocaleString() : '-'}</td>
-                        <td>
-                          <div className="table-actions">
+                      </tr>
+                      <tr className="old-bill-action-row">
+                        <td colSpan="7">
+                          <div className="table-actions old-bill-actions">
                             <button
                               className="secondary-button"
                               type="button"
@@ -6468,6 +6470,7 @@ export default function BillingTerminalView({ isActive = true }) {
                           </div>
                         </td>
                       </tr>
+                      </React.Fragment>
                     ))
                   )}
                 </tbody>

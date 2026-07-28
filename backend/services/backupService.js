@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { spawn } = require('child_process');
 require('dotenv').config();
 const db = require('../config/db');
@@ -92,16 +93,11 @@ async function restoreDatabaseBackup(fileName) {
     throw new Error('Backup file not found.');
   }
 
-  const dbPassword = process.env.DB_PASSWORD === undefined ? '1234' : process.env.DB_PASSWORD;
   const mysqlCommand = process.env.MYSQL_PATH || 'mysql';
+  const defaults = await createMysqlDefaultsFile();
   const args = [
-    `--host=${process.env.DB_HOST || 'localhost'}`,
-    `--user=${process.env.DB_USER || 'root'}`
+    `--defaults-extra-file=${defaults.defaultsFile}`
   ];
-
-  if (dbPassword) {
-    args.push(`--password=${dbPassword}`);
-  }
 
   return new Promise((resolve, reject) => {
     const input = fs.createReadStream(filePath);
@@ -116,11 +112,13 @@ async function restoreDatabaseBackup(fileName) {
       errorOutput += chunk.toString();
     });
 
-    restore.on('error', (err) => {
+    restore.on('error', async (err) => {
+      await defaults.cleanup();
       reject(new Error(`Unable to start mysql restore. Install MySQL client tools or set MYSQL_PATH. ${err.message}`));
     });
 
-    restore.on('close', (code) => {
+    restore.on('close', async (code) => {
+      await defaults.cleanup();
       if (code !== 0) {
         reject(new Error(errorOutput.trim() || `mysql restore failed with exit code ${code}`));
         return;
@@ -135,23 +133,24 @@ async function runDatabaseBackup() {
   await ensureBackupDir();
 
   const dbName = process.env.DB_NAME || 'badizo_pos';
-  const dbPassword = process.env.DB_PASSWORD === undefined ? '1234' : process.env.DB_PASSWORD;
   const fileName = `badizo_pos_backup_${timestampForFile()}.sql`;
   const filePath = path.join(backupDir, fileName);
   const dumpCommand = process.env.MYSQLDUMP_PATH || 'mysqldump';
+  const defaults = await createMysqlDefaultsFile();
   const args = [
-    `--host=${process.env.DB_HOST || 'localhost'}`,
-    `--user=${process.env.DB_USER || 'root'}`,
+    `--defaults-extra-file=${defaults.defaultsFile}`,
     '--single-transaction',
+    '--quick',
     '--routines',
     '--triggers',
+    '--events',
+    '--hex-blob',
+    '--set-gtid-purged=OFF',
+    '--default-character-set=utf8mb4',
+    '--column-statistics=0',
     '--databases',
     dbName
   ];
-
-  if (dbPassword) {
-    args.splice(2, 0, `--password=${dbPassword}`);
-  }
 
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(filePath, { flags: 'wx' });

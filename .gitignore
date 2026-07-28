@@ -9,3 +9,31 @@ barcode/output/
 electron/dist/
 pdf_preview/
 jyothi_ocr_debug.txt
+# Local generated folders
+electron/dist-*/
+frontend/build-*/
+
+# Local backup folders
+*_backup*/
+phase1_backup_*/
+
+# Local backup files
+frontend/src/components/*_backup_*.jsx
+*.bak
+*_backup_*.js
+# Deployment packages
+*.zip
+*-install/
+counter-system-install/
+
+# Temporary folders
+SYSTEM3_READY*/
+SERVER_LAN_FIX*/
+START_BADIZO_SERVER/
+
+# Temporary files
+backend-restart-result.txt
+
+# Windows
+Thumbs.db
+Desktop.ini

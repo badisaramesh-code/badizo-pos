@@ -4607,6 +4607,41 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   gap: 6px;
 }
 
+.old-bills-compact-table .old-bill-detail-row td {
+  padding-top: 5px;
+  padding-bottom: 4px;
+}
+
+.old-bills-compact-table .old-bill-action-row td {
+  padding: 3px 7px 5px;
+  border-top: 0;
+}
+
+.old-bills-compact-table .old-bill-detail-row td:first-child {
+  border-bottom: 0;
+}
+
+.old-bills-compact-table .history-invoice-counter {
+  display: inline;
+  margin: 0 0 0 7px;
+}
+
+.old-bill-actions {
+  flex-wrap: nowrap;
+  align-items: center;
+  overflow-x: auto;
+  gap: 5px;
+}
+
+.old-bill-actions .secondary-button,
+.old-bill-actions .danger-button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 11px;
+  line-height: 1.1;
+}
+
 .dashboard-grid,
 .report-grid,
 .books-grid,

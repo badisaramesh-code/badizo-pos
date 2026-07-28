@@ -1,0 +1,13 @@
+BADIZO ADMIN1 33x25 LOCAL BARCODE PRINT - FINAL
+Date: 17-07-2026
+
+1. Extract this ZIP completely on Admin1.
+2. Run RUN_ON_ADMIN1_AS_ADMIN.bat as administrator and confirm SUCCESS.
+3. Close Badizo if it is open.
+4. Run Badizo Setup 1.0.0.exe and complete installation.
+5. Restart Admin1.
+6. Open Badizo Admin1 and print 33 x 25 mm Two-Up barcode labels.
+
+This build sends the generated PRN directly from the Admin1 desktop app
+to the local TSC-244-2 printer share. It does not require the Badizo server
+to connect back to the Admin1 printer over the network.
