@@ -28,6 +28,75 @@ function timestampForFile(date = new Date()) {
   ].join('-');
 }
 
+function escapeMysqlOptionValue(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\r?\n/g, '')
+    .replace(/"/g, '\\"');
+}
+
+function restrictWindowsFileAccess(filePath) {
+  if (process.platform !== 'win32') return Promise.resolve();
+
+  const grants = ['SYSTEM:F', 'Administrators:F'];
+  const username = String(process.env.USERNAME || '').trim();
+  if (username) grants.unshift(`${username}:R`);
+
+  return new Promise((resolve, reject) => {
+    const acl = spawn('icacls.exe', [
+      filePath,
+      '/inheritance:r',
+      '/grant:r',
+      ...grants
+    ], {
+      windowsHide: true,
+      stdio: ['ignore', 'ignore', 'pipe']
+    });
+
+    let errorOutput = '';
+    acl.stderr.on('data', (chunk) => { errorOutput += chunk.toString(); });
+    acl.on('error', reject);
+    acl.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(errorOutput.trim() || `icacls failed with exit code ${code}`));
+    });
+  });
+}
+
+async function createMysqlDefaultsFile() {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'badizo-mysql-'));
+  const defaultsFile = path.join(tempDir, 'client.cnf');
+  const content = [
+    '[client]',
+    `host="${escapeMysqlOptionValue(process.env.DB_HOST || 'localhost')}"`,
+    `user="${escapeMysqlOptionValue(process.env.DB_USER || 'root')}"`,
+    `password="${escapeMysqlOptionValue(process.env.DB_PASSWORD || '')}"`,
+    'default-character-set=utf8mb4',
+    ''
+  ].join('\r\n');
+
+  try {
+    await fs.promises.writeFile(defaultsFile, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    await restrictWindowsFileAccess(defaultsFile);
+  } catch (err) {
+    await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    throw new Error(`Unable to create secure temporary MySQL credentials file. ${err.message}`);
+  }
+
+  let cleaned = false;
+  return {
+    defaultsFile,
+    async cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
+  };
+}
+
 async function ensureBackupDir() {
   await fs.promises.mkdir(backupDir, { recursive: true });
 }
@@ -168,11 +237,13 @@ async function runDatabaseBackup() {
     dump.on('error', async (err) => {
       output.destroy();
       await fs.promises.rm(filePath, { force: true }).catch(() => {});
+      await defaults.cleanup();
       reject(new Error(`Unable to start mysqldump. Install MySQL client tools or set MYSQLDUMP_PATH. ${err.message}`));
     });
 
     dump.on('close', async (code) => {
       output.end();
+      await defaults.cleanup();
       if (code !== 0) {
         await fs.promises.rm(filePath, { force: true }).catch(() => {});
         reject(new Error(errorOutput.trim() || `mysqldump failed with exit code ${code}`));
