@@ -59,6 +59,8 @@ async function main() {
       if (!code) throw new Error('Google did not return an authorization code.');
 
       const token = await exchangeCode(code);
+      console.log(token);
+
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('Badizo Google Drive authorization completed. You can close this tab.');
 

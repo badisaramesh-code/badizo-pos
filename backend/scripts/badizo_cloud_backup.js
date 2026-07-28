@@ -1,0 +1,219 @@
+const fs = require('fs');
+const path = require('path');
+const https = require('https');
+const { spawn, spawnSync } = require('child_process');
+
+const ROOT = 'D:\\badizo-pos-main';
+const BACKEND = path.join(ROOT, 'backend');
+require(path.join(BACKEND, 'node_modules', 'dotenv')).config({ path: path.join(BACKEND, '.env') });
+
+const LOCAL_ROOT = 'D:\\BadizoCloudBackups';
+const DRIVE_FOLDER_ID = String(process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID || '').trim();
+const TOKEN_URI = 'https://oauth2.googleapis.com/token';
+
+function stamp() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+}
+
+function ensureDir(dir) { fs.mkdirSync(dir, { recursive: true }); }
+
+async function accessToken() {
+  const clientId = String(process.env.GOOGLE_DRIVE_CLIENT_ID || '').trim();
+  const clientSecret = String(process.env.GOOGLE_DRIVE_CLIENT_SECRET || '').trim();
+  const refreshToken = String(process.env.GOOGLE_DRIVE_REFRESH_TOKEN || '').trim();
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error('Google Drive OAuth credentials are missing in backend\\.env');
+  }
+  const response = await fetch(TOKEN_URI, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token'
+    })
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`OAuth refresh failed: HTTP ${response.status} ${text}`);
+  const data = JSON.parse(text);
+  if (!data.access_token) throw new Error('OAuth response did not contain access_token');
+  return data.access_token;
+}
+
+function uploadStream(uploadUrl, filePath, token, mimeType) {
+  return new Promise((resolve, reject) => {
+    const stat = fs.statSync(filePath);
+    const url = new URL(uploadUrl);
+    const req = https.request({
+      method: 'PUT',
+      hostname: url.hostname,
+      path: `${url.pathname}${url.search}`,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': mimeType,
+        'Content-Length': stat.size
+      }
+    }, res => {
+      let body = '';
+      res.on('data', c => body += c.toString());
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`Upload failed: HTTP ${res.statusCode} ${body}`));
+        } else {
+          resolve(body ? JSON.parse(body) : {});
+        }
+      });
+    });
+    req.on('error', reject);
+    fs.createReadStream(filePath).on('error', reject).pipe(req);
+  });
+}
+
+async function upload(filePath, driveName) {
+  if (!DRIVE_FOLDER_ID) throw new Error('GOOGLE_DRIVE_BACKUP_FOLDER_ID is missing in backend\\.env');
+  const token = await accessToken();
+  const stat = fs.statSync(filePath);
+  const mimeType = filePath.toLowerCase().endsWith('.zip') ? 'application/zip' : 'application/sql';
+  const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,size,createdTime,webViewLink', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json; charset=UTF-8',
+      'X-Upload-Content-Type': mimeType,
+      'X-Upload-Content-Length': String(stat.size)
+    },
+    body: JSON.stringify({
+      name: driveName,
+      parents: [DRIVE_FOLDER_ID],
+      description: `Badizo automatic backup ${new Date().toISOString()}`
+    })
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`Unable to start upload: HTTP ${response.status} ${text}`);
+  const location = response.headers.get('location');
+  if (!location) throw new Error('Google Drive did not return upload URL');
+  return uploadStream(location, filePath, token, mimeType);
+}
+
+async function listDrive(prefix, token) {
+  const q = [
+    `'${DRIVE_FOLDER_ID.replace(/'/g, "\\'")}' in parents`,
+    'trashed = false',
+    `name contains '${prefix.replace(/'/g, "\\'")}'`
+  ].join(' and ');
+  const url = new URL('https://www.googleapis.com/drive/v3/files');
+  url.searchParams.set('q', q);
+  url.searchParams.set('fields', 'files(id,name,size,createdTime)');
+  url.searchParams.set('orderBy', 'createdTime desc');
+  url.searchParams.set('pageSize', '100');
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const text = await r.text();
+  if (!r.ok) throw new Error(`Drive listing failed: HTTP ${r.status} ${text}`);
+  return JSON.parse(text).files || [];
+}
+
+async function pruneDrive(prefix, keep) {
+  const token = await accessToken();
+  const files = await listDrive(prefix, token);
+  for (const file of files.slice(keep)) {
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!r.ok) throw new Error(`Could not delete old Drive backup ${file.name}`);
+    console.log(`Deleted old Drive backup: ${file.name}`);
+  }
+}
+
+function pruneLocal(dir, prefix, keep) {
+  if (!fs.existsSync(dir)) return;
+  const files = fs.readdirSync(dir)
+    .filter(n => n.startsWith(prefix))
+    .map(n => ({ name:n, path:path.join(dir,n), mtime:fs.statSync(path.join(dir,n)).mtimeMs }))
+    .sort((a,b) => b.mtime-a.mtime);
+  for (const f of files.slice(keep)) {
+    fs.rmSync(f.path, { force:true });
+    console.log(`Deleted old local backup: ${f.name}`);
+  }
+}
+
+function mysqldump(outFile) {
+  const exe = process.env.MYSQLDUMP_PATH || 'C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysqldump.exe';
+  const db = process.env.DB_NAME || 'badizo_pos';
+  const args = [
+    `--host=${process.env.DB_HOST || 'localhost'}`,
+    `--user=${process.env.DB_USER || 'root'}`,
+    `--password=${process.env.DB_PASSWORD || ''}`,
+    '--single-transaction',
+    '--quick',
+    '--routines',
+    '--triggers',
+    '--events',
+    '--hex-blob',
+    '--set-gtid-purged=OFF',
+    '--default-character-set=utf8mb4',
+    '--databases', db,
+    `--result-file=${outFile}`
+  ];
+  const r = spawnSync(exe, args, { windowsHide:true, stdio:'inherit' });
+  if (r.status !== 0 || !fs.existsSync(outFile) || fs.statSync(outFile).size === 0) {
+    throw new Error(`mysqldump failed with code ${r.status}`);
+  }
+}
+
+async function databaseBackup(kind, keep) {
+  const prefix = `badizo_${kind}_`;
+  const dir = path.join(LOCAL_ROOT, kind);
+  ensureDir(dir);
+  const name = `${prefix}${stamp()}.sql`;
+  const file = path.join(dir, name);
+  console.log(`Creating ${kind} database backup...`);
+  mysqldump(file);
+  console.log(`Uploading ${name} to Google Drive...`);
+  await upload(file, name);
+  await pruneDrive(prefix, keep);
+  pruneLocal(dir, prefix, keep);
+  console.log(`${kind} backup completed.`);
+}
+
+function zipFolder(folder) {
+  if (!fs.existsSync(folder)) throw new Error(`Folder not found: ${folder}`);
+  const dir = path.join(LOCAL_ROOT, 'manual');
+  ensureDir(dir);
+  const name = `badizo_manual_${stamp()}.zip`;
+  const zip = path.join(dir, name);
+  const escapedFolder = folder.replace(/'/g, "''");
+  const escapedZip = zip.replace(/'/g, "''");
+  const command = `Compress-Archive -Path '${escapedFolder}\\*' -DestinationPath '${escapedZip}' -Force`;
+  const r = spawnSync('powershell.exe', ['-NoProfile','-ExecutionPolicy','Bypass','-Command',command], {
+    windowsHide:false, stdio:'inherit'
+  });
+  if (r.status !== 0 || !fs.existsSync(zip)) throw new Error('Folder ZIP creation failed');
+  return { zip, name };
+}
+
+async function main() {
+  const mode = String(process.argv[2] || '').toLowerCase();
+  if (mode === 'daily') return databaseBackup('daily', 3);
+  if (mode === 'weekly') return databaseBackup('weekly', 4);
+  if (mode === 'monthly') return databaseBackup('monthly', 1);
+  if (mode === 'upload-folder') {
+    const folder = process.argv.slice(3).join(' ').trim();
+    if (!folder) throw new Error('Folder path is required');
+    const {zip,name} = zipFolder(folder);
+    console.log(`Uploading ${name}...`);
+    await upload(zip,name);
+    pruneLocal(path.dirname(zip),'badizo_manual_',2);
+    console.log('Selected folder uploaded successfully.');
+    return;
+  }
+  throw new Error('Usage: daily | weekly | monthly | upload-folder <folder>');
+}
+
+main().catch(err => {
+  console.error(`ERROR: ${err.message}`);
+  process.exit(1);
+});
