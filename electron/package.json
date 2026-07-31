@@ -12,6 +12,7 @@
   },
   "build": {
     "appId": "com.badizo.pos",
+    "afterPack": "scripts/after-pack.js",
     "productName": "Badizo",
     "directories": {
       "output": "dist"
@@ -71,6 +72,7 @@
   },
   "devDependencies": {
     "electron": "^31.7.7",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "rcedit": "^4.0.1"
   }
 }

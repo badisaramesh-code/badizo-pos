@@ -175,7 +175,7 @@ export default function CounterClosingView({ onClose }) {
   const [denominationList, setDenominationList] = useState(DEFAULT_DENOMINATIONS);
   const [denominations, setDenominations] = useState(emptyDenominations(DEFAULT_DENOMINATIONS));
   const [openingCash, setOpeningCash] = useState('');
-  const [entries, setEntries] = useState([blankEntry()]);
+  const [entries, setEntries] = useState(makeDefaultEntries);
   const [activeEntryIndex, setActiveEntryIndex] = useState(0);
   const [isExistingSheet, setIsExistingSheet] = useState(false);
   const [handedOverBy, setHandedOverBy] = useState('');
@@ -229,14 +229,9 @@ export default function CounterClosingView({ onClose }) {
     entries.filter((entry) => isEntryFilled(entry) && !isAutoEntry(entry))
   ), [entries]);
 
-  const displayEntryRows = useMemo(() => {
-    const indexedRows = entries.map((entry, index) => ({ entry, index }));
-    if (isExistingSheet) {
-      return indexedRows.filter(({ entry }) => isEntryFilled(entry) && !isAutoEntry(entry));
-    }
-
-    return indexedRows;
-  }, [entries, isExistingSheet]);
+  const displayEntryRows = useMemo(() => (
+    normalizeEntryCount(entries).map((entry, index) => ({ entry, index }))
+  ), [entries]);
 
   const entryTotals = useMemo(() => {
     return enteredEntries.reduce((acc, entry) => {

@@ -58,7 +58,7 @@ const DEFAULT_BARCODE_PRINTER_TEMPLATES = {
     shares: ['\\\\localhost\\TSC TTP-244 Pro', '\\\\localhost\\TSC-244-Pro']
   },
   'tsc-244-1-33x25-single.prn': {
-    label: '33 x 25 mm Two-Up',
+    label: '38 x 25 mm Two-Up',
     printer: 'TSC TE244',
     shares: ['\\\\localhost\\TSC-244-2']
   },

@@ -1,7 +1,7 @@
 param(
   [string]$ServerIp = '',
   [string[]]$ServerHosts = @(),
-  [ValidateSet('counter', 'admin', 'server', 'all')]
+  [ValidateSet('counter', 'admin', 'server', 'security', 'all')]
   [string]$LoginMode = 'counter',
   [string]$LoginUser = '',
   [string]$InstallerPath = '',
@@ -215,6 +215,31 @@ function Install-App {
   Write-Host 'Install completed.' -ForegroundColor Green
 }
 
+function Repair-BadizoShortcutIcons {
+  $possibleExePaths = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs\Badizo\Badizo.exe'),
+    (Join-Path $env:ProgramFiles 'Badizo\Badizo.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} 'Badizo\Badizo.exe')
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+  $appExe = $possibleExePaths | Select-Object -First 1
+  if (!$appExe) { return }
+  $iconPath = @(
+    (Join-Path (Split-Path $appExe) 'resources\assets\badizo.ico'),
+    (Join-Path (Split-Path $appExe) 'assets\badizo.ico')
+  ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+  if (!$iconPath) { return }
+  $desktopFolders = @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:PUBLIC 'Desktop')) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+  $shell = New-Object -ComObject WScript.Shell
+  foreach ($desktopFolder in $desktopFolders) {
+    Get-ChildItem -LiteralPath $desktopFolder -Filter 'Badizo*.lnk' -File -ErrorAction SilentlyContinue | ForEach-Object {
+      $shortcut = $shell.CreateShortcut($_.FullName)
+      $shortcut.IconLocation = "$iconPath,0"
+      $shortcut.Save()
+      Write-Host "B icon verified: $($_.FullName)" -ForegroundColor Green
+    }
+  }
+  Start-Process -FilePath "$env:SystemRoot\System32\ie4uinit.exe" -ArgumentList '-show' -WindowStyle Hidden -ErrorAction SilentlyContinue
+}
 function Launch-App {
   if ($SkipLaunch) {
     Write-Host 'Skipping app launch because -SkipLaunch was used.' -ForegroundColor Yellow
@@ -248,6 +273,7 @@ try {
   Test-Server
   Write-AppConfig
   Install-App
+  Repair-BadizoShortcutIcons
   Launch-App
 
   Write-Host ''

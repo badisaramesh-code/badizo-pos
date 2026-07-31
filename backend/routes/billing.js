@@ -158,6 +158,41 @@ async function redeemLoyaltyPoints(connection, invoiceNo, customerPhone, request
   return { phone, points, amount, balance: currentPoints - points };
 }
 
+function currentCheckoutPrice(product, quantity, billingTier) {
+  const qty = parseMoney(quantity) || 1;
+  const salePrice = parseMoney(product?.sale_price || product?.mrp);
+  const wholesalePrice = parseMoney(product?.wholesale_price) || salePrice;
+  const qty3Price = parseMoney(product?.qty_3_price);
+  const qty6Price = parseMoney(product?.qty_6_price);
+  const qty12Price = parseMoney(product?.qty_12_price);
+  if (qty >= 12) return qty12Price || wholesalePrice || qty6Price || qty3Price || salePrice;
+  if (qty >= 6 && qty6Price > 0) return qty6Price;
+  if (qty >= 3 && qty3Price > 0) return qty3Price;
+  if (String(billingTier || '').toUpperCase() === 'WHOLESALE') return wholesalePrice;
+  return salePrice;
+}
+
+async function validateCurrentCheckoutPrices(connection, items, billingTier) {
+  const barcodes = [...new Set(items.map((item) => String(item?.barcode || '').trim()).filter(Boolean))];
+  if (!barcodes.length) return;
+  const placeholders = barcodes.map(() => '?').join(',');
+  const [rows] = await connection.query(
+    `SELECT barcode, product_name, mrp, sale_price, wholesale_price, qty_3_price, qty_6_price, qty_12_price
+     FROM products WHERE barcode IN (${placeholders})`,
+    barcodes
+  );
+  const products = new Map(rows.map((row) => [String(row.barcode), row]));
+  for (const item of items) {
+    const barcode = String(item?.barcode || '').trim();
+    const product = products.get(barcode);
+    if (!product) continue;
+    const submittedPrice = parseMoney(item.sale_price);
+    const currentPrice = currentCheckoutPrice(product, item.quantity, billingTier);
+    if (moneyToPaise(submittedPrice) !== moneyToPaise(currentPrice)) {
+      throw new Error(`Rate updated for ${product.product_name || barcode}: current rate Rs.${currentPrice.toFixed(2)}. Remove this item and scan it again.`);
+    }
+  }
+}
 function requestedCounterForUser(user, requestedCounterNo) {
   if (user?.role === 'COUNTER') {
     return user.counter_no || 1;
@@ -554,6 +589,8 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
 
     await connection.beginTransaction();
     checkoutTimer.mark('begin-transaction');
+    await validateCurrentCheckoutPrices(connection, items, billing_tier || 'RETAIL');
+    checkoutTimer.mark('price-validation');
     const counterCount = await getCounterCount(connection);
     const counterNo = normalizeCounterNo(requestedCounterForUser(req.user, counter_no), counterCount);
     const counterLabel = billingCounterLabel(req.user, counterNo);

@@ -74,6 +74,8 @@ function getConfig() {
   const configuredAppUrl = process.env.BADIZO_APP_URL || config.appUrl || DEFAULT_APP_URL;
   const configuredApiHealthUrl = process.env.BADIZO_API_HEALTH_URL || config.apiHealthUrl || DEFAULT_API_URL;
   const loginFromUrl = getLoginParamsFromUrl(configuredAppUrl);
+  const requestedLoginMode = String(process.env.BADIZO_LOGIN_MODE || loginFromUrl.loginMode || config.loginMode || '').toLowerCase();
+  const requestedLoginUser = String(process.env.BADIZO_LOGIN_USER || loginFromUrl.loginUser || config.loginUser || '').trim().toLowerCase();
   const appHost = getUrlHost(configuredAppUrl);
   const apiHost = getUrlHost(configuredApiHealthUrl);
   const usesRemoteServer = isRemoteHost(appHost) || isRemoteHost(apiHost);
@@ -90,10 +92,10 @@ function getConfig() {
     ].filter(Boolean),
     discoveryEnabled: config.discoveryEnabled !== false,
     discoveryTimeoutMs: Number(config.discoveryTimeoutMs || DEFAULT_DISCOVERY_TIMEOUT_MS),
-    loginMode: ['server', 'admin', 'counter', 'all'].includes(String(config.loginMode || '').toLowerCase())
-      ? String(config.loginMode).toLowerCase()
-      : loginFromUrl.loginMode,
-    loginUser: String(config.loginUser || loginFromUrl.loginUser || '').trim().toLowerCase(),
+    loginMode: ['server', 'admin', 'counter', 'security', 'all'].includes(requestedLoginMode)
+      ? requestedLoginMode
+      : '',
+    loginUser: requestedLoginUser,
     kiosk: Boolean(config.kiosk),
     devTools: Boolean(config.devTools)
   };

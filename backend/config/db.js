@@ -1144,7 +1144,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         ('loyalty_redeem_points', '10'),
         ('loyalty_redeem_amount', '0.5'),
         ('backup_daily_time', '09:00'),
-        ('barcode_printer_templates', '{"tsc-244-pro-50x50-two-up.prn":{"label":"50 x 50 mm Two-Up","printer":"TSC TTP-244 Pro","shares":["\\\\\\\\localhost\\\\TSC TTP-244 Pro","\\\\\\\\localhost\\\\TSC-244-Pro"]},"tsc-244-1-33x25-single.prn":{"label":"33 x 25 mm Two-Up","printer":"TSC TE244","shares":["\\\\\\\\localhost\\\\TSC-244-2"]},"tsc-244-2-jewellery-100x15-tail.prn":{"label":"100 x 15 mm Jewellery Tail","printer":"TSC 244-2","shares":["\\\\\\\\localhost\\\\TSC 244-2"]}}')
+        ('barcode_printer_templates', '{"tsc-244-pro-50x50-two-up.prn":{"label":"50 x 50 mm Two-Up","printer":"TSC TTP-244 Pro","shares":["\\\\\\\\localhost\\\\TSC TTP-244 Pro","\\\\\\\\localhost\\\\TSC-244-Pro"]},"tsc-244-1-33x25-single.prn":{"label":"38 x 25 mm Two-Up","printer":"TSC TE244","shares":["\\\\\\\\localhost\\\\TSC-244-2"]},"tsc-244-2-jewellery-100x15-tail.prn":{"label":"100 x 15 mm Jewellery Tail","printer":"TSC 244-2","shares":["\\\\\\\\localhost\\\\TSC 244-2"]}}')
     `);
 
     await ensureColumn(connection, 'products', 'purchase_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER mrp');

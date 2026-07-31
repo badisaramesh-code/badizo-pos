@@ -22,7 +22,7 @@ const TEMPLATE_META = {
     shares: ['\\\\localhost\\TSC TTP-244 Pro', '\\\\localhost\\TSC-244-Pro']
   },
   'tsc-244-1-33x25-single.prn': {
-    size: '33 x 25 mm Two-Up',
+    size: '38 x 25 mm Two-Up',
     printer: 'TSC TTP-244 -1',
     shares: ['\\\\localhost\\TSC TTP-244 -1', '\\\\localhost\\TSC 244-1']
   },
@@ -125,6 +125,8 @@ function replaceFields(block, data) {
     QTY: tsplText(data.qty, 10),
     UNIT: tsplText(data.unit, 10),
     PKD_DATE: tsplText(data.pkd_date, 14),
+    // Keep older/custom sticker templates working if they use the former key.
+    PACKED_DATE: tsplText(data.pkd_date, 14),
     COMPANY: tsplText(data.company, 32),
     COMPANY_22: tsplText(data.company, 22),
     COMPANY_20: tsplText(data.company, 20),
@@ -151,7 +153,11 @@ function extractBlock(template, name) {
 
 function renderLabels(template, data) {
   const labelBlock = extractBlock(template, 'LABEL');
-  const stickerCount = Math.max(Number.parseInt(data.stickerCount, 10) || 1, 1);
+  const requestedStickerCount = Math.max(Number.parseInt(data.stickerCount, 10) || 1, 1);
+  // This TE244 two-up stock consumes the first physical row when a raw PRN job starts.
+  // Add one hidden two-label compensation row so the delivered count matches the request.
+  const startupCompensation = data.template_name === 'tsc-244-1-33x25-single.prn' ? 2 : 0;
+  const stickerCount = requestedStickerCount + startupCompensation;
 
   if (labelBlock) {
     const renderedLabels = Array.from({ length: stickerCount }, () => replaceFields(labelBlock, data));

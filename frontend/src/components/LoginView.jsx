@@ -89,10 +89,10 @@ export default function LoginView({ onLogin }) {
     setPersonName((currentName) => {
       const cleanName = String(currentName || '').trim().toLowerCase();
       return !cleanName || /^counter[1-6]$/.test(cleanName)
-        ? `counter${selectedCounterNo}`
+        ? `counter${assignedSystemNo}`
         : currentName;
     });
-  }, [isCounterLogin, selectedCounterNo]);
+  }, [assignedSystemNo, isCounterLogin]);
 
   useEffect(() => {
     let isMounted = true;
@@ -137,7 +137,7 @@ export default function LoginView({ onLogin }) {
       // The installed counter app identifies the physical system account used
       // for authentication. The selected counter is only the billing counter
       // for this session, so every system can open any configured counter.
-      const loginUsername = isCounterLogin ? `counter${selectedCounterNo}` : username;
+      const loginUsername = isCounterLogin ? (fixedLoginUser || `counter${systemNo}`) : username;
       const user = await login(loginUsername, password, effectivePersonName, isCounterLogin ? {
         systemNo,
         counterNo: selectedCounterNo

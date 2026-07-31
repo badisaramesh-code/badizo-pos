@@ -34,6 +34,21 @@ function getOrderedRange(fromDate, toDate) {
   return fromDate <= toDate ? { from: fromDate, to: toDate } : { from: toDate, to: fromDate };
 }
 
+function formatReportDateTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true
+  }).format(date);
+}
 function currentMonthStartIso() {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
@@ -688,7 +703,7 @@ export default function ReportsView({ isActive = true, onClose }) {
 
   function exportBarcodePrintsExcel() {
     exportRows('barcode_sticker_prints', (barcodePrintReport.rows || []).map((row) => ({
-      Date: row.created_at,
+      Date: formatReportDateTime(row.created_at),
       Barcode: row.barcode,
       Product: row.product_name,
       MRP: Number(row.mrp || 0),
@@ -1737,7 +1752,7 @@ export default function ReportsView({ isActive = true, onClose }) {
                     <tr><td colSpan="11">No barcode sticker print history found.</td></tr>
                   ) : barcodePrintReport.rows.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.created_at || '-'}</td>
+                      <td>{formatReportDateTime(row.created_at)}</td>
                       <td className="mono">{row.barcode || '-'}</td>
                       <td>{row.product_name || '-'}</td>
                       <td>{formatMoney(row.mrp)}</td>

@@ -10,9 +10,9 @@ const TEMPLATE_OPTIONS = [
   },
   {
     name: 'tsc-244-1-33x25-single.prn',
-    label: '33 x 25 mm Two-Up',
+    label: '38 x 25 mm Two-Up',
     printer: 'TSC TE244',
-    help: 'One printer row prints two 33x25mm stickers side-by-side.'
+    help: 'One printer row prints two 38x25mm stickers side-by-side.'
   },
   {
     name: 'tsc-te244-40x40-two-up.prn',
@@ -795,18 +795,21 @@ export default function BarcodeStickersView() {
 function StickerPreview({ form, templateName }) {
   if (templateName === 'tsc-244-1-33x25-single.prn') {
     return (
-      <div className="sticker-preview sticker-preview-33x25">
-        <strong className="sticker-product">{form.product_name}</strong>
-        <div className="barcode-bars small"></div>
-        <div className="mono sticker-code">{form.barcode}</div>
-        <div className="sticker-price-row"><strong>MRP {form.mrp}</strong><strong>Price {form.sale_price}</strong></div>
-        <div className="tax-note">Inclusive of all taxes</div>
-        <div className="sticker-meta-row">Qty: {form.qty} {form.unit}</div>
-        <div className="sticker-divider"></div>
-        <strong className="sticker-store">{form.company}</strong>
-        <small>{form.address_line_1}<br />Ph: {form.phone}</small>
-      </div>
-    );
+<div className="sticker-preview sticker-preview-33x25">
+  <strong className="sticker-product">{form.product_name}</strong>
+  <div className="barcode-bars small"></div>
+  <div className="mono sticker-code">{form.barcode}</div>
+  <div className="sticker-price-row">
+    <strong>MRP {form.mrp}</strong>
+    <strong>Price {form.sale_price}</strong>
+  </div>
+  <div className="tax-note">Inclusive of all taxes</div>
+  <div className="tax-note">Date: {form.pkd_date}</div>
+  <div className="sticker-meta-row">Qty: {form.qty} {form.unit}</div>
+  <div className="sticker-divider"></div>
+  <strong className="sticker-store">{form.company}</strong>
+  <small>{form.address_line_1}<br />Ph: {form.phone}</small>
+</div>    );
   }
 
   if (templateName === 'tsc-244-2-jewellery-100x15-tail.prn') {
