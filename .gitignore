@@ -37,3 +37,7 @@ backend-restart-result.txt
 # Windows
 Thumbs.db
 Desktop.ini
+# Generated deployment and QA artifacts
+output/
+tmp/
+/38x25_2up.prn
