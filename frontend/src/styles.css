@@ -2593,9 +2593,13 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .billing-table-wrap {
   flex: 1 1 auto;
   max-height: none;
-  min-height: clamp(330px, 44vh, 430px);
+  min-height: 0;
   margin-top: 5px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
   border: 1px solid #8fa99a;
   border-radius: 4px;
   background: #ffffff;
@@ -2609,7 +2613,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .billing-product-table {
   width: 100%;
-  min-width: 980px;
+  min-width: 860px;
   table-layout: fixed;
   border-collapse: collapse;
   border-spacing: 0;
@@ -2642,17 +2646,17 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .billing-product-table th:nth-child(1),
 .billing-product-table td:nth-child(1) {
-  width: 138px;
+  width: 122px;
 }
 
 .billing-product-table th:nth-child(2),
 .billing-product-table td:nth-child(2) {
-  width: 270px;
+  width: 230px;
 }
 
 .billing-product-table th:nth-child(3),
 .billing-product-table td:nth-child(3) {
-  width: 88px;
+  width: 72px;
 }
 
 .billing-product-table th:nth-child(4),
@@ -2663,32 +2667,32 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .billing-product-table td:nth-child(6),
 .billing-product-table th:nth-child(9),
 .billing-product-table td:nth-child(9) {
-  width: 72px;
+  width: 64px;
   text-align: right;
   white-space: nowrap;
 }
 
 .billing-product-table th:nth-child(7),
 .billing-product-table td:nth-child(7) {
-  width: 74px;
+  width: 60px;
   text-align: center;
   white-space: nowrap;
 }
 
 .billing-product-table th:nth-child(8),
 .billing-product-table td:nth-child(8) {
-  width: 52px;
+  width: 44px;
   text-align: center;
 }
 
 .billing-product-table th:nth-child(9),
 .billing-product-table td:nth-child(9) {
-  width: 92px;
+  width: 80px;
 }
 
 .billing-product-table th:nth-child(10),
 .billing-product-table td:nth-child(10) {
-  width: 46px;
+  width: 40px;
   text-align: center;
 }
 
@@ -2816,27 +2820,6 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .payment-panel {
   box-shadow: 0 10px 26px rgba(15, 23, 42, 0.1);
-}
-
-.usage-side-panel .compact-panel-header {
-  padding: 8px 10px;
-}
-
-.usage-detail-grid {
-  display: grid;
-  grid-template-columns: 74px 1fr;
-  gap: 5px 8px;
-  padding: 8px 10px 10px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.usage-detail-grid strong {
-  min-width: 0;
-  color: var(--text);
-  font-size: 12px;
-  text-align: right;
-  overflow-wrap: anywhere;
 }
 
 .last-bill-panel {

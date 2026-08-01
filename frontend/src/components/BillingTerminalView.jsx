@@ -120,9 +120,7 @@ function getUnitPrice(item, mode) {
   const qty3Price = toNumber(item.qty_3_price);
   const qty6Price = toNumber(item.qty_6_price);
   const qty12Price = toNumber(item.qty_12_price);
-  if (quantity >= 12) {
-    return toNumber(qty12Price || item.wholesale_price || qty6Price || qty3Price || item.sale_price || item.mrp);
-  }
+  if (quantity >= 12 && qty12Price > 0) return qty12Price;
   if (quantity >= 6 && qty6Price > 0) return qty6Price;
   if (quantity >= 3 && qty3Price > 0) return qty3Price;
   if (BILLING_MODES[mode]?.tier === 'WHOLESALE') {
@@ -870,6 +868,7 @@ export default function BillingTerminalView({ isActive = true }) {
   }, [cart.length]);
 
   useEffect(() => {
+    let cancelled = false;
     const run = async () => {
       if (isScannerWakeBlocked()) {
         setSuggestions([]);
@@ -903,7 +902,7 @@ export default function BillingTerminalView({ isActive = true }) {
 
       try {
         const results = await searchProducts(cleaned);
-        if (suppressSuggestionsUntilKeyboardInputRef.current || scannerInputModeRef.current !== 'keyboard') {
+        if (cancelled || suppressSuggestionsUntilKeyboardInputRef.current || scannerInputModeRef.current !== 'keyboard') {
           setSuggestions([]);
           setSelectedSuggestion(0);
           return;
@@ -911,12 +910,15 @@ export default function BillingTerminalView({ isActive = true }) {
         setSuggestions(results.slice(0, POS_SUGGESTION_LIMIT));
         setSelectedSuggestion(0);
       } catch (err) {
-        setSuggestions([]);
+        if (!cancelled) setSuggestions([]);
       }
     };
 
     const timer = window.setTimeout(run, TYPED_SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [query]);
 
   useEffect(() => {
@@ -2216,9 +2218,16 @@ export default function BillingTerminalView({ isActive = true }) {
       scannerInputModeRef.current = 'keyboard';
       suppressSuggestionsUntilKeyboardInputRef.current = false;
       const { search: cleaned, quantity } = parseQuantitySearch(query);
+      const normalizedSearch = cleaned.toUpperCase();
       const selectedProduct = suggestions[selectedSuggestion];
+      const selectedProductMatches = selectedProduct && (
+        String(selectedProduct.barcode || '').trim().toUpperCase() === normalizedSearch
+        || String(selectedProduct.product_code || '').trim().toUpperCase() === normalizedSearch
+        || (!SCANNER_BARCODE_PATTERN.test(cleaned)
+          && String(selectedProduct.product_name || '').trim().toUpperCase().includes(normalizedSearch))
+      );
 
-      if (selectedProduct) {
+      if (selectedProductMatches) {
         addProduct(selectedProduct, quantity);
         return;
       }
@@ -5457,7 +5466,16 @@ export default function BillingTerminalView({ isActive = true }) {
             </div>
           </div>
 
-          <div className={`billing-table-wrap ${cart.length === 0 ? 'empty-cart' : ''}`} ref={billingTableRef}>
+          <div
+            className={`billing-table-wrap ${cart.length === 0 ? 'empty-cart' : ''}`}
+            ref={billingTableRef}
+            onWheel={(event) => {
+              const tableWrap = billingTableRef.current;
+              if (!tableWrap || tableWrap.scrollHeight <= tableWrap.clientHeight) return;
+              tableWrap.scrollTop += event.deltaY;
+              event.preventDefault();
+            }}
+          >
             <table className="product-table billing-product-table">
               <thead>
                 <tr>
@@ -5515,7 +5533,7 @@ export default function BillingTerminalView({ isActive = true }) {
                       </tr>
                     );
                   })}
-                {Array.from({ length: Math.max(MIN_VISIBLE_BILL_ROWS - cart.length, 0) }, (_, blankIndex) => (
+                {Array.from({ length: Math.max(MIN_VISIBLE_BILL_ROWS - cart.length, 1) }, (_, blankIndex) => (
                   <tr key={`blank-billing-row-${blankIndex}`} className="blank-billing-row">
                     <td className="mono muted">{cart.length === 0 && blankIndex === 0 ? 'SCAN' : ''}</td>
                     <td>{cart.length === 0 && blankIndex === 0 ? 'Scan barcode or search product name' : ''}</td>
@@ -5563,26 +5581,6 @@ export default function BillingTerminalView({ isActive = true }) {
       </section>
 
       <aside className="sidebar">
-        <section className="panel usage-side-panel">
-          <div className="panel-header compact-panel-header">
-            <h2 className="panel-title">Usage Details</h2>
-            <span
-              className={`ping-status-chip compact ${backendPingOk === false ? 'danger' : backendPingOk === true ? 'success' : 'checking'}`}
-              title={backendPingTitle}
-            >
-              <span className="ping-status-dot" />
-              {backendPingLabel}
-            </span>
-          </div>
-          <div className="usage-detail-grid">
-            <span>User</span><strong>{currentUser?.username || '-'}</strong>
-            <span>Role</span><strong>{currentUser?.role || '-'}</strong>
-            <span>Counter</span><strong>{billingCounterLabelForUser(currentUser, counterNo)}</strong>
-            <span>Mode</span><strong>{activeMode.shortLabel || activeMode.label}</strong>
-            <span>Print</span><strong>{printMode}</strong>
-          </div>
-        </section>
-
         <section className="panel customer-side-panel">
           <div className="panel-header compact-panel-header">
             <h2 className="panel-title">Customer</h2>
@@ -6458,7 +6456,7 @@ export default function BillingTerminalView({ isActive = true }) {
                               View
                             </button>
                             <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no, 'Thermal')}>Reprint</button>
-                            <button className="secondary-button" onClick={() => handleReprint(invoice.invoice_no, 'A4')}>A4 Reprint</button>
+                            <button className="secondary-button" disabled={isHistoryInvoiceLoading} onClick={() => handleOpenA4PdfPreview(invoice.invoice_no)}>A4 Reprint</button>
                             <button className="secondary-button" disabled={isHistoryInvoiceLoading} onClick={() => handleOpenA4PdfPreview(invoice.invoice_no)}>A4 PDF</button>
                             <button className="secondary-button" disabled={isHistoryInvoiceLoading} onClick={() => handleViewGatePass(invoice.invoice_no)}>Gate Pass</button>
                             {canManageInvoice && invoice.invoice_status !== 'CANCELLED' && invoice.invoice_status !== 'RETURNED' && (
@@ -6605,7 +6603,7 @@ export default function BillingTerminalView({ isActive = true }) {
               <button
                 className="secondary-button"
                 type="button"
-                onClick={() => handleReprint(selectedHistoryInvoice.invoiceNo, 'A4')}
+                onClick={() => handleOpenA4PdfPreview(selectedHistoryInvoice.invoiceNo)}
               >
                 A4 Print
               </button>

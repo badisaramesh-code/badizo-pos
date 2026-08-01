@@ -1058,31 +1058,14 @@ export default function PrintableInvoice({ invoice, mode }) {
     return <A4OnePageInvoice invoice={invoice} template={template} />;
   }
 
-  const thermalSummaryStart = template.sections.findIndex((section) => section.id === 'billing-total');
-  const thermalSummaryEnd = template.sections.findIndex((section) => section.id === 'gst-summary');
-
   return (
     <div className={`print-invoice ${template.paperClass}`}>
       <div className="thermal-brand-edge">Badizo</div>
-      {template.sections.map((section, index) => {
-        if (index === thermalSummaryStart && thermalSummaryEnd >= thermalSummaryStart) {
-          return (
-            <div className="thermal-bottom-summary-group" key="thermal-bottom-summary-group">
-              {template.sections.slice(thermalSummaryStart, thermalSummaryEnd + 1).map((summarySection) => (
-                <React.Fragment key={summarySection.id}>
-                  {renderSection(summarySection, invoice, template)}
-                </React.Fragment>
-              ))}
-            </div>
-          );
-        }
-        if (index > thermalSummaryStart && index <= thermalSummaryEnd) return null;
-        return (
-          <React.Fragment key={section.id}>
-            {renderSection(section, invoice, template)}
-          </React.Fragment>
-        );
-      })}
+      {template.sections.map((section) => (
+        <React.Fragment key={section.id}>
+          {renderSection(section, invoice, template)}
+        </React.Fragment>
+      ))}
       <SectionLine />
       <div className="thermal-bill-qr-wrap">
         <BillQrCode invoice={invoice} className="thermal-bill-qr" />

@@ -165,7 +165,7 @@ function currentCheckoutPrice(product, quantity, billingTier) {
   const qty3Price = parseMoney(product?.qty_3_price);
   const qty6Price = parseMoney(product?.qty_6_price);
   const qty12Price = parseMoney(product?.qty_12_price);
-  if (qty >= 12) return qty12Price || wholesalePrice || qty6Price || qty3Price || salePrice;
+  if (qty >= 12 && qty12Price > 0) return qty12Price;
   if (qty >= 6 && qty6Price > 0) return qty6Price;
   if (qty >= 3 && qty3Price > 0) return qty3Price;
   if (String(billingTier || '').toUpperCase() === 'WHOLESALE') return wholesalePrice;
