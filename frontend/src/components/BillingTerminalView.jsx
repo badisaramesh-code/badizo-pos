@@ -2337,6 +2337,7 @@ export default function BillingTerminalView({ isActive = true }) {
           product_name: String(product.product_name || '').toUpperCase(),
           hsn_code: product.hsn_code || '',
           unit_type: product.unit_type || product.unit || '',
+          pack_measure: product.pack_measure || '',
           gst_percent: toNumber(product.gst_percent),
           mrp: toNumber(product.mrp),
           sale_price: unitPrice,
@@ -4960,6 +4961,7 @@ export default function BillingTerminalView({ isActive = true }) {
         sale_price: 0,
         mrp: 0,
         unit_type: item.unit_type || item.unit || 'Nos',
+        pack_measure: item.pack_measure || '',
         gst_percent: 0,
         lineTotal: 0,
         taxableRate: 0,
@@ -5073,6 +5075,7 @@ export default function BillingTerminalView({ isActive = true }) {
         product_name: item.product_name,
         hsn_code: item.hsn_code || '',
         unit_type: item.unit_type || item.unit || '',
+        pack_measure: item.pack_measure || '',
         quantity: toNumber(item.quantity, 1),
         sale_price: toNumber(item.unitPrice || item.sale_price || item.mrp),
         gst_percent: toNumber(item.gst_percent)

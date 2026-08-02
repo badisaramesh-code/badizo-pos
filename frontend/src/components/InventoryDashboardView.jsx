@@ -32,6 +32,8 @@ const emptyForm = {
   hsn_code: '',
   gst_percent: '',
   unit_type: '',
+  pack_quantity: '',
+  pack_unit: '',
   purchase_unit_type: 'Loose',
   purchase_unit_size: '1',
   mrp: '',
@@ -61,6 +63,35 @@ const emptyForm = {
 const GST_OPTIONS = ['0', '3', '5', '18', '40'];
 const UNIT_OPTIONS = ['Nos', 'Gm', 'Kg', 'Ml', 'Ltr', 'Pack'];
 const PURCHASE_UNIT_OPTIONS = ['Loose', 'Carton', 'Bag', 'Box', 'Case', 'Bundle', 'Pack'];
+function productPackMeasure(product) {
+  const saved = String(product?.pack_measure || '').trim();
+  if (saved) return saved;
+  const unit = String(product?.unit_type || '').trim();
+  return UNIT_OPTIONS.includes(unit) ? '' : unit;
+}
+
+function splitPackMeasure(value) {
+  const text = String(value || '').trim();
+  if (!text) return { quantity: '', unit: '' };
+  const match = text.match(/^([0-9]+(?:\.[0-9]+)?)\s*(.*)$/);
+  return match ? { quantity: match[1], unit: match[2].trim() } : { quantity: '', unit: text };
+}
+
+function joinPackMeasure(quantity, unit) {
+  return [String(quantity || '').trim(), String(unit || '').trim()].filter(Boolean).join(' ');
+}
+
+function productStockUnit(product) {
+  const unit = String(product?.unit_type || '').trim();
+  if (UNIT_OPTIONS.includes(unit)) return unit;
+  const upper = unit.toUpperCase();
+  if (/ML|MLTR/.test(upper)) return 'Ml';
+  if (/LTR|LTS|LIT/.test(upper)) return 'Ltr';
+  if (/KG|KGS/.test(upper)) return 'Kg';
+  if (/GM|GMS|GR|[0-9][ .]*G$/.test(upper)) return 'Gm';
+  return 'Nos';
+}
+
 const PRODUCT_DROPBOX_DAYS = 365;
 const ENABLE_BULK_EDIT = false;
 const ACTIVE_IMPORT_STATUSES = new Set(['QUEUED', 'RUNNING']);
@@ -88,16 +119,17 @@ const PRODUCT_EXCEL_HEADERS = [
   'Sales CGST %',
   'Sales IGST %',
   'Unit',
+  'Product Qty / Measure',
   'Sales Rate',
   'Wholesale Price',
   'Inward Quantity'
 ];
 
 const PRODUCT_EXCEL_SAMPLE_ROWS = [
-  ['73137', '89300296', '(180) JUMBO ROUND KAJU', '', '', '080211', '62.00', '62.00', '0', '2.5', '2.5', '5', '50 Gms', '62.00', '60.00', '10'],
-  ['73138', '89300297', '(180) JUMBO ROUND KAJU', '', '', '080211', '120.00', '120.00', '0', '2.5', '2.5', '5', '100 Gms', '120.00', '116.00', '8'],
-  ['73139', '89300298', '(180) JUMBO ROUND KAJU', '', '', '080211', '235.00', '235.00', '0', '2.5', '2.5', '5', '200 Gms', '235.00', '226.00', '5'],
-  ['73140', '89300299', '(180) JUMBO ROUND KAJU', '', '', '080211', '580.00', '580.00', '0', '2.5', '2.5', '5', '500 Gms', '580.00', '560.00', '3']
+  ['73137', '89300296', '(180) JUMBO ROUND KAJU', '', '', '080211', '62.00', '62.00', '0', '2.5', '2.5', '5', 'Gm', '50 Gms', '62.00', '60.00', '10'],
+  ['73138', '89300297', '(180) JUMBO ROUND KAJU', '', '', '080211', '120.00', '120.00', '0', '2.5', '2.5', '5', 'Gm', '100 Gms', '120.00', '116.00', '8'],
+  ['73139', '89300298', '(180) JUMBO ROUND KAJU', '', '', '080211', '235.00', '235.00', '0', '2.5', '2.5', '5', 'Gm', '200 Gms', '235.00', '226.00', '5'],
+  ['73140', '89300299', '(180) JUMBO ROUND KAJU', '', '', '080211', '580.00', '580.00', '0', '2.5', '2.5', '5', 'Gm', '500 Gms', '580.00', '560.00', '3']
 ];
 
 const PRODUCT_API_IMPORT_HEADERS = [
@@ -112,6 +144,7 @@ const PRODUCT_API_IMPORT_HEADERS = [
   'sales_cgst_percent',
   'sales_igst_percent',
   'unit_type',
+  'pack_measure',
   'purchase_unit_type',
   'purchase_unit_size',
   'mrp',
@@ -266,6 +299,7 @@ function rowsToApiImportCsv(rows) {
     cgst: columnIndex(['Sales CGST %', 'Sale CGST %', 'CGST %', 'sales_cgst_percent']),
     igst: columnIndex(['Sales IGST %', 'Sale IGST %', 'IGST %', 'sales_igst_percent']),
     unit: columnIndex(['Unit', 'Unit Type', 'unit_type', 'UOM']),
+    packMeasure: columnIndex(['Product Qty / Measure', 'Product Quantity', 'pack_measure', 'Pack Measure', 'Pack Size', 'Net Quantity', 'Net Qty', 'Measure', 'Size']),
     purchaseUnit: columnIndex(['Purchase Unit', 'purchase_unit_type', 'purchase pack', 'pack type']),
     purchaseUnitSize: columnIndex(['Stock Per Purchase Unit', 'purchase_unit_size', 'units per pack', 'qty per pack', 'pcs per carton', 'kg per bag', 'conversion']),
     purchasePrice: columnIndex(['Purchase Price', 'purchase_price', 'purchase rate', 'cost price', 'cost']),
@@ -300,6 +334,7 @@ function rowsToApiImportCsv(rows) {
         sales_cgst_percent: valueAt(row, indexes.cgst),
         sales_igst_percent: valueAt(row, indexes.igst),
         unit_type: valueAt(row, indexes.unit),
+        pack_measure: valueAt(row, indexes.packMeasure),
         purchase_unit_type: valueAt(row, indexes.purchaseUnit),
         purchase_unit_size: valueAt(row, indexes.purchaseUnitSize),
         mrp: valueAt(row, indexes.mrp),
@@ -437,7 +472,6 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   const wholesalePriceRef = useRef(null);
   const discountTypeRef = useRef(null);
   const discountRef = useRef(null);
-  const wholesaleDiscountRef = useRef(null);
   const stockRef = useRef(null);
   const lowStockRef = useRef(null);
   const batchNumberRef = useRef(null);
@@ -705,7 +739,8 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       discount_value: String(source.discount_value ?? '').trim() === '' ? '0' : source.discount_value,
       bulk_discount_value: String(source.bulk_discount_value ?? '').trim() === '' ? '0' : source.bulk_discount_value,
       free_promo_qty_per_sale: String(source.free_promo_qty_per_sale ?? '').trim() === '' ? '1' : source.free_promo_qty_per_sale,
-      free_promo_total_qty: String(source.free_promo_total_qty ?? '').trim() === '' ? '0' : source.free_promo_total_qty
+      free_promo_total_qty: String(source.free_promo_total_qty ?? '').trim() === '' ? '0' : source.free_promo_total_qty,
+      pack_measure: joinPackMeasure(source.pack_quantity, source.pack_unit)
     };
   }
 
@@ -723,7 +758,6 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       ['purchase_price', 'Purchase price'],
       ['sale_price', 'Retail sale price'],
       ['discount_value', 'Discount'],
-      ['bulk_discount_value', 'Wholesale discount'],
       ['stock_qty', 'Current stock'],
       ['min_stock_alert', 'Low stock alert']
     ];
@@ -766,7 +800,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       alias_names: product.alias_names || '',
       hsn_code: product.hsn_code || '',
       gst_percent: String(product.gst_percent ?? '18'),
-      unit_type: product.unit_type || 'Nos',
+      unit_type: productStockUnit(product),
+      pack_quantity: splitPackMeasure(productPackMeasure(product)).quantity,
+      pack_unit: splitPackMeasure(productPackMeasure(product)).unit,
       purchase_unit_type: product.purchase_unit_type || 'Loose',
       purchase_unit_size: String(product.purchase_unit_size ?? '1'),
       mrp: String(product.mrp ?? ''),
@@ -1188,7 +1224,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   const isProductSearchActive = filter.trim().length > 0;
   const showProductCodeColumn = isProductSearchActive;
   const visibleProducts = isProductSearchActive ? products : [];
-  const inventoryColSpan = showProductCodeColumn ? 16 : 15;
+  const inventoryColSpan = showProductCodeColumn ? 17 : 16;
   const selectedDropboxRows = dropboxRows.filter((row) => selectedDropboxBarcodes.includes(row.barcode));
   const importStatus = importSummary?.status || (activeImportId ? 'QUEUED' : '');
   const importProgress = productImportProgressPercent(importSummary || {});
@@ -1228,7 +1264,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             <button type="button" className={form.code_mode === 'MANUAL' ? 'active' : ''} onClick={() => updateField('code_mode', 'MANUAL')}>Manual Code</button>
           </div>
 
-          <label className="product-field-order-14">
+          <label className="product-field-order-16">
             <span className="field-label">Product Code</span>
             <input
               ref={productCodeRef}
@@ -1259,7 +1295,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             <input ref={productNameRef} className="field" value={form.product_name} onChange={(event) => updateField('product_name', event.target.value)} onKeyDown={(event) => moveOnEnter(event, hsnRef)} required />
           </label>
 
-          <label className="product-field-order-15">
+          <label className="product-field-order-17">
             <span className="field-label">Alias / invoice names</span>
             <input
               ref={aliasNamesRef}
@@ -1271,12 +1307,12 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             />
           </label>
 
-          <label className="product-field-order-3">
+          <label className="product-field-order-5">
             <span className="field-label">HSN code</span>
             <input ref={hsnRef} className="field" value={form.hsn_code} onChange={(event) => updateField('hsn_code', event.target.value)} onKeyDown={(event) => moveOnEnter(event, gstRef)} required />
           </label>
 
-          <label className="product-field-order-4">
+          <label className="product-field-order-6">
             <span className="field-label">GST percent</span>
             <select ref={gstRef} className="select" value={form.gst_percent} onChange={(event) => updateField('gst_percent', event.target.value)} onKeyDown={(event) => moveOnEnter(event, mrpRef)}>
               <option value="">Select GST</option>
@@ -1284,7 +1320,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             </select>
           </label>
 
-          <label className="product-field-order-9">
+          <label className="product-field-order-19">
             <span className="field-label">Selling / stock unit</span>
             <select ref={unitRef} className="select" value={form.unit_type} onChange={(event) => updateField('unit_type', event.target.value)} onKeyDown={(event) => moveOnEnter(event, purchaseUnitRef)}>
               <option value="">Select Unit</option>
@@ -1292,14 +1328,24 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             </select>
           </label>
 
-          <label className="product-field-order-10">
+          <label className="product-field-order-4">
+            <span className="field-label">Product / Pack Qty (optional)</span>
+            <input className="field" type="number" min="0" step="0.001" value={form.pack_quantity} onChange={(event) => updateField('pack_quantity', event.target.value)} placeholder="Example: 1" />
+          </label>
+
+          <label className="product-field-order-3">
+            <span className="field-label">Product / Pack Unit (optional)</span>
+            <input className="field" value={form.pack_unit} onChange={(event) => updateField('pack_unit', event.target.value)} placeholder="Example: Kg, Gr, Ltr, Ml, Pcs" maxLength={30} />
+          </label>
+
+          <label className="product-field-order-18">
             <span className="field-label">Purchase unit</span>
             <select ref={purchaseUnitRef} className="select" value={form.purchase_unit_type} onChange={(event) => updateField('purchase_unit_type', event.target.value)} onKeyDown={(event) => moveOnEnter(event, discountTypeRef)}>
               {PURCHASE_UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
             </select>
           </label>
 
-          <label className="product-field-order-16">
+          <label className="product-field-order-20">
             <span className="field-label">Stock per purchase unit</span>
             <input
               ref={purchaseUnitSizeRef}
@@ -1315,42 +1361,42 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             />
           </label>
 
-          <label className="product-field-order-5">
+          <label className="product-field-order-7">
             <span className="field-label">MRP</span>
             <input ref={mrpRef} className="field" type="number" step="0.01" min="0" value={form.mrp} onChange={(event) => updateField('mrp', event.target.value)} onKeyDown={(event) => moveOnEnter(event, purchasePriceRef)} required />
           </label>
 
-          <label className="product-field-order-6">
+          <label className="product-field-order-8">
             <span className="field-label">Purchase price / Cost</span>
             <input ref={purchasePriceRef} className="field" type="number" step="0.01" min="0" value={form.purchase_price} onChange={(event) => updateField('purchase_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, salePriceRef)} placeholder="Cost to store" required />
           </label>
 
-          <label className="product-field-order-7">
+          <label className="product-field-order-11">
             <span className="field-label">Retail sale price</span>
             <input ref={salePriceRef} className="field" type="number" step="0.01" min="0" value={form.sale_price} onChange={(event) => updateField('sale_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, wholesalePriceRef)} required />
           </label>
 
-          <label className="product-field-order-8">
+          <label className="product-field-order-15">
             <span className="field-label">Wholesale price (optional)</span>
             <input ref={wholesalePriceRef} className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, unitRef)} placeholder="Defaults to retail price" />
           </label>
 
-          <label className="product-field-order-8">
+          <label className="product-field-order-12">
             <span className="field-label">3+ Price (Qty 3–5, optional)</span>
             <input className="field" type="number" step="0.01" min="0" value={form.qty_3_price} onChange={(event) => updateField('qty_3_price', event.target.value)} placeholder="Leave empty to use normal price" />
           </label>
 
-          <label className="product-field-order-8">
+          <label className="product-field-order-13">
             <span className="field-label">6+ Price (Qty 6–11, optional)</span>
             <input className="field" type="number" step="0.01" min="0" value={form.qty_6_price} onChange={(event) => updateField('qty_6_price', event.target.value)} placeholder="Leave empty to use normal price" />
           </label>
 
-          <label className="product-field-order-8">
+          <label className="product-field-order-14">
             <span className="field-label">12+ Price (Qty 12+, optional)</span>
             <input className="field" type="number" step="0.01" min="0" value={form.qty_12_price} onChange={(event) => updateField('qty_12_price', event.target.value)} placeholder="Leave empty to use wholesale price" />
           </label>
 
-          <label className="product-field-order-11">
+          <label className="product-field-order-9">
             <span className="field-label">Discount Type</span>
             <select ref={discountTypeRef} className="select" value={form.discount_type} onChange={(event) => updateField('discount_type', event.target.value)} onKeyDown={(event) => moveOnEnter(event, discountRef)}>
               <option value="PERCENT">Percent</option>
@@ -1358,14 +1404,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             </select>
           </label>
 
-          <label className="product-field-order-12">
+          <label className="product-field-order-10">
             <span className="field-label">Discount</span>
-            <input ref={discountRef} className="field" type="number" step="0.01" min="0" value={form.discount_value} onChange={(event) => updateField('discount_value', event.target.value)} onKeyDown={(event) => moveOnEnter(event, wholesaleDiscountRef)} required />
-          </label>
-
-          <label className="product-field-order-13">
-            <span className="field-label">Wholesale Discount</span>
-            <input ref={wholesaleDiscountRef} className="field" type="number" step="0.01" min="0" value={form.bulk_discount_value} onChange={(event) => updateField('bulk_discount_value', event.target.value)} onKeyDown={(event) => moveOnEnter(event, productCodeRef)} required />
+            <input ref={discountRef} className="field" type="number" step="0.01" min="0" value={form.discount_value} onChange={(event) => updateField('discount_value', event.target.value)} onKeyDown={(event) => moveOnEnter(event, salePriceRef)} required />
           </label>
 
           <label className="change-box product-field-after">
@@ -1441,8 +1482,8 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             />
           </label>
 
-          <button ref={saveButtonRef} className="primary-button" type="submit" disabled={!canManageProducts}>Save Product</button>
-          <button className="secondary-button" type="button" onClick={resetProductForm}>Clear</button>
+          <button className="secondary-button product-clear-button" type="button" onClick={resetProductForm}>Clear</button>
+          <button ref={saveButtonRef} className="primary-button product-save-button" type="submit" disabled={!canManageProducts}>Save Product</button>
         </form>
       </section>
       )}
@@ -2000,6 +2041,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                   <th>Product</th>
                   <th>GST</th>
                   <th>Unit</th>
+                  <th>Qty / Measure</th>
                   <th>Purchase Pack</th>
                   <th>MRP</th>
                   <th>Purchase</th>
@@ -2030,7 +2072,8 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                           {product.alias_names && <div className="muted compact-cell-text">{product.alias_names}</div>}
                         </td>
                         <td>{product.gst_percent}%</td>
-                        <td>{product.unit_type || 'Nos'}</td>
+                        <td>{productStockUnit(product)}</td>
+                        <td>{productPackMeasure(product) || '-'}</td>
                         <td>{product.purchase_unit_type || 'Loose'} x {Number(product.purchase_unit_size || 1)}</td>
                         <td>{formatMoney(product.mrp)}</td>
                         <td>{formatMoney(product.purchase_price)}</td>

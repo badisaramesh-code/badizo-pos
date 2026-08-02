@@ -903,7 +903,8 @@ router.get('/invoice/details', authenticate, authorize('SERVER', 'ADMIN', 'COUNT
               ii.cgst_amount, ii.sgst_amount, ii.igst_amount, ii.is_free_bonus, ii.free_offer_id, ii.returned_qty,
               COALESCE(p.mrp, 0) AS mrp,
               COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), '') AS hsn_code,
-              COALESCE(p.unit_type, '') AS unit_type
+              COALESCE(p.unit_type, '') AS unit_type,
+              COALESCE(p.pack_measure, '') AS pack_measure
        FROM invoice_items ii
        LEFT JOIN products p ON p.barcode = ii.barcode
        WHERE ii.invoice_no = ?

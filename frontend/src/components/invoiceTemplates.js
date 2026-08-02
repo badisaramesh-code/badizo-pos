@@ -18,11 +18,11 @@ export const THERMAL_RECEIPT_TEMPLATE = {
     { id: 'thanks', type: 'centerText', enabled: true, text: 'Thank You Visit Again' }
   ],
   itemColumns: [
-    { key: 'barcode', label: 'Barcode/Product', width: '34%' },
-    { key: 'mrp', label: 'MRP', width: '14%', align: 'right' },
-    { key: 'discount', label: 'Disc', width: '13%', align: 'right' },
-    { key: 'gst', label: 'GST%', width: '12%', align: 'right' },
-    { key: 'quantity', label: 'Qty', width: '9%', align: 'right' },
+    { key: 'barcode', label: 'Barcode/Product', width: '33%' },
+    { key: 'mrp', label: 'MRP', width: '13%', align: 'right' },
+    { key: 'discount', label: 'Disc', width: '12%', align: 'right' },
+    { key: 'gst', label: 'GST%', width: '11%', align: 'center' },
+    { key: 'quantity', label: 'Qty', width: '13%', align: 'right' },
     { key: 'total', label: 'Total', width: '18%', align: 'right' }
   ],
   terms: [

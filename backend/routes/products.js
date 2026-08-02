@@ -42,6 +42,7 @@ const PRODUCT_IMPORT_COLUMNS = [
   'sales_cgst_percent',
   'sales_igst_percent',
   'unit_type',
+  'pack_measure',
   'purchase_unit_type',
   'purchase_unit_size',
   'mrp',
@@ -84,6 +85,15 @@ function escapeLikePattern(value) {
   return String(value || '').replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
+const STANDARD_PRODUCT_UNITS = new Set(['Nos', 'Gm', 'Kg', 'Ml', 'Ltr', 'Pack']);
+
+function productPackMeasure(row) {
+  const saved = String(row?.pack_measure || '').trim();
+  if (saved) return saved;
+  const legacyUnit = String(row?.unit_type || '').trim();
+  return legacyUnit && !STANDARD_PRODUCT_UNITS.has(legacyUnit) ? legacyUnit : '';
+}
+
 function toProduct(row) {
   return {
     id: row.id,
@@ -98,6 +108,7 @@ function toProduct(row) {
     sales_cgst_percent: Number(row.sales_cgst_percent || 0),
     sales_igst_percent: Number(row.sales_igst_percent || 0),
     unit_type: row.unit_type || 'Nos',
+    pack_measure: productPackMeasure(row),
     purchase_unit_type: row.purchase_unit_type || 'Loose',
     purchase_unit_size: Number(row.purchase_unit_size || 1),
     mrp: Number(row.mrp || 0),
@@ -140,6 +151,7 @@ function productSnapshot(row) {
     sales_cgst_percent: Number(row.sales_cgst_percent || 0),
     sales_igst_percent: Number(row.sales_igst_percent || 0),
     unit_type: row.unit_type || 'Nos',
+    pack_measure: productPackMeasure(row),
     purchase_unit_type: row.purchase_unit_type || 'Loose',
     purchase_unit_size: Number(row.purchase_unit_size || 1),
     mrp: Number(row.mrp || 0),
@@ -356,6 +368,7 @@ const PRODUCT_CSV_HEADERS = [
   'Sales CGST %',
   'Sales IGST %',
   'Unit',
+  'Product Qty / Measure',
   'Sales Rate',
   'Wholesale Price',
   'Inward Quantity'
@@ -372,6 +385,7 @@ const PRODUCT_EXPORT_HEADERS = [
   'sales_cgst_percent',
   'sales_igst_percent',
   'unit_type',
+  'pack_measure',
   'purchase_unit_type',
   'purchase_unit_size',
   'mrp',
@@ -404,6 +418,7 @@ const PRODUCT_IMPORT_ALIASES = {
   sales_cgst_percent: ['sales cgst %', 'sale cgst %', 'cgst %', 'cgst', 'sales_cgst_percent'],
   sales_igst_percent: ['sales igst %', 'sale igst %', 'igst %', 'igst', 'sales_igst_percent'],
   unit_type: ['unit', 'units', 'unit type', 'uom'],
+  pack_measure: ['product qty / measure', 'product quantity', 'pack measure', 'pack size', 'net quantity', 'net qty', 'measure', 'size'],
   purchase_unit_type: ['purchase unit', 'purchase_unit_type', 'purchase pack', 'purchase pack unit', 'pack type'],
   purchase_unit_size: ['stock per purchase unit', 'purchase_unit_size', 'units per pack', 'qty per pack', 'pcs per carton', 'kg per bag', 'conversion'],
   mrp: ['mrp', 'm r p'],
@@ -463,6 +478,7 @@ function normalizeCsvRow(rawRow, rowNumber) {
     sales_cgst_percent: hasImportValue(rawRow.sales_cgst_percent),
     sales_igst_percent: hasImportValue(rawRow.sales_igst_percent),
     unit_type: hasImportValue(rawRow.unit_type),
+    pack_measure: hasImportValue(rawRow.pack_measure),
     purchase_unit_type: hasImportValue(rawRow.purchase_unit_type),
     purchase_unit_size: hasImportValue(rawRow.purchase_unit_size),
     mrp: hasImportValue(rawRow.mrp),
@@ -537,6 +553,7 @@ function normalizeCsvRow(rawRow, rowNumber) {
       sales_cgst_percent: salesCgstPercent,
       sales_igst_percent: salesIgstPercent,
       unit_type: normalizeUnitType(rawRow.unit_type),
+      pack_measure: String(rawRow.pack_measure || '').trim().slice(0, 60),
       purchase_unit_type: normalizePurchaseUnitType(rawRow.purchase_unit_type),
       purchase_unit_size: purchaseUnitSize > 0 ? purchaseUnitSize : 1,
       mrp,
@@ -1665,6 +1682,7 @@ router.get('/export', authenticate, authorize('SERVER', 'ADMIN'), async (_req, r
       csvLine(PRODUCT_EXPORT_HEADERS),
       ...rows.map((row) => csvLine(PRODUCT_EXPORT_HEADERS.map((header) => {
         if (header === 'is_free_item') return row.is_free_item ? '1' : '0';
+        if (header === 'pack_measure') return productPackMeasure(row);
         return row[header];
       })))
     ].join('\n');
@@ -2426,10 +2444,10 @@ async function restoreProductSnapshot(connection, snapshot) {
   await connection.query(
     `INSERT INTO products
      (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, sales_sgst_percent, sales_cgst_percent, sales_igst_percent,
-      unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price,
+      unit_type, pack_measure, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price,
       discount_type, discount_value, bulk_discount_value, is_free_item, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
       free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert, default_batch_no, default_mfd_date, default_expiry_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        product_code = VALUES(product_code),
        product_name = VALUES(product_name),
@@ -2440,6 +2458,7 @@ async function restoreProductSnapshot(connection, snapshot) {
        sales_cgst_percent = VALUES(sales_cgst_percent),
        sales_igst_percent = VALUES(sales_igst_percent),
        unit_type = VALUES(unit_type),
+       pack_measure = VALUES(pack_measure),
        purchase_unit_type = VALUES(purchase_unit_type),
        purchase_unit_size = VALUES(purchase_unit_size),
        mrp = VALUES(mrp),
@@ -2471,6 +2490,7 @@ async function restoreProductSnapshot(connection, snapshot) {
       snapshot.sales_cgst_percent,
       snapshot.sales_igst_percent,
       snapshot.unit_type,
+      snapshot.pack_measure,
       snapshot.purchase_unit_type,
       snapshot.purchase_unit_size,
       snapshot.mrp,
@@ -3093,6 +3113,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     hsn_code,
     gst_percent,
     unit_type,
+    pack_measure,
     purchase_unit_type,
     purchase_unit_size,
     mrp,
@@ -3126,6 +3147,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       hsnCode: hsn_code || '',
       gstPercent: Number(gst_percent),
       unitType: normalizeUnitType(unit_type),
+      packMeasure: String(pack_measure || '').trim().slice(0, 60),
       purchaseUnitType: normalizePurchaseUnitType(purchase_unit_type),
       purchaseUnitSize: Math.max(Number(purchase_unit_size) || 1, 0.001),
       mrp: Number(mrp) || 0,
@@ -3223,6 +3245,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       values.hsnCode,
       values.gstPercent,
       values.unitType,
+      values.packMeasure,
       values.purchaseUnitType,
       values.purchaseUnitSize,
       values.mrp,
@@ -3277,6 +3300,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
              hsn_code = ?,
              gst_percent = ?,
              unit_type = ?,
+             pack_measure = ?,
              purchase_unit_type = ?,
              purchase_unit_size = ?,
              mrp = ?,
@@ -3311,10 +3335,10 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     } else {
       await db.query(
         `INSERT INTO products
-         (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, unit_type, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price, qty_3_price, qty_6_price, qty_12_price,
+         (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, unit_type, pack_measure, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price, qty_3_price, qty_6_price, qty_12_price,
           discount_type, discount_value, bulk_discount_value, is_free_item, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
           free_promo_total_qty, free_promo_remaining_qty, stock_qty, min_stock_alert, default_batch_no, default_mfd_date, default_expiry_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            product_code = VALUES(product_code),
            product_name = VALUES(product_name),
@@ -3322,6 +3346,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
            hsn_code = VALUES(hsn_code),
            gst_percent = VALUES(gst_percent),
            unit_type = VALUES(unit_type),
+           pack_measure = VALUES(pack_measure),
            purchase_unit_type = VALUES(purchase_unit_type),
            purchase_unit_size = VALUES(purchase_unit_size),
            mrp = VALUES(mrp),

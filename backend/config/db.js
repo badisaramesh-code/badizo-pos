@@ -150,6 +150,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         sales_cgst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
         sales_igst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
         unit_type VARCHAR(40) NOT NULL DEFAULT 'Nos',
+        pack_measure VARCHAR(60) NOT NULL DEFAULT '',
         purchase_unit_type VARCHAR(30) NOT NULL DEFAULT 'Loose',
         purchase_unit_size DECIMAL(12,3) NOT NULL DEFAULT 1.000,
         mrp DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -1187,6 +1188,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'products', 'sales_igst_percent', 'DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER sales_cgst_percent');
     await ensureColumn(connection, 'products', 'unit_type', "VARCHAR(40) NOT NULL DEFAULT 'Nos' AFTER sales_igst_percent");
     await connection.query("ALTER TABLE products MODIFY unit_type VARCHAR(40) NOT NULL DEFAULT 'Nos'");
+    await ensureColumn(connection, 'products', 'pack_measure', "VARCHAR(60) NOT NULL DEFAULT '' AFTER unit_type");
     await ensureColumn(connection, 'products', 'purchase_unit_type', "VARCHAR(30) NOT NULL DEFAULT 'Loose' AFTER unit_type");
     await ensureColumn(connection, 'products', 'purchase_unit_size', 'DECIMAL(12,3) NOT NULL DEFAULT 1.000 AFTER purchase_unit_type');
     await ensureColumn(connection, 'products', 'discount_type', "ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT' AFTER wholesale_price");

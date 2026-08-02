@@ -12,24 +12,35 @@ function formatPercent(value) {
   return fixed.replace(/\.?0+$/, '') || '0';
 }
 
-function getItemUnit(item) {
-  return String(item?.unit_type || item?.unit || '').trim() || 'Nos';
+function formatPrintQuantity(value) {
+  const fixed = toNumber(value, 1).toFixed(3);
+  return fixed.replace(/\.?0+$/, '') || '0';
 }
 
-function formatQuantityWithUnit(itemOrQuantity, maybeUnit = '') {
-  const quantity = typeof itemOrQuantity === 'object'
-    ? toNumber(itemOrQuantity?.quantity, 1)
-    : toNumber(itemOrQuantity, 1);
-  const unit = typeof itemOrQuantity === 'object'
-    ? getItemUnit(itemOrQuantity)
-    : (String(maybeUnit || '').trim() || 'Nos');
-  return `${formatPlainMoney(quantity)} ${unit}`;
+function normalizePrintMeasure(value) {
+  const measure = String(value || '').replace(/\s+/g, ' ').trim();
+  const duplicate = measure.match(/^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?\s*[a-zA-Z].*)$/);
+  if (duplicate && Number(duplicate[1]) === Number.parseFloat(duplicate[2])) {
+    return duplicate[2].replace(/\s+/g, '');
+  }
+  return measure.replace(/\s*\/\s*/g, '/');
 }
 
-function formatQuantityDetail(item) {
-  const unit = String(item?.unit_type || item?.unit || '').trim();
-  if (!unit) return '';
-  return unit;
+function formatQuantityWithUnit(itemOrQuantity) {
+  const isItem = typeof itemOrQuantity === 'object';
+  const quantity = isItem ? toNumber(itemOrQuantity?.quantity, 1) : toNumber(itemOrQuantity, 1);
+  const measure = isItem ? normalizePrintMeasure(itemOrQuantity?.pack_measure) : '';
+  const quantityText = formatPrintQuantity(quantity);
+  return (
+    <span className="print-quantity">
+      {measure && <span className="print-pack-measure">{measure}/</span>}
+      <strong className="print-billing-quantity">{quantityText}</strong>
+    </span>
+  );
+}
+
+function formatQuantityDetail() {
+  return '';
 }
 
 function SectionLine() {
@@ -298,8 +309,8 @@ function ThermalItemTable({ invoice, template }) {
                 <td>{item.barcode || '-'}</td>
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.mrp)}</td>
                 <td style={{ textAlign: 'right' }}>{formatPlainMoney(discount)}</td>
-                <td style={{ textAlign: 'right' }}>{formatPercent(item.gst_percent)}</td>
-                <td style={{ textAlign: 'right' }}>{formatPlainMoney(item.quantity)}</td>
+                <td className="thermal-item-gst" style={{ textAlign: 'center' }}>{formatPercent(item.gst_percent)}</td>
+                <td style={{ textAlign: 'right' }}>{formatQuantityWithUnit(item)}</td>
                 <td className="thermal-line-total" style={{ textAlign: 'right' }}>{formatPlainMoney(item.lineTotal)}</td>
               </tr>
               {index < saleItems.length - 1 && (

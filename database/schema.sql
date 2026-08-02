@@ -30,6 +30,7 @@ CREATE TABLE products (
     sales_cgst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
     sales_igst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
     unit_type VARCHAR(40) NOT NULL DEFAULT 'Nos',
+    pack_measure VARCHAR(60) NOT NULL DEFAULT '',
     mrp DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     purchase_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,  -- Cost to Store
     sale_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,      -- Retail Selling Price
