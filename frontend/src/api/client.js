@@ -454,7 +454,7 @@ export async function fetchPosSaleReport({ from, to, reportType = 'ALL', counter
   });
 
   const taxRowsByRate = new Map((tax.rows || []).map((row) => [Number(row.gst_percent || 0), row]));
-  const baseGstSlabs = [0, 3, 5, 12, 18, 28, 40];
+  const baseGstSlabs = [0, 3, 5, 18, 40];
   const allRates = [...new Set([...baseGstSlabs, ...(tax.rows || []).map((row) => Number(row.gst_percent || 0))])]
     .sort((a, b) => a - b);
   const gst = allRates.map((rate) => {

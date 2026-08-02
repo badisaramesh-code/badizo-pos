@@ -9,6 +9,7 @@ import {
   fetchExceptionReport,
   fetchGstHsnReport,
   fetchGstHsnProductDetails,
+  fetchSettings,
   fetchGstr1Report,
   fetchGstr2Report,
   fetchGstr3Report,
@@ -149,6 +150,7 @@ export default function ReportsView({ isActive = true, onClose }) {
   });
   const [hsnReport, setHsnReport] = useState({ rows: [] });
   const [hsnFilters, setHsnFilters] = useState(DEFAULT_HSN_FILTERS);
+  const [gstPercentOptions, setGstPercentOptions] = useState(GST_PERCENT_OPTIONS);
   const [hsnProductSearch, setHsnProductSearch] = useState('');
   const [hsnProductDetails, setHsnProductDetails] = useState({ rows: [], totals: { quantity: 0, gross: 0, cgst: 0, sgst: 0, igst: 0 } });
   const [hsnProductDetailError, setHsnProductDetailError] = useState('');
@@ -177,6 +179,16 @@ export default function ReportsView({ isActive = true, onClose }) {
   const [isReportLoading, setIsReportLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const deferredHsnProductSearch = useDeferredValue(hsnFilters.productSearch);
+
+  useEffect(() => {
+    if (!isActive) return;
+    fetchSettings()
+      .then((saved) => {
+        const slabs = String(saved.gst_slabs || '').split(',').map((value) => value.trim()).filter(Boolean);
+        setGstPercentOptions(['ALL', ...slabs]);
+      })
+      .catch(() => setGstPercentOptions(GST_PERCENT_OPTIONS));
+  }, [isActive]);
 
   useEffect(() => {
     if (isActive) loadReports();
@@ -1104,7 +1116,7 @@ export default function ReportsView({ isActive = true, onClose }) {
                     value={hsnFilters.gstPercent}
                     onChange={(event) => setHsnFilters((current) => ({ ...current, gstPercent: event.target.value }))}
                   >
-                    {GST_PERCENT_OPTIONS.map((percent) => (
+                    {gstPercentOptions.map((percent) => (
                       <option key={percent} value={percent}>{percent === 'ALL' ? 'All GST' : `${percent}%`}</option>
                     ))}
                   </select>

@@ -18,7 +18,7 @@ const PRICE_LIST_UPDATE_BATCH_SIZE = 100;
 const PRICE_LIST_BACKGROUND_BATCH_SIZE = 100;
 const POS_PRODUCT_SEARCH_LIMIT = 50;
 const POS_PRODUCT_SEARCH_MAX_LIMIT = 200;
-const DEFAULT_GST_SLABS = [0, 3, 5, 12, 18, 28, 40];
+const DEFAULT_GST_SLABS = [0, 3, 5, 18, 40];
 const PRODUCT_IMPORT_ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING']);
 const PRICE_LIST_JOB_ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING']);
 const priceListRunningJobs = new Set();
@@ -499,7 +499,7 @@ function normalizeCsvRow(rawRow, rowNumber) {
   const errors = [];
   if (!barcode) errors.push('Product Code or barcode is required');
   if ((importFields.gst_percent || importFields.sales_sgst_percent || importFields.sales_cgst_percent || importFields.sales_igst_percent)
-    && (!Number.isFinite(gstPercent) || ![0, 3, 5, 12, 18, 28, 40].includes(gstPercent))) errors.push('gst_percent must be 0, 3, 5, 12, 18, 28, or 40');
+    && (!Number.isFinite(gstPercent) || gstPercent < 0 || gstPercent > 100)) errors.push('gst_percent must be between 0 and 100');
   if (![salesSgstPercent, salesCgstPercent, salesIgstPercent].every((tax) => Number.isFinite(tax) && tax >= 0 && tax <= 100)) errors.push('sales tax split percentages must be valid numbers');
   if (importFields.mrp && (!Number.isFinite(mrp) || mrp < 0)) errors.push('mrp must be a valid number');
   if (importFields.purchase_unit_size && (!Number.isFinite(purchaseUnitSize) || purchaseUnitSize <= 0)) errors.push('purchase_unit_size must be greater than zero');
@@ -3171,7 +3171,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       return res.status(400).json({ error: `Fill all product columns before saving. Missing: ${requiredErrors.join(', ')}.` });
     }
 
-    if (!Number.isFinite(values.gstPercent) || ![0, 3, 5, 12, 18, 28, 40].includes(values.gstPercent)) {
+    if (!Number.isFinite(values.gstPercent) || values.gstPercent < 0 || values.gstPercent > 100) {
       return res.status(400).json({ error: 'Select a valid GST percent.' });
     }
 
@@ -3399,11 +3399,11 @@ router.post('/bulk-update', authenticate, authorize('SERVER', 'ADMIN'), async (r
   const invalidRow = normalizedRows.find((row) => (
     !row.barcode ||
     !row.product_name ||
-    ![0, 3, 5, 12, 18, 28, 40].includes(row.gst_percent)
+    !Number.isFinite(row.gst_percent) || row.gst_percent < 0 || row.gst_percent > 100
   ));
 
   if (invalidRow) {
-    return res.status(400).json({ error: 'Every row needs product name and GST must be 0, 3, 5, 12, 18, 28, or 40.' });
+    return res.status(400).json({ error: 'Every row needs product name and GST must be between 0 and 100.' });
   }
 
   try {

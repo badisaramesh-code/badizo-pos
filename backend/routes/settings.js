@@ -148,7 +148,7 @@ function publicSettings(settings) {
     '3. Warranty or guarantee is the responsibility of the manufacturer.',
     '4. Any dispute subject related to SATHUPALLY jurisdiction.'
   ];
-  const gstSlabs = String(settings.gst_slabs || '0,3,5,12,18,28,40')
+  const gstSlabs = String(settings.gst_slabs || '0,3,5,18,40')
     .split(/[,;\s]+/)
     .map((value) => Number(value))
     .filter((value) => Number.isFinite(value) && value >= 0 && value <= 100)
@@ -174,7 +174,7 @@ function publicSettings(settings) {
     thermal_footer_line_2: settings.thermal_footer_line_2 || thermalFooterDefaults[1],
     thermal_footer_line_3: settings.thermal_footer_line_3 || thermalFooterDefaults[2],
     thermal_footer_line_4: settings.thermal_footer_line_4 || thermalFooterDefaults[3],
-    gst_slabs: gstSlabs.length ? gstSlabs.join(',') : '0,3,5,12,18,28,40',
+    gst_slabs: gstSlabs.length ? gstSlabs.join(',') : '0,3,5,18,40',
     loyalty_enabled: String(settings.loyalty_enabled || '0') === '1',
     loyalty_earn_sale_amount: Number(settings.loyalty_earn_sale_amount || 100) > 0 ? Number(settings.loyalty_earn_sale_amount || 100) : 100,
     loyalty_earn_points: Number(settings.loyalty_earn_points || 10) > 0 ? Number(settings.loyalty_earn_points || 10) : 10,
@@ -308,7 +308,7 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
           .filter((item) => Number.isFinite(item) && item >= 0 && item <= 100)
           .filter((item, index, list) => list.indexOf(item) === index)
           .sort((a, b) => a - b);
-        value = slabs.length ? slabs.join(',') : '0,3,5,12,18,28,40';
+        value = slabs.length ? slabs.join(',') : '0,3,5,18,40';
       }
 
       if ([

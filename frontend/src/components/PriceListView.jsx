@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { fetchPriceListGroups, fetchPriceListProducts, fetchPriceListUpdateJob, fetchSettings, startPriceListUpdateJob } from '../api/client';
 
-const DEFAULT_GST_OPTIONS = ['0', '3', '5', '12', '18', '28', '40'];
+const DEFAULT_GST_OPTIONS = ['0', '3', '5', '18', '40'];
 const DEFAULT_GROUPS = ['ALL PRODUCTS', 'FMG', 'PLASTIC', 'FOOD', 'GENERAL'];
 const UNIT_OPTIONS = ['Nos', 'Gm', 'Kg', 'Ml', 'Ltr', 'Pack'];
 const DISCOUNT_TYPE_OPTIONS = ['PERCENT', 'VALUE'];

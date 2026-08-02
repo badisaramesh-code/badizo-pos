@@ -572,7 +572,7 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
       paymentTotals.total += total;
     });
 
-    const baseGstSlabs = [0, 3, 5, 12, 18, 28, 40];
+    const baseGstSlabs = [0, 3, 5, 18, 40];
     const rowsByRate = new Map(gstRows.map((row) => [Number(row.gst_percent || 0), row]));
     const allRates = [...new Set([...baseGstSlabs, ...gstRows.map((row) => Number(row.gst_percent || 0))])]
       .sort((a, b) => a - b);

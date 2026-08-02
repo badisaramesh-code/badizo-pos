@@ -82,6 +82,7 @@ const DEFAULT_BARCODE_PRINTER_TEMPLATES = {
 };
 
 export default function SystemView() {
+  const [gstSlabDraft, setGstSlabDraft] = useState('');
   const [settings, setSettings] = useState({
     shop_name: 'Hyper Fresh Mart LLP',
     gst_number: '36AAJFH7790R1ZB',
@@ -102,7 +103,7 @@ export default function SystemView() {
     thermal_footer_line_2: '2. Decoration Items & Toys Exchange Not Allowed',
     thermal_footer_line_3: '3. Warranty or guarantee is the responsibility of the manufacturer.',
     thermal_footer_line_4: '4. Any dispute subject related to SATHUPALLY jurisdiction.',
-    gst_slabs: '0,3,5,12,18,28,40',
+    gst_slabs: '0,3,5,18,40',
     loyalty_enabled: false,
     loyalty_earn_sale_amount: 100,
     loyalty_earn_points: 10,
@@ -219,6 +220,56 @@ export default function SystemView() {
     setSettings((current) => ({ ...current, [field]: value }));
   }
 
+  const gstSlabValues = useMemo(() => String(settings.gst_slabs || '')
+    .split(/[,;\s]+/)
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value >= 0 && value <= 100)
+    .filter((value, index, list) => list.indexOf(value) === index)
+    .sort((a, b) => a - b), [settings.gst_slabs]);
+
+  function saveGstSlabValues(values) {
+    const normalized = values.map(Number)
+      .filter((value) => Number.isFinite(value) && value >= 0 && value <= 100)
+      .filter((value, index, list) => list.indexOf(value) === index)
+      .sort((a, b) => a - b);
+    updateSetting('gst_slabs', normalized.join(','));
+  }
+
+  function addGstSlab() {
+    const value = Number(gstSlabDraft);
+    setErrorMessage('');
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      setErrorMessage('GST slab must be a number between 0 and 100.');
+      return;
+    }
+    if (gstSlabValues.includes(value)) {
+      setErrorMessage(value + '% GST slab already exists.');
+      return;
+    }
+    saveGstSlabValues([...gstSlabValues, value]);
+    setGstSlabDraft('');
+    setStatusMessage('GST slab added. Press Save Settings to apply it across POS.');
+  }
+
+  function editGstSlab(oldValue, rawValue) {
+    const value = Number(rawValue);
+    setErrorMessage('');
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      setErrorMessage('GST slab must be a number between 0 and 100.');
+      return;
+    }
+    if (value !== oldValue && gstSlabValues.includes(value)) {
+      setErrorMessage(value + '% GST slab already exists.');
+      return;
+    }
+    saveGstSlabValues(gstSlabValues.map((slab) => slab === oldValue ? value : slab));
+    setStatusMessage('GST slab edited. Press Save Settings to apply it across POS.');
+  }
+
+  function removeGstSlab(value) {
+    saveGstSlabValues(gstSlabValues.filter((slab) => slab !== value));
+    setStatusMessage(value + '% GST slab removed. Press Save Settings to apply it across POS.');
+  }
   function handleThermalLogoUpload(event) {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -779,15 +830,28 @@ export default function SystemView() {
                   readOnly
                 />
               </label>
-              <label>
-                <span className="field-label">GST Slabs</span>
-                <input
-                  className="field"
-                  value={settings.gst_slabs || ''}
-                  onChange={(event) => updateSetting('gst_slabs', event.target.value)}
-                  placeholder="0,3,5,12,18,28,40"
-                />
-              </label>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <span className="field-label">GST Slab Manager</span>
+                <div className="change-box">When government GST rates change, Add, Edit or Remove slabs here and press Save Settings.</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  {gstSlabValues.map((slab) => (
+                    <div key={slab} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input className="field" type="number" min="0" max="100" step="0.01" defaultValue={slab}
+                        aria-label={'Edit ' + slab + '% GST slab'} style={{ width: 90 }}
+                        onBlur={(event) => editGstSlab(slab, event.target.value)} />
+                      <span>%</span>
+                      <button className="secondary-button" type="button" onClick={() => removeGstSlab(slab)}>Remove</button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                  <input className="field" type="number" min="0" max="100" step="0.01"
+                    value={gstSlabDraft} onChange={(event) => setGstSlabDraft(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addGstSlab(); } }}
+                    placeholder="New GST %" style={{ maxWidth: 150 }} />
+                  <button className="secondary-button" type="button" onClick={addGstSlab}>Add Slab</button>
+                </div>
+              </div>
             </div>
 
             <div className="settings-section system-file-card setup-file-footer">

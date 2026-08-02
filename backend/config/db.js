@@ -1137,7 +1137,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         ('thermal_footer_line_2', '2. Decoration Items & Toys Exchange Not Allowed'),
         ('thermal_footer_line_3', '3. Warranty or guarantee is the responsibility of the manufacturer.'),
         ('thermal_footer_line_4', '4. Any dispute subject related to SATHUPALLY jurisdiction.'),
-        ('gst_slabs', '0,3,5,12,18,28,40'),
+        ('gst_slabs', '0,3,5,18,40'),
         ('loyalty_enabled', '0'),
         ('loyalty_earn_sale_amount', '100'),
         ('loyalty_earn_points', '10'),

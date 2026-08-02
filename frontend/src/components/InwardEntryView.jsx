@@ -12,6 +12,7 @@ import {
   fetchRecentInwards,
   fetchSupplierLedger,
   fetchSuppliers,
+  fetchSettings,
   recordSupplierPayment,
   savePurchaseOrder,
   saveInwardEntry,
@@ -23,6 +24,9 @@ import {
 import { formatMoney, toNumber } from '../utils/money';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+
+const DEFAULT_GST_OPTIONS = [0, 3, 5, 18, 40];
+let configuredGstRates = [...DEFAULT_GST_OPTIONS];
 
 const blankLine = {
   product: '',
@@ -1575,7 +1579,7 @@ function inferScannedGstPercent(baseAmount, totalAmount) {
   const total = toNumber(totalAmount);
   if (base <= 0 || total <= 0 || total < base) return 0;
   const inferred = ((total / base) - 1) * 100;
-  const knownRates = [0, 3, 5, 12, 18, 28, 40];
+  const knownRates = configuredGstRates;
   const matchedRate = knownRates.find((rate) => Math.abs(inferred - rate) <= 1.2);
   return matchedRate ?? 0;
 }
@@ -2132,7 +2136,7 @@ function pickFlexibleQuantity(numbers, amount) {
     const laterNumbers = numbers.slice(index + 1, -1).map(toNumber).filter((value) => value > 0);
     const bestDiff = laterNumbers.reduce((best, rate) => {
       const direct = Math.abs(qty * rate - amountValue);
-      const withTax = [0, 3, 5, 12, 18, 28, 40].reduce((taxBest, gst) => (
+      const withTax = configuredGstRates.reduce((taxBest, gst) => (
         Math.min(taxBest, Math.abs(qty * rate * (1 + gst / 100) - amountValue))
       ), Number.POSITIVE_INFINITY);
       return Math.min(best, direct, withTax);
@@ -2158,7 +2162,7 @@ function pickFlexibleRate(numbers, quantity, amount) {
     .map((value) => {
       const rate = toNumber(value);
       const direct = Math.abs(qty * rate - amountValue);
-      const withTax = [0, 3, 5, 12, 18, 28, 40].reduce((best, gst) => (
+      const withTax = configuredGstRates.reduce((best, gst) => (
         Math.min(best, Math.abs(qty * rate * (1 + gst / 100) - amountValue))
       ), Number.POSITIVE_INFINITY);
       return { value, diff: Math.min(direct, withTax) };
@@ -2372,7 +2376,7 @@ function pickOcrPrice(numbersAfterHsn) {
     .map((value) => {
       const price = toNumber(value);
       const directDiff = Math.abs(qty * price - amount);
-      const taxInclusiveDiff = [0, 3, 5, 12, 18, 28, 40].reduce((best, gst) => (
+      const taxInclusiveDiff = configuredGstRates.reduce((best, gst) => (
         Math.min(best, Math.abs(qty * price * (1 + gst / 100) - amount))
       ), Number.POSITIVE_INFINITY);
       return { value, diff: Math.min(directDiff, taxInclusiveDiff) };
@@ -2389,12 +2393,12 @@ function pickOcrGstPercent(numberTokens, price) {
   const priceValue = toNumber(price);
   const possibleRates = numberTokens
     .map(cleanNumber)
-    .filter((value) => ['0', '3', '5', '12', '18', '28', '40'].includes(value));
+    .filter((value) => configuredGstRates.map(String).includes(value));
   return possibleRates.find((value) => toNumber(value) !== priceValue) || '0';
 }
 
 function isKnownGstRate(value) {
-  return ['0', '3', '5', '12', '18', '28', '40'].includes(String(toNumber(value)));
+  return configuredGstRates.includes(toNumber(value));
 }
 
 function normalizeOcrProductName(value) {
@@ -2609,6 +2613,7 @@ export default function InwardEntryView() {
   const [activeInwardSection, setActiveInwardSection] = useState(INWARD_SECTIONS.ENTRY);
   const [supplier, setSupplier] = useState(blankSupplier);
   const [taxType, setTaxType] = useState('LOCAL');
+  const [gstOptions, setGstOptions] = useState(DEFAULT_GST_OPTIONS);
   const [paymentMode, setPaymentMode] = useState('Credit');
   const [discountType, setDiscountType] = useState('PERCENT');
   const [schemeType, setSchemeType] = useState('PERCENT');
@@ -2655,6 +2660,18 @@ export default function InwardEntryView() {
   const [supplierLedgerSearch, setSupplierLedgerSearch] = useState('');
   const [supplierLedger, setSupplierLedger] = useState({ rows: [], summary: { total_purchase: 0, total_paid: 0, balance: 0 } });
   const [isSupplierLedgerLoading, setIsSupplierLedgerLoading] = useState(false);
+
+  useEffect(() => {
+    fetchSettings()
+      .then((saved) => {
+        const slabs = String(saved.gst_slabs || '').split(',').map(Number).filter((value) => Number.isFinite(value) && value >= 0 && value <= 100);
+        if (slabs.length) {
+          configuredGstRates = slabs;
+          setGstOptions(slabs);
+        }
+      })
+      .catch(() => setGstOptions(DEFAULT_GST_OPTIONS));
+  }, []);
 
   useEffect(() => {
     loadRecentInwards();
@@ -3756,13 +3773,7 @@ export default function InwardEntryView() {
                       <td><input className="field compact-number-field" type="number" min="0" step="0.01" value={line.qty} onChange={(event) => updateLine(index, 'qty', event.target.value)} /></td>
                       <td>
                         <select className="select gst-select" value={normalizeGstPercent(line.gst_percent)} onChange={(event) => updateLine(index, 'gst_percent', event.target.value)}>
-                          <option value="0">0%</option>
-                          <option value="3">3%</option>
-                          <option value="5">5%</option>
-                          <option value="12">12%</option>
-                          <option value="18">18%</option>
-                          <option value="28">28%</option>
-                          <option value="40">40%</option>
+                          {gstOptions.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
                         </select>
                       </td>
                       {taxType === 'LOCAL' && <><td>{formatMoney(calculated.cgst)}</td><td>{formatMoney(calculated.sgst)}</td></>}

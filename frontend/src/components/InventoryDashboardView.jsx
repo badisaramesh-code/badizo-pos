@@ -14,6 +14,7 @@ import {
   getStoredUser,
   importProducts,
   fetchReorderSuggestions,
+  fetchSettings,
   lookupExactProduct,
   saveProduct,
   saveStockAdjustment,
@@ -57,7 +58,7 @@ const emptyForm = {
   updated_at: ''
 };
 
-const GST_OPTIONS = ['0', '3', '5', '12', '18', '28', '40'];
+const GST_OPTIONS = ['0', '3', '5', '18', '40'];
 const UNIT_OPTIONS = ['Nos', 'Gm', 'Kg', 'Ml', 'Ltr', 'Pack'];
 const PURCHASE_UNIT_OPTIONS = ['Loose', 'Carton', 'Bag', 'Box', 'Case', 'Bundle', 'Pack'];
 const PRODUCT_DROPBOX_DAYS = 365;
@@ -373,6 +374,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   const [form, setForm] = useState({ ...emptyForm, created_at: todayIso() });
   const [filter, setFilter] = useState('');
   const [gstFilter, setGstFilter] = useState('ALL');
+  const [gstOptions, setGstOptions] = useState(GST_OPTIONS);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(50);
   const [pagination, setPagination] = useState({ total: 0, totalPages: 1 });
@@ -444,6 +446,15 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   const saveButtonRef = useRef(null);
   const didMountFilterRef = useRef(false);
   const pageRef = useRef(page);
+
+  useEffect(() => {
+    fetchSettings()
+      .then((saved) => {
+        const slabs = String(saved.gst_slabs || '').split(',').map((value) => value.trim()).filter(Boolean);
+        if (slabs.length) setGstOptions(slabs);
+      })
+      .catch(() => setGstOptions(GST_OPTIONS));
+  }, [navigationKey]);
 
   useEffect(() => {
     pageRef.current = page;
@@ -1269,7 +1280,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             <span className="field-label">GST percent</span>
             <select ref={gstRef} className="select" value={form.gst_percent} onChange={(event) => updateField('gst_percent', event.target.value)} onKeyDown={(event) => moveOnEnter(event, mrpRef)}>
               <option value="">Select GST</option>
-              {GST_OPTIONS.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
+              {gstOptions.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
             </select>
           </label>
 
@@ -1889,7 +1900,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                       />
                       <select className="select" value={bulkPatch.gst_percent} onChange={(event) => setBulkPatch((current) => ({ ...current, gst_percent: event.target.value }))}>
                         <option value="">Bulk GST</option>
-                        {GST_OPTIONS.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
+                        {gstOptions.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
                       </select>
                       <select className="select" value={bulkPatch.unit_type} onChange={(event) => setBulkPatch((current) => ({ ...current, unit_type: event.target.value }))}>
                         <option value="">Bulk Unit</option>
@@ -1928,7 +1939,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                               </td>
                               <td>
                                 <select className="select" value={row.gst_percent} onChange={(event) => updateBulkRow(index, 'gst_percent', event.target.value)}>
-                                  {GST_OPTIONS.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
+                                  {gstOptions.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
                                 </select>
                               </td>
                               <td>
@@ -1969,13 +1980,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
             </button>
             <select className="select" value={gstFilter} onChange={(event) => { setGstFilter(event.target.value); setPage(1); }}>
               <option value="ALL">All GST</option>
-              <option value="0">0%</option>
-              <option value="3">3%</option>
-              <option value="5">5%</option>
-              <option value="12">12%</option>
-              <option value="18">18%</option>
-              <option value="28">28%</option>
-              <option value="40">40%</option>
+              {gstOptions.map((gst) => <option key={gst} value={gst}>{gst}%</option>)}
             </select>
             <select className="select" value={limit} onChange={(event) => { setLimit(Number(event.target.value)); setPage(1); }}>
               <option value="25">25 rows</option>
