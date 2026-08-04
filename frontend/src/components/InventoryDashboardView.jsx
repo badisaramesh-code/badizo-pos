@@ -566,9 +566,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
   useEffect(() => {
     if (activeProductSection === PRODUCT_SECTIONS.FORM) {
-      focusBarcodeField();
+      focusBarcodeField(12);
     }
-  }, [activeProductSection]);
+  }, [activeProductSection, form.original_barcode, navigationKey]);
 
   useEffect(() => {
     if (ENABLE_BULK_EDIT && activeProductSection === PRODUCT_SECTIONS.BULK && bulkFocusVersion > 0 && !isBulkSaving) {
@@ -606,7 +606,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     }, 0);
   }
 
-  function focusBarcodeField(attempts = 5) {
+  function focusBarcodeField(attempts = 12) {
     const focusAttempt = (remaining) => {
       const input = barcodeRef.current;
       if (!input) {
@@ -678,7 +678,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
   function resetProductForm() {
     setForm({ ...emptyForm, created_at: todayIso(), updated_at: '' });
-    focusBarcodeField();
+    focusBarcodeField(12);
   }
 
   function openNewProductForm() {
@@ -686,7 +686,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     setErrorMessage('');
     setForm({ ...emptyForm, created_at: todayIso(), updated_at: '' });
     setActiveProductSection(PRODUCT_SECTIONS.FORM);
-    focusBarcodeField();
+    focusBarcodeField(12);
   }
 
   function updateField(field, value) {
@@ -829,7 +829,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       updated_at: product.updated_at || ''
     });
     setActiveProductSection(PRODUCT_SECTIONS.FORM);
-    focusBarcodeField();
+    focusBarcodeField(12);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -1224,7 +1224,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   const isProductSearchActive = filter.trim().length > 0;
   const showProductCodeColumn = isProductSearchActive;
   const visibleProducts = isProductSearchActive ? products : [];
-  const inventoryColSpan = showProductCodeColumn ? 17 : 16;
+  const inventoryColSpan = showProductCodeColumn ? 18 : 17;
   const selectedDropboxRows = dropboxRows.filter((row) => selectedDropboxBarcodes.includes(row.barcode));
   const importStatus = importSummary?.status || (activeImportId ? 'QUEUED' : '');
   const importProgress = productImportProgressPercent(importSummary || {});
@@ -2039,6 +2039,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                   <th>Barcode</th>
                   {showProductCodeColumn && <th>Code</th>}
                   <th>Product</th>
+                  <th>HSN Code</th>
                   <th>GST</th>
                   <th>Unit</th>
                   <th>Qty / Measure</th>
@@ -2048,7 +2049,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                   <th>Retail</th>
                   <th>Wholesale</th>
                   <th>Disc</th>
-                  <th>Offer</th>
+                  <th>Free</th>
                   <th>Stock</th>
                   <th>Entry Date</th>
                   <th>Edit Date</th>
@@ -2071,6 +2072,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                           <strong>{product.product_name}</strong>
                           {product.alias_names && <div className="muted compact-cell-text">{product.alias_names}</div>}
                         </td>
+                        <td>{product.hsn_code || '-'}</td>
                         <td>{product.gst_percent}%</td>
                         <td>{productStockUnit(product)}</td>
                         <td>{productPackMeasure(product) || '-'}</td>
@@ -2088,7 +2090,16 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                               <span className="muted compact-cell-text">{product.free_promo_name || 'Free item offer'}</span>
                             </div>
                           ) : null}
-                          {!product.is_free_item && !product.free_promo_enabled ? '-' : null}
+                          {(product.free_issue_offers || []).map((offer) => (
+                            <div className="offer-cell" key={offer.id}>
+                              <span className={`status-chip ${offer.is_active ? 'success' : 'info'}`}>Free issue</span>
+                              <strong className="compact-cell-text">{offer.free_product_name || offer.free_barcode || '-'}</strong>
+                              <span className="muted compact-cell-text">
+                                Per sale {offer.qty_per_sale} | Issued {offer.issued_qty} | Balance {offer.remaining_qty}
+                              </span>
+                            </div>
+                          ))}
+                          {!product.is_free_item && !product.free_promo_enabled && !(product.free_issue_offers || []).length ? '-' : null}
                         </td>
                         <td className={isLow ? 'stock-low' : ''}>{product.stock_qty}</td>
                         <td>{formatProductDate(product.created_at || product.updated_at)}</td>

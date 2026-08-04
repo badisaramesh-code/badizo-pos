@@ -121,7 +121,7 @@ export default function BarcodeStickersView() {
     address_line_2: savedStoreSettings.address_line_2,
     customer_care: savedStoreSettings.customer_care,
     phone: savedStoreSettings.phone,
-    stickerCount: '2'
+    stickerCount: ''
   });
   const [templateInfo, setTemplateInfo] = useState(null);
   const [prn, setPrn] = useState('');
@@ -129,6 +129,8 @@ export default function BarcodeStickersView() {
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isPrinting, setIsPrinting] = useState(false);
+  const [activePrintJob, setActivePrintJob] = useState(null);
+  const [isCancellingPrint, setIsCancellingPrint] = useState(false);
   const [barcodePrinterTemplates, setBarcodePrinterTemplates] = useState({});
   const [printerSelections, setPrinterSelections] = useState(loadBarcodePrinterSelections);
   const selectedTemplate = TEMPLATE_OPTIONS.find((option) => option.name === templateName) || TEMPLATE_OPTIONS[0];
@@ -193,6 +195,30 @@ export default function BarcodeStickersView() {
     }
   }, [templateName, screenMode, setupUnlocked]);
 
+  useEffect(() => {
+    if (screenMode === 'print') {
+      resetStickerSelection();
+      focusStickerSearch(12);
+    }
+  }, [screenMode]);
+
+  function focusStickerSearch(attempts = 12) {
+    const focusAttempt = (remaining) => {
+      const input = searchRef.current;
+      if (!input) {
+        if (remaining > 1) window.setTimeout(() => focusAttempt(remaining - 1), 60);
+        return;
+      }
+      input.focus({ preventScroll: true });
+      const caretPosition = input.value.length;
+      input.setSelectionRange?.(caretPosition, caretPosition);
+      if (document.activeElement !== input && remaining > 1) {
+        window.setTimeout(() => focusAttempt(remaining - 1), 60);
+      }
+    };
+    window.requestAnimationFrame(() => focusAttempt(attempts));
+  }
+
   async function loadBarcodePrinterSettings() {
     try {
       const settings = await fetchSettings();
@@ -241,6 +267,36 @@ export default function BarcodeStickersView() {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
+  function resetStickerSelection({ clearMessages = false } = {}) {
+    setSearchQuery('');
+    setSuggestions([]);
+    setSelectedSearchIndex(0);
+    setForm((current) => ({
+      ...current,
+      product_name: '',
+      barcode: '',
+      mrp: '0.00',
+      sale_price: '0.00',
+      hsn_code: '',
+      gst_percent: '0.00',
+      sales_sgst_percent: '0.00',
+      sales_cgst_percent: '0.00',
+      sales_igst_percent: '0.00',
+      discount_value: '0.00',
+      discount_type: 'PERCENT',
+      pkd_date: todayStickerDate(),
+      qty: '1',
+      unit: 'Nos',
+      stickerCount: ''
+    }));
+    setPrn('');
+    setOutputInfo(null);
+    if (clearMessages) {
+      setStatusMessage('');
+      setErrorMessage('');
+    }
+    focusStickerSearch(12);
+  }
   function changeTemplateName(nextTemplateName) {
     setTemplateName(nextTemplateName);
     try {
@@ -426,7 +482,9 @@ export default function BarcodeStickersView() {
             printer_name: selectedPrinterName
           });
         setOutputInfo({ ...result, ...printResult });
+        setActivePrintJob(printResult.job_token ? { jobToken: printResult.job_token, shareName: localShareName } : null);
         setStatusMessage(`Sticker sent to ${printResult.printer_name || selectedPrinterName}. File: ${result.output_name}`);
+        resetStickerSelection();
       } catch (printErr) {
         setErrorMessage(printErr.response?.data?.error || 'Sticker file was created, but Windows could not send it to the printer.');
         setStatusMessage(`Sticker file is ready: ${result.output_path}. Check printer sharing, then print this PRN file.`);
@@ -438,6 +496,22 @@ export default function BarcodeStickersView() {
     }
   }
 
+  async function cancelActivePrint() {
+    if (!activePrintJob || !window.badizoDesktop?.cancelBarcodePrint) return;
+    setIsCancellingPrint(true);
+    setErrorMessage('');
+    try {
+      const result = await window.badizoDesktop.cancelBarcodePrint(activePrintJob);
+      setActivePrintJob(null);
+      resetStickerSelection();
+      setStatusMessage(result.cancelled ? 'Pending barcode stickers cancelled. You can now send a fresh print.' : 'Barcode print already completed or was not found in the queue.');
+      focusStickerSearch(12);
+    } catch (err) {
+      setErrorMessage(err.message || 'Unable to cancel the barcode print job.');
+    } finally {
+      setIsCancellingPrint(false);
+    }
+  }
   function copyPrn() {
     if (!prn) return;
     window.navigator.clipboard?.writeText(prn);
@@ -453,6 +527,7 @@ export default function BarcodeStickersView() {
     setOutputInfo(null);
     setErrorMessage('');
     setStatusMessage('');
+    resetStickerSelection();
   }
 
   function openTemplateSetup() {
@@ -535,9 +610,13 @@ export default function BarcodeStickersView() {
               <button className="primary-button" type="button" onClick={() => generatePrn({ sendToPrinter: true })} disabled={isPrinting}>
                 {isPrinting ? 'Sending...' : 'Print Barcode Labels'}
               </button>
+              <button className="danger-button" type="button" onClick={cancelActivePrint} disabled={!activePrintJob || isPrinting || isCancellingPrint}>
+                {isCancellingPrint ? 'Cancelling...' : 'Cancel Print'}
+              </button>
               <div className="barcode-search-strip barcode-search-under-print">
                 <input
                   ref={searchRef}
+                  autoFocus
                   className="field barcode-live-search"
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
@@ -545,12 +624,8 @@ export default function BarcodeStickersView() {
                   placeholder="Type 3+ letters/code or scan barcode"
                 />
                 <button className="secondary-button" type="button" onClick={() => searchAndLoadProduct()}>Find</button>
-                <button className="secondary-button" type="button" onClick={() => {
-                  setSearchQuery('');
-                  setSuggestions([]);
-                  setSelectedSearchIndex(0);
-                  searchRef.current?.focus();
-                }}>Clear</button>
+                <button className="secondary-button" type="button" onClick={() => resetStickerSelection({ clearMessages: true })}>Clear</button>
+
                 <span className="barcode-search-status">{isSearching ? 'Searching...' : `${suggestions.length} products`}</span>
               </div>
               </div>

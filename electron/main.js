@@ -719,6 +719,45 @@ ipcMain.handle('badizo:print-html', async (_event, payload) => {
   return printHtml(payload || {});
 });
 
+function startBarcodeQueueSafetyMonitor(shareName, documentToken) {
+  const escapedShareName = String(shareName).replace(/'/g, "''");
+  const escapedDocumentToken = String(documentToken).replace(/'/g, "''");
+  const script = `
+$ErrorActionPreference = 'Stop'
+$printer = Get-Printer | Where-Object { $_.Name -eq '${escapedShareName}' -or $_.ShareName -eq '${escapedShareName}' } | Select-Object -First 1
+if (-not $printer) { exit 2 }
+$printerName = $printer.Name
+$documentToken = '${escapedDocumentToken}'
+$sawBadizoJob = $false
+$deadline = (Get-Date).AddMinutes(5)
+while ((Get-Date) -lt $deadline) {
+  $jobs = @(Get-PrintJob -PrinterName $printerName -ErrorAction SilentlyContinue | Where-Object { [string]$_.DocumentName -like "*$documentToken*" })
+  if ($jobs.Count -gt 0) { $sawBadizoJob = $true }
+  if ($sawBadizoJob -and $jobs.Count -eq 0) { exit 0 }
+  $currentPrinter = Get-Printer -Name $printerName -ErrorAction SilentlyContinue
+  $printerState = [string]$currentPrinter.PrinterStatus
+  $printerUnavailable = (-not $currentPrinter) -or $currentPrinter.WorkOffline -or $printerState -match 'Offline|Error|NotAvailable|PowerSave|ServerUnknown'
+  $jobUnavailable = $jobs | Where-Object { [string]$_.JobStatus -match 'Offline|Error|Blocked|PaperOut|UserIntervention|Retained' }
+  if ($jobs.Count -gt 0 -and ($printerUnavailable -or $jobUnavailable)) {
+    foreach ($job in $jobs) { Remove-PrintJob -PrinterName $printerName -ID $job.ID -ErrorAction SilentlyContinue }
+    exit 17
+  }
+  Start-Sleep -Milliseconds 300
+}
+exit 3
+`;
+  const encodedScript = Buffer.from(script, 'utf16le').toString('base64');
+  const monitor = execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedScript], { windowsHide: true, timeout: 315000 }, (err) => {
+    if (!err) return;
+    if (err.code === 17) {
+      logMessage(`Barcode queue safety: printer ${shareName} went offline; pending job ${documentToken} was cancelled.`);
+      return;
+    }
+    if (err.code !== 3) logMessage(`Barcode queue safety monitor ended for ${shareName}/${documentToken}: ${err.message}`);
+  });
+  return monitor;
+}
+
 ipcMain.handle('badizo:print-barcode-prn', async (_event, payload) => {
   const prn = String(payload?.prn || '');
   if (!prn) throw new Error('Barcode PRN data is empty.');
@@ -728,20 +767,45 @@ ipcMain.handle('badizo:print-barcode-prn', async (_event, payload) => {
     throw new Error('Barcode printer share name is invalid.');
   }
 
-  const tempPath = path.join(os.tmpdir(), `badizo-barcode-${Date.now()}.prn`);
+  const documentToken = `badizo-barcode-${Date.now()}-${process.pid}`;
+  const tempPath = path.join(os.tmpdir(), `${documentToken}.prn`);
   const printerShare = `\\\\localhost\\${shareName}`;
+  const queueMonitor = startBarcodeQueueSafetyMonitor(shareName, documentToken);
   try {
     fs.writeFileSync(tempPath, prn, 'ascii');
     await execFileAsync('cmd.exe', ['/c', 'copy', '/b', tempPath, printerShare], {
       windowsHide: true,
       timeout: 15000
     });
-    return { ok: true, printed: true, printerName: shareName, printer_share: printerShare, method: 'electron-local-prn' };
+    return { ok: true, printed: true, printerName: shareName, printer_share: printerShare, job_token: documentToken, method: 'electron-local-prn' };
+  } catch (err) {
+    queueMonitor?.kill();
+    throw err;
   } finally {
     try { fs.unlinkSync(tempPath); } catch (_err) {}
   }
 });
 
+ipcMain.handle('badizo:cancel-barcode-print', async (_event, payload) => {
+  const shareName = String(payload?.shareName || '').trim();
+  const documentToken = String(payload?.jobToken || '').trim();
+  if (!/^[A-Za-z0-9 _.-]{1,80}$/.test(shareName) || !/^badizo-barcode-\d+-\d+$/.test(documentToken)) throw new Error('Barcode print job details are invalid.');
+  const escapedShareName = shareName.replace(/'/g, "''");
+  const escapedDocumentToken = documentToken.replace(/'/g, "''");
+  const script = `
+$ErrorActionPreference = 'Stop'
+$printer = Get-Printer | Where-Object { $_.Name -eq '${escapedShareName}' -or $_.ShareName -eq '${escapedShareName}' } | Select-Object -First 1
+if (-not $printer) { throw 'Barcode printer was not found.' }
+$jobs = @(Get-PrintJob -PrinterName $printer.Name -ErrorAction SilentlyContinue | Where-Object { [string]$_.DocumentName -like '*${escapedDocumentToken}*' })
+foreach ($job in $jobs) { Remove-PrintJob -PrinterName $printer.Name -ID $job.ID -ErrorAction Stop }
+Write-Output $jobs.Count
+`;
+  const encodedScript = Buffer.from(script, 'utf16le').toString('base64');
+  const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedScript], { windowsHide: true, timeout: 15000 });
+  const cancelledJobs = Math.max(Number.parseInt(String(stdout || '').trim(), 10) || 0, 0);
+  logMessage(`Barcode print cancel requested for ${shareName}/${documentToken}; removed jobs: ${cancelledJobs}.`);
+  return { ok: true, cancelled: cancelledJobs > 0, cancelled_jobs: cancelledJobs };
+});
 function safePdfFileName(value) {
   const base = String(value || 'badizo-bill')
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')

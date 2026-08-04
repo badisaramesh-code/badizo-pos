@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld('badizoDesktop', {
   printBarcodePrn(payload) {
     return ipcRenderer.invoke('badizo:print-barcode-prn', payload);
   },
+  cancelBarcodePrint(payload) {
+    return ipcRenderer.invoke('badizo:cancel-barcode-print', payload);
+  },
   saveA4PdfHtml(payload) {
     return ipcRenderer.invoke('badizo:save-a4-pdf-html', payload);
   }

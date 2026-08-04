@@ -127,6 +127,7 @@ function toProduct(row) {
     free_promo_qty_per_sale: Number(row.free_promo_qty_per_sale || 1),
     free_promo_total_qty: Number(row.free_promo_total_qty || 0),
     free_promo_remaining_qty: Number(row.free_promo_remaining_qty || 0),
+    free_issue_offers: Array.isArray(row.free_issue_offers) ? row.free_issue_offers : [],
     stock_qty: Number(row.stock_qty || 0),
     min_stock_alert: Number(row.min_stock_alert || 10),
     default_batch_no: row.default_batch_no || '',
@@ -1110,6 +1111,7 @@ router.get('/dropbox', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
     const ageDays = normalizeDropboxDays(req.query.ageDays);
     const query = buildDropboxBaseQuery({ search, ageDays });
 
+
     const [summaryRows] = await db.query(
       `SELECT COUNT(*) AS total, COALESCE(SUM(p.stock_qty), 0) AS stock_qty
        ${query.fromSql}
@@ -1429,6 +1431,38 @@ router.get('/', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (re
       [...values, limit, offset]
     );
 
+    const productBarcodes = (rows || []).map((row) => row.barcode).filter(Boolean);
+    if (productBarcodes.length) {
+      const placeholders = productBarcodes.map(() => '?').join(', ');
+      const [freeIssueRows] = await db.query(
+        `SELECT id, trigger_barcode, trigger_batch_no, inward_no, free_barcode,
+                free_product_name, free_qty_per_sale, free_qty_total,
+                free_qty_remaining, is_active
+         FROM batch_free_offers
+         WHERE trigger_barcode IN (${placeholders})
+         ORDER BY trigger_barcode ASC, id DESC`,
+        productBarcodes
+      );
+      const offersByBarcode = new Map();
+      for (const offer of freeIssueRows || []) {
+        const offers = offersByBarcode.get(offer.trigger_barcode) || [];
+        offers.push({
+          id: offer.id,
+          batch_no: offer.trigger_batch_no || '',
+          inward_no: offer.inward_no || '',
+          free_barcode: offer.free_barcode || '',
+          free_product_name: offer.free_product_name || '',
+          qty_per_sale: Number(offer.free_qty_per_sale || 0),
+          total_qty: Number(offer.free_qty_total || 0),
+          remaining_qty: Number(offer.free_qty_remaining || 0),
+          issued_qty: Math.max(Number(offer.free_qty_total || 0) - Number(offer.free_qty_remaining || 0), 0),
+          is_active: Boolean(offer.is_active)
+        });
+        offersByBarcode.set(offer.trigger_barcode, offers);
+      }
+      for (const row of rows) row.free_issue_offers = offersByBarcode.get(row.barcode) || [];
+    }
+
     const [summaryRows] = await db.query(
       `SELECT
          COUNT(*) AS total_sku,
@@ -1459,6 +1493,7 @@ router.get('/expiry-dashboard', authenticate, authorize('SERVER', 'ADMIN'), asyn
   try {
     const days = Math.min(Math.max(Number.parseInt(req.query.days, 10) || 30, 1), 365);
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 500, 50), 1000);
+
     const [summaryRows] = await db.query(
       `SELECT
          SUM(CASE WHEN pb.expiry_date < CURDATE() THEN 1 ELSE 0 END) AS expired_count,
