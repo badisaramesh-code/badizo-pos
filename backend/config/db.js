@@ -323,6 +323,63 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
 
     await connection.query(`
+      CREATE TABLE IF NOT EXISTS quotation_sequences (
+        sequence_date DATE PRIMARY KEY,
+        last_number INT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS quotations (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        quotation_no VARCHAR(50) NOT NULL UNIQUE,
+        customer_name VARCHAR(150) NOT NULL DEFAULT 'Walk-in Customer',
+        customer_phone VARCHAR(20) DEFAULT '',
+        customer_address VARCHAR(500) DEFAULT '',
+        customer_gstin VARCHAR(15) DEFAULT '',
+        billing_counter VARCHAR(40) DEFAULT '',
+        billing_tier ENUM('RETAIL', 'WHOLESALE') NOT NULL DEFAULT 'RETAIL',
+        tax_type ENUM('LOCAL', 'INTERSTATE') NOT NULL DEFAULT 'LOCAL',
+        sub_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        gst_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        round_off DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        grand_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        validity_days INT NOT NULL DEFAULT 7,
+        notes TEXT DEFAULT NULL,
+        status ENUM('ACTIVE', 'EXPIRED', 'CONVERTED', 'CANCELLED') NOT NULL DEFAULT 'ACTIVE',
+        created_by VARCHAR(100) DEFAULT '',
+        approved_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_quotation_created (created_at),
+        INDEX idx_quotation_status_created (status, created_at),
+        INDEX idx_quotation_customer (customer_name, customer_phone)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS quotation_items (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        quotation_no VARCHAR(50) NOT NULL,
+        line_no INT NOT NULL,
+        barcode VARCHAR(120) DEFAULT '',
+        product_name VARCHAR(255) NOT NULL,
+        hsn_code VARCHAR(20) DEFAULT '',
+        unit_type VARCHAR(40) DEFAULT '',
+        pack_measure VARCHAR(60) DEFAULT '',
+        quantity DECIMAL(12,3) NOT NULL DEFAULT 1.000,
+        mrp DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        sale_price DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        gst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+        taxable_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        tax_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        line_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_quotation_items_no_line (quotation_no, line_no),
+        CONSTRAINT fk_quotation_items_header FOREIGN KEY (quotation_no) REFERENCES quotations(quotation_no) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await connection.query(`
       CREATE TABLE IF NOT EXISTS invoice_items (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         invoice_no VARCHAR(50) NOT NULL,
@@ -1130,6 +1187,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         ('bank_account_no', '59209440987345'),
         ('bank_ifsc', 'HDFC0004047'),
         ('bank_branch', 'Sathupally'),
+        ('upi_id', ''),
         ('counter_count', '6'),
         ('default_print_mode', 'Thermal'),
         ('thermal_receipt_width_mm', '80'),

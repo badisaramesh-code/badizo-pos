@@ -3190,7 +3190,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       productName: normalizeProductName(product_name),
       aliasNames: normalizeAliasNames(alias_names),
       salePrice: Number(sale_price) || 0,
-      wholesalePrice: Number(wholesale_price || sale_price) || 0,
+      wholesalePrice: Number(wholesale_price) || 0,
       qty3Price: Number(qty_3_price) || 0,
       qty6Price: Number(qty_6_price) || 0,
       qty12Price: Number(qty_12_price) || 0,

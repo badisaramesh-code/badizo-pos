@@ -792,6 +792,7 @@ export default function SystemView() {
               <label><span className="field-label">Bank Account No</span><input className="field" value={settings.bank_account_no || ''} onChange={(event) => updateSetting('bank_account_no', event.target.value)} /></label>
               <label><span className="field-label">Bank IFSC</span><input className="field" value={settings.bank_ifsc || ''} onChange={(event) => updateSetting('bank_ifsc', event.target.value.toUpperCase())} /></label>
               <label><span className="field-label">Bank Branch</span><input className="field" value={settings.bank_branch || ''} onChange={(event) => updateSetting('bank_branch', event.target.value)} /></label>
+              <label><span className="field-label">UPI ID for Quotation QR</span><input className="field" value={settings.upi_id || ''} onChange={(event) => updateSetting('upi_id', event.target.value.trim())} placeholder="example@bank" /></label>
             </div>
 
             <div className="settings-section settings-inline-section system-file-card setup-file-billing">

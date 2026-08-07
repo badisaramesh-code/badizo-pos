@@ -38,9 +38,15 @@ function escapeMysqlOptionValue(value) {
 function restrictWindowsFileAccess(filePath) {
   if (process.platform !== 'win32') return Promise.resolve();
 
-  const grants = ['SYSTEM:F', 'Administrators:F'];
+  // Use well-known SIDs so this also works under LocalSystem and on Windows
+  // installations where the built-in group names are localized. USERNAME is
+  // the machine account (for example DESKTOP-ABC$) for an NSSM LocalSystem
+  // service and cannot be resolved reliably by icacls.
+  const grants = ['*S-1-5-18:F', '*S-1-5-32-544:F'];
   const username = String(process.env.USERNAME || '').trim();
-  if (username) grants.unshift(`${username}:R`);
+  if (username && !username.endsWith('$') && username.toUpperCase() !== 'SYSTEM') {
+    grants.unshift(`${username}:R`);
+  }
 
   return new Promise((resolve, reject) => {
     const acl = spawn('icacls.exe', [

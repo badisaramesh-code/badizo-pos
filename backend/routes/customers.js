@@ -24,6 +24,75 @@ function toCustomer(row) {
 
 router.use(authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'));
 
+router.get('/match', async (req, res) => {
+  const phone = normalizePhone(req.query.phone);
+  const customerName = String(req.query.name || '').trim();
+
+  if ((!phone || phone.length < 10) && customerName.length < 3) {
+    return res.status(400).json({ error: 'Full customer name or valid 10 digit phone number is required.' });
+  }
+
+  const matchByPhone = Boolean(phone && phone.length >= 10);
+  const matchSql = matchByPhone
+    ? 'i.customer_phone = ?'
+    : 'LOWER(TRIM(i.customer_name)) = LOWER(?)';
+  const matchValue = matchByPhone ? phone : customerName;
+
+  try {
+    const [invoiceRows] = await db.query(
+      `SELECT i.customer_name, i.customer_phone, i.customer_address, i.customer_gstin,
+              i.invoice_no AS last_invoice_no, i.created_at AS last_invoice_at
+       FROM invoices i
+       WHERE i.invoice_status <> 'CANCELLED'
+         AND ${matchSql}
+       ORDER BY i.created_at DESC
+       LIMIT 1`,
+      [matchValue]
+    );
+    if (!invoiceRows.length) return res.status(404).json({ error: 'Customer not found in previous bills.' });
+
+    const latest = invoiceRows[0];
+    const resolvedPhone = normalizePhone(latest.customer_phone);
+    const resolvedName = String(latest.customer_name || customerName).trim();
+    const aggregateSql = resolvedPhone && resolvedPhone.length >= 10
+      ? 'customer_phone = ?'
+      : 'LOWER(TRIM(customer_name)) = LOWER(?)';
+    const aggregateValue = resolvedPhone && resolvedPhone.length >= 10 ? resolvedPhone : resolvedName;
+
+    const [[totals], [customerRows]] = await Promise.all([
+      db.query(
+        `SELECT COUNT(*) AS billing_count,
+                COALESCE(SUM(grand_total), 0) AS total_spent,
+                MAX(created_at) AS last_invoice_at
+         FROM invoices
+         WHERE invoice_status <> 'CANCELLED'
+           AND ${aggregateSql}`,
+        [aggregateValue]
+      ),
+      resolvedPhone && resolvedPhone.length >= 10
+        ? db.query('SELECT * FROM customers WHERE phone = ? LIMIT 1', [resolvedPhone])
+        : Promise.resolve([[]])
+    ]);
+    const customer = customerRows[0] || {};
+
+    res.json({
+      id: customer.id || null,
+      customer_name: resolvedName || customer.customer_name || '',
+      phone: resolvedPhone || customer.phone || '',
+      gstin: latest.customer_gstin || customer.gstin || '',
+      address: latest.customer_address || customer.address || '',
+      loyalty_points: Number(customer.loyalty_points || 0),
+      total_spent: Number(totals[0]?.total_spent || customer.total_spent || 0),
+      visit_count: Number(totals[0]?.billing_count || customer.visit_count || 0),
+      billing_count: Number(totals[0]?.billing_count || customer.visit_count || 0),
+      last_invoice_no: latest.last_invoice_no || '',
+      last_invoice_at: totals[0]?.last_invoice_at || latest.last_invoice_at || null
+    });
+  } catch (err) {
+    console.error('Customer previous bill match failed:', err.message);
+    res.status(500).json({ error: 'Unable to load customer details from previous bills.' });
+  }
+});
 router.get('/lookup/:phone', async (req, res) => {
   const phone = normalizePhone(req.params.phone);
   if (!phone || phone.length < 10) {
@@ -58,7 +127,7 @@ router.get('/', authorize('SERVER', 'ADMIN'), async (req, res) => {
     const values = [];
     let whereSql = '';
     if (search) {
-      whereSql = `WHERE customer_name LIKE ? OR phone LIKE ?`;
+      whereSql = `WHERE c.customer_name LIKE ? OR c.phone LIKE ?`;
       values.push(`%${search}%`, `%${search}%`);
     }
 

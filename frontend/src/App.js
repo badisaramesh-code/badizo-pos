@@ -15,7 +15,7 @@ import ProductImportHistoryView from './components/ProductImportHistoryView';
 import ReportsView from './components/ReportsView';
 import StaffPayrollView from './components/StaffPayrollView';
 import SystemView from './components/SystemView';
-import { clearAuthSession, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
+import { clearAuthSession, fetchBackupHealth, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
 import { APP_TABS, canAccessTab } from './config/navigation';
 import './styles.css';
 
@@ -35,6 +35,7 @@ export default function App() {
   const [workspaceNavigationKey, setWorkspaceNavigationKey] = useState(0);
   const [mountedWorkspaces, setMountedWorkspaces] = useState(() => new Set(['billing']));
   const [currentUser, setCurrentUser] = useState(getStoredUser);
+  const [backupAlert, setBackupAlert] = useState(null);
 
   useEffect(() => {
     setMountedWorkspaces((current) => {
@@ -108,6 +109,45 @@ export default function App() {
     };
   }, [currentUser]);
 
+
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    let cancelled = false;
+    const checkBackupHealth = async () => {
+      try {
+        const health = await fetchBackupHealth();
+        if (cancelled) return;
+        const now = new Date();
+        if (now.getHours() < 10) {
+          setBackupAlert(null);
+          return;
+        }
+        const latestSuccess = health?.latestSuccessAt ? new Date(health.latestSuccessAt) : null;
+        const backedUpToday = latestSuccess
+          && latestSuccess.getFullYear() === now.getFullYear()
+          && latestSuccess.getMonth() === now.getMonth()
+          && latestSuccess.getDate() === now.getDate();
+        if (backedUpToday) {
+          setBackupAlert(null);
+          return;
+        }
+        const dayKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+        const alertId = `daily-backup-missing-${dayKey}`;
+        if (window.sessionStorage.getItem('badizo_backup_alert_ack') === alertId) return;
+        setBackupAlert({ ...health, alertId });
+      } catch (_err) {
+        // Backend connectivity is monitored separately; do not show a false backup alarm.
+      }
+    };
+    const openedAfterWarningTime = new Date().getHours() >= 10;
+    const initialTimer = window.setTimeout(checkBackupHealth, openedAfterWarningTime ? 10 * 60 * 1000 : 0);
+    const timer = window.setInterval(checkBackupHealth, 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
+  }, [currentUser]);
   if (!currentUser) {
     return <LoginView onLogin={setCurrentUser} />;
   }
@@ -154,6 +194,20 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {backupAlert && (
+        <div className="backup-alert-toast-wrap" role="alert" aria-live="assertive">
+          <div className="backup-alert-modal">
+            <h2>Today Backup Pending</h2>
+            <p>Local / Google Drive daily backup complete Ã Â°â€¢Ã Â°Â¾Ã Â°Â²Ã Â±â€¡Ã Â°Â¦Ã Â±Â.</p>
+            <p className="backup-alert-detail">{backupAlert.message || 'Please contact Admin / Server person.'}</p>
+            {backupAlert.latestSuccessAt && <p className="backup-alert-time">Last success: {new Date(backupAlert.latestSuccessAt).toLocaleString()}</p>}
+            <button type="button" onClick={() => {
+              window.sessionStorage.setItem('badizo_backup_alert_ack', backupAlert.alertId);
+              setBackupAlert(null);
+            }}>OK Ã¢â‚¬â€ Inform Admin</button>
+          </div>
+        </div>
+      )}
       <header className="topbar">
         <div className="brand-wrap">
           <img className="brand-image" src="/badizo-logo-transparent.png" alt="Badizo" />

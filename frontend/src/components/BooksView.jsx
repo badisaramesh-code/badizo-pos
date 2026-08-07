@@ -7,6 +7,7 @@ import { formatMoney } from '../utils/money';
 const COUNTER_CLOSING_VIEW_REQUEST_KEY = 'badizo_counter_closing_view_request';
 
 const BOOK_ORDER = [
+  ['namedLedgers', 'Ledgers'],
   ['dayBook', 'Day Book'],
   ['cashBook', 'Cash Book'],
   ['counterCashBalance', 'Counter Cash Balance'],
@@ -24,6 +25,13 @@ const BOOK_ORDER = [
 ];
 
 const DEFAULT_BOOKS = {
+  namedLedgers: {
+    title: 'Named Ledgers',
+    summary: { accounts: 0, entries: 0, dr: 0, cr: 0 },
+    accountNames: [],
+    columns: ['Date', 'Account', 'Counter', 'Sheet', 'Details', 'DR Rs', 'CR Rs', 'Balance Rs', 'dr/cr', 'Posted By', 'Time'],
+    rows: []
+  },
   dayBook: {
     title: 'Day Book',
     summary: { entries: 0 },
@@ -122,6 +130,10 @@ function financialYearStartIso() {
 
 function formatCell(value, column = '') {
   if (value === null || value === undefined || value === '') return '-';
+  if (column === 'Counter') {
+    const counter = String(value).trim().replace(/\/Counter\s*/i, '/C');
+    return /^\d+$/.test(counter) ? 'C' + counter : counter;
+  }
   if (column.toLowerCase().includes('date') || column === 'Time') {
     const date = new Date(value);
     if (!Number.isNaN(date.getTime())) {
@@ -220,6 +232,7 @@ export default function BooksView({ setActiveWorkspace }) {
   const [booksData, setBooksData] = useState(null);
   const [activeBook, setActiveBook] = useState('dayBook');
   const [accountSearch, setAccountSearch] = useState('');
+  const [selectedLedgerAccount, setSelectedLedgerAccount] = useState('');
   const [accountSuggestions, setAccountSuggestions] = useState([]);
   const [isAccountSuggestionOpen, setIsAccountSuggestionOpen] = useState(false);
   const [voucherForm, setVoucherForm] = useState(blankVoucherForm());
@@ -279,12 +292,14 @@ export default function BooksView({ setActiveWorkspace }) {
 
   const activeReport = booksData?.books?.[activeBook] || DEFAULT_BOOKS[activeBook];
   const isAccountSearchBook = ['sundryCreditors', 'sundryDebtors'].includes(activeBook);
+  const isNamedLedgerBook = activeBook === 'namedLedgers';
   const isManualVoucherBook = activeBook === 'dayBook';
   const isCounterClosingSheetBook = activeBook === 'counterClosingSheets';
   const isCounterClosingCashAccountBook = activeBook === 'counterClosingCashAccount';
   const visibleRows = useMemo(() => {
     const rows = activeReport?.rows || [];
     const query = accountSearch.trim().toLowerCase();
+    if (isNamedLedgerBook) return selectedLedgerAccount ? rows.filter((row) => row.Account === selectedLedgerAccount) : [];
     if (!query) return rows;
     if (isAccountSearchBook) return rows.filter((row) => String(row.Account || '').toLowerCase().includes(query));
     if (isCounterClosingSheetBook) {
@@ -296,7 +311,13 @@ export default function BooksView({ setActiveWorkspace }) {
         .some((column) => String(row[column] || '').toLowerCase().includes(query)));
     }
     return rows;
-  }, [accountSearch, activeReport, isAccountSearchBook, isCounterClosingSheetBook, isCounterClosingCashAccountBook]);
+  }, [accountSearch, activeReport, isAccountSearchBook, isCounterClosingSheetBook, isCounterClosingCashAccountBook, isNamedLedgerBook, selectedLedgerAccount]);
+
+  const visibleLedgerNames = useMemo(() => {
+    if (!isNamedLedgerBook) return [];
+    const query = accountSearch.trim().toLowerCase();
+    return (activeReport?.accountNames || []).filter((name) => !query || String(name).toLowerCase().includes(query));
+  }, [accountSearch, activeReport, isNamedLedgerBook]);
 
   const bookCards = useMemo(() => BOOK_ORDER.map(([key, fallbackTitle]) => {
     const book = booksData?.books?.[key] || DEFAULT_BOOKS[key];
@@ -561,7 +582,7 @@ export default function BooksView({ setActiveWorkspace }) {
                 key={book.key}
                 type="button"
                 className={`module-card book-select-card ${activeBook === book.key ? 'active' : ''}`}
-                onClick={() => { setActiveBook(book.key); setAccountSearch(''); setIsReportOpen(true); }}
+                onClick={() => { setActiveBook(book.key); setAccountSearch(''); setSelectedLedgerAccount(''); setIsReportOpen(true); }}
               >
                 <strong>{book.title}</strong>
                 <span className="muted">{book.entries} entries</span>
@@ -622,6 +643,34 @@ export default function BooksView({ setActiveWorkspace }) {
                   <span key={label}>{label}: <strong>{value}</strong></span>
                 ))}
               </div>
+              {isNamedLedgerBook && (
+                <div className="named-ledger-picker">
+                  <label>
+                    <span className="field-label">Ledger Account</span>
+                    <input
+                      className="field"
+                      value={accountSearch}
+                      onChange={(event) => setAccountSearch(event.target.value)}
+                      placeholder="Search ledger name"
+                    />
+                  </label>
+                  <div className="named-ledger-name-list">
+                    {visibleLedgerNames.length === 0 ? (
+                      <span className="muted">No repeated Counter Closing account names found.</span>
+                    ) : visibleLedgerNames.map((name) => (
+                      <button
+                        key={name}
+                        type="button"
+                        className={`named-ledger-name-row ${selectedLedgerAccount === name ? 'active' : ''}`}
+                        onClick={() => setSelectedLedgerAccount(name)}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                  {selectedLedgerAccount && <strong className="named-ledger-selected">Account: {selectedLedgerAccount}</strong>}
+                </div>
+              )}
               {isCounterClosingSheetBook && (
                 <div className="books-account-tools">
                   <label className="supplier-lookup-field">

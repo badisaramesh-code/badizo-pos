@@ -113,6 +113,7 @@ export default function PriceListView() {
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
   const activeProperty = propertyConfig(selectedProperty);
   const selectedSet = useMemo(() => new Set(selectedBarcodes), [selectedBarcodes]);
@@ -276,9 +277,7 @@ export default function PriceListView() {
     const cleanBarcodes = [...new Set(selectedBarcodes.map((barcode) => String(barcode || '').trim().toUpperCase()).filter(Boolean))];
     if (!cleanBarcodes.length) return setErrorMessage('Select products before updating.');
 
-    const confirmed = window.confirm(`Update ${cleanBarcodes.length} selected products? This will change ${previewMeta.propertyLabel} to ${previewMeta.display}.`);
-    if (!confirmed) return;
-
+    setIsConfirmOpen(false);
     setIsSaving(true);
     try {
       const job = await startPriceListUpdateJob({
@@ -402,7 +401,7 @@ export default function PriceListView() {
               </label>
               <div className="price-list-action-stack">
                 <button className="secondary-button" type="button" onClick={previewChange}>Change Property</button>
-                <button className="primary-button" type="button" onClick={saveChanges} disabled={isSaving || jobActive || !previewMeta}>{isSaving ? 'Starting...' : jobActive ? 'Updating...' : 'Update Products'}</button>
+                <button className="primary-button" type="button" onClick={() => setIsConfirmOpen(true)} disabled={isSaving || jobActive || !previewMeta}>{isSaving ? 'Starting...' : jobActive ? 'Updating...' : 'Update Products'}</button>
               </div>
             </div>
           </div>
@@ -486,6 +485,21 @@ export default function PriceListView() {
           </div>
         </div>
       </section>
+      {isConfirmOpen && previewMeta && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirm mass update">
+          <div className="modal digital-contact-modal">
+            <div className="modal-header"><h3>Confirm Mass Update</h3></div>
+            <div className="modal-body">
+              <p>Update {selectedBarcodes.length} selected products?</p>
+              <p>This will change {previewMeta.propertyLabel} to <strong>{previewMeta.display}</strong>.</p>
+              <div className="modal-actions">
+                <button className="secondary-button" type="button" onClick={() => setIsConfirmOpen(false)}>Cancel</button>
+                <button className="primary-button" type="button" onClick={saveChanges}>Confirm &amp; Update</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

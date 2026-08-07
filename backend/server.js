@@ -1,10 +1,10 @@
 const express = require('express');
 const cors = require('cors');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { mountRoutes } = require('./routes');
-const { scheduleCloudBackupSync, scheduleDailyBackup } = require('./services/backupService');
 const { scheduleDailySaleAlerts } = require('./services/saleAlertService');
 const { logError, logInfo } = require('./services/logger');
 
@@ -158,6 +158,55 @@ function startLegacyFrontendRedirect(targetPort) {
   return redirectServer;
 }
 
+const scheduledDailyBackupDir = 'D:\\BadizoCloudBackups\\daily';
+const scheduledDailyBackupScript = path.join(__dirname, 'scripts', 'badizo_cloud_backup.js');
+let dailyCatchUpRunning = false;
+
+function localDatePrefix(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `badizo_daily_${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_`;
+}
+
+function hasTodayScheduledBackup() {
+  try {
+    const prefix = localDatePrefix();
+    return fs.existsSync(scheduledDailyBackupDir)
+      && fs.readdirSync(scheduledDailyBackupDir).some((name) => name.startsWith(prefix) && name.endsWith('.sql'));
+  } catch (err) {
+    logError('Daily backup catch-up check failed', err);
+    return false;
+  }
+}
+
+function checkDailyBackupCatchUp() {
+  const now = new Date();
+  const afterBackupGraceTime = now.getHours() > 9 || (now.getHours() === 9 && now.getMinutes() >= 5);
+  if (!afterBackupGraceTime || dailyCatchUpRunning || hasTodayScheduledBackup()) return;
+
+  dailyCatchUpRunning = true;
+  logInfo('Starting missed daily backup catch-up', { at: now.toISOString() });
+  const child = spawn(process.execPath, [scheduledDailyBackupScript, 'daily'], {
+    cwd: __dirname,
+    windowsHide: true,
+    stdio: 'ignore'
+  });
+  child.on('error', (err) => {
+    dailyCatchUpRunning = false;
+    logError('Unable to start daily backup catch-up', err);
+  });
+  child.on('exit', (code) => {
+    dailyCatchUpRunning = false;
+    if (code !== 0) logError('Daily backup catch-up exited unsuccessfully', new Error(`Exit code ${code}`));
+  });
+}
+
+function scheduleDailyBackupCatchUpCheck() {
+  setTimeout(checkDailyBackupCatchUp, 60 * 1000).unref?.();
+  const timer = setInterval(checkDailyBackupCatchUp, 5 * 60 * 1000);
+  timer.unref?.();
+  return timer;
+}
+
 function startServer(port = PORT) {
   return new Promise((resolve, reject) => {
     const listenPort = normalizePort(port, PORT);
@@ -165,9 +214,8 @@ function startServer(port = PORT) {
       console.log(`BADIZO POS API running on http://${HOST}:${listenPort}`);
       logInfo('Backend started', { host: HOST, port: listenPort });
       startLegacyFrontendRedirect(listenPort);
-      scheduleDailyBackup();
-      scheduleCloudBackupSync();
       scheduleDailySaleAlerts();
+      scheduleDailyBackupCatchUpCheck();
       resolve(server);
     });
 

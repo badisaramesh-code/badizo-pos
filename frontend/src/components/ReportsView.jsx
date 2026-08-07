@@ -15,6 +15,7 @@ import {
   fetchGstr3Report,
   fetchMonthlySalesReport,
   fetchProductSalesReport,
+  fetchQuotations,
   fetchReprintReport,
   fetchStockReport,
   fetchTaxSummaryReport,
@@ -101,6 +102,33 @@ const TOP_PRODUCT_SORT_LABELS = {
 function isHandoverAutoEntry(entry) {
   return HANDOVER_AUTO_ENTRY_DETAILS.has(String(entry?.details || '').trim());
 }
+function buildHandoverDayBookRows(sheets = []) {
+  return sheets.flatMap((sheet) => {
+    const common = {
+      date: sheet.closing_date || '',
+      counter: sheet.counter_no || '',
+      sheet: sheet.sheet_no || '',
+      handedOverBy: sheet.handed_over_by || '',
+      checkedBy: sheet.taken_over_by || ''
+    };
+    const entryRows = (sheet.entries || []).map((entry, index) => ({
+      ...common,
+      line: Number(entry.line_no || index + 1),
+      details: entry.details || '',
+      remarks: entry.remarks || '',
+      dr: entry.direction === 'DR' ? Number(entry.amount || 0) : 0,
+      cr: entry.direction === 'CR' ? Number(entry.amount || 0) : 0,
+      rowType: 'ENTRY'
+    }));
+    const noteDetails = (sheet.denominations || [])
+      .filter((item) => Number(item.quantity || 0) > 0)
+      .map((item) => `${item.denomination_label || item.denomination_value} x ${Number(item.quantity || 0)} = ${Number(item.amount || 0).toFixed(2)}`)
+      .join(', ');
+    return noteDetails
+      ? [...entryRows, { ...common, line: '', details: 'Cash Note Denominations', remarks: noteDetails, dr: 0, cr: 0, rowType: 'NOTES' }]
+      : entryRows;
+  });
+}
 
 function getHsnNumber(value) {
   const match = String(value || '').match(/\d+/);
@@ -176,6 +204,7 @@ export default function ReportsView({ isActive = true, onClose }) {
   const [exchangeReport, setExchangeReport] = useState({ rows: [], totals: {} });
   const [barcodePrintReport, setBarcodePrintReport] = useState({ rows: [], totals: {} });
   const [reprintReport, setReprintReport] = useState({ rows: [], totals: {} });
+  const [quotationReport, setQuotationReport] = useState({ rows: [], totals: { count: 0, amount: 0 } });
   const [isReportLoading, setIsReportLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const deferredHsnProductSearch = useDeferredValue(hsnFilters.productSearch);
@@ -484,6 +513,11 @@ export default function ReportsView({ isActive = true, onClose }) {
         setBarcodePrintReport(barcodePrints);
         return;
       }
+      case 'quotations': {
+        const quotations = await fetchQuotations({ from, to, search: reportSearch });
+        setQuotationReport(quotations);
+        return;
+      }
       case 'reprints': {
         const reprints = await fetchReprintReport({ from, to, counter, search: reportSearch });
         setReprintReport(reprints);
@@ -590,6 +624,46 @@ export default function ReportsView({ isActive = true, onClose }) {
   function exportPdf() {
     printReport();
   }
+  async function exportQuotationsPdf() {
+    const reportPanel = document.querySelector('.report-view-scroll > .panel');
+    const savePdf = window.badizoDesktop?.saveA4PdfHtml;
+
+    // Keep the browser build usable, where the Electron PDF bridge is unavailable.
+    if (!reportPanel || typeof savePdf !== 'function') {
+      exportPdf();
+      return;
+    }
+
+    const styleMarkup = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+      .map((node) => node.outerHTML)
+      .join('\n');
+    const { from, to } = getOrderedRange(fromDate, toDate);
+    const html = `<!doctype html>
+<html class="printing-reports">
+<head>
+  <meta charset="utf-8" />
+  <title>Badizo Quotation Report ${from} to ${to}</title>
+  <base href="${window.location.origin}/" />
+  ${styleMarkup}
+  <style>
+    @page { size: A4 portrait; margin: 10mm; }
+    html, body { width: 190mm !important; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    .report-header-actions { display: none !important; }
+  </style>
+</head>
+<body class="printing-reports"><div class="reports-print-area"><div class="report-view-scroll">${reportPanel.outerHTML}</div></div></body>
+</html>`;
+
+    try {
+      setErrorMessage('');
+      await savePdf({
+        html,
+        filename: `BADIZO-QUOTATION-REPORT-${from}-TO-${to}`
+      });
+    } catch (err) {
+      setErrorMessage(err?.message || 'Unable to export quotation report PDF.');
+    }
+  }
 
   const counterOptions = useMemo(() => {
     const names = dailyReport.rows.map((row) => row.billing_counter).filter(Boolean);
@@ -607,6 +681,7 @@ export default function ReportsView({ isActive = true, onClose }) {
     { key: 'gstr', title: 'GSTR-1, 2, 3B Returns', note: `${(gstr1Report.b2b?.length || 0) + (gstr1Report.b2cl?.length || 0) + (gstr1Report.b2c?.length || 0) + (gstr2Report.b2b?.length || 0) + (gstr3Report.outward?.length || 0) + (gstr3Report.inward?.length || 0)} rows${gstCheckIssueCount ? `, ${gstCheckIssueCount} checks` : ''}` },
     { key: 'handover', title: 'Counter Handover', note: `${counterHandoverReport.totals?.sheets || 0} sheets` },
     { key: 'exchange', title: 'Exchange Bills', note: `${exchangeReport.totals?.billCount || 0} bills` },
+    { key: 'quotations', title: 'Quotations', note: `${quotationReport.totals?.count || 0} quotations` },
     { key: 'reprints', title: 'Reprints', note: `${reprintReport.totals?.count || 0} prints` },
     { key: 'barcodePrints', title: 'Barcode Stickers', note: `${barcodePrintReport.totals?.stickers || 0} stickers` },
     { key: 'returns', title: 'Returns', note: `${exceptionReport.returns.length} returns` },
@@ -628,6 +703,23 @@ export default function ReportsView({ isActive = true, onClose }) {
     exportWorkbook(reportFileName(name, from, to), [{ name, rows }]);
   }
 
+  function exportQuotationsExcel() {
+    exportRows('quotations', (quotationReport.rows || []).map((row) => ({
+      'Quotation No': row.quotation_no,
+      'Date / Time': formatReportDateTime(row.created_at),
+      Customer: row.customer_name || '',
+      Phone: row.customer_phone || '',
+      Items: Number(row.item_count || 0),
+      Taxable: Number(row.sub_total || 0),
+      GST: Number(row.gst_total || 0),
+      Amount: Number(row.grand_total || 0),
+      Validity: `${Number(row.validity_days || 0)} days`,
+      Status: row.status || '',
+      Counter: row.billing_counter || '',
+      'Created By': row.created_by || '',
+      'Approved By': row.approved_by || ''
+    })));
+  }
   function exportDailyExcel() {
     exportRows('daily_sales', dailyReport.rows.map((row) => ({
       'Invoice No': row.invoice_no,
@@ -980,70 +1072,23 @@ export default function ReportsView({ isActive = true, onClose }) {
 
   function exportCounterHandoverExcel() {
     const { from, to } = getOrderedRange(fromDate, toDate);
-    const rows = counterHandoverReport.rows || [];
-    const summaryRows = rows.map((row) => ({
-      Date: row.closing_date,
-      Counter: row.counter_no,
-      Sheet: row.sheet_no,
-      'Opening Cash': Number(row.opening_cash || 0),
-      'Counter Sale': Number(row.counter_sales || 0),
-      Cash: Number(row.cash_sales || 0),
-      UPI: Number(row.upi_sales || 0),
-      Card: Number(row.card_sales || 0),
-      DR: Number(row.dr_total || 0),
-      CR: Number(row.cr_total || 0),
-      'Cash Notes Balance': Number(row.cash_balance || 0),
-      Difference: Number(row.variance_amount || 0),
-      'Handed Over By': row.handed_over_by || '',
-      'Checked By': row.taken_over_by || ''
-    }));
-    const manualRows = rows.flatMap((row) => (row.entries || [])
-      .filter((entry) => !isHandoverAutoEntry(entry))
-      .map((entry) => ({
-        Date: row.closing_date,
-        Counter: row.counter_no,
-        Sheet: row.sheet_no,
-        Line: Number(entry.line_no || 0),
-        Type: entry.entry_type || '',
-        Details: entry.details || '',
-        Remarks: entry.remarks || '',
-        Direction: entry.direction || '',
-        DR: entry.direction === 'DR' ? Number(entry.amount || 0) : 0,
-        CR: entry.direction === 'CR' ? Number(entry.amount || 0) : 0
-      })));
-    const entryRows = rows.flatMap((row) => (row.entries || []).map((entry) => ({
-      Date: row.closing_date,
-      Counter: row.counter_no,
-      Sheet: row.sheet_no,
-      Line: Number(entry.line_no || 0),
-      Type: entry.entry_type || '',
-      Details: entry.details || '',
-      Remarks: entry.remarks || '',
-      Direction: entry.direction || '',
-      Amount: Number(entry.amount || 0)
-    })));
-    const denominationRows = rows.map((row) => {
-      const byValue = (row.denominations || []).reduce((acc, item) => {
-        acc[Number(item.denomination_value)] = Number(item.quantity || 0);
-        return acc;
-      }, {});
-      return HANDOVER_DENOMINATIONS.reduce((acc, value) => {
-        acc[`${value} Qty`] = byValue[value] || '';
-        return acc;
-      }, {
-        Date: row.closing_date,
-        Counter: row.counter_no,
-        Sheet: row.sheet_no,
-        'Cash Notes Balance': Number(row.cash_balance || 0)
-      });
-    });
-
-    exportWorkbook(reportFileName('counter_handover', from, to), [
-      { name: 'Summary', rows: summaryRows },
-      { name: 'Manual Entries', rows: manualRows },
-      { name: 'All Sheet Lines', rows: entryRows },
-      { name: 'Cash Notes', rows: denominationRows }
-    ]);
+    const dayBookRows = buildHandoverDayBookRows(counterHandoverReport.rows || []);
+    exportWorkbook(reportFileName('counter_day_book', from, to), [{
+      name: 'Day Book',
+      rows: dayBookRows.map((row, index) => ({
+        'S.No': index + 1,
+        Date: row.date,
+        Counter: `Counter ${row.counter}`,
+        Sheet: row.sheet,
+        Line: row.line,
+        Details: row.details,
+        Remarks: row.remarks,
+        DR: row.dr || '',
+        CR: row.cr || '',
+        'Handed Over By': row.handedOverBy,
+        'Checked By': row.checkedBy
+      }))
+    }]);
   }
 
   function exportExchangeExcel() {
@@ -1639,98 +1684,65 @@ export default function ReportsView({ isActive = true, onClose }) {
             </div>
           </section>
         );
-      case 'handover':
+      case 'handover': {
+        const dayBookRows = buildHandoverDayBookRows(counterHandoverReport.rows || []);
+        const dayBookDr = dayBookRows.reduce((sum, row) => sum + Number(row.dr || 0), 0);
+        const dayBookCr = dayBookRows.reduce((sum, row) => sum + Number(row.cr || 0), 0);
         return (
           <section className="panel">
-            <ReportHeader title="Counter Handover Report" onExcel={exportCounterHandoverExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
+            <ReportHeader title="Counter Daily Day Book" onExcel={exportCounterHandoverExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
+            <div className="panel-body">
+              <table className="history-table counter-day-book-table">
+                <thead><tr><th>S.No</th><th>Date</th><th>Counter</th><th>Sheet</th><th>Line</th><th>Details</th><th>Remarks</th><th>DR</th><th>CR</th><th>Handed Over</th><th>Checked By</th></tr></thead>
+                <tbody>
+                  {dayBookRows.length === 0 ? <tr><td colSpan="11">No day book entries found for the selected dates.</td></tr> : dayBookRows.map((row, index) => (
+                    <tr key={`${row.sheet}-${row.rowType}-${row.line || index}`}>
+                      <td>{index + 1}</td>
+                      <td>{row.date}</td>
+                      <td>Counter {row.counter}</td>
+                      <td className="mono">{row.sheet}</td>
+                      <td>{row.line || '-'}</td>
+                      <td>{row.details || '-'}</td>
+                      <td>{row.remarks || '-'}</td>
+                      <td>{row.dr ? formatMoney(row.dr) : '-'}</td>
+                      <td>{row.cr ? formatMoney(row.cr) : '-'}</td>
+                      <td>{row.handedOverBy || '-'}</td>
+                      <td>{row.checkedBy || '-'}</td>
+                    </tr>
+                  ))}
+                  {dayBookRows.length > 0 && (
+                    <tr className="report-total-row">
+                      <td colSpan="7"><strong>TOTAL</strong></td>
+                      <td><strong>{formatMoney(dayBookDr)}</strong></td>
+                      <td><strong>{formatMoney(dayBookCr)}</strong></td>
+                      <td colSpan="2"></td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        );
+      }      case 'quotations':
+        return (
+          <section className="panel">
+            <ReportHeader title="Quotation Report (Non-Sales)" onExcel={exportQuotationsExcel} onPdf={exportQuotationsPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body form-stack">
+              <div className="alert-box">Quotations are non-sales documents. Amounts below are excluded from sales, GST, payment, stock, and counter-closing totals.</div>
               <section className="report-summary-strip">
-                <span>Sheets: <strong>{Number(counterHandoverReport.totals?.sheets || 0)}</strong></span>
-                <span>Counter Sales: <strong>{formatMoney(counterHandoverReport.totals?.counterSales || 0)}</strong></span>
-                <span>DR: <strong>{formatMoney(counterHandoverReport.totals?.dr || 0)}</strong></span>
-                <span>CR: <strong>{formatMoney(counterHandoverReport.totals?.cr || 0)}</strong></span>
-                <span>Cash Notes Balance: <strong>{formatMoney(counterHandoverReport.totals?.cashBalance || 0)}</strong></span>
-                <span>Difference: <strong>{formatMoney(counterHandoverReport.totals?.difference || 0)}</strong></span>
+                <span>Quotations: <strong>{Number(quotationReport.totals?.count || 0)}</strong></span>
+                <span>Quoted Value: <strong>{formatMoney(quotationReport.totals?.amount || 0)}</strong></span>
               </section>
               <table className="history-table">
-                <thead><tr><th>Date</th><th>Counter</th><th>Sheet</th><th>Opening</th><th>Sale</th><th>Cash</th><th>UPI</th><th>Card</th><th>DR</th><th>CR</th><th>Cash Notes</th><th>Difference</th><th>Handover</th></tr></thead>
+                <thead><tr><th>Quotation No</th><th>Date / Time</th><th>Customer</th><th>Phone</th><th>Items</th><th>Taxable</th><th>GST</th><th>Amount</th><th>Validity</th><th>Status</th><th>Counter</th><th>Created / Approved</th></tr></thead>
                 <tbody>
-                  {(counterHandoverReport.rows || []).length === 0 ? <tr><td colSpan="13">No counter handover sheets found.</td></tr> : counterHandoverReport.rows.map((row) => (
-                    <tr key={row.sheet_no}>
-                      <td>{row.closing_date}</td>
-                      <td>Counter {row.counter_no}</td>
-                      <td className="mono">{row.sheet_no}</td>
-                      <td>{formatMoney(row.opening_cash)}</td>
-                      <td>{formatMoney(row.counter_sales)}</td>
-                      <td>{formatMoney(row.cash_sales)}</td>
-                      <td>{formatMoney(row.upi_sales)}</td>
-                      <td>{formatMoney(row.card_sales)}</td>
-                      <td>{formatMoney(row.dr_total)}</td>
-                      <td>{formatMoney(row.cr_total)}</td>
-                      <td><strong>{formatMoney(row.cash_balance)}</strong></td>
-                      <td className={Math.abs(Number(row.variance_amount || 0)) > 0.01 ? 'stock-low' : ''}>{formatMoney(row.variance_amount)}</td>
-                      <td>{row.handed_over_by || '-'} to {row.taken_over_by || '-'}</td>
+                  {(quotationReport.rows || []).length === 0 ? <tr><td colSpan="12">No quotations found for selected range.</td></tr> : quotationReport.rows.map((row) => (
+                    <tr key={row.quotation_no}>
+                      <td className="mono">{row.quotation_no}</td><td>{formatReportDateTime(row.created_at)}</td><td>{row.customer_name || '-'}</td><td>{row.customer_phone || '-'}</td><td>{Number(row.item_count || 0)}</td><td>{formatMoney(row.sub_total)}</td><td>{formatMoney(row.gst_total)}</td><td><strong>{formatMoney(row.grand_total)}</strong></td><td>{Number(row.validity_days || 0)} days</td><td>{row.status || '-'}</td><td>{row.billing_counter || '-'}</td><td>{row.created_by || '-'} / {row.approved_by || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {(counterHandoverReport.rows || []).map((row) => {
-                const manualEntries = (row.entries || []).filter((entry) => !isHandoverAutoEntry(entry));
-                const denominationQty = (row.denominations || []).reduce((acc, item) => {
-                  acc[Number(item.denomination_value)] = Number(item.quantity || 0);
-                  return acc;
-                }, {});
-                return (
-                  <section key={`${row.sheet_no}-details`} className="form-stack">
-                    <h3 className="panel-title">{row.sheet_no} - Counter {row.counter_no} Sheet Details</h3>
-                    <table className="history-table">
-                      <thead><tr><th>Line</th><th>Details</th><th>Remarks</th><th>DR</th><th>CR</th></tr></thead>
-                      <tbody>
-                        {(row.entries || []).length === 0 ? (
-                          <tr><td colSpan="5">No sheet lines saved.</td></tr>
-                        ) : row.entries.map((entry, index) => (
-                          <tr key={`${row.sheet_no}-entry-${index}`}>
-                            <td>{entry.line_no || index + 1}</td>
-                            <td>{entry.details || '-'}</td>
-                            <td>{entry.remarks || '-'}</td>
-                            <td>{entry.direction === 'DR' ? formatMoney(entry.amount) : '-'}</td>
-                            <td>{entry.direction === 'CR' ? formatMoney(entry.amount) : '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <table className="history-table">
-                      <thead><tr><th>Manual Entry</th><th>Remarks</th><th>Direction</th><th>Amount</th></tr></thead>
-                      <tbody>
-                        {manualEntries.length === 0 ? (
-                          <tr><td colSpan="4">No daily expense / bank cash manual entries saved for this sheet.</td></tr>
-                        ) : manualEntries.map((entry, index) => (
-                          <tr key={`${row.sheet_no}-manual-${index}`}>
-                            <td>{entry.details || '-'}</td>
-                            <td>{entry.remarks || '-'}</td>
-                            <td>{entry.direction || '-'}</td>
-                            <td>{formatMoney(entry.amount)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <table className="history-table">
-                      <thead>
-                        <tr>
-                          {HANDOVER_DENOMINATIONS.map((value) => <th key={value}>{value} Qty</th>)}
-                          <th>Cash Notes Balance</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          {HANDOVER_DENOMINATIONS.map((value) => <td key={value}>{denominationQty[value] || '-'}</td>)}
-                          <td><strong>{formatMoney(row.cash_balance)}</strong></td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </section>
-                );
-              })}
             </div>
           </section>
         );

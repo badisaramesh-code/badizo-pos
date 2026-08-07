@@ -143,6 +143,15 @@ export async function fetchSessionEvents(options = 200) {
   };
 }
 
+export async function fetchBackupHealth() {
+  const { data } = await api.get('/backup-health', {
+    timeout: 5000,
+    __badizoNoRetry: true,
+    params: { _: Date.now() }
+  });
+  return data;
+}
+
 export async function pingBackendHealth(timeoutMs = 2500, options = {}) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -579,6 +588,20 @@ export async function fetchReprintReport({ from, to, counter = '', search = '' }
   return data;
 }
 
+export async function createQuotation(payload) {
+  const { data } = await api.post('/quotations', payload, { timeout: 30000 });
+  return data;
+}
+
+export async function fetchQuotations({ from, to, search = '' } = {}) {
+  const { data } = await api.get('/quotations', { params: { from, to, search } });
+  return data;
+}
+
+export async function fetchQuotationDetails(quotationNo) {
+  const { data } = await api.get(`/quotations/${encodeURIComponent(quotationNo)}`);
+  return data;
+}
 export async function checkout(payload) {
   try {
     const { data } = await api.post('/billing/checkout', payload, { timeout: 30000 });
@@ -807,6 +830,10 @@ export async function deleteInwardEntry(id) {
   return data;
 }
 
+export async function matchCustomerFromPreviousBill({ name = '', phone = '' } = {}) {
+  const { data } = await api.get('/customers/match', { params: { name, phone } });
+  return data;
+}
 export async function lookupCustomer(phone) {
   const { data } = await api.get(`/customers/lookup/${encodeURIComponent(phone)}`);
   return data;

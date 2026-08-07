@@ -8,6 +8,7 @@ const BACKEND = path.join(ROOT, 'backend');
 require(path.join(BACKEND, 'node_modules', 'dotenv')).config({ path: path.join(BACKEND, '.env') });
 
 const LOCAL_ROOT = 'D:\\BadizoCloudBackups';
+const STATUS_FILE = path.join(LOCAL_ROOT, 'backup-status.json');
 const DRIVE_FOLDER_ID = String(process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID || '').trim();
 const TOKEN_URI = 'https://oauth2.googleapis.com/token';
 
@@ -18,6 +19,19 @@ function stamp() {
 }
 
 function ensureDir(dir) { fs.mkdirSync(dir, { recursive: true }); }
+
+function writeBackupStatus(status, kind, details = {}) {
+  ensureDir(LOCAL_ROOT);
+  const payload = {
+    status,
+    kind,
+    at: new Date().toISOString(),
+    ...details
+  };
+  const temporary = `${STATUS_FILE}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(payload, null, 2), 'utf8');
+  fs.renameSync(temporary, STATUS_FILE);
+}
 
 async function accessToken() {
   const clientId = String(process.env.GOOGLE_DRIVE_CLIENT_ID || '').trim();
@@ -164,6 +178,28 @@ function mysqldump(outFile) {
   }
 }
 
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function uploadDailyWithNetworkRetry(file, name) {
+  const retryMinutes = Math.max(Number.parseInt(process.env.GOOGLE_DRIVE_RETRY_MINUTES, 10) || 10, 1);
+  for (;;) {
+    try {
+      const uploaded = await upload(file, name);
+      return uploaded;
+    } catch (err) {
+      writeBackupStatus('failed', 'daily', {
+        file: name,
+        message: `Google Drive upload pending; retrying when internet is available. ${String(err.message || '').slice(0, 350)}`
+      });
+      console.error(`Drive upload pending: ${err.message}`);
+      console.log(`Retrying Google Drive upload in ${retryMinutes} minute(s)...`);
+      await wait(retryMinutes * 60 * 1000);
+    }
+  }
+}
+
 async function databaseBackup(kind, keep) {
   const prefix = `badizo_${kind}_`;
   const dir = path.join(LOCAL_ROOT, kind);
@@ -173,7 +209,11 @@ async function databaseBackup(kind, keep) {
   console.log(`Creating ${kind} database backup...`);
   mysqldump(file);
   console.log(`Uploading ${name} to Google Drive...`);
-  await upload(file, name);
+  if (kind === 'daily') {
+    await uploadDailyWithNetworkRetry(file, name);
+  } else {
+    await upload(file, name);
+  }
   await pruneDrive(prefix, keep);
   pruneLocal(dir, prefix, keep);
   console.log(`${kind} backup completed.`);
@@ -198,8 +238,10 @@ function zipFolder(folder) {
 async function main() {
   const mode = String(process.argv[2] || '').toLowerCase();
   if (mode === 'daily') return databaseBackup('daily', 3);
-  if (mode === 'weekly') return databaseBackup('weekly', 4);
-  if (mode === 'monthly') return databaseBackup('monthly', 1);
+  if (mode === 'weekly' || mode === 'monthly') {
+    console.log(`${mode} backup is disabled. Daily rolling backups only.`);
+    return;
+  }
   if (mode === 'upload-folder') {
     const folder = process.argv.slice(3).join(' ').trim();
     if (!folder) throw new Error('Folder path is required');
@@ -213,7 +255,13 @@ async function main() {
   throw new Error('Usage: daily | weekly | monthly | upload-folder <folder>');
 }
 
+const requestedMode = String(process.argv[2] || 'unknown').toLowerCase();
 main().catch(err => {
+  try {
+    writeBackupStatus('failed', requestedMode, { message: String(err.message || 'Unknown backup error').slice(0, 500) });
+  } catch (statusErr) {
+    console.error(`ERROR writing backup status: ${statusErr.message}`);
+  }
   console.error(`ERROR: ${err.message}`);
   process.exit(1);
 });

@@ -1,10 +1,15 @@
+const crypto = require('crypto');
+const fs = require('fs');
 const http = require('http');
+const path = require('path');
 const { URL } = require('url');
 require('dotenv').config();
 
 const PORT = Number(process.env.GOOGLE_DRIVE_OAUTH_PORT || 53682);
 const REDIRECT_URI = `http://localhost:${PORT}/oauth2callback`;
 const SCOPE = 'https://www.googleapis.com/auth/drive';
+const OAUTH_STATE = crypto.randomBytes(32).toString('hex');
+const ENV_PATH = path.join(__dirname, '..', '.env');
 
 function requireEnv(name) {
   const value = String(process.env[name] || '').trim();
@@ -34,6 +39,16 @@ async function exchangeCode(code) {
   return JSON.parse(text);
 }
 
+function saveRefreshToken(refreshToken) {
+  if (!refreshToken) throw new Error('Google did not return a refresh token. Revoke the old Badizo grant and retry.');
+  const content = fs.readFileSync(ENV_PATH, 'utf8');
+  const line = `GOOGLE_DRIVE_REFRESH_TOKEN=${refreshToken}`;
+  const updated = /^GOOGLE_DRIVE_REFRESH_TOKEN=.*$/m.test(content)
+    ? content.replace(/^GOOGLE_DRIVE_REFRESH_TOKEN=.*$/m, line)
+    : `${content.trimEnd()}\r\n${line}\r\n`;
+  fs.writeFileSync(ENV_PATH, updated, { encoding: 'utf8', mode: 0o600 });
+}
+
 async function main() {
   const clientId = requireEnv('GOOGLE_DRIVE_CLIENT_ID');
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
@@ -43,6 +58,7 @@ async function main() {
   authUrl.searchParams.set('scope', SCOPE);
   authUrl.searchParams.set('access_type', 'offline');
   authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('state', OAUTH_STATE);
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -57,18 +73,15 @@ async function main() {
       const error = requestUrl.searchParams.get('error');
       if (error) throw new Error(error);
       if (!code) throw new Error('Google did not return an authorization code.');
+      if (requestUrl.searchParams.get('state') !== OAUTH_STATE) throw new Error('OAuth state validation failed.');
 
       const token = await exchangeCode(code);
-      console.log(token);
+      saveRefreshToken(token.refresh_token);
 
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('Badizo Google Drive authorization completed. You can close this tab.');
 
-      console.log('');
-      console.log('Add this line to backend\\.env:');
-      console.log(`GOOGLE_DRIVE_REFRESH_TOKEN=${token.refresh_token}`);
-      console.log('');
-      console.log('Keep this token private.');
+      console.log('Google Drive refresh token saved securely to backend\\.env.');
       server.close();
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'text/plain' });

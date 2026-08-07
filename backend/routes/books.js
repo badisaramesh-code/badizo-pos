@@ -299,6 +299,36 @@ router.get('/accounting', async (req, res) => {
       [from, to]
     );
 
+    const [namedLedgerEntries] = await db.query(
+      `SELECT cle.id,
+              DATE_FORMAT(cle.entry_date, '%Y-%m-%d') AS entry_date,
+              cle.counter_no,
+              COALESCE((SELECT REPLACE(i.billing_counter, 'Counter', 'C') FROM invoices i WHERE DATE(i.created_at) = cle.entry_date AND i.billing_counter REGEXP CONCAT('Counter', cle.counter_no, '$') ORDER BY i.created_at DESC LIMIT 1), CONCAT('C', cle.counter_no)) AS counter_label,
+              cle.source_id,
+              chs.sheet_no,
+              UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END)) AS account_name,
+              cle.details,
+              cle.direction,
+              cle.amount,
+              cle.created_by,
+              DATE_FORMAT(cle.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
+       FROM counter_cash_ledger_entries cle
+       LEFT JOIN counter_handover_sheets chs ON chs.id = cle.source_id
+       INNER JOIN (
+         SELECT UPPER(TRIM(CASE WHEN account_name LIKE 'Expense - %' THEN SUBSTRING(account_name, 11) ELSE account_name END)) AS normalized_name
+         FROM counter_cash_ledger_entries
+         WHERE source_type = 'COUNTER_HANDOVER'
+           AND payment_mode NOT IN ('CLOSING_BASE', 'SALES', 'CASH_NOTES')
+         GROUP BY UPPER(TRIM(CASE WHEN account_name LIKE 'Expense - %' THEN SUBSTRING(account_name, 11) ELSE account_name END))
+         HAVING COUNT(*) >= 2
+       ) repeated ON repeated.normalized_name = UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END))
+       WHERE cle.source_type = 'COUNTER_HANDOVER'
+         AND cle.payment_mode NOT IN ('CLOSING_BASE', 'SALES', 'CASH_NOTES')
+         AND cle.entry_date <= ?
+       ORDER BY account_name ASC, cle.entry_date ASC, cle.created_at ASC, cle.id ASC`,
+      [to]
+    );
+
     const [cashAccountManualEntries] = await db.query(
       `SELECT id, entry_date, counter_no, details, direction, amount, created_by, created_at
        FROM counter_cash_ledger_entries
@@ -309,7 +339,8 @@ router.get('/accounting', async (req, res) => {
     );
 
     const [handoverSheets] = await db.query(
-      `SELECT id, closing_date, counter_no, sheet_no, opening_cash, counter_sales, all_counter_sales,
+      `SELECT id, closing_date, counter_no, COALESCE((SELECT REPLACE(i.billing_counter, 'Counter', 'C') FROM invoices i WHERE DATE(i.created_at) = counter_handover_sheets.closing_date AND i.billing_counter REGEXP CONCAT('Counter', counter_handover_sheets.counter_no, '$') ORDER BY i.created_at DESC LIMIT 1), CONCAT('C', counter_handover_sheets.counter_no)) AS counter_label,
+               sheet_no, opening_cash, counter_sales, all_counter_sales,
                cash_sales, upi_sales, card_sales, dr_total, cr_total, notes_total, cash_balance,
                variance_amount, handed_over_by, taken_over_by,
                DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
@@ -720,10 +751,43 @@ router.get('/accounting', async (req, res) => {
       pending: bankSettlementRows.reduce((sum, row) => sum + Number(row.Difference || 0), 0)
     };
 
+    const namedLedgerNames = [...new Set(namedLedgerEntries.map((row) => row.account_name))];
+    const namedLedgerBalances = {};
+    const namedLedgerRows = [];
+    namedLedgerEntries.forEach((row) => {
+      const account = row.account_name;
+      const amount = Number(row.amount || 0);
+      namedLedgerBalances[account] = Number(namedLedgerBalances[account] || 0)
+        + (row.direction === 'DR' ? amount : -amount);
+      if (row.entry_date < from) return;
+      namedLedgerRows.push({
+        Date: row.entry_date,
+        Account: account,
+        Counter: row.counter_label || ('C' + row.counter_no),
+        Sheet: row.sheet_no || '',
+        Details: row.details || '',
+        'DR Rs': row.direction === 'DR' ? amount : 0,
+        'CR Rs': row.direction === 'CR' ? amount : 0,
+        'Balance Rs': namedLedgerBalances[account],
+        'dr/cr': namedLedgerBalances[account] >= 0 ? 'Dr' : 'Cr',
+        'Posted By': row.created_by || '',
+        Time: row.created_at || ''
+      });
+    });
+    const namedLedgerDr = namedLedgerRows.reduce((sum, row) => sum + Number(row['DR Rs'] || 0), 0);
+    const namedLedgerCr = namedLedgerRows.reduce((sum, row) => sum + Number(row['CR Rs'] || 0), 0);
+
     res.json({
       from,
       to,
       books: {
+        namedLedgers: {
+          title: 'Named Ledgers',
+          summary: { accounts: namedLedgerNames.length, entries: namedLedgerRows.length, dr: namedLedgerDr, cr: namedLedgerCr },
+          accountNames: namedLedgerNames,
+          columns: ['Date', 'Account', 'Counter', 'Sheet', 'Details', 'DR Rs', 'CR Rs', 'Balance Rs', 'dr/cr', 'Posted By', 'Time'],
+          rows: namedLedgerRows
+        },
         dayBook: {
           title: 'Day Book',
           summary: { debit: dayBookRows.reduce((t, r) => t + r.Debit, 0), credit: dayBookRows.reduce((t, r) => t + r.Credit, 0), entries: dayBookRows.length },
@@ -779,7 +843,7 @@ router.get('/accounting', async (req, res) => {
           columns: ['Date', 'Counter', 'Sheet No', 'Bills', 'Opening Cash', 'Cash Sales', 'UPI', 'Card', 'DR', 'CR', 'Notes Balance', 'Variance'],
           rows: (handoverSheets.length ? handoverSheets.map((row) => ({
             Date: row.closing_date,
-            Counter: row.counter_no,
+            Counter: row.counter_label || ('C' + row.counter_no),
             'Sheet No': row.sheet_no,
             Bills: '',
             'Opening Cash': Number(row.opening_cash || 0),
@@ -825,7 +889,7 @@ router.get('/accounting', async (req, res) => {
               .join(', ');
             return {
               Date: row.closing_date,
-              Counter: row.counter_no,
+              Counter: row.counter_label || ('C' + row.counter_no),
               'Sheet No': row.sheet_no,
               'Counter Sale': Number(row.counter_sales || 0),
               'All Counter Sale': Number(row.all_counter_sales || 0),

@@ -4,6 +4,7 @@ import {
   approveSensitiveBillingMode,
   checkout,
   createSalesReturn,
+  createQuotation,
   deleteHeldBill,
   fetchHeldBills,
   fetchCounterSaleSlip,
@@ -17,6 +18,7 @@ import {
   holdBill,
   lookupExactProduct,
   lookupCustomer,
+  matchCustomerFromPreviousBill,
   pingBackendHealth,
   recordInvoiceReprint,
   saveCustomer,
@@ -25,6 +27,7 @@ import {
 } from '../api/client';
 import { amountInWords, formatMoney, toNumber } from '../utils/money';
 import PrintableInvoice from './PrintableInvoice';
+import PrintableQuotation from './PrintableQuotation';
 
 const BILLING_MODES = {
   RETAIL_LOCAL: {
@@ -513,6 +516,10 @@ export default function BillingTerminalView({ isActive = true }) {
   const [historyToDate, setHistoryToDate] = useState(localIsoDate());
   const [selectedHistoryInvoice, setSelectedHistoryInvoice] = useState(null);
   const [a4PdfPreviewInvoice, setA4PdfPreviewInvoice] = useState(null);
+  const [quotationDialogOpen, setQuotationDialogOpen] = useState(false);
+  const [quotationPreview, setQuotationPreview] = useState(null);
+  const [quotationDraft, setQuotationDraft] = useState({ customerName: '', customerPhone: '', customerAddress: '', validityDays: '7', notes: '', username: '', password: '' });
+  const [isQuotationSaving, setIsQuotationSaving] = useState(false);
   const [gatePassPreview, setGatePassPreview] = useState(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [isHistoryInvoiceLoading, setIsHistoryInvoiceLoading] = useState(false);
@@ -1518,10 +1525,22 @@ export default function BillingTerminalView({ isActive = true }) {
     const timer = window.setTimeout(async () => {
       setIsCustomerSuggestionLoading(true);
       try {
-        const rows = await fetchCustomers(query);
+        const [rows, exactCustomer] = await Promise.all([
+          fetchCustomers(query),
+          matchCustomerFromPreviousBill({ name: query }).catch(() => null)
+        ]);
         if (!cancelled) {
           setCustomerSuggestions(rows.slice(0, 3));
           setIsCustomerLookupOpen(rows.length > 0);
+          if (exactCustomer) {
+            setCustomerPhone(exactCustomer.phone || '');
+            setCustomerAddress(exactCustomer.address || '');
+            setCustomerGstin(String(exactCustomer.gstin || '').toUpperCase());
+            setLoyaltyCustomer(exactCustomer);
+            setUseLoyaltyPoints(false);
+            setLoyaltyRedeemPoints('');
+            setStatusMessage(`${exactCustomer.customer_name || query} details loaded from previous bill.`);
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -1552,9 +1571,17 @@ export default function BillingTerminalView({ isActive = true }) {
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
-        const customer = await lookupCustomer(phoneText);
+        const customer = await matchCustomerFromPreviousBill({ phone: phoneText })
+          .catch(() => lookupCustomer(phoneText));
         if (cancelled) return;
         setLoyaltyCustomer(customer);
+        if (isBusinessBillingMode(billingMode)) {
+          setCompanyName(customer.customer_name || companyName);
+        } else {
+          setCustomerName(customer.customer_name || customerName);
+        }
+        setCustomerAddress(customer.address || '');
+        setCustomerGstin(String(customer.gstin || '').toUpperCase());
         setUseLoyaltyPoints(false);
         setLoyaltyRedeemPoints('');
       } catch (err) {
@@ -4273,6 +4300,122 @@ export default function BillingTerminalView({ isActive = true }) {
     window.setTimeout(startPrint, 350);
   }
 
+  function openQuotationDialog() {
+    setErrorMessage('');
+    if (!window.badizoDesktop?.saveA4PdfHtml) {
+      setErrorMessage('Quotation is A4 PDF-only and works in the BADIZO desktop app.');
+      return;
+    }
+    if (!cart.length) {
+      setErrorMessage('Add at least one product before creating quotation.');
+      return;
+    }
+    if (cart.some((item) => item.isUnknown)) {
+      setErrorMessage('Remove or correct unknown red product lines before creating quotation.');
+      return;
+    }
+    setQuotationDraft({
+      customerName: (isBusinessBillingMode(billingMode) ? companyName : customerName) || '',
+      customerPhone: customerPhone || '',
+      customerAddress: customerAddress || '',
+      validityDays: '7',
+      notes: 'Prices and stock are subject to confirmation.',
+      username: '',
+      password: ''
+    });
+    setQuotationDialogOpen(true);
+  }
+
+  function buildQuotationHtml(quotation) {
+    const styleMarkup = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+      .map((node) => node.outerHTML)
+      .join('\n');
+    const quotationMarkup = renderToStaticMarkup(<PrintableQuotation quotation={quotation} />);
+    return `<!doctype html>
+<html class="printing-quotation">
+<head>
+  <meta charset="utf-8" />
+  <title>${quotation.quotationNo || 'Badizo Quotation'} A4 PDF</title>
+  <base href="${window.location.origin}/" />
+  ${styleMarkup}
+  <style>
+    @page { size: A4 portrait; margin: 10mm; }
+    html, body { width: 210mm !important; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    .quotation-print-host { width: 190mm !important; margin: 0 auto !important; }
+    .printable-quotation { width: 190mm !important; min-height: 277mm !important; margin: 0 !important; border: 0 !important; }
+  </style>
+</head>
+<body><div class="quotation-print-host">${quotationMarkup}</div></body>
+</html>`;
+  }
+
+  async function saveQuotationPdf(quotation) {
+    const result = await window.badizoDesktop.saveA4PdfHtml({
+      html: buildQuotationHtml(quotation),
+      filename: `BADIZO-${quotation.quotationNo}-QUOTATION-A4`
+    });
+    if (result?.canceled) {
+      setStatusMessage(`Quotation ${quotation.quotationNo} saved securely; PDF save was cancelled.`);
+      return false;
+    }
+    setStatusMessage(`Quotation ${quotation.quotationNo} A4 PDF saved. No sale, stock, or invoice entry was created.`);
+    return true;
+  }
+
+  async function submitQuotation(event) {
+    event.preventDefault();
+    if (!quotationDraft.customerName.trim()) {
+      setErrorMessage('Customer name is required for quotation.');
+      return;
+    }
+    setIsQuotationSaving(true);
+    setErrorMessage('');
+    try {
+      const mode = BILLING_MODES[billingMode];
+      const result = await createQuotation({
+        customer_name: quotationDraft.customerName,
+        customer_phone: quotationDraft.customerPhone,
+        customer_address: quotationDraft.customerAddress,
+        customer_gstin: customerGstin,
+        billing_counter: printableDraft.counterLabel,
+        billing_tier: mode.tier,
+        tax_type: mode.taxType,
+        validity_days: quotationDraft.validityDays,
+        notes: quotationDraft.notes,
+        items: cart.map((item) => ({
+          barcode: item.barcode,
+          product_name: item.product_name,
+          hsn_code: item.hsn_code,
+          unit_type: item.unit_type || item.unit,
+          pack_measure: item.pack_measure,
+          quantity: toNumber(item.quantity, 1),
+          mrp: toNumber(item.mrp),
+          sale_price: getUnitPrice(item, billingMode),
+          gst_percent: toNumber(item.gst_percent)
+        })),
+        approval: { username: quotationDraft.username, password: quotationDraft.password }
+      });
+      const quotation = {
+        ...printableDraft,
+        quotationNo: result.quotation_no,
+        invoiceNo: result.quotation_no,
+        customerName: quotationDraft.customerName,
+        customerPhone: quotationDraft.customerPhone,
+        customerAddress: quotationDraft.customerAddress,
+        validityDays: Number(quotationDraft.validityDays) || 7,
+        notes: quotationDraft.notes,
+        paymentMode: 'Quotation',
+        totals: { ...printableDraft.totals, grand: toNumber(result.grand_total) }
+      };
+      setQuotationDialogOpen(false);
+      setQuotationPreview(quotation);
+      await saveQuotationPdf(quotation);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || err.message || 'Unable to create quotation.');
+    } finally {
+      setIsQuotationSaving(false);
+    }
+  }
   function buildA4InvoiceHtml(invoiceForPdf) {
     const styleMarkup = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
       .map((node) => node.outerHTML)
@@ -5036,6 +5179,7 @@ export default function BillingTerminalView({ isActive = true }) {
       counter_no: counterNo,
       customer_name: effectiveCustomerName || 'Walk-in Customer',
       customer_phone: effectiveCustomerPhone,
+      customer_address: customerAddress,
       items: cart.map((item) => ({
         ...item,
         sale_price: getUnitPrice(item, billingMode)
@@ -5937,6 +6081,9 @@ export default function BillingTerminalView({ isActive = true }) {
                   });
                   refreshHeldBills(counterNo);
                 }}>F6 Held Bills</button>
+                <button className="secondary-button quotation-action-button" type="button" onClick={openQuotationDialog} disabled={isQuotationSaving}>
+                  Quotation A4 PDF
+                </button>
                 <button className="secondary-button" onClick={() => printBill(printableInvoice || printableDraft)}>Print</button>
                 <button
                   className="secondary-button sale-report-action"
@@ -6736,6 +6883,47 @@ export default function BillingTerminalView({ isActive = true }) {
         </div>
       )}
 
+      {quotationDialogOpen && (
+        <div className="modal-backdrop">
+          <form className="modal quotation-modal" onSubmit={submitQuotation}>
+            <div className="panel-header green">
+              <h2 className="panel-title">Create Secure Quotation</h2>
+              <button className="close-action-button" type="button" onClick={() => setQuotationDialogOpen(false)}>Cancel</button>
+            </div>
+            <div className="panel-body form-stack">
+              <div className="alert-box">A4 PDF only. This will not reduce stock, create a sale, take payment, or use POS/thermal print.</div>
+              {errorMessage && <div className="alert-box">{errorMessage}</div>}
+              <div className="quotation-modal-grid">
+                <label><span className="field-label">Customer name</span><input className="field" value={quotationDraft.customerName} onChange={(event) => setQuotationDraft((current) => ({ ...current, customerName: event.target.value }))} required autoFocus /></label>
+                <label><span className="field-label">Phone</span><input className="field" value={quotationDraft.customerPhone} onChange={(event) => setQuotationDraft((current) => ({ ...current, customerPhone: event.target.value.replace(/\D/g, '').slice(0, 10) }))} inputMode="numeric" /></label>
+                <label><span className="field-label">Address</span><input className="field" value={quotationDraft.customerAddress} onChange={(event) => setQuotationDraft((current) => ({ ...current, customerAddress: event.target.value }))} /></label>
+                <label><span className="field-label">Valid for (days)</span><input className="field" type="number" min="1" max="365" value={quotationDraft.validityDays} onChange={(event) => setQuotationDraft((current) => ({ ...current, validityDays: event.target.value }))} required /></label>
+                <label className="quotation-notes-field"><span className="field-label">Quotation notes / terms</span><textarea className="field" rows="2" value={quotationDraft.notes} onChange={(event) => setQuotationDraft((current) => ({ ...current, notes: event.target.value }))} /></label>
+                <label><span className="field-label">Admin / Server username</span><input className="field" value={quotationDraft.username} onChange={(event) => setQuotationDraft((current) => ({ ...current, username: event.target.value }))} autoComplete="username" required /></label>
+                <label><span className="field-label">Password</span><input className="field" type="password" value={quotationDraft.password} onChange={(event) => setQuotationDraft((current) => ({ ...current, password: event.target.value }))} autoComplete="current-password" required /></label>
+              </div>
+              <button className="primary-button" type="submit" disabled={isQuotationSaving}>{isQuotationSaving ? 'Authorizing...' : 'Authorize & Download A4 PDF'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {quotationPreview && (
+        <div className="modal-backdrop preview-modal-backdrop">
+          <div className="modal quotation-preview-modal">
+            <div className="reprint-preview-header">
+              <div><span className="field-label">Quotation A4 PDF</span><strong className="mono">{quotationPreview.quotationNo}</strong></div>
+              <button className="close-action-button" type="button" onClick={() => setQuotationPreview(null)}>Close</button>
+            </div>
+            <div className="reprint-preview-meta"><span>{quotationPreview.customerName}</span><span>Valid {quotationPreview.validityDays} days</span><strong>{formatMoney(quotationPreview.totals.grand)}</strong></div>
+            <div className="quotation-preview-scroll"><PrintableQuotation quotation={quotationPreview} /></div>
+            <div className="gate-pass-preview-actions">
+              <button className="primary-button" type="button" disabled={isQuotationSaving} onClick={() => saveQuotationPdf(quotationPreview)}>Download A4 PDF Again</button>
+              <span>No POS/Thermal print option is available for quotations.</span>
+            </div>
+          </div>
+        </div>
+      )}
       {approvalDialog && (
         <div className="modal-backdrop">
           <form className="modal supervisor-approval-modal" onSubmit={submitModeApproval}>

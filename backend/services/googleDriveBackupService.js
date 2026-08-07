@@ -110,8 +110,14 @@ async function getServiceAccountAccessToken() {
 }
 
 async function getAccessToken() {
-  const mode = String(process.env.GOOGLE_DRIVE_AUTH_MODE || '').toLowerCase();
-  if (mode === 'oauth' || process.env.GOOGLE_DRIVE_REFRESH_TOKEN) {
+  const mode = String(process.env.GOOGLE_DRIVE_AUTH_MODE || '').trim().toLowerCase();
+  if (mode === 'service_account' || mode === 'service-account') {
+    return getServiceAccountAccessToken();
+  }
+  if (mode === 'oauth') {
+    return getOAuthAccessToken();
+  }
+  if (process.env.GOOGLE_DRIVE_REFRESH_TOKEN) {
     return getOAuthAccessToken();
   }
   return getServiceAccountAccessToken();

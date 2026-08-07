@@ -424,6 +424,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   const [bulkPatch, setBulkPatch] = useState({ hsn_code: '', gst_percent: '', unit_type: '' });
   const [isBulkLoading, setIsBulkLoading] = useState(false);
   const [isBulkSaving, setIsBulkSaving] = useState(false);
+  const [isBulkConfirmOpen, setIsBulkConfirmOpen] = useState(false);
   const [bulkStatus, setBulkStatus] = useState('');
   const [bulkFocusVersion, setBulkFocusVersion] = useState(0);
   const [isDropboxOpen, setIsDropboxOpen] = useState(false);
@@ -470,6 +471,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   const purchasePriceRef = useRef(null);
   const salePriceRef = useRef(null);
   const wholesalePriceRef = useRef(null);
+  const isInventoryActiveRef = useRef(isActive);
   const discountTypeRef = useRef(null);
   const discountRef = useRef(null);
   const stockRef = useRef(null);
@@ -555,6 +557,11 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   }, [activeImportId]);
 
   useEffect(() => {
+    isInventoryActiveRef.current = isActive;
+  }, [isActive]);
+
+  useEffect(() => {
+    if (!isActive) return;
     if (activeProductSection === PRODUCT_SECTIONS.BULK) {
       if (!ENABLE_BULK_EDIT) {
         setActiveProductSection(PRODUCT_SECTIONS.LIST);
@@ -562,19 +569,20 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       }
       focusBulkSearch();
     }
-  }, [activeProductSection]);
+  }, [activeProductSection, isActive]);
 
   useEffect(() => {
+    if (!isActive) return;
     if (activeProductSection === PRODUCT_SECTIONS.FORM) {
       focusBarcodeField(12);
     }
-  }, [activeProductSection, form.original_barcode, navigationKey]);
+  }, [activeProductSection, form.original_barcode, isActive, navigationKey]);
 
   useEffect(() => {
-    if (ENABLE_BULK_EDIT && activeProductSection === PRODUCT_SECTIONS.BULK && bulkFocusVersion > 0 && !isBulkSaving) {
+    if (isActive && ENABLE_BULK_EDIT && activeProductSection === PRODUCT_SECTIONS.BULK && bulkFocusVersion > 0 && !isBulkSaving) {
       focusBulkSearch(4);
     }
-  }, [activeProductSection, bulkFocusVersion, isBulkSaving]);
+  }, [activeProductSection, bulkFocusVersion, isActive, isBulkSaving]);
 
   async function loadProducts(targetPage = page) {
     setErrorMessage('');
@@ -625,6 +633,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
   function focusBulkSearch(attempts = 1) {
     const focusAttempt = (remaining) => {
+      if (!isInventoryActiveRef.current) return;
       const input = bulkSearchRef.current;
       if (!input) return;
       input.disabled = false;
@@ -701,15 +710,10 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
       if (field === 'sale_price') {
         next.discount_value = calculateDiscountFromPrice(next.mrp, value, discountType);
-        if (next.wholesale_price === '') {
-          next.wholesale_price = value;
-          next.bulk_discount_value = next.discount_value;
-        }
       }
 
       if (field === 'discount_value') {
         next.sale_price = calculatePriceFromDiscount(next.mrp, value, discountType);
-        if (next.wholesale_price === '') next.wholesale_price = next.sale_price;
       }
 
       if (field === 'wholesale_price') {
@@ -729,13 +733,44 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     });
   }
 
+  function formatProductAmounts() {
+    const amountFields = [
+      'mrp',
+      'purchase_price',
+      'discount_value',
+      'sale_price',
+      'qty_3_price',
+      'qty_6_price',
+      'qty_12_price',
+      'wholesale_price'
+    ];
+
+    setForm((current) => {
+      const next = { ...current };
+      let changed = false;
+
+      amountFields.forEach((field) => {
+        const rawValue = String(current[field] ?? '').trim();
+        if (rawValue === '') return;
+        const numericValue = Number(rawValue);
+        if (!Number.isFinite(numericValue)) return;
+        const formattedValue = numericValue.toFixed(2);
+        if (formattedValue !== current[field]) {
+          next[field] = formattedValue;
+          changed = true;
+        }
+      });
+
+      return changed ? next : current;
+    });
+  }
   function normalizedProductForm(source = form) {
     return {
       ...source,
       default_batch_no: String(source.default_batch_no ?? '').trim().toUpperCase(),
       default_mfd_date: dateInputValue(source.default_mfd_date),
       default_expiry_date: dateInputValue(source.default_expiry_date),
-      wholesale_price: String(source.wholesale_price ?? '').trim() === '' ? source.sale_price : source.wholesale_price,
+      wholesale_price: String(source.wholesale_price ?? '').trim(),
       discount_value: String(source.discount_value ?? '').trim() === '' ? '0' : source.discount_value,
       bulk_discount_value: String(source.bulk_discount_value ?? '').trim() === '' ? '0' : source.bulk_discount_value,
       free_promo_qty_per_sale: String(source.free_promo_qty_per_sale ?? '').trim() === '' ? '1' : source.free_promo_qty_per_sale,
@@ -808,7 +843,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       mrp: String(product.mrp ?? ''),
       purchase_price: String(product.purchase_price ?? ''),
       sale_price: String(product.sale_price ?? ''),
-      wholesale_price: String(product.wholesale_price ?? ''),
+      wholesale_price: Number(product.wholesale_price) > 0 ? String(product.wholesale_price) : '',
       qty_3_price: Number(product.qty_3_price) > 0 ? String(product.qty_3_price) : '',
       qty_6_price: Number(product.qty_6_price) > 0 ? String(product.qty_6_price) : '',
       qty_12_price: Number(product.qty_12_price) > 0 ? String(product.qty_12_price) : '',
@@ -958,9 +993,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       return;
     }
 
-    const confirmed = window.confirm(`Save changes for ${bulkRows.length} products? Barcode will not be changed.`);
-    if (!confirmed) return;
-
+    setIsBulkConfirmOpen(false);
     setIsBulkSaving(true);
     try {
       const result = await bulkUpdateProducts(bulkRows);
@@ -970,6 +1003,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       setBulkRows([]);
       setBulkPatch({ hsn_code: '', gst_percent: '', unit_type: '' });
       setBulkSearch('');
+      document.activeElement?.blur?.();
       setBulkFocusVersion((current) => current + 1);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save bulk product edit.');
@@ -1363,37 +1397,37 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
           <label className="product-field-order-7">
             <span className="field-label">MRP</span>
-            <input ref={mrpRef} className="field" type="number" step="0.01" min="0" value={form.mrp} onChange={(event) => updateField('mrp', event.target.value)} onKeyDown={(event) => moveOnEnter(event, purchasePriceRef)} required />
+            <input ref={mrpRef} className="field" type="number" step="0.01" min="0" value={form.mrp} onChange={(event) => updateField('mrp', event.target.value)} onBlur={formatProductAmounts} onKeyDown={(event) => moveOnEnter(event, purchasePriceRef)} required />
           </label>
 
           <label className="product-field-order-8">
             <span className="field-label">Purchase price / Cost</span>
-            <input ref={purchasePriceRef} className="field" type="number" step="0.01" min="0" value={form.purchase_price} onChange={(event) => updateField('purchase_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, salePriceRef)} placeholder="Cost to store" required />
+            <input ref={purchasePriceRef} className="field" type="number" step="0.01" min="0" value={form.purchase_price} onChange={(event) => updateField('purchase_price', event.target.value)} onBlur={formatProductAmounts} onKeyDown={(event) => moveOnEnter(event, salePriceRef)} placeholder="Cost to store" required />
           </label>
 
           <label className="product-field-order-11">
             <span className="field-label">Retail sale price</span>
-            <input ref={salePriceRef} className="field" type="number" step="0.01" min="0" value={form.sale_price} onChange={(event) => updateField('sale_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, wholesalePriceRef)} required />
+            <input ref={salePriceRef} className="field retail-sale-price-input" type="number" step="0.01" min="0" value={form.sale_price} onChange={(event) => updateField('sale_price', event.target.value)} onBlur={formatProductAmounts} onKeyDown={(event) => moveOnEnter(event, wholesalePriceRef)} required />
           </label>
 
           <label className="product-field-order-15">
             <span className="field-label">Wholesale price (optional)</span>
-            <input ref={wholesalePriceRef} className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} onKeyDown={(event) => moveOnEnter(event, unitRef)} placeholder="Defaults to retail price" />
+            <input ref={wholesalePriceRef} className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} onBlur={formatProductAmounts} onKeyDown={(event) => moveOnEnter(event, unitRef)} placeholder="Leave empty unless wholesale price is needed" />
           </label>
 
           <label className="product-field-order-12">
             <span className="field-label">3+ Price (Qty 3–5, optional)</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.qty_3_price} onChange={(event) => updateField('qty_3_price', event.target.value)} placeholder="Leave empty to use normal price" />
+            <input className="field" type="number" step="0.01" min="0" value={form.qty_3_price} onChange={(event) => updateField('qty_3_price', event.target.value)} onBlur={formatProductAmounts} placeholder="Leave empty to use normal price" />
           </label>
 
           <label className="product-field-order-13">
             <span className="field-label">6+ Price (Qty 6–11, optional)</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.qty_6_price} onChange={(event) => updateField('qty_6_price', event.target.value)} placeholder="Leave empty to use normal price" />
+            <input className="field" type="number" step="0.01" min="0" value={form.qty_6_price} onChange={(event) => updateField('qty_6_price', event.target.value)} onBlur={formatProductAmounts} placeholder="Leave empty to use normal price" />
           </label>
 
           <label className="product-field-order-14">
             <span className="field-label">12+ Price (Qty 12+, optional)</span>
-            <input className="field" type="number" step="0.01" min="0" value={form.qty_12_price} onChange={(event) => updateField('qty_12_price', event.target.value)} placeholder="Leave empty to use wholesale price" />
+            <input className="field" type="number" step="0.01" min="0" value={form.qty_12_price} onChange={(event) => updateField('qty_12_price', event.target.value)} onBlur={formatProductAmounts} placeholder="Leave empty to use wholesale price" />
           </label>
 
           <label className="product-field-order-9">
@@ -1406,7 +1440,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
           <label className="product-field-order-10">
             <span className="field-label">Discount</span>
-            <input ref={discountRef} className="field" type="number" step="0.01" min="0" value={form.discount_value} onChange={(event) => updateField('discount_value', event.target.value)} onKeyDown={(event) => moveOnEnter(event, salePriceRef)} required />
+            <input ref={discountRef} className="field" type="number" step="0.01" min="0" value={form.discount_value} onChange={(event) => updateField('discount_value', event.target.value)} onBlur={formatProductAmounts} onKeyDown={(event) => moveOnEnter(event, salePriceRef)} required />
           </label>
 
           <label className="change-box product-field-after">
@@ -1947,8 +1981,8 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
                         <option value="">Bulk Unit</option>
                         {UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
                       </select>
-                      <button className="secondary-button" onClick={applyBulkPatch}>Apply To Table</button>
-                      <button className="primary-button compact-primary" onClick={(event) => { event.currentTarget.blur(); saveBulkRows(); }} disabled={isBulkSaving}>
+                      <button className="secondary-button" type="button" onClick={applyBulkPatch}>Apply To Table</button>
+                      <button className="primary-button compact-primary" type="button" onClick={(event) => { event.currentTarget.blur(); setIsBulkConfirmOpen(true); }} disabled={isBulkSaving || !bulkRows.length}>
                         {isBulkSaving ? 'Saving...' : 'Save Bulk Edit'}
                       </button>
                     </div>
@@ -2128,6 +2162,20 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
           )}
         </div>
       </section>
+      )}
+      {isBulkConfirmOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirm bulk product update">
+          <div className="modal digital-contact-modal">
+            <div className="modal-header"><h3>Confirm Mass Update</h3></div>
+            <div className="modal-body">
+              <p>Save changes for {bulkRows.length} products? Barcode will not be changed.</p>
+              <div className="modal-actions">
+                <button className="secondary-button" type="button" onClick={() => setIsBulkConfirmOpen(false)}>Cancel</button>
+                <button className="primary-button" type="button" onClick={saveBulkRows}>Confirm &amp; Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -140,3 +140,57 @@ INSERT INTO products (barcode, product_name, hsn_code, gst_percent, mrp, purchas
 ('8901801001108', 'Colgate Dental Cream 100g', '33061020', 18.00, 65.00, 50.00, 62.00, 55.00, 150.00, 10.00),
 ('8901275012354', 'Parle G Biscuits', '19053110', 18.00, 10.00, 6.50, 8.00, 7.00, 1000.00, 50.00),
 ('8901412015562', 'Tata Salt 1kg', '25010020', 0.00, 28.00, 23.00, 27.00, 24.00, 400.00, 30.00);
+
+-- Isolated non-sales quotation documents. These tables do not reference or update invoice, payment, or stock balances.
+CREATE TABLE quotation_sequences (
+    sequence_date DATE PRIMARY KEY,
+    last_number INT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE quotations (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    quotation_no VARCHAR(50) NOT NULL UNIQUE,
+    customer_name VARCHAR(150) NOT NULL DEFAULT 'Walk-in Customer',
+    customer_phone VARCHAR(20) DEFAULT '',
+    customer_address VARCHAR(500) DEFAULT '',
+    customer_gstin VARCHAR(15) DEFAULT '',
+    billing_counter VARCHAR(40) DEFAULT '',
+    billing_tier ENUM('RETAIL', 'WHOLESALE') NOT NULL DEFAULT 'RETAIL',
+    tax_type ENUM('LOCAL', 'INTERSTATE') NOT NULL DEFAULT 'LOCAL',
+    sub_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    gst_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    round_off DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    grand_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    validity_days INT NOT NULL DEFAULT 7,
+    notes TEXT DEFAULT NULL,
+    status ENUM('ACTIVE', 'EXPIRED', 'CONVERTED', 'CANCELLED') NOT NULL DEFAULT 'ACTIVE',
+    created_by VARCHAR(100) DEFAULT '',
+    approved_by VARCHAR(100) DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_quotation_created (created_at),
+    INDEX idx_quotation_status_created (status, created_at),
+    INDEX idx_quotation_customer (customer_name, customer_phone)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE quotation_items (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    quotation_no VARCHAR(50) NOT NULL,
+    line_no INT NOT NULL,
+    barcode VARCHAR(120) DEFAULT '',
+    product_name VARCHAR(255) NOT NULL,
+    hsn_code VARCHAR(20) DEFAULT '',
+    unit_type VARCHAR(40) DEFAULT '',
+    pack_measure VARCHAR(60) DEFAULT '',
+    quantity DECIMAL(12,3) NOT NULL DEFAULT 1.000,
+    mrp DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    sale_price DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    gst_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    taxable_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    tax_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    line_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_quotation_items_no_line (quotation_no, line_no),
+    CONSTRAINT fk_quotation_items_header FOREIGN KEY (quotation_no) REFERENCES quotations(quotation_no) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

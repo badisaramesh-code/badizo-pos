@@ -52,6 +52,10 @@ function counterRegexForNo(counterNo) {
   return `(^|/)Counter[[:space:]]*${number}$`;
 }
 
+function normalizeNamedLedgerAccount(value) {
+  return String(value || '').trim().replace(/s+/g, ' ').toUpperCase().slice(0, 160);
+}
+
 function normalizeEntries(entries) {
   if (!Array.isArray(entries)) return [];
   return entries
@@ -408,7 +412,7 @@ router.post('/handover', async (req, res) => {
           date,
           counterNo,
           sheetId,
-          entry.entry_type === 'EXPENSE' ? `Expense - ${entry.details}` : entry.details,
+          normalizeNamedLedgerAccount(entry.details),
           entry.remarks || `${sheetNo} Counter ${counterNo}`,
           entry.direction,
           entry.amount,
