@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { csvLine, normalizeDate, todayIso } = require('../utils/formatters');
+const { getFinancialYear, getFinancialYearBounds, getFinancialYearOptions } = require('../services/financialYearService');
 
 function normalizeCounter(value) {
   const text = String(value || '').trim();
@@ -42,6 +43,132 @@ function dateRangeBounds(from, to = from) {
 }
 
 router.use(authenticate);
+
+router.get('/financial-years', authorize('SERVER', 'ADMIN'), async (_req, res) => {
+  try {
+    const [invoiceYears] = await db.query(
+      `SELECT financial_year, MIN(DATE(created_at)) AS from_date, MAX(DATE(created_at)) AS to_date, COUNT(*) AS bill_count
+       FROM invoices
+       WHERE COALESCE(financial_year, '') <> ''
+       GROUP BY financial_year`
+    );
+    const [inwardYears] = await db.query(
+      `SELECT financial_year, MIN(DATE(created_at)) AS from_date, MAX(DATE(created_at)) AS to_date, COUNT(*) AS inward_count
+       FROM inward_entries
+       WHERE COALESCE(financial_year, '') <> ''
+       GROUP BY financial_year`
+    );
+
+    const byYear = new Map(getFinancialYearOptions(8, 1).map((year) => [
+      year.financialYear,
+      { ...year, billCount: 0, inwardCount: 0, fromDate: year.from, toDate: year.to }
+    ]));
+
+    [...invoiceYears, ...inwardYears].forEach((row) => {
+      const bounds = getFinancialYearBounds(row.financial_year);
+      const current = byYear.get(bounds.financialYear) || {
+        ...bounds,
+        billCount: 0,
+        inwardCount: 0,
+        fromDate: bounds.from,
+        toDate: bounds.to
+      };
+      current.billCount += Number(row.bill_count || 0);
+      current.inwardCount += Number(row.inward_count || 0);
+      current.fromDate = row.from_date && row.from_date < current.fromDate ? row.from_date : current.fromDate;
+      current.toDate = row.to_date && row.to_date > current.toDate ? row.to_date : current.toDate;
+      byYear.set(bounds.financialYear, current);
+    });
+
+    const currentFinancialYear = getFinancialYear();
+    const years = Array.from(byYear.values()).sort((a, b) => b.financialYear.localeCompare(a.financialYear));
+    res.json({ currentFinancialYear, years });
+  } catch (err) {
+    console.error('Financial year list failed:', err.message);
+    res.status(500).json({ error: 'Unable to load financial years.' });
+  }
+});
+
+router.get('/financial-archive', authorize('SERVER', 'ADMIN'), async (req, res) => {
+  try {
+    const bounds = getFinancialYearBounds(req.query.financial_year || getFinancialYear());
+    const search = String(req.query.search || '').trim();
+    const type = String(req.query.type || 'ALL').toUpperCase();
+    const like = `%${search}%`;
+
+    const includeBills = type === 'ALL' || type === 'BILLS';
+    const includeInwards = type === 'ALL' || type === 'INWARDS';
+    const billParams = search ? [bounds.financialYear, like, like, like, like] : [bounds.financialYear];
+    const inwardParams = search ? [bounds.financialYear, like, like, like, like] : [bounds.financialYear];
+
+    const [billRows] = includeBills ? await db.query(
+      `SELECT invoice_no, financial_year, serial_no, DATE_FORMAT(created_at, '%Y-%m-%d') AS bill_date,
+              TIME_FORMAT(created_at, '%H:%i:%s') AS bill_time, customer_name, customer_phone,
+              grand_total, payment_mode, billing_counter, invoice_status, reprint_count, created_at
+       FROM invoices
+       WHERE financial_year = ?
+         ${search ? `AND (invoice_no LIKE ? OR customer_name LIKE ? OR customer_phone LIKE ? OR billing_counter LIKE ?)` : ''}
+       ORDER BY serial_no DESC, created_at DESC
+       LIMIT 1000`,
+      billParams
+    ) : [[]];
+
+    const [inwardRows] = includeInwards ? await db.query(
+      `SELECT id, inward_no, financial_year, serial_no, DATE_FORMAT(created_at, '%Y-%m-%d') AS inward_date,
+              supplier_name, supplier_invoice_no, supplier_invoice_date, grand_total, payment_mode,
+              payment_status, posting_status, created_by, created_at
+       FROM inward_entries
+       WHERE financial_year = ?
+         ${search ? `AND (inward_no LIKE ? OR supplier_name LIKE ? OR supplier_invoice_no LIKE ? OR created_by LIKE ?)` : ''}
+       ORDER BY serial_no DESC, created_at DESC
+       LIMIT 1000`,
+      inwardParams
+    ) : [[]];
+
+    const [billTotals] = await db.query(
+      `SELECT COUNT(*) AS bill_count,
+              COALESCE(SUM(CASE WHEN invoice_status <> 'CANCELLED' THEN grand_total ELSE 0 END), 0) AS sales_total,
+              COALESCE(SUM(CASE WHEN invoice_status <> 'CANCELLED' THEN gst_total ELSE 0 END), 0) AS gst_total,
+              COALESCE(SUM(CASE WHEN invoice_status = 'CANCELLED' THEN 1 ELSE 0 END), 0) AS cancelled_count
+       FROM invoices
+       WHERE financial_year = ?`,
+      [bounds.financialYear]
+    );
+    const [inwardTotals] = await db.query(
+      `SELECT COUNT(*) AS inward_count,
+              COALESCE(SUM(grand_total), 0) AS inward_total,
+              COALESCE(SUM(gst_total), 0) AS inward_gst_total
+       FROM inward_entries
+       WHERE financial_year = ?`,
+      [bounds.financialYear]
+    );
+
+    res.json({
+      financialYear: bounds.financialYear,
+      label: bounds.label,
+      from: bounds.from,
+      to: bounds.to,
+      search,
+      type,
+      bills: billRows,
+      inwards: inwardRows,
+      totals: {
+        resultBillCount: billRows.length,
+        resultInwardCount: inwardRows.length,
+        billCount: Number(billTotals[0]?.bill_count || 0),
+        salesTotal: Number(billTotals[0]?.sales_total || 0),
+        gstTotal: Number(billTotals[0]?.gst_total || 0),
+        cancelledCount: Number(billTotals[0]?.cancelled_count || 0),
+        inwardCount: Number(inwardTotals[0]?.inward_count || 0),
+        inwardTotal: Number(inwardTotals[0]?.inward_total || 0),
+        inwardGstTotal: Number(inwardTotals[0]?.inward_gst_total || 0)
+      }
+    });
+  } catch (err) {
+    console.error('Financial archive search failed:', err.message);
+    res.status(500).json({ error: 'Unable to load financial year archive.' });
+  }
+});
 
 router.get('/dashboard', authorize('SERVER', 'ADMIN'), async (_req, res) => {
   try {

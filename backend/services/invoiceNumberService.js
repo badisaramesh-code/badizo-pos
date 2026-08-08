@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { normalizeCounterNo } = require('../utils/formatters');
+const { getFinancialYear } = require('./financialYearService');
 
 async function getCounterCount(connection = db) {
   const [rows] = await connection.query(
@@ -7,14 +8,6 @@ async function getCounterCount(connection = db) {
   );
   const counterCount = Number.parseInt(rows[0]?.setting_value, 10) || 6;
   return Math.min(Math.max(counterCount, 1), 99);
-}
-
-function getFinancialYear(date = new Date()) {
-  const year = date.getFullYear();
-  const month = date.getMonth() + 1;
-  const startYear = month >= 4 ? year : year - 1;
-  const endYear = startYear + 1;
-  return `${String(startYear).slice(-2)}-${String(endYear).slice(-2)}`;
 }
 
 function formatInvoiceNo(financialYear, counterNo, sequenceNo) {

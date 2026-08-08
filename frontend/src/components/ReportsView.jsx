@@ -7,6 +7,8 @@ import {
   fetchDailySalesReport,
   fetchExchangeBillsReport,
   fetchExceptionReport,
+  fetchFinancialArchive,
+  fetchFinancialYears,
   fetchGstHsnReport,
   fetchGstHsnProductDetails,
   fetchSettings,
@@ -67,6 +69,14 @@ function exportWorkbook(filename, sheets) {
 
 function reportFileName(name, from, to) {
   return `badizo_${name}_${from}_to_${to}.xlsx`;
+}
+
+function financialYearLabel(year) {
+  if (!year) return '';
+  if (year.label) return year.label;
+  const match = String(year.financialYear || year).match(/^(\d{2})-(\d{2})$/);
+  if (!match) return String(year.financialYear || year);
+  return `20${match[1]}-20${match[2]}`;
 }
 
 const HSN_RANGE_OPTIONS = [
@@ -205,6 +215,10 @@ export default function ReportsView({ isActive = true, onClose }) {
   const [barcodePrintReport, setBarcodePrintReport] = useState({ rows: [], totals: {} });
   const [reprintReport, setReprintReport] = useState({ rows: [], totals: {} });
   const [quotationReport, setQuotationReport] = useState({ rows: [], totals: { count: 0, amount: 0 } });
+  const [financialYears, setFinancialYears] = useState([]);
+  const [selectedFinancialYear, setSelectedFinancialYear] = useState('');
+  const [archiveType, setArchiveType] = useState('ALL');
+  const [financialArchive, setFinancialArchive] = useState({ bills: [], inwards: [], totals: {}, financialYear: '', from: '', to: '' });
   const [isReportLoading, setIsReportLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const deferredHsnProductSearch = useDeferredValue(hsnFilters.productSearch);
@@ -217,6 +231,17 @@ export default function ReportsView({ isActive = true, onClose }) {
         setGstPercentOptions(['ALL', ...slabs]);
       })
       .catch(() => setGstPercentOptions(GST_PERCENT_OPTIONS));
+  }, [isActive]);
+
+  useEffect(() => {
+    if (!isActive) return;
+    fetchFinancialYears()
+      .then((data) => {
+        const years = Array.isArray(data.years) ? data.years : [];
+        setFinancialYears(years);
+        setSelectedFinancialYear((current) => current || data.currentFinancialYear || years[0]?.financialYear || '');
+      })
+      .catch(() => setFinancialYears([]));
   }, [isActive]);
 
   useEffect(() => {
@@ -523,6 +548,15 @@ export default function ReportsView({ isActive = true, onClose }) {
         setReprintReport(reprints);
         return;
       }
+      case 'archive': {
+        const archive = await fetchFinancialArchive({ financialYear: selectedFinancialYear, search: reportSearch, type: archiveType });
+        setFinancialArchive(archive);
+        if (archive.from && archive.to) {
+          setFromDate(archive.from);
+          setToDate(archive.to);
+        }
+        return;
+      }
       case 'returns':
       case 'cancelled': {
         const exceptions = await fetchExceptionReport({ from, to });
@@ -569,6 +603,15 @@ export default function ReportsView({ isActive = true, onClose }) {
   function handleReportFilterSubmit(event) {
     event.preventDefault();
     openSelectedReport(loadReports);
+  }
+
+  function applyFinancialYear(financialYear) {
+    setSelectedFinancialYear(financialYear);
+    const year = financialYears.find((item) => item.financialYear === financialYear);
+    if (year?.from && year?.to) {
+      setFromDate(year.from);
+      setToDate(year.to);
+    }
   }
 
   async function openSelectedReport(loader = () => refreshSelectedReport(activeReport)) {
@@ -682,6 +725,7 @@ export default function ReportsView({ isActive = true, onClose }) {
     { key: 'handover', title: 'Counter Handover', note: `${counterHandoverReport.totals?.sheets || 0} sheets` },
     { key: 'exchange', title: 'Exchange Bills', note: `${exchangeReport.totals?.billCount || 0} bills` },
     { key: 'quotations', title: 'Quotations', note: `${quotationReport.totals?.count || 0} quotations` },
+    { key: 'archive', title: 'Financial Year Archive', note: `${financialArchive.totals?.billCount || 0} bills, ${financialArchive.totals?.inwardCount || 0} inwards` },
     { key: 'reprints', title: 'Reprints', note: `${reprintReport.totals?.count || 0} prints` },
     { key: 'barcodePrints', title: 'Barcode Stickers', note: `${barcodePrintReport.totals?.stickers || 0} stickers` },
     { key: 'returns', title: 'Returns', note: `${exceptionReport.returns.length} returns` },
@@ -735,6 +779,46 @@ export default function ReportsView({ isActive = true, onClose }) {
       Mode: row.payment_mode || '',
       Counter: row.billing_counter || ''
     })));
+  }
+
+  function exportFinancialArchiveExcel() {
+    const fy = financialArchive.financialYear || selectedFinancialYear || 'financial_year';
+    const fyLabel = financialArchive.label || financialYearLabel(fy);
+    exportWorkbook(`badizo_financial_archive_${fyLabel || fy}.xlsx`, [
+      {
+        name: 'Bills',
+        rows: (financialArchive.bills || []).map((row) => ({
+          'FY': row.financial_year || fy,
+          'S.No': Number(row.serial_no || 0),
+          'Invoice No': row.invoice_no || '',
+          Date: row.bill_date || '',
+          Time: row.bill_time || '',
+          Customer: row.customer_name || '',
+          Phone: row.customer_phone || '',
+          Total: Number(row.grand_total || 0),
+          Payment: row.payment_mode || '',
+          Counter: row.billing_counter || '',
+          Status: row.invoice_status || '',
+          Reprints: Number(row.reprint_count || 0)
+        }))
+      },
+      {
+        name: 'Inwards',
+        rows: (financialArchive.inwards || []).map((row) => ({
+          'FY': row.financial_year || fy,
+          'S.No': Number(row.serial_no || 0),
+          'Inward No': row.inward_no || '',
+          Date: row.inward_date || '',
+          Supplier: row.supplier_name || '',
+          'Supplier Invoice': row.supplier_invoice_no || '',
+          Total: Number(row.grand_total || 0),
+          Payment: row.payment_mode || '',
+          Status: row.payment_status || '',
+          Posting: row.posting_status || '',
+          By: row.created_by || ''
+        }))
+      }
+    ]);
   }
 
   function exportHsnExcel() {
@@ -1794,6 +1878,74 @@ export default function ReportsView({ isActive = true, onClose }) {
             </div>
           </section>
         );
+      case 'archive':
+        return (
+          <section className="panel">
+            <ReportHeader title={`Financial Year Archive ${financialArchive.label || financialYearLabel(financialArchive.financialYear || selectedFinancialYear)}`} onExcel={exportFinancialArchiveExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
+            <div className="panel-body form-stack">
+              <section className="report-summary-strip">
+                <span>FY: <strong>{financialArchive.label || financialYearLabel(financialArchive.financialYear || selectedFinancialYear) || '-'}</strong></span>
+                <span>Period: <strong>{financialArchive.from || fromDate} to {financialArchive.to || toDate}</strong></span>
+                <span>Search Bills: <strong>{Number(financialArchive.totals?.resultBillCount || 0)}</strong></span>
+                <span>Search Inwards: <strong>{Number(financialArchive.totals?.resultInwardCount || 0)}</strong></span>
+                <span>Bills: <strong>{Number(financialArchive.totals?.billCount || 0)}</strong></span>
+                <span>Sales: <strong>{formatMoney(financialArchive.totals?.salesTotal || 0)}</strong></span>
+                <span>Inwards: <strong>{Number(financialArchive.totals?.inwardCount || 0)}</strong></span>
+                <span>Purchases: <strong>{formatMoney(financialArchive.totals?.inwardTotal || 0)}</strong></span>
+              </section>
+
+              {(archiveType === 'ALL' || archiveType === 'BILLS') && (
+                <div className="archive-table-section">
+                  <h3 className="panel-title">All Bills</h3>
+                  <table className="history-table">
+                    <thead><tr><th>FY S.No</th><th>Invoice No</th><th>Date / Time</th><th>Customer</th><th>Phone</th><th>Total</th><th>Payment</th><th>Counter</th><th>Status</th><th>Reprints</th></tr></thead>
+                    <tbody>
+                      {(financialArchive.bills || []).length === 0 ? <tr><td colSpan="10">No bills found in this financial year.</td></tr> : financialArchive.bills.map((row) => (
+                        <tr key={row.invoice_no}>
+                          <td>{Number(row.serial_no || 0) || '-'}</td>
+                          <td className="mono">{row.invoice_no}</td>
+                          <td>{row.bill_date || '-'} {row.bill_time || ''}</td>
+                          <td>{row.customer_name || 'Walk-in Customer'}</td>
+                          <td>{row.customer_phone || '-'}</td>
+                          <td><strong>{formatMoney(row.grand_total)}</strong></td>
+                          <td>{row.payment_mode || '-'}</td>
+                          <td>{row.billing_counter || '-'}</td>
+                          <td>{row.invoice_status || '-'}</td>
+                          <td>{Number(row.reprint_count || 0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {(archiveType === 'ALL' || archiveType === 'INWARDS') && (
+                <div className="archive-table-section">
+                  <h3 className="panel-title">All Inwards</h3>
+                  <table className="history-table">
+                    <thead><tr><th>FY S.No</th><th>Inward No</th><th>Date</th><th>Supplier</th><th>Supplier Invoice</th><th>Total</th><th>Payment</th><th>Status</th><th>Posting</th><th>By</th></tr></thead>
+                    <tbody>
+                      {(financialArchive.inwards || []).length === 0 ? <tr><td colSpan="10">No inwards found in this financial year.</td></tr> : financialArchive.inwards.map((row) => (
+                        <tr key={row.inward_no}>
+                          <td>{Number(row.serial_no || 0) || '-'}</td>
+                          <td className="mono">{row.inward_no}</td>
+                          <td>{row.inward_date || '-'}</td>
+                          <td>{row.supplier_name || '-'}</td>
+                          <td>{row.supplier_invoice_no || '-'}</td>
+                          <td><strong>{formatMoney(row.grand_total)}</strong></td>
+                          <td>{row.payment_mode || '-'}</td>
+                          <td>{row.payment_status || '-'}</td>
+                          <td>{row.posting_status || '-'}</td>
+                          <td>{row.created_by || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </section>
+        );
       case 'reprints':
         return (
           <section className="panel">
@@ -1924,6 +2076,25 @@ export default function ReportsView({ isActive = true, onClose }) {
               <select className="select" value={counter} onChange={(event) => setCounter(event.target.value)}>
                 <option value="">All Counters</option>
                 {counterOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+            <label className="report-counter-field">
+              <span className="field-label">Financial Year</span>
+              <select className="select" value={selectedFinancialYear} onChange={(event) => applyFinancialYear(event.target.value)}>
+                {financialYears.length === 0 && <option value="">Current FY</option>}
+                {financialYears.map((year) => (
+                  <option key={year.financialYear} value={year.financialYear}>
+                    {financialYearLabel(year)} ({year.from} to {year.to})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="report-counter-field">
+              <span className="field-label">Archive Type</span>
+              <select className="select" value={archiveType} onChange={(event) => setArchiveType(event.target.value)}>
+                <option value="ALL">Bills + Inwards</option>
+                <option value="BILLS">Bills Only</option>
+                <option value="INWARDS">Inwards Only</option>
               </select>
             </label>
             <label className="date-range-field">

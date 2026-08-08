@@ -428,6 +428,18 @@ export async function fetchDailySalesReport({ date, from, to, counter = '' } = {
   return data;
 }
 
+export async function fetchFinancialYears() {
+  const { data } = await api.get('/reports/financial-years');
+  return data;
+}
+
+export async function fetchFinancialArchive({ financialYear = '', search = '', type = 'ALL' } = {}) {
+  const { data } = await api.get('/reports/financial-archive', {
+    params: { financial_year: financialYear, search, type }
+  });
+  return data;
+}
+
 export async function fetchCounterSaleSlip({ date, counterNo } = {}) {
   const { data } = await api.get('/reports/counter-sale-slip', {
     params: { date, counter_no: counterNo }

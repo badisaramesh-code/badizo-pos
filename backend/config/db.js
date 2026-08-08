@@ -277,6 +277,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
       CREATE TABLE IF NOT EXISTS invoices (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         invoice_no VARCHAR(50) NOT NULL UNIQUE,
+        financial_year VARCHAR(7) DEFAULT NULL,
+        serial_no BIGINT DEFAULT NULL,
         checkout_request_id VARCHAR(64) DEFAULT NULL UNIQUE,
         customer_phone VARCHAR(15) DEFAULT NULL,
         customer_name VARCHAR(150) DEFAULT 'Walk-in Customer',
@@ -317,6 +319,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         ewaybill_date DATETIME DEFAULT NULL,
         ewaybill_valid_upto DATETIME DEFAULT NULL,
         INDEX idx_invoice_no (invoice_no),
+        INDEX idx_invoice_financial_year_serial (financial_year, serial_no),
         INDEX idx_created_at (created_at),
         INDEX idx_invoice_status (invoice_status)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -542,6 +545,16 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
 
     await connection.query(`
+      CREATE TABLE IF NOT EXISTS inward_sequences (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        financial_year VARCHAR(7) NOT NULL,
+        next_number BIGINT NOT NULL DEFAULT 1,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_inward_sequence (financial_year)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.query(`
       CREATE TABLE IF NOT EXISTS app_settings (
         setting_key VARCHAR(100) PRIMARY KEY,
         setting_value VARCHAR(255) NOT NULL,
@@ -553,6 +566,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
       CREATE TABLE IF NOT EXISTS inward_entries (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         inward_no VARCHAR(50) NOT NULL UNIQUE,
+        financial_year VARCHAR(7) DEFAULT NULL,
+        serial_no BIGINT DEFAULT NULL,
         supplier_name VARCHAR(255) NOT NULL,
         supplier_address VARCHAR(255) DEFAULT '',
         supplier_gstin VARCHAR(20) DEFAULT '',
@@ -576,6 +591,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         tax_type ENUM('LOCAL', 'INTERSTATE') NOT NULL DEFAULT 'LOCAL',
         created_by VARCHAR(100) DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_inward_financial_year_serial (financial_year, serial_no),
         INDEX idx_inward_created_at (created_at),
         INDEX idx_supplier_invoice_no (supplier_invoice_no)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -1266,6 +1282,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'products', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at');
     await connection.query("ALTER TABLE product_import_jobs MODIFY status ENUM('QUEUED', 'RUNNING', 'SUCCESS', 'FAILED', 'PARTIAL SUCCESS', 'ROLLED BACK') NOT NULL DEFAULT 'QUEUED'");
     await ensureColumn(connection, 'invoices', 'transaction_type', "ENUM('B2C', 'B2B') NOT NULL DEFAULT 'B2C' AFTER created_at");
+    await ensureColumn(connection, 'invoices', 'financial_year', "VARCHAR(7) DEFAULT NULL AFTER invoice_no");
+    await ensureColumn(connection, 'invoices', 'serial_no', 'BIGINT DEFAULT NULL AFTER financial_year');
     await ensureColumn(connection, 'invoices', 'checkout_request_id', 'VARCHAR(64) DEFAULT NULL UNIQUE AFTER invoice_no');
     await connection.query("ALTER TABLE invoices MODIFY payment_mode ENUM('Cash', 'UPI', 'Card', 'Mixed') NOT NULL DEFAULT 'Cash'");
     await ensureColumn(connection, 'invoices', 'payment_status', "ENUM('PENDING', 'PAID', 'FAILED') NOT NULL DEFAULT 'PAID' AFTER payment_mode");
@@ -1295,6 +1313,23 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'invoices', 'ewaybill_no', 'VARCHAR(80) DEFAULT NULL AFTER ewaybill_status');
     await ensureColumn(connection, 'invoices', 'ewaybill_date', 'DATETIME DEFAULT NULL AFTER ewaybill_no');
     await ensureColumn(connection, 'invoices', 'ewaybill_valid_upto', 'DATETIME DEFAULT NULL AFTER ewaybill_date');
+    await connection.query(`
+      UPDATE invoices
+      SET financial_year = CONCAT(
+            LPAD(MOD(CASE WHEN MONTH(created_at) >= 4 THEN YEAR(created_at) ELSE YEAR(created_at) - 1 END, 100), 2, '0'),
+            '-',
+            LPAD(MOD(CASE WHEN MONTH(created_at) >= 4 THEN YEAR(created_at) + 1 ELSE YEAR(created_at) END, 100), 2, '0')
+          )
+      WHERE financial_year IS NULL OR financial_year = ''
+    `);
+    await connection.query(`
+      UPDATE invoices
+      SET serial_no = CASE
+            WHEN invoice_no LIKE 'BZ/%/%/%' THEN CAST(SUBSTRING_INDEX(invoice_no, '/', -1) AS UNSIGNED)
+            ELSE id
+          END
+      WHERE serial_no IS NULL OR serial_no = 0
+    `);
     await ensureColumn(connection, 'invoice_items', 'hsn_code', "VARCHAR(20) DEFAULT '' AFTER product_name");
     await ensureColumn(connection, 'invoice_items', 'cgst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER gst_percent');
     await ensureColumn(connection, 'invoice_items', 'sgst_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER cgst_amount');
@@ -1312,6 +1347,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
     await ensureColumn(connection, 'batch_free_offers', 'free_qty_per_sale', 'DECIMAL(12,3) NOT NULL DEFAULT 1.000 AFTER free_product_name');
     await ensureColumn(connection, 'inward_entries', 'total_cgst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER gst_total');
+    await ensureColumn(connection, 'inward_entries', 'financial_year', "VARCHAR(7) DEFAULT NULL AFTER inward_no");
+    await ensureColumn(connection, 'inward_entries', 'serial_no', 'BIGINT DEFAULT NULL AFTER financial_year');
     await ensureColumn(connection, 'inward_entries', 'total_sgst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER total_cgst');
     await ensureColumn(connection, 'inward_entries', 'total_igst', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER total_sgst');
     await ensureColumn(connection, 'inward_entries', 'tax_type', "ENUM('LOCAL', 'INTERSTATE') NOT NULL DEFAULT 'LOCAL' AFTER grand_total");
@@ -1322,6 +1359,31 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'inward_entries', 'due_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER paid_amount');
     await ensureColumn(connection, 'inward_entries', 'payment_status', "ENUM('PAID', 'PARTIAL', 'DUE', 'OVERDUE') NOT NULL DEFAULT 'DUE' AFTER due_amount");
     await ensureColumn(connection, 'inward_entries', 'posting_status', "ENUM('DRAFT', 'POSTED') NOT NULL DEFAULT 'POSTED' AFTER tax_type");
+    await connection.query(`
+      UPDATE inward_entries
+      SET financial_year = CONCAT(
+            LPAD(MOD(CASE WHEN MONTH(created_at) >= 4 THEN YEAR(created_at) ELSE YEAR(created_at) - 1 END, 100), 2, '0'),
+            '-',
+            LPAD(MOD(CASE WHEN MONTH(created_at) >= 4 THEN YEAR(created_at) + 1 ELSE YEAR(created_at) END, 100), 2, '0')
+          )
+      WHERE financial_year IS NULL OR financial_year = ''
+    `);
+    await connection.query(`
+      UPDATE inward_entries
+      SET serial_no = CASE
+            WHEN inward_no LIKE 'INW/%/%' THEN CAST(SUBSTRING_INDEX(inward_no, '/', -1) AS UNSIGNED)
+            ELSE id
+          END
+      WHERE serial_no IS NULL OR serial_no = 0
+    `);
+    await connection.query(`
+      INSERT INTO inward_sequences (financial_year, next_number)
+      SELECT financial_year, COALESCE(MAX(serial_no), 0) + 1
+      FROM inward_entries
+      WHERE COALESCE(financial_year, '') <> ''
+      GROUP BY financial_year
+      ON DUPLICATE KEY UPDATE next_number = GREATEST(inward_sequences.next_number, VALUES(next_number))
+    `);
     await connection.query(`
       UPDATE inward_entries
       SET paid_amount = grand_total, due_amount = 0, payment_status = 'PAID'
@@ -1421,6 +1483,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureIndex(connection, 'batch_free_offers', 'idx_batch_free_sale_pick', '(trigger_barcode, is_active, free_qty_remaining, id)');
 
     await ensureIndex(connection, 'invoices', 'idx_invoices_created_status', '(created_at, invoice_status)');
+    await ensureIndex(connection, 'invoices', 'idx_invoice_financial_year_serial', '(financial_year, serial_no)');
     await ensureIndex(connection, 'invoices', 'idx_invoices_status_created', '(invoice_status, created_at)');
     await ensureIndex(connection, 'invoices', 'idx_invoices_counter_created_status', '(billing_counter, created_at, invoice_status)');
     await ensureIndex(connection, 'invoices', 'idx_invoices_counter_status_created_id', '(billing_counter, invoice_status, created_at, id)');
@@ -1440,6 +1503,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureIndex(connection, 'loyalty_transactions', 'idx_loyalty_customer_created', '(customer_id, created_at)');
 
     await ensureIndex(connection, 'inward_entries', 'idx_inward_created_status', '(created_at, posting_status)');
+    await ensureIndex(connection, 'inward_entries', 'idx_inward_financial_year_serial', '(financial_year, serial_no)');
     await ensureIndex(connection, 'inward_entries', 'idx_inward_supplier_created', '(supplier_name, created_at)');
     await ensureIndex(connection, 'inward_entries', 'idx_inward_due_status', '(payment_status, due_date)');
     await ensureIndex(connection, 'inward_items', 'idx_inward_items_inward_id', '(inward_no, id)');

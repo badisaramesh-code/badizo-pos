@@ -642,13 +642,15 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
 
     await connection.query(
       `INSERT INTO invoices
-       (invoice_no, checkout_request_id, customer_name, customer_address, customer_phone, sub_total, gst_total, grand_total,
+       (invoice_no, financial_year, serial_no, checkout_request_id, customer_name, customer_address, customer_phone, sub_total, gst_total, grand_total,
         cash_received, change_returned, payment_mode, payment_status, payment_reference, billing_counter, transaction_type, billing_tier, tax_type,
         customer_company_name, customer_gstin, total_cgst, total_sgst, total_igst, exchange_total, exchange_items_json,
         loyalty_redeemed_points, loyalty_redeemed_amount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
        [
          invoiceNo,
+         allocatedInvoice.financialYear,
+         allocatedInvoice.sequenceNo,
          checkoutRequestId || null,
          customer_name || 'Walk-in Customer',
         customer_address || null,

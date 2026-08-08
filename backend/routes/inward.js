@@ -3,21 +3,8 @@ const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { writeAuditLog } = require('../services/auditService');
+const { allocateInwardNo } = require('../services/inwardNumberService');
 const { parseMoney } = require('../utils/formatters');
-
-function inwardNo() {
-  const now = new Date();
-  const stamp = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0'),
-    String(now.getHours()).padStart(2, '0'),
-    String(now.getMinutes()).padStart(2, '0'),
-    String(now.getSeconds()).padStart(2, '0'),
-    String(now.getMilliseconds()).padStart(3, '0')
-  ].join('');
-  return `INW-${stamp}`;
-}
 
 function purchaseOrderNo() {
   const now = new Date();
@@ -940,7 +927,7 @@ router.post('/purchase-orders/:poNo/status', async (req, res) => {
 router.get('/recent', async (_req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT id, inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date, payment_mode,
+      `SELECT id, inward_no, financial_year, serial_no, supplier_name, supplier_invoice_no, supplier_invoice_date, payment_mode,
               payment_terms, due_date, paid_amount, due_amount, payment_status,
               item_count, total_qty, taxable_total, gst_total, total_cgst, total_sgst, total_igst,
               grand_total, tax_type, posting_status, created_by, created_at
@@ -979,7 +966,7 @@ router.get('/history', async (req, res) => {
 
   try {
     const [rows] = await db.query(
-      `SELECT id, inward_no, supplier_name, supplier_invoice_no, supplier_invoice_date, payment_mode,
+      `SELECT id, inward_no, financial_year, serial_no, supplier_name, supplier_invoice_no, supplier_invoice_date, payment_mode,
               payment_terms, due_date, paid_amount, due_amount, payment_status,
               item_count, total_qty, taxable_total, gst_total, total_cgst, total_sgst, total_igst,
               grand_total, tax_type, posting_status, created_by, created_at
@@ -1102,7 +1089,7 @@ router.get('/by-number/:inwardNo/details', async (req, res) => {
 
   try {
     const [entryRows] = await db.query(
-      `SELECT id, inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
+      `SELECT id, inward_no, financial_year, serial_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
               supplier_invoice_no, supplier_invoice_date, payment_mode, payment_terms, due_date,
               paid_amount, due_amount, payment_status, item_count, total_qty, taxable_total,
               gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, posting_status, created_by, created_at
@@ -1143,7 +1130,7 @@ router.get('/:id/details', async (req, res) => {
 
   try {
     const [entryRows] = await db.query(
-      `SELECT id, inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
+      `SELECT id, inward_no, financial_year, serial_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
               supplier_invoice_no, supplier_invoice_date, payment_mode, payment_terms, due_date,
               paid_amount, due_amount, payment_status, item_count, total_qty, taxable_total,
               gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, posting_status, created_by, created_at
@@ -1228,14 +1215,16 @@ router.post('/', async (req, res) => {
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
-    let finalInwardNo = inwardNo();
+    let finalInwardNo = '';
+    let finalFinancialYear = '';
+    let finalSerialNo = 0;
     let entryResult = null;
     let replacingEntry = null;
     let skipStockMutationForReplacement = false;
 
     if (replaceInwardId > 0 && isDraft) {
       const [replaceRows] = await connection.query(
-        `SELECT id, inward_no, posting_status
+        `SELECT id, inward_no, financial_year, serial_no, posting_status
          FROM inward_entries
          WHERE id = ?
          FOR UPDATE`,
@@ -1249,6 +1238,8 @@ router.post('/', async (req, res) => {
         throw new Error('Only pending inward bills can be updated as draft.');
       }
       finalInwardNo = replacingEntry.inward_no;
+      finalFinancialYear = replacingEntry.financial_year || finalFinancialYear;
+      finalSerialNo = Number(replacingEntry.serial_no || 0) || finalSerialNo;
       await connection.query(`DELETE FROM inward_items WHERE inward_no = ?`, [finalInwardNo]);
       await connection.query(
         `UPDATE inward_entries
@@ -1275,7 +1266,7 @@ router.post('/', async (req, res) => {
 
     if (replaceInwardId > 0 && !isDraft) {
       const [replaceRows] = await connection.query(
-        `SELECT id, inward_no, posting_status
+        `SELECT id, inward_no, financial_year, serial_no, posting_status
          FROM inward_entries
          WHERE id = ?
          FOR UPDATE`,
@@ -1289,6 +1280,8 @@ router.post('/', async (req, res) => {
         throw new Error('Only posted inward bills can be replaced from edit mode.');
       }
       finalInwardNo = replacingEntry.inward_no;
+      finalFinancialYear = replacingEntry.financial_year || finalFinancialYear;
+      finalSerialNo = Number(replacingEntry.serial_no || 0) || finalSerialNo;
       const [soldBatchRows] = await connection.query(
         `SELECT COUNT(*) AS sold_count
          FROM product_batches
@@ -1334,14 +1327,20 @@ router.post('/', async (req, res) => {
     let grandTotal = 0;
 
     if (!entryResult) {
+      const allocatedInward = await allocateInwardNo(connection);
+      finalInwardNo = allocatedInward.inwardNo;
+      finalFinancialYear = allocatedInward.financialYear;
+      finalSerialNo = allocatedInward.sequenceNo;
       [entryResult] = await connection.query(
         `INSERT INTO inward_entries
-         (inward_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
+         (inward_no, financial_year, serial_no, supplier_name, supplier_address, supplier_gstin, supplier_phone,
           supplier_invoice_no, supplier_invoice_date, payment_mode, item_count, total_qty, taxable_total,
           gst_total, total_cgst, total_sgst, total_igst, grand_total, tax_type, posting_status, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, ?, ?, ?)`,
         [
           finalInwardNo,
+          finalFinancialYear,
+          finalSerialNo,
           String(supplier.name || '').trim(),
           String(supplier.address || '').trim(),
           String(supplier.gstin || '').trim().toUpperCase(),
@@ -1682,7 +1681,8 @@ router.post('/', async (req, res) => {
     res.json({
       success: true,
       id: entryResult.insertId,
-      serial_no: entryResult.insertId,
+      financial_year: finalFinancialYear,
+      serial_no: finalSerialNo,
       inward_no: finalInwardNo,
       item_count: validLines.length,
       pending_item_count: pendingLines.length,

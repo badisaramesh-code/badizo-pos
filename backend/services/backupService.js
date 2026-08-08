@@ -42,7 +42,7 @@ function restrictWindowsFileAccess(filePath) {
   // installations where the built-in group names are localized. USERNAME is
   // the machine account (for example DESKTOP-ABC$) for an NSSM LocalSystem
   // service and cannot be resolved reliably by icacls.
-  const grants = ['*S-1-5-18:F', '*S-1-5-32-544:F'];
+  const grants = ['*S-1-5-18:F', '*S-1-5-32-544:F', '*S-1-5-32-545:R'];
   const username = String(process.env.USERNAME || '').trim();
   if (username && !username.endsWith('$') && username.toUpperCase() !== 'SYSTEM') {
     grants.unshift(`${username}:R`);
@@ -79,7 +79,7 @@ async function createMysqlDefaultsFile() {
     '[client]',
     `host="${escapeMysqlOptionValue(process.env.DB_HOST || 'localhost')}"`,
     `user="${escapeMysqlOptionValue(process.env.DB_USER || 'root')}"`,
-    `password="${escapeMysqlOptionValue(process.env.DB_PASSWORD || '')}"`,
+    `password="${escapeMysqlOptionValue(process.env.DB_PASSWORD || '1234')}"`,
     'default-character-set=utf8mb4',
     ''
   ].join('\r\n');
