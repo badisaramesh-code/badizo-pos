@@ -28,6 +28,8 @@ foreach ($required in @('backend\node_modules', 'frontend\build\index.html')) {
 New-Item -ItemType Directory -Force -Path (Join-Path $OutputDir 'payload\app') | Out-Null
 Copy-CleanFolder (Join-Path $appRoot 'backend') (Join-Path $OutputDir 'payload\app\backend') @('backups','logs','.env')
 Copy-CleanFolder (Join-Path $appRoot 'frontend\build') (Join-Path $OutputDir 'payload\app\frontend\build') @()
+Copy-CleanFolder (Join-Path $appRoot 'barcode\templates') (Join-Path $OutputDir 'payload\app\barcode\templates') @()
+Copy-CleanFolder (Join-Path $appRoot 'thermal') (Join-Path $OutputDir 'payload\app\thermal') @()
 New-Item -ItemType Directory -Force -Path (Join-Path $OutputDir 'payload\runtime') | Out-Null
 Copy-Item -LiteralPath $node -Destination (Join-Path $OutputDir 'payload\runtime\node.exe') -Force
 Copy-Item -LiteralPath $installer.FullName -Destination (Join-Path $OutputDir 'payload\Badizo Setup 1.0.0.exe') -Force

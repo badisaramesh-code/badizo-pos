@@ -99,7 +99,14 @@ try {
   New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
   Copy-Item -LiteralPath (Join-Path $payload 'app\backend') -Destination $InstallRoot -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $payload 'app\frontend') -Destination $InstallRoot -Recurse -Force
+  foreach ($assetFolder in @('barcode', 'thermal')) {
+    $sourceAsset = Join-Path $payload "app\$assetFolder"
+    if (Test-Path -LiteralPath $sourceAsset) {
+      Copy-Item -LiteralPath $sourceAsset -Destination $InstallRoot -Recurse -Force
+    }
+  }
   Copy-Item -LiteralPath (Join-Path $payload 'runtime') -Destination $InstallRoot -Recurse -Force
+  New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot 'barcode\output') | Out-Null
   New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot 'backend\logs') | Out-Null
 
   $serverIp = Set-FixedServerIp -IpAddress $fixedServerIp
