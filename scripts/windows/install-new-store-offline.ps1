@@ -199,7 +199,7 @@ Set-Location $backend
   if (!$healthy) { throw "Server did not become healthy. Check $InstallRoot\backend\logs\server.err.log" }
 
   $serverUrl = "http://${serverIp}:5000"
-  New-BadizoDesktopShortcut -Name 'Badizo POS Server' -Url $serverUrl -IconPath (Join-Path $InstallRoot 'assets\badizo.ico')
+  New-BadizoDesktopShortcut -Name 'Badizo POS' -Url $serverUrl -IconPath (Join-Path $InstallRoot 'assets\badizo.ico')
 
   Write-Host ''
   Write-Host 'BADIZO SERVER INSTALLATION SUCCESSFUL' -ForegroundColor Green
