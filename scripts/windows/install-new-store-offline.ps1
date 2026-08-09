@@ -105,7 +105,7 @@ try {
   Require-Admin
   $PackageRoot = (Resolve-Path -LiteralPath $PackageRoot).Path
   $payload = Join-Path $PackageRoot 'payload'
-  foreach ($required in @('app\backend\server.js', 'app\backend\node_modules', 'app\frontend\build\index.html', 'runtime\node.exe')) {
+  foreach ($required in @('app\backend\server.js', 'app\backend\node_modules', 'app\frontend\build\index.html', 'runtime\node.exe', 'setup-slave-app.ps1', 'Badizo Setup 1.0.0.exe')) {
     if (!(Test-Path -LiteralPath (Join-Path $payload $required))) { throw "Package file missing: $required" }
   }
 
@@ -199,14 +199,21 @@ Set-Location $backend
   if (!$healthy) { throw "Server did not become healthy. Check $InstallRoot\backend\logs\server.err.log" }
 
   $serverUrl = "http://${serverIp}:5000"
-  New-BadizoDesktopShortcut -Name 'Badizo POS' -Url $serverUrl -IconPath (Join-Path $InstallRoot 'assets\badizo.ico')
+  Step 'Installing the Badizo desktop app shortcut on this server'
+  & (Join-Path $payload 'setup-slave-app.ps1') `
+    -ServerIp $serverIp `
+    -LoginMode server `
+    -LoginUser server `
+    -InstallerPath (Join-Path $payload 'Badizo Setup 1.0.0.exe') `
+    -SkipServerCheck
+  if ($LASTEXITCODE -ne 0) { throw 'Badizo desktop app shortcut setup failed on the server.' }
 
   Write-Host ''
   Write-Host 'BADIZO SERVER INSTALLATION SUCCESSFUL' -ForegroundColor Green
   Write-Host "Server URL: $serverUrl" -ForegroundColor Green
   Write-Host "Health URL: http://${serverIp}:5000/api/health" -ForegroundColor Green
+  Write-Host 'Desktop app shortcut: Badizo POS' -ForegroundColor Green
   Write-Host 'IMPORTANT: Reserve this IP in the router or configure it as static.' -ForegroundColor Yellow
-  Start-Process "http://localhost:5000"
 } catch {
   Remove-Item Env:\MYSQL_PWD -ErrorAction SilentlyContinue
   Write-Host ''
