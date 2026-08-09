@@ -66,6 +66,41 @@ function Convert-Secure([Security.SecureString]$Value) {
   finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 }
 
+function New-BadizoDesktopShortcut([string]$Name, [string]$Url, [string]$IconPath) {
+  $desktopFolders = @(
+    [Environment]::GetFolderPath('Desktop'),
+    [Environment]::GetFolderPath('CommonDesktopDirectory')
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+
+  $edge = @(
+    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
+    (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe')
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+  $chrome = @(
+    (Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe')
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+  $browser = if ($edge) { $edge } elseif ($chrome) { $chrome } else { '' }
+
+  foreach ($desktop in $desktopFolders) {
+    $shortcutPath = Join-Path $desktop "$Name.lnk"
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    if ($browser) {
+      $shortcut.TargetPath = $browser
+      $shortcut.Arguments = "--app=$Url"
+    } else {
+      $shortcut.TargetPath = $Url
+    }
+    $shortcut.WorkingDirectory = $InstallRoot
+    if ($IconPath -and (Test-Path -LiteralPath $IconPath)) {
+      $shortcut.IconLocation = "$IconPath,0"
+    }
+    $shortcut.Save()
+    Write-Host "Desktop shortcut ready: $shortcutPath" -ForegroundColor Green
+  }
+}
+
 try {
   Require-Admin
   $PackageRoot = (Resolve-Path -LiteralPath $PackageRoot).Path
@@ -104,6 +139,10 @@ try {
     if (Test-Path -LiteralPath $sourceAsset) {
       Copy-Item -LiteralPath $sourceAsset -Destination $InstallRoot -Recurse -Force
     }
+  }
+  $assetSource = Join-Path $payload 'app\assets'
+  if (Test-Path -LiteralPath $assetSource) {
+    Copy-Item -LiteralPath $assetSource -Destination $InstallRoot -Recurse -Force
   }
   Copy-Item -LiteralPath (Join-Path $payload 'runtime') -Destination $InstallRoot -Recurse -Force
   New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot 'barcode\output') | Out-Null
@@ -159,13 +198,12 @@ Set-Location $backend
   }
   if (!$healthy) { throw "Server did not become healthy. Check $InstallRoot\backend\logs\server.err.log" }
 
-  $desktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
-  $urlFile = Join-Path $desktop 'Badizo POS Server.url'
-  @("[InternetShortcut]", "URL=http://${serverIp}:5000") | Set-Content -LiteralPath $urlFile -Encoding ASCII
+  $serverUrl = "http://${serverIp}:5000"
+  New-BadizoDesktopShortcut -Name 'Badizo POS Server' -Url $serverUrl -IconPath (Join-Path $InstallRoot 'assets\badizo.ico')
 
   Write-Host ''
   Write-Host 'BADIZO SERVER INSTALLATION SUCCESSFUL' -ForegroundColor Green
-  Write-Host "Server URL: http://${serverIp}:5000" -ForegroundColor Green
+  Write-Host "Server URL: $serverUrl" -ForegroundColor Green
   Write-Host "Health URL: http://${serverIp}:5000/api/health" -ForegroundColor Green
   Write-Host 'IMPORTANT: Reserve this IP in the router or configure it as static.' -ForegroundColor Yellow
   Start-Process "http://localhost:5000"
