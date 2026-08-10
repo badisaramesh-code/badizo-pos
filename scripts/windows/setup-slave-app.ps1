@@ -281,6 +281,7 @@ try {
   Test-Server
   Write-AppConfig
   Install-App
+  Write-AppConfig
   Repair-BadizoShortcutIcons
   Launch-App
 
