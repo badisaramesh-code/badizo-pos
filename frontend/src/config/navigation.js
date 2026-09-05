@@ -20,6 +20,7 @@ export const APP_TABS = [
   { key: 'staffPayroll', label: 'Staff Payroll', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'reports', label: 'Reports', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'books', label: 'Ledger Books', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
+  { key: 'localAccounts', label: 'Local/Non-Local', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'system', label: 'System', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] }
 ];
 

@@ -1059,6 +1059,38 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
 
     await connection.query(`
+      CREATE TABLE IF NOT EXISTS local_account_entries (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        account_scope ENUM('LOCAL', 'NON_LOCAL') NOT NULL,
+        entry_date DATE NOT NULL,
+        account_name VARCHAR(180) NOT NULL,
+        details VARCHAR(255) DEFAULT '',
+        remarks VARCHAR(255) DEFAULT '',
+        is_cleared TINYINT(1) NOT NULL DEFAULT 0,
+        dr_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        cr_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_local_accounts_scope_date (account_scope, entry_date),
+        INDEX idx_local_accounts_scope_name (account_scope, account_name)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS local_account_ledgers (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        account_scope ENUM('LOCAL', 'NON_LOCAL') NOT NULL,
+        account_name VARCHAR(180) NOT NULL,
+        address_details VARCHAR(500) DEFAULT '',
+        phone_number VARCHAR(30) DEFAULT '',
+        gst_number VARCHAR(30) DEFAULT '',
+        created_by VARCHAR(100) DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_local_ledger_scope_name (account_scope, account_name)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await connection.query(`
       CREATE TABLE IF NOT EXISTS staff_workers (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         staff_code VARCHAR(40) DEFAULT NULL UNIQUE,
@@ -1222,6 +1254,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         ('barcode_printer_templates', '{"tsc-244-pro-50x50-two-up.prn":{"label":"50 x 50 mm Two-Up","printer":"TSC TTP-244 Pro","shares":["\\\\\\\\localhost\\\\TSC TTP-244 Pro","\\\\\\\\localhost\\\\TSC-244-Pro"]},"tsc-244-1-33x25-single.prn":{"label":"38 x 25 mm Two-Up","printer":"TSC TE244","shares":["\\\\\\\\localhost\\\\TSC-244-2"]},"tsc-244-2-jewellery-100x15-tail.prn":{"label":"100 x 15 mm Jewellery Tail","printer":"TSC 244-2","shares":["\\\\\\\\localhost\\\\TSC 244-2"]}}')
     `);
 
+    await ensureColumn(connection, 'local_account_entries', 'is_cleared', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER remarks');
     await ensureColumn(connection, 'products', 'purchase_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER mrp');
     await ensureColumn(connection, 'staff_salary_sheets', 'da_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER overtime_amount');
     await ensureColumn(connection, 'staff_salary_sheets', 'hra_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER da_amount');

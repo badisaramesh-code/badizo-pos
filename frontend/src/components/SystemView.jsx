@@ -746,7 +746,8 @@ export default function SystemView() {
             </div>
             <div className="setup-files-two-column">
             <div className="settings-section system-file-card setup-file-store">
-              <div className="settings-section-title">Store Master File</div>
+              <div className="settings-section-title">Shop / Report Heading</div>
+              <p>Change the shop name, address, phone and GST here, then save settings. Thermal bills, A4 bills and Local/Non-Local PDF and print reports use this same heading automatically.</p>
               <label><span className="field-label">Shop Name</span><input className="field" value={settings.shop_name || ''} onChange={(event) => updateSetting('shop_name', event.target.value)} /></label>
               <label><span className="field-label">GST Number</span><input className="field" value={settings.gst_number || ''} onChange={(event) => updateSetting('gst_number', event.target.value.toUpperCase())} /></label>
               <label><span className="field-label">Phone</span><input className="field" value={settings.phone || ''} onChange={(event) => updateSetting('phone', event.target.value)} /></label>

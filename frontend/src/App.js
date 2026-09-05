@@ -9,6 +9,7 @@ import GatePassView from './components/GatePassView';
 import InwardEntryView from './components/InwardEntryView';
 import InventoryDashboardView from './components/InventoryDashboardView';
 import LoginView from './components/LoginView';
+import LocalAccountsView from './components/LocalAccountsView';
 import OrdersView from './components/OrdersView';
 import PriceListView from './components/PriceListView';
 import ProductImportHistoryView from './components/ProductImportHistoryView';
@@ -189,6 +190,7 @@ export default function App() {
     staffPayroll: <StaffPayrollView />,
     reports: <ReportsView isActive={activeWorkspace === 'reports'} onClose={() => setActiveWorkspace('billing')} />,
     books: <BooksView setActiveWorkspace={setActiveWorkspace} />,
+    localAccounts: <LocalAccountsView />,
     system: <SystemView />
   };
 
@@ -222,7 +224,7 @@ export default function App() {
           {visibleTabs.map((tab) => (
             <button
               key={tab.key}
-              className={`tab-button ${activeWorkspace === tab.key ? 'active' : ''}`}
+              className={`tab-button ${tab.key === 'localAccounts' ? 'local-accounts-tab' : ''} ${activeWorkspace === tab.key ? 'active' : ''}`}
               onClick={() => openWorkspaceFromTopNav(tab.key)}
             >
               {tab.label}

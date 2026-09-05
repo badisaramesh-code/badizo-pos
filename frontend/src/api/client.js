@@ -924,6 +924,32 @@ export async function saveAccountingVoucher(payload) {
   return data;
 }
 
+export async function fetchLocalAccounts(params) {
+  const { data } = await api.get('/local-accounts', { params });
+  return data;
+}
+export async function saveLocalAccountEntry(payload, id = null) {
+  const { data } = id ? await api.put(`/local-accounts/${id}`, payload) : await api.post('/local-accounts', payload);
+  return data;
+}
+
+export async function setLocalAccountEntryCleared(id, isCleared) {
+  const { data } = await api.put(`/local-accounts/${id}/cleared`, { is_cleared: Boolean(isCleared) });
+  return data;
+}
+
+export async function deleteLocalLedger(payload) {
+  const { data } = await api.delete('/local-accounts/ledger', { data: payload });
+  return data;
+}
+export async function saveLocalLedgerProfile(payload) {
+  const { data } = await api.put('/local-accounts/ledger/profile', payload);
+  return data;
+}
+export async function renameLocalLedger(payload) {
+  const { data } = await api.put('/local-accounts/ledger/name', payload);
+  return data;
+}
 export async function fetchStaffWorkers({ search = '', activeOnly = true } = {}) {
   const { data } = await api.get('/staff-payroll/staff', {
     params: { search, active_only: activeOnly ? '1' : '0' }
