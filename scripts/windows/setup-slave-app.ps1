@@ -231,6 +231,14 @@ function Repair-BadizoShortcutIcons {
   $desktopFolders = @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:PUBLIC 'Desktop')) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
   $shell = New-Object -ComObject WScript.Shell
   foreach ($desktopFolder in $desktopFolders) {
+    $primaryShortcutPath = Join-Path $desktopFolder 'Badizo POS.lnk'
+    $primaryShortcut = $shell.CreateShortcut($primaryShortcutPath)
+    $primaryShortcut.TargetPath = $appExe
+    $primaryShortcut.WorkingDirectory = Split-Path -Parent $appExe
+    $primaryShortcut.IconLocation = "$iconPath,0"
+    $primaryShortcut.Save()
+    Write-Host "B icon shortcut ready: $primaryShortcutPath" -ForegroundColor Green
+
     Get-ChildItem -LiteralPath $desktopFolder -Filter 'Badizo*.lnk' -File -ErrorAction SilentlyContinue | ForEach-Object {
       $shortcut = $shell.CreateShortcut($_.FullName)
       $shortcut.IconLocation = "$iconPath,0"
@@ -273,6 +281,7 @@ try {
   Test-Server
   Write-AppConfig
   Install-App
+  Write-AppConfig
   Repair-BadizoShortcutIcons
   Launch-App
 

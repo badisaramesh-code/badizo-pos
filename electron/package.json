@@ -59,7 +59,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Badizo"
+      "shortcutName": "Badizo POS"
     }
   },
   "dependencies": {
