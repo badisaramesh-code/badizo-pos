@@ -29,7 +29,7 @@ const TEMPLATE_OPTIONS = [
 ];
 
 const BARCODE_STORE_SETTINGS_KEY = 'badizo_barcode_store_settings';
-const BARCODE_LABEL_FORMAT_KEY = 'badizo_barcode_label_format';
+const BARCODE_LABEL_FORMAT_KEY = 'badizo_barcode_label_format_v2';
 const BARCODE_PRINTER_SELECTIONS_KEY = 'badizo_barcode_printer_selections';
 const DEFAULT_STORE_SETTINGS = {
   company: 'hyper fresh mart llp',
@@ -78,9 +78,11 @@ function downloadTextFile(text, filename) {
 function loadBarcodeLabelFormat() {
   try {
     const saved = window.localStorage.getItem(BARCODE_LABEL_FORMAT_KEY);
-    return TEMPLATE_OPTIONS.some((option) => option.name === saved) ? saved : TEMPLATE_OPTIONS[0].name;
+    return TEMPLATE_OPTIONS.some((option) => option.name === saved)
+      ? saved
+      : 'tsc-244-1-33x25-single.prn';
   } catch (err) {
-    return TEMPLATE_OPTIONS[0].name;
+    return 'tsc-244-1-33x25-single.prn';
   }
 }
 
@@ -463,17 +465,17 @@ export default function BarcodeStickersView() {
       setPrn(result.prn || '');
       setOutputInfo(result);
       if (!sendToPrinter) {
-      setStatusMessage(`Sticker print file ready and report saved: ${result.output_name}. Printer: ${result.printer_name || selectedPrinterName}`);
+      setStatusMessage(`Sticker print file ready and report saved: ${result.output_name}. Stock: ${result.old_stock_qty} + ${result.sticker_count} = ${result.new_stock_qty}. Printer: ${result.printer_name || selectedPrinterName}`);
         return;
       }
 
       try {
         const localSharePath = (selectedPrinterConfig.shares || []).find((share) => /^\\\\localhost\\/i.test(String(share || '')));
-        const isAdmin1Local33x25 = result.template_name === 'tsc-244-1-33x25-single.prn'
+        const isLocalTsc38x25 = result.template_name === 'tsc-244-1-33x25-single.prn'
           || /TSC\s*TE244/i.test(String(selectedPrinterName || result.printer_name || ''));
-        const localShareName = isAdmin1Local33x25
-          ? 'TSC-244-2'
-          : localSharePath ? String(localSharePath).replace(/^\\\\localhost\\/i, '') : '';
+        const localShareName = localSharePath
+          ? String(localSharePath).replace(/^\\\\localhost\\/i, '')
+          : isLocalTsc38x25 ? 'TSC TTP-244 Pro' : '';
         const printResult = window.badizoDesktop?.printBarcodePrn && localShareName
           ? await window.badizoDesktop.printBarcodePrn({ prn: result.prn, shareName: localShareName })
           : await printBarcodePrn({
@@ -483,8 +485,12 @@ export default function BarcodeStickersView() {
           });
         setOutputInfo({ ...result, ...printResult });
         setActivePrintJob(printResult.job_token ? { jobToken: printResult.job_token, shareName: localShareName } : null);
-        setStatusMessage(`Sticker sent to ${printResult.printer_name || selectedPrinterName}. File: ${result.output_name}`);
-        resetStickerSelection();
+        setStatusMessage(`Sticker sent to ${printResult.printer_name || selectedPrinterName}. Stock: ${result.old_stock_qty} + ${result.sticker_count} = ${result.new_stock_qty}. File: ${result.output_name}`);
+        setSuggestions([]);
+        setForm((current) => ({ ...current, stickerCount: '' }));
+        window.setTimeout(() => {
+          stickerCountRef.current?.focus();
+        }, 30);
       } catch (printErr) {
         setErrorMessage(printErr.response?.data?.error || 'Sticker file was created, but Windows could not send it to the printer.');
         setStatusMessage(`Sticker file is ready: ${result.output_path}. Check printer sharing, then print this PRN file.`);

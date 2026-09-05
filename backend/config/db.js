@@ -1212,6 +1212,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         source_id BIGINT DEFAULT NULL,
         account_name VARCHAR(160) NOT NULL,
         details VARCHAR(255) NOT NULL,
+        remarks VARCHAR(255) DEFAULT '',
         direction ENUM('DR', 'CR') NOT NULL,
         amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         payment_mode VARCHAR(30) DEFAULT '',
@@ -1255,6 +1256,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     `);
 
     await ensureColumn(connection, 'local_account_entries', 'is_cleared', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER remarks');
+    await ensureColumn(connection, 'counter_cash_ledger_entries', 'remarks', "VARCHAR(255) DEFAULT '' AFTER details");
     await ensureColumn(connection, 'products', 'purchase_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER mrp');
     await ensureColumn(connection, 'staff_salary_sheets', 'da_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER overtime_amount');
     await ensureColumn(connection, 'staff_salary_sheets', 'hra_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER da_amount');

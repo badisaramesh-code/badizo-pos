@@ -1,0 +1,14 @@
+
+
+TaskName           : Badizo Daily Drive Backup
+State              : Ready
+User               : SYSTEM
+DailyInterval      : 1
+StartBoundary      : 2026-07-26T09:00:00
+EndBoundary        : 
+ExecutionTimeLimit : PT0S
+NextRun            : 25-08-2026 09:00:00
+
+
+
+

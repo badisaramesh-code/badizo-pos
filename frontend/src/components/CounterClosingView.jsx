@@ -186,7 +186,10 @@ export default function CounterClosingView({ onClose }) {
   const [errorMessage, setErrorMessage] = useState('');
   const [isHandoverLoading, setIsHandoverLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const handedOverByRef = useRef(null);
+  const takenOverByRef = useRef(null);
   const entryDetailRefs = useRef([]);
+  const denominationInputRefs = useRef([]);
   const historySectionRef = useRef(null);
 
   useEffect(() => {
@@ -425,6 +428,15 @@ export default function CounterClosingView({ onClose }) {
     focusEntryDetails(Math.min(index + 1, HANDOVER_TRANSACTION_ROWS - 1));
   }
 
+  function moveBetweenDenominations(event, index) {
+    if (!['Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    const direction = ['Enter', 'ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1;
+    const nextIndex = Math.min(Math.max(index + direction, 0), denominationRows.length - 1);
+    denominationInputRefs.current[nextIndex]?.focus();
+    denominationInputRefs.current[nextIndex]?.select?.();
+  }
+
   function resetAccountingRows() {
     setEntries(makeDefaultEntries());
     setActiveEntryIndex(0);
@@ -645,6 +657,12 @@ export default function CounterClosingView({ onClose }) {
     th:nth-child(4), th:nth-child(5), td:nth-child(4), td:nth-child(5) { width: 10mm; text-align: right; }
     tfoot th { font-weight: 700; }
     .handover-details-cell { font-weight: 800; }
+    .handover-negative-difference {
+      color: #d00000 !important;
+      font-weight: 900 !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
     .balance {
       padding: 5px 2px;
       text-align: center;
@@ -690,7 +708,7 @@ export default function CounterClosingView({ onClose }) {
         ${denominationRowsMarkup}
         <tr><td>33</td><td>Counter Closing Cash</td><td></td><td></td><td>${autoClosingCash ? autoClosingCash.toFixed(2) : ''}</td></tr>
         <tr><td>34</td><td>To Day Sale</td><td></td><td></td><td>${autoTodaySale ? autoTodaySale.toFixed(2) : ''}</td></tr>
-        <tr><td>35</td><td>Difference +/-</td><td></td><td>${handoverPrintDifferenceDr ? handoverPrintDifferenceDr.toFixed(2) : ''}</td><td>${handoverPrintDifferenceCr ? handoverPrintDifferenceCr.toFixed(2) : ''}</td></tr>
+        <tr><td>35</td><td>Difference +/-</td><td></td><td>${handoverPrintDifferenceDr ? handoverPrintDifferenceDr.toFixed(2) : ''}</td><td class="${handoverPrintDifferenceCr ? 'handover-negative-difference' : ''}">${handoverPrintDifferenceCr ? handoverPrintDifferenceCr.toFixed(2) : ''}</td></tr>
       </tbody>
       <tfoot><tr><th>36</th><th>Counter closing Total</th><th></th><th>${handoverPrintTallyTotal.toFixed(2)}</th><th>${handoverPrintTallyTotal.toFixed(2)}</th></tr></tfoot>
     </table>
@@ -710,10 +728,33 @@ export default function CounterClosingView({ onClose }) {
 
     const sourceSheetMarkup = document.querySelector('.handover-print-sheet')?.outerHTML || '';
     const sheetMarkup = sourceSheetMarkup;
-    const styleMarkup = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+    const appStyleMarkup = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
       .map((node) => node.outerHTML)
       .join('\n');
-    const thermalCss = normalizedMode === 'Thermal' ? `
+    const a4StyleMarkup = `<style>
+      @page { size: A4 portrait; margin: 6mm; }
+      html, body { margin: 0; padding: 0; background: #fff; color: #111; }
+      body { width: 198mm; font-family: Arial, Helvetica, sans-serif; }
+      .print-area, .handover-print-area { display: block; width: 198mm; height: 285mm; margin: 0; padding: 0; overflow: hidden; background: #fff; break-inside: avoid; page-break-inside: avoid; }
+      .handover-print-sheet { box-sizing: border-box; position: relative; width: 192mm; height: 283mm; margin: 0 auto; padding: 3mm; overflow: hidden; color: #111; background: #fff; font-family: Arial, Helvetica, sans-serif; font-size: 10px; break-inside: avoid; page-break-inside: avoid; }
+      .thermal-brand-edge { font-size: 8px; font-weight: 800; }
+      .handover-print-sheet h1 { margin: 0; border: 1px solid #111; border-bottom: 0; text-align: center; font-size: 15px; line-height: 1.25; text-transform: lowercase; }
+      .handover-print-meta, .handover-print-sale-row { display: grid; border: 1px solid #111; border-bottom: 0; }
+      .handover-print-meta { grid-template-columns: 1fr 2.2fr .8fr; }
+      .handover-print-sale-row { grid-template-columns: 1fr 1fr; }
+      .handover-print-meta > *, .handover-print-sale-row > * { padding: 2px 4px; border-right: 1px solid #111; text-align: center; }
+      .handover-print-meta > *:last-child, .handover-print-sale-row > *:last-child { border-right: 0; }
+      .handover-print-sheet table { width: 100%; border-collapse: collapse; }
+      .handover-print-sheet th, .handover-print-sheet td { height: 15px; padding: 1px 3px; border: 1px solid #111; vertical-align: middle; line-height: 1.1; }
+      .handover-print-sheet .handover-details-cell { font-weight: 800; }
+      .handover-print-sheet .handover-negative-difference { color: #d00000; font-weight: 900; }
+      .handover-print-sheet th:nth-child(1), .handover-print-sheet td:nth-child(1) { width: 11mm; text-align: center; }
+      .handover-print-sheet th:nth-child(4), .handover-print-sheet th:nth-child(5), .handover-print-sheet td:nth-child(4), .handover-print-sheet td:nth-child(5) { width: 25mm; text-align: right; }
+      .handover-print-balance { display: flex; flex-direction: column; gap: 3px; padding: 5px; text-align: center; font-size: 11px; }
+      .handover-signatures { display: grid; grid-template-columns: 1fr 1fr 1fr; margin-top: 10mm; font-size: 11px; }
+      @media print { html, body, .print-area, .handover-print-area, .handover-print-sheet { display: block !important; visibility: visible !important; } .handover-print-area *, .handover-print-sheet * { visibility: visible !important; } }
+    </style>`;
+    const styleMarkup = normalizedMode === 'A4' ? a4StyleMarkup : appStyleMarkup;    const thermalCss = normalizedMode === 'Thermal' ? `
       body.printing-handover.printing-thermal,
       body.printing-handover.printing-thermal #root,
       body.printing-handover.printing-thermal .handover-print-area {
@@ -853,6 +894,29 @@ export default function CounterClosingView({ onClose }) {
       }
     }
 
+    if (normalizedMode === 'A4') {
+      const a4PrintWindow = window.open('', '_blank', 'popup=yes,width=1100,height=800');
+      if (!a4PrintWindow) {
+        setErrorMessage('Counter Closing A4 print window was blocked. Allow pop-ups and try again.');
+        return;
+      }
+      a4PrintWindow.document.open();
+      a4PrintWindow.document.write(buildHandoverPrintHtml('A4'));
+      a4PrintWindow.document.close();
+      const finishA4Print = () => {
+        try {
+          if (!a4PrintWindow.closed) a4PrintWindow.close();
+        } catch (_err) {
+          // The browser owns the temporary print window after the dialog opens.
+        }
+      };
+      a4PrintWindow.addEventListener('afterprint', finishA4Print, { once: true });
+      window.setTimeout(() => {
+        a4PrintWindow.focus();
+        a4PrintWindow.print();
+      }, 300);
+      return;
+    }
     const printClass = normalizedMode === 'A4' ? 'printing-a4' : 'printing-thermal';
     document.documentElement.classList.add('printing-handover', printClass);
     document.body.classList.add('printing-handover', printClass);
@@ -929,11 +993,11 @@ export default function CounterClosingView({ onClose }) {
             </label>
             <label>
               <span className="field-label">Handed Over By</span>
-              <input className="field" value={handedOverBy} onChange={(event) => setHandedOverBy(event.target.value)} />
+              <input ref={handedOverByRef} className="field" value={handedOverBy} onChange={(event) => setHandedOverBy(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); takenOverByRef.current?.focus(); takenOverByRef.current?.select?.(); } }} />
             </label>
             <label>
               <span className="field-label">Checked / Taken By</span>
-              <input className="field" value={takenOverBy} onChange={(event) => setTakenOverBy(event.target.value)} />
+              <input ref={takenOverByRef} className="field" value={takenOverBy} onChange={(event) => setTakenOverBy(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); focusEntryDetails(0); } }} />
             </label>
             <button className="secondary-button" type="button" onClick={() => startCashEntry('CR')}>Cash In</button>
             <button className="secondary-button" type="button" onClick={() => startCashEntry('DR')}>Cash Out</button>
@@ -1034,10 +1098,10 @@ export default function CounterClosingView({ onClose }) {
               <strong>Today Cash Notes Count Balance: {formatMoney(cashBalance)}</strong>
             </div>
             <div className="panel-body handover-denomination-grid">
-              {denominationRows.map((row) => (
+              {denominationRows.map((row, index) => (
                 <label key={row.value}>
                   <span className="field-label">Rs. {row.value}</span>
-                  <input className="field" type="number" min="0" value={denominations[row.value] || ''} onChange={(event) => setDenominations((current) => ({ ...current, [row.value]: event.target.value }))} />
+                  <input ref={(element) => { denominationInputRefs.current[index] = element; }} className="field" type="number" min="0" value={denominations[row.value] || ''} onChange={(event) => setDenominations((current) => ({ ...current, [row.value]: event.target.value }))} onKeyDown={(event) => moveBetweenDenominations(event, index)} />
                   <strong>{formatMoney(row.amount)}</strong>
                 </label>
               ))}
@@ -1180,7 +1244,7 @@ export default function CounterClosingView({ onClose }) {
               ))}
               <tr><td>33</td><td>Counter Closing Cash</td><td></td><td></td><td>{autoClosingCash ? autoClosingCash.toFixed(2) : ''}</td></tr>
               <tr><td>34</td><td>To Day Sale</td><td></td><td></td><td>{autoTodaySale ? autoTodaySale.toFixed(2) : ''}</td></tr>
-              <tr><td>35</td><td>Difference +/-</td><td></td><td>{handoverPrintDifferenceDr ? handoverPrintDifferenceDr.toFixed(2) : ''}</td><td>{handoverPrintDifferenceCr ? handoverPrintDifferenceCr.toFixed(2) : ''}</td></tr>
+              <tr><td>35</td><td>Difference +/-</td><td></td><td>{handoverPrintDifferenceDr ? handoverPrintDifferenceDr.toFixed(2) : ''}</td><td className={handoverPrintDifferenceCr ? 'handover-negative-difference' : ''}>{handoverPrintDifferenceCr ? handoverPrintDifferenceCr.toFixed(2) : ''}</td></tr>
             </tbody>
             <tfoot>
               <tr><th>36</th><th>Counter closing Total</th><th></th><th>{handoverPrintTallyTotal.toFixed(2)}</th><th>{handoverPrintTallyTotal.toFixed(2)}</th></tr>

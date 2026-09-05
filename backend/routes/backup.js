@@ -1,9 +1,11 @@
 const express = require('express');
 const fs = require('fs');
+const path = require('path');
 const router = express.Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const {
   backupDir,
+  backupSources,
   getBackupPath,
   listBackups,
   restoreDatabaseBackup,
@@ -18,6 +20,7 @@ router.get('/', async (_req, res) => {
   try {
     res.json({
       backupDir,
+      backupDirs: backupSources.map((source) => ({ key: source.key, label: source.label, directory: source.dir })),
       backups: await listBackups()
     });
   } catch (err) {
@@ -56,7 +59,7 @@ router.get('/download/:file', async (req, res) => {
       return res.status(404).json({ error: 'Backup file not found.' });
     }
 
-    res.download(filePath);
+    res.download(filePath, path.basename(filePath));
   } catch (err) {
     console.error('Backup download failed:', err.message);
     logError('Backup download failed', err, { file: req.params?.file, user: req.user?.username || '' });

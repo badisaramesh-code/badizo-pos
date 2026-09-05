@@ -13,7 +13,7 @@ const execFileAsync = promisify(execFile);
 const APP_ROOT = path.resolve(__dirname, '..', '..');
 const TEMPLATE_DIR = path.join(APP_ROOT, 'barcode', 'templates');
 const OUTPUT_DIR = path.join(APP_ROOT, 'barcode', 'output');
-const DEFAULT_TEMPLATE = 'tsc-244-pro-50x50-two-up.prn';
+const DEFAULT_TEMPLATE = 'tsc-244-1-33x25-single.prn';
 
 const TEMPLATE_META = {
   'tsc-244-pro-50x50-two-up.prn': {
@@ -23,8 +23,8 @@ const TEMPLATE_META = {
   },
   'tsc-244-1-33x25-single.prn': {
     size: '38 x 25 mm Two-Up',
-    printer: 'TSC TTP-244 -1',
-    shares: ['\\\\localhost\\TSC TTP-244 -1', '\\\\localhost\\TSC 244-1']
+    printer: 'TSC TE244',
+    shares: ['\\\\localhost\\TSC TTP-244 Pro', '\\\\localhost\\TSC-244-2', '\\\\localhost\\TSC TE244']
   },
   'tsc-te244-40x40-two-up.prn': {
     size: '40 x 40 mm Two-Up',
@@ -58,7 +58,7 @@ function normalizeTemplateMeta(rawValue) {
     acc[templateName] = {
       size: defaults.size,
       printer: String(configured.printer || defaults.printer || '').trim(),
-      shares: shares.length ? shares.slice(0, 5) : defaults.shares
+      shares: [...new Set([...shares, ...defaults.shares])].slice(0, 5)
     };
     return acc;
   }, {});
@@ -86,9 +86,12 @@ async function getRequestedPrinterMeta(templateName, requestedPrinterName) {
       `SELECT setting_value FROM app_settings WHERE setting_key = 'barcode_printer_templates' LIMIT 1`
     );
     const configuredMeta = normalizeTemplateMeta(rows[0]?.setting_value || '');
-    return Object.values(configuredMeta).find((meta) => (
+    const requestedPrinterMeta = Object.values(configuredMeta).find((meta) => (
       String(meta.printer || '').trim().toLowerCase() === requested
-    )) || templateMeta;
+    ));
+    return requestedPrinterMeta
+      ? { ...requestedPrinterMeta, size: templateMeta.size }
+      : templateMeta;
   } catch (err) {
     return templateMeta;
   }
@@ -154,38 +157,32 @@ function extractBlock(template, name) {
 function renderLabels(template, data) {
   const labelBlock = extractBlock(template, 'LABEL');
   const requestedStickerCount = Math.max(Number.parseInt(data.stickerCount, 10) || 1, 1);
-  // This TE244 two-up stock consumes the first physical row when a raw PRN job starts.
-  // Add one hidden two-label compensation row so the delivered count matches the request.
-  const startupCompensation = data.template_name === 'tsc-244-1-33x25-single.prn' ? 2 : 0;
-  const stickerCount = requestedStickerCount + startupCompensation;
+  const stickerCount = requestedStickerCount;
 
   if (labelBlock) {
     const renderedLabels = Array.from({ length: stickerCount }, () => replaceFields(labelBlock, data));
     return template
       .replace(/{{#LABEL}}[\s\S]*?{{\/LABEL}}/, renderedLabels.join('\r\n'))
-      .replace(/\n/g, '\r\n');
+      .replace(/\r?\n/g, '\r\n');
   }
 
   const rowBlock = extractBlock(template, 'ROW');
   const leftBlock = extractBlock(rowBlock, 'LEFT');
   const rightBlock = extractBlock(rowBlock, 'RIGHT');
-  const rows = Math.ceil(stickerCount / 2);
   const renderedRows = [];
 
-  for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
-    const hasRight = rowIndex * 2 + 2 <= stickerCount;
-    const left = replaceFields(leftBlock, data);
-    const right = hasRight ? replaceFields(rightBlock, data) : '';
-    renderedRows.push(
-      rowBlock
-        .replace(/{{#LEFT}}[\s\S]*?{{\/LEFT}}/, left)
-        .replace(/{{#RIGHT}}[\s\S]*?{{\/RIGHT}}/, right)
-    );
-  }
+  const renderRow = (includeRight, copies = 1) => rowBlock
+    .replace(/{{#LEFT}}[\s\S]*?{{\/LEFT}}/, replaceFields(leftBlock, data))
+    .replace(/{{#RIGHT}}[\s\S]*?{{\/RIGHT}}/, includeRight ? replaceFields(rightBlock, data) : '')
+    .replace(/PRINT\s+1\s*,\s*1/i, `PRINT 1,${copies}`);
+
+  const completeRows = Math.floor(stickerCount / 2);
+  if (completeRows > 0) renderedRows.push(renderRow(true, completeRows));
+  if (stickerCount % 2 === 1) renderedRows.push(renderRow(false, 1));
 
   return template
     .replace(/{{#ROW}}[\s\S]*?{{\/ROW}}/, renderedRows.join('\r\n'))
-    .replace(/\n/g, '\r\n');
+    .replace(/\r?\n/g, '\r\n');
 }
 
 async function sendPrnToPrinter(outputPath, printerShares) {
@@ -273,7 +270,13 @@ router.get('/print-logs', authorize('SERVER', 'ADMIN'), async (req, res) => {
 });
 
 router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
+  let connection;
   try {
+    const requestedStickerCount = req.body?.stickerCount ?? 1;
+    const stickerCount = Number(requestedStickerCount);
+    if (!Number.isInteger(stickerCount) || stickerCount < 1 || stickerCount > 1000000) {
+      return res.status(400).json({ error: 'Sticker count must be a whole number between 1 and 10,00,000.' });
+    }
     await fs.mkdir(OUTPUT_DIR, { recursive: true });
     const templateName = cleanTemplateName(req.body?.template_name);
     const templateMeta = await getRequestedPrinterMeta(templateName, req.body?.printer_name);
@@ -285,9 +288,25 @@ router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) =>
     const outputPath = path.join(OUTPUT_DIR, outputName);
 
     await fs.writeFile(outputPath, prn, 'utf8');
-    const stickerCount = Math.max(Number.parseInt(req.body?.stickerCount, 10) || 1, 1);
+    const barcode = String(req.body?.barcode || '').trim().toUpperCase();
 
-    await db.query(
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const [productRows] = await connection.query(
+      `SELECT barcode, product_name, stock_qty FROM products WHERE barcode = ? LIMIT 1 FOR UPDATE`,
+      [barcode]
+    );
+    if (!productRows.length) {
+      const error = new Error('Product not found for this barcode. Stock and sticker report were not updated.');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const product = productRows[0];
+    const oldStockQty = Number(product.stock_qty || 0);
+    const newStockQty = oldStockQty + stickerCount;
+
+    const [printLogResult] = await connection.query(
       `INSERT INTO barcode_print_logs
        (barcode, product_name, mrp, sale_price, pkd_date, qty, unit, template_name,
         sticker_size, printer_name, sticker_count, output_name, output_path, created_by)
@@ -310,6 +329,26 @@ router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) =>
       ]
     );
 
+    await connection.query(
+      `UPDATE products SET stock_qty = ?, updated_at = CURRENT_TIMESTAMP WHERE barcode = ?`,
+      [newStockQty, barcode]
+    );
+    await connection.query(
+      `INSERT INTO stock_adjustments
+       (barcode, product_name, old_qty, adjustment_qty, new_qty, reason, note, created_by)
+       VALUES (?, ?, ?, ?, ?, 'OTHER', ?, ?)`,
+      [
+        barcode,
+        product.product_name,
+        oldStockQty,
+        stickerCount,
+        newStockQty,
+        `Barcode stickers printed (print log #${printLogResult.insertId})`,
+        req.user?.username || ''
+      ]
+    );
+    await connection.commit();
+
     res.json({
       prn,
       template_name: templateName,
@@ -317,10 +356,15 @@ router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) =>
       output_name: outputName,
       output_path: outputPath,
       sticker_count: stickerCount,
+      old_stock_qty: oldStockQty,
+      new_stock_qty: newStockQty,
       sticker_size: templateMeta.size,
       printer_name: templateMeta.printer
     });
   } catch (err) {
+    if (connection) {
+      try { await connection.rollback(); } catch (_rollbackError) {}
+    }
     console.error('Barcode PRN render failed:', err.message);
     logError('Barcode PRN render failed', err, {
       barcode: req.body?.barcode,
@@ -329,7 +373,9 @@ router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) =>
       stickerCount: req.body?.stickerCount,
       user: req.user?.username || ''
     });
-    res.status(500).json({ error: 'Unable to generate barcode PRN.' });
+    res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Unable to generate barcode PRN.' });
+  } finally {
+    if (connection) connection.release();
   }
 });
 

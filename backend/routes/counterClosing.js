@@ -53,7 +53,7 @@ function counterRegexForNo(counterNo) {
 }
 
 function normalizeNamedLedgerAccount(value) {
-  return String(value || '').trim().replace(/s+/g, ' ').toUpperCase().slice(0, 160);
+  return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase().slice(0, 160);
 }
 
 function normalizeEntries(entries) {

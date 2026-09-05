@@ -3058,9 +3058,16 @@ router.get('/search/:query', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER
     const [exactRows] = await db.query(
       `SELECT * FROM products
        WHERE barcode = ? OR product_code = ?
-       ORDER BY product_name ASC
+       ORDER BY
+         CASE
+           WHEN barcode = ? THEN 0
+           WHEN product_code = ? THEN 1
+           ELSE 2
+         END,
+         product_name ASC,
+         id DESC
        LIMIT 5`,
-      [q.toUpperCase(), q.toUpperCase()]
+      [q.toUpperCase(), q.toUpperCase(), q.toUpperCase(), q.toUpperCase()]
     );
 
     if (exactRows && exactRows.length > 0) {
@@ -3234,6 +3241,10 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
 
     if (values.salePrice > values.mrp && values.mrp > 0) {
       return res.status(400).json({ error: 'Sale price cannot be greater than MRP.' });
+    }
+
+    if (values.salePrice < values.purchasePrice) {
+      return res.status(400).json({ error: 'Sale price cannot be less than purchase price.' });
     }
 
     if (values.wholesalePrice > values.mrp && values.mrp > 0) {

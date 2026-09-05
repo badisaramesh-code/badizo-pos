@@ -27,6 +27,10 @@ import {
 import { todayIso } from '../utils/date';
 import { formatMoney } from '../utils/money';
 
+function barcodeStickerSize(row) {
+  if (row?.template_name === 'tsc-244-1-33x25-single.prn') return '38 x 25 mm Two-Up';
+  return row?.sticker_size || row?.template_name || '-';
+}
 function formatCompactMoney(value) {
   const amount = Number(value || 0);
   if (Math.abs(amount) >= 10000000) return `Rs. ${(amount / 10000000).toFixed(2)} Cr`;
@@ -53,11 +57,6 @@ function formatReportDateTime(value) {
     hour12: true
   }).format(date);
 }
-function currentMonthStartIso() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-}
-
 function exportWorkbook(filename, sheets) {
   const workbook = XLSX.utils.book_new();
   sheets.forEach(({ name, rows }) => {
@@ -65,6 +64,41 @@ function exportWorkbook(filename, sheets) {
     XLSX.utils.book_append_sheet(workbook, worksheet, name.slice(0, 31));
   });
   XLSX.writeFile(workbook, filename);
+}
+
+function downloadJson(filename, value) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function roundGstValue(value) {
+  return Number(Number(value || 0).toFixed(2));
+}
+
+function gstReturnPeriod(dateValue) {
+  const match = String(dateValue || '').match(/^(\d{4})-(\d{2})/);
+  return match ? `${match[2]}${match[1]}` : '';
+}
+
+function gstStateCode(gstin, fallback = '36') {
+  const match = String(gstin || '').trim().match(/^(\d{2})/);
+  return match ? match[1] : fallback;
+}
+
+function groupBy(rows, getKey) {
+  return (rows || []).reduce((groups, row) => {
+    const key = getKey(row);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+    return groups;
+  }, new Map());
 }
 
 function reportFileName(name, from, to) {
@@ -100,6 +134,17 @@ const DEFAULT_HSN_FILTERS = {
   productSearch: '',
   qtySort: 'DEFAULT'
 };
+
+const HSN_SEARCH_SESSION_KEY = 'badizo-reports-hsn-search';
+
+function readSavedHsnSearch() {
+  try {
+    const saved = JSON.parse(window.sessionStorage.getItem(HSN_SEARCH_SESSION_KEY) || '{}');
+    return saved && typeof saved === 'object' ? saved : {};
+  } catch (err) {
+    return {};
+  }
+}
 
 const HSN_VISIBLE_ROW_LIMIT = 500;
 const HANDOVER_AUTO_ENTRY_DETAILS = new Set(['Counter Closing Cash', 'Today Sale']);
@@ -150,13 +195,15 @@ function getReportNumber(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
-function ReportHeader({ title, onExcel, onPdf, onClose }) {
+function ReportHeader({ title, onExcel, onJson, onReviewExcel, excelLabel = 'Export Excel', onPdf, onClose }) {
   return (
     <div className="panel-header green">
       <h2 className="panel-title">{title}</h2>
       <div className="report-header-actions">
         <button className="header-print-button report-print-trigger" type="button">Print Report</button>
-        <button className="header-print-button" type="button" onClick={onExcel}>Export Excel</button>
+        <button className="header-print-button" type="button" onClick={onExcel}>{excelLabel}</button>
+        {onJson && <button className="header-print-button" type="button" onClick={onJson}>GST Portal JSON</button>}
+        {onReviewExcel && <button className="header-print-button" type="button" onClick={onReviewExcel}>GST Review Excel</button>}
         <button className="header-print-button" type="button" onClick={onPdf}>Export PDF</button>
         {onClose && <button className="close-action-button" type="button" onClick={onClose}>Close</button>}
       </div>
@@ -165,6 +212,7 @@ function ReportHeader({ title, onExcel, onPdf, onClose }) {
 }
 
 export default function ReportsView({ isActive = true, onClose }) {
+  const savedHsnSearch = useMemo(() => readSavedHsnSearch(), []);
   const [activeReport, setActiveReport] = useState('daily');
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [fromDate, setFromDate] = useState(todayIso());
@@ -187,10 +235,12 @@ export default function ReportsView({ isActive = true, onClose }) {
     }
   });
   const [hsnReport, setHsnReport] = useState({ rows: [] });
-  const [hsnFilters, setHsnFilters] = useState(DEFAULT_HSN_FILTERS);
+  const [hsnFilters, setHsnFilters] = useState(() => ({ ...DEFAULT_HSN_FILTERS, ...(savedHsnSearch.filters || {}) }));
+  const [hsnCodeSearch, setHsnCodeSearch] = useState(() => String(savedHsnSearch.hsnCodeSearch || ''));
   const [gstPercentOptions, setGstPercentOptions] = useState(GST_PERCENT_OPTIONS);
-  const [hsnProductSearch, setHsnProductSearch] = useState('');
-  const [hsnProductDetails, setHsnProductDetails] = useState({ rows: [], totals: { quantity: 0, gross: 0, cgst: 0, sgst: 0, igst: 0 } });
+  const [shopSettings, setShopSettings] = useState({ gst_number: '' });
+  const [hsnProductSearch, setHsnProductSearch] = useState(() => String(savedHsnSearch.productSearch || ''));
+  const [hsnProductDetails, setHsnProductDetails] = useState(() => savedHsnSearch.productDetails || ({ rows: [], totals: { quantity: 0, gross: 0, cgst: 0, sgst: 0, igst: 0 } }));
   const [hsnProductDetailError, setHsnProductDetailError] = useState('');
   const [hsnProductDetailLoading, setHsnProductDetailLoading] = useState(false);
   const [hsnProductSuggestions, setHsnProductSuggestions] = useState([]);
@@ -222,11 +272,13 @@ export default function ReportsView({ isActive = true, onClose }) {
   const [isReportLoading, setIsReportLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const deferredHsnProductSearch = useDeferredValue(hsnFilters.productSearch);
+  const deferredHsnCodeSearch = useDeferredValue(hsnCodeSearch);
 
   useEffect(() => {
     if (!isActive) return;
     fetchSettings()
       .then((saved) => {
+        setShopSettings(saved || { gst_number: '' });
         const slabs = String(saved.gst_slabs || '').split(',').map((value) => value.trim()).filter(Boolean);
         setGstPercentOptions(['ALL', ...slabs]);
       })
@@ -257,6 +309,19 @@ export default function ReportsView({ isActive = true, onClose }) {
   }, [isActive]);
 
   useEffect(() => {
+    try {
+      window.sessionStorage.setItem(HSN_SEARCH_SESSION_KEY, JSON.stringify({
+        filters: hsnFilters,
+        hsnCodeSearch,
+        productSearch: hsnProductSearch,
+        productDetails: hsnProductDetails
+      }));
+    } catch (err) {
+      // Search persistence is optional; the report remains usable if browser storage is unavailable.
+    }
+  }, [hsnCodeSearch, hsnFilters, hsnProductDetails, hsnProductSearch]);
+
+  useEffect(() => {
     if (!isReportOpen) return undefined;
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') setIsReportOpen(false);
@@ -267,6 +332,7 @@ export default function ReportsView({ isActive = true, onClose }) {
 
   const filteredHsnRows = useMemo(() => {
     const productSearch = deferredHsnProductSearch.trim().toLowerCase();
+    const hsnSearch = deferredHsnCodeSearch.trim().replace(/\s+/g, '');
     const selectedRange = HSN_RANGE_OPTIONS.find((option) => option.value === hsnFilters.hsnRange);
     const rows = (hsnReport.rows || []).filter((row) => {
       if (selectedRange && selectedRange.value !== 'ALL') {
@@ -277,6 +343,10 @@ export default function ReportsView({ isActive = true, onClose }) {
       }
 
       if (hsnFilters.gstPercent !== 'ALL' && Number(row.gst_percent || 0) !== Number(hsnFilters.gstPercent)) {
+        return false;
+      }
+
+      if (hsnSearch && !String(row.hsn_code || '').replace(/\s+/g, '').startsWith(hsnSearch)) {
         return false;
       }
 
@@ -297,7 +367,7 @@ export default function ReportsView({ isActive = true, onClose }) {
     }
 
     return rows;
-  }, [deferredHsnProductSearch, hsnFilters.gstPercent, hsnFilters.hsnRange, hsnFilters.qtySort, hsnReport.rows]);
+  }, [deferredHsnCodeSearch, deferredHsnProductSearch, hsnFilters.gstPercent, hsnFilters.hsnRange, hsnFilters.qtySort, hsnReport.rows]);
 
   const visibleHsnRows = useMemo(() => filteredHsnRows.slice(0, HSN_VISIBLE_ROW_LIMIT), [filteredHsnRows]);
 
@@ -486,17 +556,17 @@ export default function ReportsView({ isActive = true, onClose }) {
         return;
       }
       case 'monthly': {
-        const monthly = await fetchMonthlySalesReport(from.slice(0, 7));
+        const monthly = await fetchMonthlySalesReport({ from, to });
         setMonthlyReport(monthly);
         return;
       }
       case 'stock': {
-        const stock = await fetchStockReport(false);
+        const stock = await fetchStockReport(false, reportSearch);
         setStockReport(stock);
         return;
       }
       case 'top': {
-        const top = await fetchTopProductsReport({ from, to });
+        const top = await fetchTopProductsReport({ from, to, search: reportSearch });
         setTopProducts(top);
         return;
       }
@@ -529,7 +599,7 @@ export default function ReportsView({ isActive = true, onClose }) {
         return;
       }
       case 'exchange': {
-        const exchange = await fetchExchangeBillsReport({ from, to, counter });
+        const exchange = await fetchExchangeBillsReport({ from, to, counter, search: reportSearch });
         setExchangeReport(exchange);
         return;
       }
@@ -559,13 +629,13 @@ export default function ReportsView({ isActive = true, onClose }) {
       }
       case 'returns':
       case 'cancelled': {
-        const exceptions = await fetchExceptionReport({ from, to });
+        const exceptions = await fetchExceptionReport({ from, to, search: reportSearch });
         setExceptionReport(exceptions);
         return;
       }
       case 'daily':
       default: {
-        const daily = await fetchDailySalesReport({ from, to, counter });
+        const daily = await fetchDailySalesReport({ from, to, counter, search: reportSearch });
         setDailyReport(daily);
       }
     }
@@ -588,7 +658,7 @@ export default function ReportsView({ isActive = true, onClose }) {
     setIsReportLoading(true);
     const { from, to } = getOrderedRange(fromDate, toDate);
     try {
-      const daily = await fetchDailySalesReport({ from, to, counter });
+      const daily = await fetchDailySalesReport({ from, to, counter, search: reportSearch });
       setDailyReport(daily);
       if (activeReport !== 'daily') {
         await loadSelectedReport(activeReport, { from, to });
@@ -716,7 +786,7 @@ export default function ReportsView({ isActive = true, onClose }) {
   const reportOptions = [
     { key: 'daily', title: 'Daily Sales', note: `${dailyReport.totals.billCount || 0} bills` },
     { key: 'hsn', title: 'GST HSN Summary', note: `${hsnReport.rows.length} HSN rows` },
-    { key: 'monthly', title: 'Monthly Sales', note: `${monthlyReport.rows.length} days` },
+    { key: 'monthly', title: 'Monthly Sales', note: `${monthlyReport.rows.length} months` },
     { key: 'stock', title: 'Stock Report', note: `${stockReport.length} products` },
     { key: 'top', title: 'Top Products', note: `${topProducts.rows.length} products` },
     { key: 'productSales', title: 'Product Sales', note: `${productSalesReport.rows.length} entries` },
@@ -770,6 +840,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       Date: row.bill_date || '',
       Time: row.bill_time || '',
       Customer: row.customer_name || 'Walk-in Customer',
+      Phone: row.customer_phone || '',
       Items: Number(row.item_count || 0),
       Taxable: Number(row.sub_total || 0),
       GST: Number(row.gst_total || 0),
@@ -837,7 +908,7 @@ export default function ReportsView({ isActive = true, onClose }) {
 
   function exportMonthlyExcel() {
     exportRows('monthly_sales', monthlyReport.rows.map((row) => ({
-      Date: row.sale_date ? new Date(row.sale_date).toLocaleDateString() : '-',
+      Month: row.sale_month || '-',
       Bills: Number(row.bill_count || 0),
       Taxable: Number(row.taxable || 0),
       GST: Number(row.gst || 0),
@@ -845,19 +916,25 @@ export default function ReportsView({ isActive = true, onClose }) {
     })));
   }
 
-  function exportStockExcel() {
-    exportRows('stock_report', stockReport.map((row) => ({
-      Barcode: row.barcode,
-      'Product Code': row.product_code,
-      Product: row.product_name,
-      HSN: row.hsn_code,
-      'GST %': Number(row.gst_percent || 0),
-      Purchase: Number(row.purchase_price || 0),
-      Sale: Number(row.sale_price || 0),
-      Stock: Number(row.stock_qty || 0),
-      'Min Stock': Number(row.min_stock_alert || 0),
-      Value: Number(row.stock_value || 0)
-    })));
+  async function exportStockExcel() {
+    setErrorMessage('');
+    try {
+      const rows = await fetchStockReport(false, reportSearch, true);
+      exportRows('stock_report', rows.map((row) => ({
+        Barcode: row.barcode,
+        'Product Code': row.product_code,
+        Product: row.product_name,
+        HSN: row.hsn_code,
+        'GST %': Number(row.gst_percent || 0),
+        Purchase: Number(row.purchase_price || 0),
+        Sale: Number(row.sale_price || 0),
+        Stock: Number(row.stock_qty || 0),
+        'Min Stock': Number(row.min_stock_alert || 0),
+        Value: Number(row.stock_value || 0)
+      })));
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to export the complete stock report.');
+    }
   }
 
   function exportTopProductsExcel() {
@@ -899,10 +976,10 @@ export default function ReportsView({ isActive = true, onClose }) {
       'Pkd Date': row.pkd_date || '',
       Qty: row.qty || '',
       Unit: row.unit || '',
-      Size: row.sticker_size || row.template_name,
+      Size: barcodeStickerSize(row),
       Printer: row.printer_name || '',
-      Stickers: Number(row.sticker_count || 0),
-      User: row.created_by || ''
+      'System / User': row.created_by || '',
+      Stickers: Number(row.sticker_count || 0)
     })));
   }
 
@@ -931,6 +1008,207 @@ export default function ReportsView({ isActive = true, onClose }) {
       IGST: Number(row.igst || 0),
       Tax: Number(row.cgst || 0) + Number(row.sgst || 0) + Number(row.igst || 0)
     })));
+  }
+
+  function validateGstr1PortalExport() {
+    const { from, to } = getOrderedRange(fromDate, toDate);
+    const gstin = String(shopSettings.gst_number || '').trim().toUpperCase();
+    if (!/^\d{2}[A-Z0-9]{13}$/.test(gstin)) {
+      setErrorMessage('Enter a valid 15-character shop GSTIN in Settings before creating GSTR-1 upload files.');
+      return null;
+    }
+    if (gstReturnPeriod(from) !== gstReturnPeriod(to)) {
+      setErrorMessage('GST portal upload files must contain one return month only. Select dates within the same month.');
+      return null;
+    }
+    const hasUnregisteredInterstate = (gstr1Report.b2cl || []).length > 0
+      || (gstr1Report.b2c || []).some((row) => row.supply_type === 'B2CS-INTERSTATE');
+    if (hasUnregisteredInterstate) {
+      setErrorMessage('Place-of-supply state is required for interstate B2C sales. Correct those bills before creating a portal upload file.');
+      return null;
+    }
+    const invalidRecipient = (gstr1Report.b2b || []).find((row) => !/^\d{2}[A-Z0-9]{13}$/.test(String(row.customer_gstin || '').trim().toUpperCase()));
+    if (invalidRecipient) {
+      setErrorMessage(`B2B invoice ${invalidRecipient.invoice_no || ''} has an invalid customer GSTIN. Correct it before export.`);
+      return null;
+    }
+    const invalidHsn = (gstr1Report.hsn || []).find((row) => {
+      const hsn = String(row.hsn_code || '').trim();
+      return !/^\d{4,8}$/.test(hsn) || /^0+$/.test(hsn);
+    });
+    if (invalidHsn) {
+      const shownHsn = String(invalidHsn.hsn_code || '').trim() || 'blank';
+      setErrorMessage(`HSN ${shownHsn} is not valid for GST upload. Update products with blank/0000 HSN codes and reload the report.`);
+      return null;
+    }
+    setErrorMessage('');
+    return { from, to, gstin, fp: gstReturnPeriod(to), sellerState: gstStateCode(gstin) };
+  }
+
+  function buildGstr1PortalJson(exportInfo) {
+    const { gstin, fp, sellerState } = exportInfo;
+    const b2b = [...groupBy(gstr1Report.b2b, (row) => String(row.customer_gstin || '').trim().toUpperCase())]
+      .filter(([ctin]) => /^\d{2}[A-Z0-9]{13}$/.test(ctin))
+      .map(([ctin, recipientRows]) => ({
+        ctin,
+        inv: [...groupBy(recipientRows, (row) => `${row.invoice_no}|${row.invoice_date}`)].map(([, invoiceRows]) => ({
+          inum: String(invoiceRows[0].invoice_no || ''),
+          idt: invoiceRows[0].invoice_date,
+          val: roundGstValue(invoiceRows.reduce((sum, row) => sum + Number(row.invoice_value || 0), 0)),
+          pos: gstStateCode(ctin, sellerState),
+          rchrg: 'N',
+          inv_typ: 'R',
+          itms: invoiceRows.map((row, index) => ({
+            num: index + 1,
+            itm_det: {
+              txval: roundGstValue(row.taxable_value),
+              rt: roundGstValue(row.gst_percent),
+              iamt: roundGstValue(row.igst),
+              camt: roundGstValue(row.cgst),
+              samt: roundGstValue(row.sgst),
+              csamt: 0
+            }
+          }))
+        }))
+      }));
+
+    const b2cs = (gstr1Report.b2c || []).map((row) => ({
+      sply_ty: 'INTRA',
+      typ: 'OE',
+      pos: sellerState,
+      rt: roundGstValue(row.gst_percent),
+      txval: roundGstValue(row.taxable_value),
+      iamt: roundGstValue(row.igst),
+      camt: roundGstValue(row.cgst),
+      samt: roundGstValue(row.sgst),
+      csamt: 0
+    }));
+
+    const hsnData = (gstr1Report.hsn || []).map((row, index) => ({
+      num: index + 1,
+      hsn_sc: String(row.hsn_code || ''),
+      desc: '',
+      uqc: 'NOS-NUMBERS',
+      qty: roundGstValue(row.quantity),
+      val: roundGstValue(row.total_value),
+      txval: roundGstValue(row.taxable_value),
+      iamt: roundGstValue(row.igst),
+      camt: roundGstValue(row.cgst),
+      samt: roundGstValue(row.sgst),
+      csamt: 0
+    }));
+
+    const nilInv = (gstr1Report.nilExempt || []).map((row) => ({
+      sply_ty: row.supply_type === 'Registered' ? 'INTRAB2B' : 'INTRAB2C',
+      nil_amt: roundGstValue(row.nil_rated_value),
+      expt_amt: 0,
+      ngsup_amt: 0
+    }));
+    const documents = gstr1Report.documents || {};
+    const payload = {
+      gstin,
+      fp,
+      gt: roundGstValue(gstr1Report.totals?.total),
+      cur_gt: roundGstValue(gstr1Report.totals?.total),
+      b2b,
+      b2cs,
+      hsn: { data: hsnData },
+      nil: { inv: nilInv },
+      doc_issue: {
+        doc_det: [{
+          doc_num: 1,
+          docs: [{
+            num: 1,
+            from: String(documents.from_invoice || ''),
+            to: String(documents.to_invoice || ''),
+            totnum: Number(documents.issued_count || 0),
+            cancel: Number(documents.cancelled_count || 0),
+            net_issue: Number(documents.netIssued || 0)
+          }]
+        }]
+      }
+    };
+    return Object.fromEntries(Object.entries(payload).filter(([, value]) => {
+      if (Array.isArray(value)) return value.length > 0;
+      return true;
+    }));
+  }
+
+  function exportGstr1PortalJson() {
+    const exportInfo = validateGstr1PortalExport();
+    if (!exportInfo) return;
+    downloadJson(`badizo_gstr1_${exportInfo.gstin}_${exportInfo.fp}.json`, buildGstr1PortalJson(exportInfo));
+  }
+
+  function exportGstr1OfflineExcel() {
+    const exportInfo = validateGstr1PortalExport();
+    if (!exportInfo) return;
+    const { gstin, fp, sellerState } = exportInfo;
+    const invoiceTotals = new Map(
+      [...groupBy(gstr1Report.b2b, (row) => `${row.invoice_no}|${row.invoice_date}`)]
+        .map(([key, rows]) => [key, roundGstValue(rows.reduce((sum, row) => sum + Number(row.invoice_value || 0), 0))])
+    );
+    exportWorkbook(`badizo_gstr1_${gstin}_${fp}.xlsx`, [
+      {
+        name: 'b2b',
+        rows: (gstr1Report.b2b || []).map((row) => ({
+          'GSTIN/UIN of Recipient': row.customer_gstin || '',
+          'Receiver Name': row.customer_name || '',
+          'Invoice Number': row.invoice_no || '',
+          'Invoice date': row.invoice_date || '',
+          'Invoice Value': invoiceTotals.get(`${row.invoice_no}|${row.invoice_date}`) || 0,
+          'Place Of Supply': gstStateCode(row.customer_gstin, sellerState),
+          'Reverse Charge': 'N',
+          'Invoice Type': 'Regular',
+          Rate: roundGstValue(row.gst_percent),
+          'Taxable Value': roundGstValue(row.taxable_value),
+          'Cess Amount': 0
+        }))
+      },
+      {
+        name: 'b2cs',
+        rows: (gstr1Report.b2c || []).map((row) => ({
+          Type: 'OE',
+          'Place Of Supply': sellerState,
+          Rate: roundGstValue(row.gst_percent),
+          'Taxable Value': roundGstValue(row.taxable_value),
+          'Cess Amount': 0,
+          'E-Commerce GSTIN': ''
+        }))
+      },
+      {
+        name: 'hsn',
+        rows: (gstr1Report.hsn || []).map((row) => ({
+          HSN: row.hsn_code || '', Description: '', UQC: 'NOS-NUMBERS',
+          'Total Quantity': roundGstValue(row.quantity),
+          'Total Value': roundGstValue(row.total_value),
+          'Taxable Value': roundGstValue(row.taxable_value),
+          'Integrated Tax Amount': roundGstValue(row.igst),
+          'Central Tax Amount': roundGstValue(row.cgst),
+          'State/UT Tax Amount': roundGstValue(row.sgst),
+          'Cess Amount': 0
+        }))
+      },
+      {
+        name: 'nil',
+        rows: (gstr1Report.nilExempt || []).map((row) => ({
+          'Description': row.supply_type === 'Registered' ? 'Inter-State supplies to registered persons' : 'Inter-State supplies to unregistered persons',
+          'Nil Rated Supplies': roundGstValue(row.nil_rated_value),
+          'Exempted (other than nil rated/non GST supply)': 0,
+          'Non-GST supplies': 0
+        }))
+      },
+      {
+        name: 'docs',
+        rows: [{
+          'Nature of Document': 'Invoices for outward supply',
+          SrNoFrom: gstr1Report.documents?.from_invoice || '',
+          SrNoTo: gstr1Report.documents?.to_invoice || '',
+          'Total Number': Number(gstr1Report.documents?.issued_count || 0),
+          Cancelled: Number(gstr1Report.documents?.cancelled_count || 0)
+        }]
+      }
+    ]);
   }
 
   function exportGstrReturnsExcel() {
@@ -1225,6 +1503,22 @@ export default function ReportsView({ isActive = true, onClose }) {
           <section className="panel">
             <ReportHeader title="GST HSN-wise Summary" onExcel={exportHsnExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body">
+              <div className="hsn-product-detail-box">
+                <div className="report-filter-row hsn-product-detail-form">
+                  <label className="hsn-product-detail-search">
+                    <span className="field-label">HSN Product Search (HSN Code Only)</span>
+                    <input
+                      className="field"
+                      inputMode="numeric"
+                      value={hsnCodeSearch}
+                      onChange={(event) => setHsnCodeSearch(event.target.value.replace(/[^0-9]/g, '').slice(0, 8))}
+                      placeholder="Enter HSN code, example: 1905"
+                    />
+                  </label>
+                  <button className="secondary-button" type="button" onClick={() => setHsnCodeSearch('')} disabled={!hsnCodeSearch}>Clear HSN</button>
+                  <span className="status-chip">{hsnCodeSearch ? `${filteredHsnRows.length} matching products` : 'Enter HSN to find products'}</span>
+                </div>
+              </div>
               <div className="report-filter-row hsn-summary-controls">
                 <label className="hsn-summary-field">
                   <span className="field-label">HSN</span>
@@ -1385,10 +1679,10 @@ export default function ReportsView({ isActive = true, onClose }) {
             <ReportHeader title="Monthly Sales" onExcel={exportMonthlyExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body">
               <table className="history-table">
-                <thead><tr><th>Date</th><th>Bills</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                <thead><tr><th>Month</th><th>Bills</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
                 <tbody>
                   {monthlyReport.rows.length === 0 ? <tr><td colSpan="5">No monthly sales data.</td></tr> : monthlyReport.rows.map((row) => (
-                    <tr key={row.sale_date}><td>{row.sale_date ? new Date(row.sale_date).toLocaleDateString() : '-'}</td><td>{row.bill_count}</td><td>{formatMoney(row.taxable)}</td><td>{formatMoney(row.gst)}</td><td><strong>{formatMoney(row.total)}</strong></td></tr>
+                    <tr key={row.sale_month}><td>{row.sale_month || '-'}</td><td>{row.bill_count}</td><td>{formatMoney(row.taxable)}</td><td>{formatMoney(row.gst)}</td><td><strong>{formatMoney(row.total)}</strong></td></tr>
                   ))}
                 </tbody>
               </table>
@@ -1525,10 +1819,18 @@ export default function ReportsView({ isActive = true, onClose }) {
       case 'gstr1':
         return (
           <section className="panel">
-            <ReportHeader title="GSTR-1, GSTR-2, GSTR-3B Returns" onExcel={exportGstrReturnsExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
+            <ReportHeader
+              title="GSTR-1, GSTR-2, GSTR-3B Returns"
+              onExcel={exportGstr1OfflineExcel}
+              excelLabel="GSTR-1 Excel (Offline Tool)"
+              onJson={exportGstr1PortalJson}
+              onReviewExcel={exportGstrReturnsExcel}
+              onPdf={exportPdf}
+              onClose={() => setIsReportOpen(false)}
+            />
             <div className="panel-body form-stack">
               <div className="alert-box">
-                GST filing review format: verify GSTIN, supplier invoices, place of supply, HSN/UQC, input tax credit and payable values before uploading to GST portal/offline utility.
+                Use “GST Portal JSON” for direct portal upload. Use “GSTR-1 Excel (Offline Tool)” with the GST Returns Offline Tool, then generate its JSON. Verify GSTIN, filing month, place of supply and HSN/UQC before filing.
               </div>
               <section>
                 <h3 className="panel-title">GSTR-1 - Outward Supplies</h3>
@@ -1851,13 +2153,14 @@ export default function ReportsView({ isActive = true, onClose }) {
                     <th>Qty</th>
                     <th>Size</th>
                     <th>Printer</th>
+                    <th>System / User</th>
                     <th>Stickers</th>
                     <th>File</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(barcodePrintReport.rows || []).length === 0 ? (
-                    <tr><td colSpan="11">No barcode sticker print history found.</td></tr>
+                    <tr><td colSpan="12">No barcode sticker print history found.</td></tr>
                   ) : barcodePrintReport.rows.map((row) => (
                     <tr key={row.id}>
                       <td>{formatReportDateTime(row.created_at)}</td>
@@ -1867,8 +2170,9 @@ export default function ReportsView({ isActive = true, onClose }) {
                       <td>{formatMoney(row.sale_price)}</td>
                       <td>{row.pkd_date || '-'}</td>
                       <td>{row.qty || '-'} {row.unit || ''}</td>
-                      <td>{row.sticker_size || row.template_name || '-'}</td>
+                      <td>{barcodeStickerSize(row)}</td>
                       <td>{row.printer_name || '-'}</td>
+                      <td>{row.created_by || '-'}</td>
                       <td><strong>{Number(row.sticker_count || 0)}</strong></td>
                       <td>{row.output_name || '-'}</td>
                     </tr>
@@ -2022,13 +2326,13 @@ export default function ReportsView({ isActive = true, onClose }) {
                 <span>Net Sales: <strong>{formatMoney(dailyReport.totals.total || 0)}</strong></span>
               </section>
               <table className="history-table">
-                <thead><tr><th>Invoice No</th><th>Date</th><th>Time</th><th>Customer</th><th>Items</th><th>Taxable</th><th>GST</th><th>Sale Total</th><th>Exchange Less</th><th>Net Total</th><th>Mode</th><th>Counter</th></tr></thead>
+                <thead><tr><th>Invoice No</th><th>Date</th><th>Time</th><th>Customer</th><th>Phone</th><th>Items</th><th>Taxable</th><th>GST</th><th>Sale Total</th><th>Exchange Less</th><th>Net Total</th><th>Mode</th><th>Counter</th></tr></thead>
                 <tbody>
-                  {dailyReport.rows.length === 0 ? <tr><td colSpan="12">No invoices found for selected date range.</td></tr> : dailyReport.rows.map((row) => (
-                    <tr key={row.invoice_no}><td className="mono">{row.invoice_no}</td><td>{row.bill_date || '-'}</td><td>{row.bill_time}</td><td>{row.customer_name || 'Walk-in Customer'}</td><td>{row.item_count}</td><td>{formatMoney(row.sub_total)}</td><td>{formatMoney(row.gst_total)}</td><td>{formatMoney(row.sale_total || row.grand_total)}</td><td>{Number(row.exchange_total || 0) > 0 ? <strong>{formatMoney(row.exchange_total)}</strong> : formatMoney(0)}</td><td><strong>{formatMoney(row.grand_total)}</strong></td><td>{row.payment_mode}</td><td>{row.billing_counter}</td></tr>
+                  {dailyReport.rows.length === 0 ? <tr><td colSpan="13">No invoices found for the selected date, counter, and search.</td></tr> : dailyReport.rows.map((row) => (
+                    <tr key={row.invoice_no}><td className="mono">{row.invoice_no}</td><td>{row.bill_date || '-'}</td><td>{row.bill_time}</td><td>{row.customer_name || 'Walk-in Customer'}</td><td>{row.customer_phone || '-'}</td><td>{row.item_count}</td><td>{formatMoney(row.sub_total)}</td><td>{formatMoney(row.gst_total)}</td><td>{formatMoney(row.sale_total || row.grand_total)}</td><td>{Number(row.exchange_total || 0) > 0 ? <strong>{formatMoney(row.exchange_total)}</strong> : formatMoney(0)}</td><td><strong>{formatMoney(row.grand_total)}</strong></td><td>{row.payment_mode}</td><td>{row.billing_counter}</td></tr>
                   ))}
                 </tbody>
-                <tfoot><tr><th>Total</th><th></th><th></th><th></th><th>{dailyReport.totals.itemCount || 0}</th><th>{formatMoney(dailyReport.totals.taxable || 0)}</th><th>{formatMoney(dailyReport.totals.gst || 0)}</th><th>{formatMoney(dailyReport.totals.saleTotal || 0)}</th><th>{formatMoney(dailyReport.totals.exchangeLess || 0)}</th><th>{formatMoney(dailyReport.totals.total || 0)}</th><th></th><th></th></tr></tfoot>
+                <tfoot><tr><th>Total</th><th></th><th></th><th></th><th></th><th>{dailyReport.totals.itemCount || 0}</th><th>{formatMoney(dailyReport.totals.taxable || 0)}</th><th>{formatMoney(dailyReport.totals.gst || 0)}</th><th>{formatMoney(dailyReport.totals.saleTotal || 0)}</th><th>{formatMoney(dailyReport.totals.exchangeLess || 0)}</th><th>{formatMoney(dailyReport.totals.total || 0)}</th><th></th><th></th></tr></tfoot>
               </table>
               <div className="report-action-row">
                 <button className="primary-button" type="button" onClick={printReport}>Print Report</button>
@@ -2036,7 +2340,7 @@ export default function ReportsView({ isActive = true, onClose }) {
                 <button className="secondary-button" type="button" onClick={exportPdf}>Export PDF</button>
                 <button className="secondary-button" type="button" onClick={() => {
                   const { from, to } = getOrderedRange(fromDate, toDate);
-                  exportDailySalesReport({ from, to, counter });
+                  exportDailySalesReport({ from, to, counter, search: reportSearch });
                 }}>Export CSV</button>
               </div>
             </div>
@@ -2103,7 +2407,7 @@ export default function ReportsView({ isActive = true, onClose }) {
                 className="field"
                 value={reportSearch}
                 onChange={(event) => setReportSearch(event.target.value)}
-                placeholder="Invoice / customer / barcode / user"
+                placeholder="Invoice no / phone / walk-in customer name"
               />
             </label>
             <button className="secondary-button" type="button" onClick={() => openSelectedReport(loadReports)} disabled={isReportLoading}>
@@ -2119,10 +2423,6 @@ export default function ReportsView({ isActive = true, onClose }) {
                 className={`report-select-card ${activeReport === report.key ? 'active' : ''}`}
                 type="button"
                 onClick={() => {
-                  if (report.key === 'gstr' || report.key === 'handover') {
-                    setFromDate(currentMonthStartIso());
-                    setToDate(todayIso());
-                  }
                   setActiveReport(report.key);
                 }}
               >

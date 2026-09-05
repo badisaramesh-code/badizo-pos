@@ -1,16 +1,21 @@
-{
-  "appUrl": "http://badizo-server:5000",
-  "apiHealthUrl": "http://badizo-server:5000/api/health",
-  "backendPort": 5000,
-  "frontendPort": 5000,
-  "startBackend": false,
-  "startFrontend": false,
-  "serverHosts": ["badizo-server.local", "badizo-server", "BADIZO-SERVER", "server", "SERVER"],
-  "discoveryEnabled": true,
-  "discoveryTimeoutMs": 20000,
-  "loginMode": "all",
-  "loginUser": "",
-  "forcePackagedConfig": false,
-  "kiosk": false,
-  "devTools": false
+﻿{
+    "appUrl":  "http://192.168.1.10:5000",
+    "apiHealthUrl":  "http://192.168.1.10:5000/api/health",
+    "backendPort":  5000,
+    "frontendPort":  5000,
+    "startBackend":  false,
+    "startFrontend":  false,
+    "serverHosts":  [
+                        "192.168.1.10",
+                        "badizo-server.local",
+                        "badizo-server",
+                        "server"
+                    ],
+    "discoveryEnabled":  true,
+    "discoveryTimeoutMs":  12000,
+    "loginMode":  "all",
+    "loginUser":  "",
+    "forcePackagedConfig":  false,
+    "kiosk":  false,
+    "devTools":  false
 }

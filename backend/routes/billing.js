@@ -629,6 +629,10 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     const paidTotalPaise = paymentSplits.reduce((sum, row) => sum + moneyToPaise(row.amount), 0);
     const tenderTotalPaise = normalizedPaymentMode === 'Mixed' ? moneyToPaise(cash_received || paiseToMoney(paidTotalPaise)) : paidTotalPaise;
     const grandTotalPaise = moneyToPaise(grandTotal);
+    const cashReceivedAmount = normalizedPaymentMode === 'Cash' ? parseCurrency(cash_received) : paiseToMoney(tenderTotalPaise);
+    if (!Number.isFinite(cashReceivedAmount) || cashReceivedAmount < 0 || cashReceivedAmount > 99999999.99) {
+      throw new Error('Cash received must be between Rs. 0 and Rs. 9,99,99,999.99.');
+    }
     if (normalizedPaymentMode === 'Cash' && moneyToPaise(cash_received) < grandTotalPaise) {
       throw new Error('Cash received must be equal to or greater than the bill total.');
     }
@@ -658,7 +662,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         parseCurrency(sub_total),
         parseCurrency(gst_total),
         grandTotal,
-        normalizedPaymentMode === 'Cash' ? parseCurrency(cash_received) : paiseToMoney(tenderTotalPaise),
+        cashReceivedAmount,
         normalizedPaymentMode === 'Cash' ? parseCurrency(change_returned) : changeReturned,
         normalizedPaymentMode,
         payment_status || 'PAID',
@@ -866,7 +870,11 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       steps: checkoutTimer.steps
     });
     console.error('Checkout rollback:', err.message);
-    res.status(500).json({ error: err.message });
+    const retryableDeadlock = err?.code === 'ER_LOCK_DEADLOCK' || Number(err?.errno) === 1213;
+    res.status(retryableDeadlock ? 503 : 500).json({
+      error: retryableDeadlock ? 'Checkout was temporarily busy. Retrying safely.' : err.message,
+      retryable: retryableDeadlock
+    });
   } finally {
     connection.release();
   }

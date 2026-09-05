@@ -243,7 +243,7 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    const token = jwt.sign({ ...safeUser, session_id: sessionId }, JWT_SECRET, { expiresIn: '12h' });
+    const token = jwt.sign({ ...safeUser, session_id: sessionId }, JWT_SECRET, { expiresIn: '18h' });
     res.json({ token, user: safeUser });
   } catch (err) {
     logError('Login failed', err, {

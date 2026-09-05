@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { fetchAccountingBooks, saveAccountingVoucher, saveCounterClosingCashAccountEntry, searchInwardSuppliers } from '../api/client';
+import { fetchAccountingBooks, saveAccountingVoucher, saveCounterClosingCashAccountEntry, saveNamedLedgerEntry, searchInwardSuppliers } from '../api/client';
 import { todayIso } from '../utils/date';
 import { formatMoney } from '../utils/money';
 
 const COUNTER_CLOSING_VIEW_REQUEST_KEY = 'badizo_counter_closing_view_request';
+const ACCOUNTING_BOOKS_CACHE_KEY = 'badizo_accounting_books_cache_v1';
 
 const BOOK_ORDER = [
   ['namedLedgers', 'Ledgers'],
@@ -29,7 +30,7 @@ const DEFAULT_BOOKS = {
     title: 'Named Ledgers',
     summary: { accounts: 0, entries: 0, dr: 0, cr: 0 },
     accountNames: [],
-    columns: ['Date', 'Account', 'Counter', 'Sheet', 'Details', 'DR Rs', 'CR Rs', 'Balance Rs', 'dr/cr', 'Posted By', 'Time'],
+    columns: ['Date', 'Account', 'Counter', 'Sheet', 'Details', 'Remarks', 'DR Rs', 'CR Rs', 'Balance Rs', 'dr/cr', 'Posted By', 'Time'],
     rows: []
   },
   dayBook: {
@@ -130,6 +131,7 @@ function financialYearStartIso() {
 
 function formatCell(value, column = '') {
   if (value === null || value === undefined || value === '') return '-';
+  if (column.toLowerCase() === 'dr/cr') return String(value).toUpperCase();
   if (column === 'Counter') {
     const counter = String(value).trim().replace(/\/Counter\s*/i, '/C');
     return /^\d+$/.test(counter) ? 'C' + counter : counter;
@@ -142,7 +144,7 @@ function formatCell(value, column = '') {
   }
   if (['DR Rs', 'CR Rs', 'Balance Rs'].includes(column)) {
     const amount = Number(value || 0);
-    return Number.isFinite(amount) ? amount.toFixed(2) : String(value);
+    return Number.isFinite(amount) ? (column === 'Balance Rs' ? Math.abs(amount) : amount).toFixed(2) : String(value);
   }
   if (typeof value === 'number') return formatMoney(value);
   return String(value);
@@ -216,6 +218,15 @@ function blankVoucherForm() {
   };
 }
 
+function blankNamedLedgerEntryForm() {
+  return {
+    entry_date: todayIso(),
+    details: '',
+    remarks: '',
+    dr_amount: '',
+    cr_amount: ''
+  };
+}
 function blankCashAccountEntryForm() {
   return {
     entry_date: todayIso(),
@@ -237,11 +248,23 @@ export default function BooksView({ setActiveWorkspace }) {
   const [isAccountSuggestionOpen, setIsAccountSuggestionOpen] = useState(false);
   const [voucherForm, setVoucherForm] = useState(blankVoucherForm());
   const [cashAccountEntryForm, setCashAccountEntryForm] = useState(blankCashAccountEntryForm());
+  const [namedLedgerEntryForm, setNamedLedgerEntryForm] = useState(blankNamedLedgerEntryForm());
   const [errorMessage, setErrorMessage] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [isReportOpen, setIsReportOpen] = useState(false);
 
   useEffect(() => {
+    const range = getOrderedRange(fromDate, toDate);
+    try {
+      const cached = JSON.parse(window.localStorage.getItem(ACCOUNTING_BOOKS_CACHE_KEY) || 'null');
+      if (cached?.from === range.from && cached?.to === range.to && cached?.books) {
+        setBooksData({ ...cached, books: { ...DEFAULT_BOOKS, ...cached.books } });
+        loadBooks();
+        return;
+      }
+    } catch (_err) {
+      window.localStorage.removeItem(ACCOUNTING_BOOKS_CACHE_KEY);
+    }
     loadBooks();
   }, []);
 
@@ -313,6 +336,20 @@ export default function BooksView({ setActiveWorkspace }) {
     return rows;
   }, [accountSearch, activeReport, isAccountSearchBook, isCounterClosingSheetBook, isCounterClosingCashAccountBook, isNamedLedgerBook, selectedLedgerAccount]);
 
+  const namedLedgerTotals = useMemo(() => {
+    const totals = visibleRows.reduce((result, row) => ({
+      dr: result.dr + Number(row['DR Rs'] || 0),
+      cr: result.cr + Number(row['CR Rs'] || 0)
+    }), { dr: 0, cr: 0 });
+    return { ...totals, balance: totals.dr - totals.cr };
+  }, [visibleRows]);
+
+  const namedLedgerColumns = useMemo(() => {
+    const columns = activeReport?.columns || [];
+    const amountColumns = ['DR Rs', 'CR Rs', 'Balance Rs', 'dr/cr'];
+    return [...columns.filter((column) => !amountColumns.includes(column)), ...amountColumns.filter((column) => columns.includes(column))];
+  }, [activeReport]);
+
   const visibleLedgerNames = useMemo(() => {
     if (!isNamedLedgerBook) return [];
     const query = accountSearch.trim().toLowerCase();
@@ -382,17 +419,31 @@ export default function BooksView({ setActiveWorkspace }) {
       setErrorMessage(err.response?.data?.error || 'Unable to load full accounting books. Showing available book formats.');
     }
 
-    setBooksData({
+    const normalizedResult = {
       ...result,
       books: {
         ...DEFAULT_BOOKS,
         ...(result.books || {})
       }
-    });
+    };
+    setBooksData(normalizedResult);
+    try {
+      window.localStorage.setItem(ACCOUNTING_BOOKS_CACHE_KEY, JSON.stringify({
+        from: normalizedResult.from,
+        to: normalizedResult.to,
+        books: { namedLedgers: normalizedResult.books.namedLedgers }
+      }));
+    } catch (_err) {
+      // The report remains usable even when browser storage is unavailable.
+    }
   }
 
   function updateVoucher(field, value) {
     setVoucherForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateNamedLedgerEntry(field, value) {
+    setNamedLedgerEntryForm((current) => ({ ...current, [field]: value }));
   }
 
   function updateCashAccountEntry(field, value) {
@@ -465,6 +516,41 @@ export default function BooksView({ setActiveWorkspace }) {
     }
   }
 
+  async function submitNamedLedgerEntry(event) {
+    event.preventDefault();
+    setErrorMessage('');
+    setStatusMessage('');
+    const drAmount = Number(namedLedgerEntryForm.dr_amount || 0);
+    const crAmount = Number(namedLedgerEntryForm.cr_amount || 0);
+    if (!selectedLedgerAccount) {
+      setErrorMessage('Select a ledger account first.');
+      return;
+    }
+    if (drAmount > 0 && crAmount > 0) {
+      setErrorMessage('Enter amount in either DR Rs or CR Rs, not both.');
+      return;
+    }
+    if (drAmount <= 0 && crAmount <= 0) {
+      setErrorMessage('Enter amount in DR Rs or CR Rs.');
+      return;
+    }
+    try {
+      const result = await saveNamedLedgerEntry({
+        entry_date: namedLedgerEntryForm.entry_date,
+        account_name: selectedLedgerAccount,
+        details: namedLedgerEntryForm.details,
+        remarks: namedLedgerEntryForm.remarks,
+        direction: drAmount > 0 ? 'DR' : 'CR',
+        amount: drAmount > 0 ? drAmount : crAmount
+      });
+      setNamedLedgerEntryForm({ ...blankNamedLedgerEntryForm(), entry_date: result.entry_date || namedLedgerEntryForm.entry_date });
+      await loadBooks();
+      setSelectedLedgerAccount(result.account_name);
+      setStatusMessage(`${result.account_name} ledger entry saved.`);
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to save named ledger entry.');
+    }
+  }
   async function submitCashAccountEntry(event) {
     event.preventDefault();
     setErrorMessage('');
@@ -644,31 +730,74 @@ export default function BooksView({ setActiveWorkspace }) {
                 ))}
               </div>
               {isNamedLedgerBook && (
-                <div className="named-ledger-picker">
-                  <label>
-                    <span className="field-label">Ledger Account</span>
-                    <input
-                      className="field"
-                      value={accountSearch}
-                      onChange={(event) => setAccountSearch(event.target.value)}
-                      placeholder="Search ledger name"
-                    />
-                  </label>
-                  <div className="named-ledger-name-list">
-                    {visibleLedgerNames.length === 0 ? (
-                      <span className="muted">No repeated Counter Closing account names found.</span>
-                    ) : visibleLedgerNames.map((name) => (
-                      <button
-                        key={name}
-                        type="button"
-                        className={`named-ledger-name-row ${selectedLedgerAccount === name ? 'active' : ''}`}
-                        onClick={() => setSelectedLedgerAccount(name)}
-                      >
-                        {name}
-                      </button>
-                    ))}
+                <div className="named-ledger-view">
+                  {selectedLedgerAccount && (
+                    <form className="named-ledger-entry-row" onSubmit={submitNamedLedgerEntry}>
+                      <label>
+                        <span className="field-label">Name</span>
+                        <input className="field" value={selectedLedgerAccount} readOnly />
+                      </label>
+                      <label>
+                        <span className="field-label">Date</span>
+                        <input className="field" type="date" value={namedLedgerEntryForm.entry_date} onChange={(event) => updateNamedLedgerEntry('entry_date', event.target.value)} required />
+                      </label>
+                      <label className="named-ledger-details-field">
+                        <span className="field-label">Details</span>
+                        <input className="field" value={namedLedgerEntryForm.details} onChange={(event) => updateNamedLedgerEntry('details', event.target.value)} maxLength="255" required />
+                      </label>
+                      <label className="named-ledger-remarks-field">
+                        <span className="field-label">Remarks</span>
+                        <input className="field" value={namedLedgerEntryForm.remarks} onChange={(event) => updateNamedLedgerEntry('remarks', event.target.value)} maxLength="255" />
+                      </label>
+                      <label>
+                        <span className="field-label">DR</span>
+                        <input className="field" type="number" min="0" step="0.01" value={namedLedgerEntryForm.dr_amount} onChange={(event) => updateNamedLedgerEntry('dr_amount', event.target.value)} placeholder="Debit" />
+                      </label>
+                      <label>
+                        <span className="field-label">CR</span>
+                        <input className="field" type="number" min="0" step="0.01" value={namedLedgerEntryForm.cr_amount} onChange={(event) => updateNamedLedgerEntry('cr_amount', event.target.value)} placeholder="Credit" />
+                      </label>
+                      <button className="primary-button compact-primary" type="submit">Add Entry</button>
+                    </form>
+                  )}
+                  <div className="named-ledger-book-layout">
+                    <aside className="named-ledger-sidebar">
+                      <h3>Named Ledgers</h3>
+                      <input className="field" value={accountSearch} onChange={(event) => setAccountSearch(event.target.value)} placeholder="Search ledger name" />
+                      <div className="named-ledger-name-list">
+                        {visibleLedgerNames.length === 0 ? (
+                          <span className="muted named-ledger-empty">No ledger names found.</span>
+                        ) : visibleLedgerNames.map((name) => (
+                          <button key={name} type="button" className={`named-ledger-name-row ${selectedLedgerAccount === name ? 'active' : ''}`} onClick={() => setSelectedLedgerAccount(name)}>
+                            <span>{name}</span>
+                            <small>{(activeReport?.rows || []).filter((row) => row.Account === name).length}</small>
+                          </button>
+                        ))}
+                      </div>
+                    </aside>
+                    <section className="named-ledger-book">
+                      <div className="named-ledger-book-heading">
+                        <div><h2>{selectedLedgerAccount || 'Select a Ledger'}</h2><span>{selectedLedgerAccount ? 'Ledger Book' : 'Choose an account from the left'}</span></div>
+                        {selectedLedgerAccount && <div className="named-ledger-heading-totals">
+                          <div><span>DR Total</span><strong>{formatMoney(namedLedgerTotals.dr)}</strong></div>
+                          <div><span>CR Total</span><strong>{formatMoney(namedLedgerTotals.cr)}</strong></div>
+                          <div><span>Balance</span><strong className={namedLedgerTotals.balance < 0 ? 'negative' : 'positive'}>{formatMoney(Math.abs(namedLedgerTotals.balance))} {namedLedgerTotals.balance < 0 ? 'CR' : 'DR'}</strong></div>
+                        </div>}
+                      </div>
+                      <div className="books-table-scroll named-ledger-table-scroll">
+                        <table className="history-table books-accounting-table named-ledger-table">
+                          <thead><tr>{namedLedgerColumns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
+                          <tbody>
+                            {visibleRows.length === 0 ? (
+                              <tr><td colSpan={namedLedgerColumns.length}>{selectedLedgerAccount ? 'No entries for selected date range.' : 'Select a ledger account to view entries.'}</td></tr>
+                            ) : visibleRows.map((row, index) => (
+                              <tr key={`${activeBook}-${index}`}>{namedLedgerColumns.map((column) => <td key={column}>{formatCell(row[column], column)}</td>)}</tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
                   </div>
-                  {selectedLedgerAccount && <strong className="named-ledger-selected">Account: {selectedLedgerAccount}</strong>}
                 </div>
               )}
               {isCounterClosingSheetBook && (
@@ -843,7 +972,7 @@ export default function BooksView({ setActiveWorkspace }) {
                   </form>
                 </div>
               )}
-              <div className={isCounterClosingCashAccountBook ? 'books-table-scroll cash-account-table-scroll' : 'books-table-scroll'}>
+              {!isNamedLedgerBook && <div className={isCounterClosingCashAccountBook ? 'books-table-scroll cash-account-table-scroll' : 'books-table-scroll'}>
                 <table className={isCounterClosingCashAccountBook ? 'history-table books-accounting-table cash-account-table' : 'history-table books-accounting-table'}>
                   <thead>
                     <tr>{activeReport.columns.map((column) => <th key={column}>{column}</th>)}</tr>
@@ -864,7 +993,7 @@ export default function BooksView({ setActiveWorkspace }) {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </div>}
               {isCounterClosingCashAccountBook && (
                 <form className="cash-account-entry-row" onSubmit={submitCashAccountEntry}>
                   <strong>Manual Entry Sheet</strong>

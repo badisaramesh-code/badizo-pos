@@ -773,11 +773,13 @@ ipcMain.handle('badizo:print-barcode-prn', async (_event, payload) => {
   const queueMonitor = startBarcodeQueueSafetyMonitor(shareName, documentToken);
   try {
     fs.writeFileSync(tempPath, prn, 'ascii');
-    await execFileAsync('cmd.exe', ['/c', 'copy', '/b', tempPath, printerShare], {
-      windowsHide: true,
-      timeout: 15000
-    });
-    return { ok: true, printed: true, printerName: shareName, printer_share: printerShare, job_token: documentToken, method: 'electron-local-prn' };
+    const escapedShareName = shareName.replace(/'/g, "''");
+    const rawScript = `\$source=@'\nusing System; using System.Runtime.InteropServices;\npublic class BadizoRaw { [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] public class DI{[MarshalAs(UnmanagedType.LPWStr)]public string n;[MarshalAs(UnmanagedType.LPWStr)]public string o;[MarshalAs(UnmanagedType.LPWStr)]public string t;} [DllImport(\"winspool.drv\",SetLastError=true,CharSet=CharSet.Unicode)]static extern bool OpenPrinter(string n,out IntPtr h,IntPtr d);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool ClosePrinter(IntPtr h);[DllImport(\"winspool.drv\",SetLastError=true,CharSet=CharSet.Unicode)]static extern int StartDocPrinter(IntPtr h,int l,[In]DI d);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool EndDocPrinter(IntPtr h);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool StartPagePrinter(IntPtr h);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool EndPagePrinter(IntPtr h);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool WritePrinter(IntPtr h,byte[] b,int c,out int w); public static int Send(string p,byte[]b,string n){IntPtr h;if(!OpenPrinter(p,out h,IntPtr.Zero))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());try{var d=new DI{n=n,t=\"RAW\"};int j=StartDocPrinter(h,1,d);if(j==0)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());try{if(!StartPagePrinter(h))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());int w;if(!WritePrinter(h,b,b.Length,out w)||w!=b.Length)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());}finally{EndPagePrinter(h);EndDocPrinter(h);}return j;}finally{ClosePrinter(h);}} }\n'@\nAdd-Type \$source\n\$printer=Get-Printer | Where-Object { \$_.Name -eq '${escapedShareName}' -or \$_.ShareName -eq '${escapedShareName}' -or \$_.Name -match 'TSC.*(TE?244|244)' -or \$_.ShareName -match 'TSC.*244' } | Select-Object -First 1\nif(-not \$printer){throw 'Barcode printer was not found in Windows.'}\n\$bytes=[IO.File]::ReadAllBytes('${tempPath.replace(/'/g, "''")}')\n[BadizoRaw]::Send(\$printer.Name, \$bytes, '${documentToken}')`;
+    const encodedScript = Buffer.from(rawScript, 'utf16le').toString('base64');
+    const rawResult = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedScript], { windowsHide: true, timeout: 15000 });
+    const rawJobId = Number.parseInt(String(rawResult.stdout || '').trim(), 10) || 0;
+    if (!rawJobId) throw new Error('Windows did not create a RAW barcode print job.');
+    return { ok: true, printed: true, printerName: shareName, printer_share: printerShare, job_token: documentToken, raw_job_id: rawJobId, method: 'electron-windows-raw' };
   } catch (err) {
     queueMonitor?.kill();
     throw err;

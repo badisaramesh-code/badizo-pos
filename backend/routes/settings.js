@@ -61,7 +61,7 @@ const DEFAULT_BARCODE_PRINTER_TEMPLATES = {
   'tsc-244-1-33x25-single.prn': {
     label: '38 x 25 mm Two-Up',
     printer: 'TSC TE244',
-    shares: ['\\\\localhost\\TSC-244-2']
+    shares: ['\\\\localhost\\TSC TTP-244 Pro', '\\\\localhost\\TSC-244-2', '\\\\localhost\\TSC TE244']
   },
   'tsc-te244-40x40-two-up.prn': {
     label: '40 x 40 mm Two-Up',
@@ -135,7 +135,7 @@ function normalizeBarcodePrinterTemplates(rawValue) {
     acc[templateName] = {
       label: defaults.label,
       printer: String(configured.printer || defaults.printer || '').trim(),
-      shares: shares.length ? shares.slice(0, 5) : defaults.shares
+      shares: [...new Set([...shares, ...defaults.shares])].slice(0, 5)
     };
     return acc;
   }, {});

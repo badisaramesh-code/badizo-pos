@@ -817,6 +817,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     if (qty6Price > mrp && mrp > 0) return '6+ price cannot be greater than MRP.';
     if (qty12Price > mrp && mrp > 0) return '12+ price cannot be greater than MRP.';
     if (purchasePrice < 0) return 'Purchase price cannot be negative.';
+    if (salePrice < purchasePrice) return 'Retail sale price cannot be less than purchase price.';
     if (purchaseUnitSize <= 0) return 'Stock per purchase unit must be greater than zero.';
     if (productForm.free_promo_enabled && !uppercaseProductName(productForm.free_promo_name)) return 'Enter free item name for product promotion.';
     if (productForm.default_mfd_date && productForm.default_expiry_date && productForm.default_mfd_date >= productForm.default_expiry_date) {
@@ -1255,7 +1256,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
     }
   }
 
-  const isProductSearchActive = filter.trim().length > 0;
+  const isProductSearchActive = filter.trim().length > 0 || gstFilter !== 'ALL';
   const showProductCodeColumn = isProductSearchActive;
   const visibleProducts = isProductSearchActive ? products : [];
   const inventoryColSpan = showProductCodeColumn ? 18 : 17;

@@ -26,6 +26,7 @@ import {
   searchProducts
 } from '../api/client';
 import { amountInWords, formatMoney, toNumber } from '../utils/money';
+import { findExactSaleProduct } from '../utils/productLookup';
 import PrintableInvoice from './PrintableInvoice';
 import PrintableQuotation from './PrintableQuotation';
 
@@ -309,6 +310,12 @@ function SaleReportSlip({ report, shop, printedAt }) {
   const payments = report?.paymentTotals || {};
   const totals = report?.totals || {};
   const gstRows = Array.isArray(report?.gst) ? report.gst : [];
+  const activeGstRows = gstRows.filter((row) => Number(row.total || 0) !== 0 || Number(row.gst || 0) !== 0);
+  const gstBreakupTotals = activeGstRows.reduce((sum, row) => ({
+    cgst: sum.cgst + Number(row.cgst || 0),
+    sgst: sum.sgst + Number(row.sgst || 0),
+    igst: sum.igst + Number(row.igst || 0)
+  }), { cgst: 0, sgst: 0, igst: 0 });
   const showGstDetail = report?.reportType === 'GST';
 
   return (
@@ -328,20 +335,22 @@ function SaleReportSlip({ report, shop, printedAt }) {
       <div className="counter-sale-slip-line"><span>Card Sales</span><strong>{formatSlipAmount(payments.card)}</strong></div>
       <div className="counter-sale-slip-line"><span>Other Sales</span><strong>{formatSlipAmount(payments.other)}</strong></div>
       <div className="counter-sale-slip-line"><span>Cash Sales</span><strong>{formatSlipAmount(payments.cash)}</strong></div>
-      <div className="counter-sale-slip-total"><span>Total Sale</span><strong>{formatSlipAmount(payments.total || totals.netTotal)}</strong></div>
+      <div className="counter-sale-slip-total"><span>Total Sale</span><strong>{formatSlipAmount(totals.saleTotal)}</strong></div>
+      <div className="counter-sale-slip-line"><span>Payment / Net Total</span><strong>{formatSlipAmount(payments.total || totals.netTotal)}</strong></div>
       {showGstDetail && (
         <>
           <div className="counter-sale-slip-rule" />
           <div className="counter-sale-slip-heading">GST SALE REPORT</div>
-          <div className="sale-report-gst-head"><span>GST</span><span>Taxable</span><span>Tax</span><span>Total</span></div>
-          {gstRows.map((row) => (
-            <div className="sale-report-gst-row" key={row.gstPercent}>
-              <span>{Number(row.gstPercent || 0).toFixed(0)}%</span>
-              <span>{formatSlipAmount(row.taxable)}</span>
-              <span>{formatSlipAmount(row.gst)}</span>
-              <span>{formatSlipAmount(row.total)}</span>
+          {activeGstRows.map((row) => (
+            <div className="sale-report-gst-detail" key={row.gstPercent}>
+              <div className="counter-sale-slip-line"><strong>GST {Number(row.gstPercent || 0).toFixed(0)}%</strong><strong>{formatSlipAmount(row.total)}</strong></div>
+              <div className="counter-sale-slip-line"><span>Taxable</span><span>{formatSlipAmount(row.taxable)}</span></div>
+              <div className="sale-report-gst-taxes"><span>CGST {formatSlipAmount(row.cgst)}</span><span>SGST {formatSlipAmount(row.sgst)}</span><span>IGST {formatSlipAmount(row.igst)}</span></div>
             </div>
           ))}
+          <div className="counter-sale-slip-line"><span>Total CGST</span><strong>{formatSlipAmount(gstBreakupTotals.cgst)}</strong></div>
+          <div className="counter-sale-slip-line"><span>Total SGST</span><strong>{formatSlipAmount(gstBreakupTotals.sgst)}</strong></div>
+          <div className="counter-sale-slip-line"><span>Total IGST</span><strong>{formatSlipAmount(gstBreakupTotals.igst)}</strong></div>
           <div className="counter-sale-slip-total"><span>GST Total Sale</span><strong>{formatSlipAmount(totals.saleTotal)}</strong></div>
         </>
       )}
@@ -351,6 +360,8 @@ function SaleReportSlip({ report, shop, printedAt }) {
       <div className="counter-sale-slip-line"><span>Exchange Bills</span><strong>{Number(totals.exchangeBillCount || 0)}</strong></div>
       <div className="counter-sale-slip-line"><span>Exchange Sale</span><strong>{formatSlipAmount(totals.exchangeSaleTotal)}</strong></div>
       <div className="counter-sale-slip-line"><span>Exchange Less</span><strong>{formatSlipAmount(totals.exchangeTotal)}</strong></div>
+      {Number(totals.loyaltyRedeemedTotal || 0) !== 0 && <div className="counter-sale-slip-line"><span>Loyalty Less</span><strong>{formatSlipAmount(totals.loyaltyRedeemedTotal)}</strong></div>}
+      {Math.abs(Number(totals.roundOffTotal || 0)) >= 0.005 && <div className="counter-sale-slip-line"><span>Round Off</span><strong>{Number(totals.roundOffTotal) >= 0 ? "+" : "-"} {formatSlipAmount(Math.abs(Number(totals.roundOffTotal)))}</strong></div>}
       <div className="counter-sale-slip-line"><span>Exchange Net</span><strong>{formatSlipAmount(totals.exchangeNetTotal)}</strong></div>
       <div className="counter-sale-slip-total"><span>Net Sale</span><strong>{formatSlipAmount(totals.netTotal)}</strong></div>
       <div className="counter-sale-slip-rule" />
@@ -568,6 +579,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const searchFocusTimerRef = useRef(null);
   const suggestionClickTimerRef = useRef(null);
   const suggestionRowRefs = useRef([]);
+  const selectedSuggestionRef = useRef(0);
   const exchangeScannerBufferRef = useRef('');
   const exchangeScannerBufferLastKeyAtRef = useRef(0);
   const exchangeScannerBufferTimerRef = useRef(null);
@@ -1125,6 +1137,7 @@ export default function BillingTerminalView({ isActive = true }) {
   }, [isActive, suggestions.length]);
 
   useEffect(() => {
+    selectedSuggestionRef.current = selectedSuggestion;
     if (!suggestions.length) return;
     const selectedRow = suggestionRowRefs.current[selectedSuggestion];
     selectedRow?.scrollIntoView?.({ block: 'nearest' });
@@ -1732,10 +1745,7 @@ export default function BillingTerminalView({ isActive = true }) {
     }
 
     const results = await searchProducts(key, { timeoutMs: 3500, retry: false });
-    const exactFromSearch = results.find((product) => (
-      String(product.barcode || '').toUpperCase() === key
-      || String(product.product_code || '').toUpperCase() === key
-    ));
+    const exactFromSearch = findExactSaleProduct(results, key);
     if (exactFromSearch) {
       exactProductShortCacheRef.current.set(key, { at: Date.now(), product: exactFromSearch });
       return exactFromSearch;
@@ -2227,12 +2237,16 @@ export default function BillingTerminalView({ isActive = true }) {
 
     if (event.key === 'ArrowDown' && suggestions.length) {
       event.preventDefault();
-      setSelectedSuggestion((current) => Math.min(current + 1, suggestions.length - 1));
+      const nextIndex = Math.min(selectedSuggestionRef.current + 1, suggestions.length - 1);
+      selectedSuggestionRef.current = nextIndex;
+      setSelectedSuggestion(nextIndex);
     }
 
     if (event.key === 'ArrowUp' && suggestions.length) {
       event.preventDefault();
-      setSelectedSuggestion((current) => Math.max(current - 1, 0));
+      const nextIndex = Math.max(selectedSuggestionRef.current - 1, 0);
+      selectedSuggestionRef.current = nextIndex;
+      setSelectedSuggestion(nextIndex);
     }
 
     if (event.key === 'Enter') {
@@ -2245,16 +2259,29 @@ export default function BillingTerminalView({ isActive = true }) {
       scannerInputModeRef.current = 'keyboard';
       suppressSuggestionsUntilKeyboardInputRef.current = false;
       const { search: cleaned, quantity } = parseQuantitySearch(query);
-      const normalizedSearch = cleaned.toUpperCase();
-      const selectedProduct = suggestions[selectedSuggestion];
-      const selectedProductMatches = selectedProduct && (
-        String(selectedProduct.barcode || '').trim().toUpperCase() === normalizedSearch
-        || String(selectedProduct.product_code || '').trim().toUpperCase() === normalizedSearch
-        || (!SCANNER_BARCODE_PATTERN.test(cleaned)
-          && String(selectedProduct.product_name || '').trim().toUpperCase().includes(normalizedSearch))
-      );
+      const selectedProduct = suggestions[selectedSuggestionRef.current] || suggestions[selectedSuggestion];
 
-      if (selectedProductMatches) {
+      // A typed numeric value is a barcode/product-code lookup, not a fuzzy
+      // suggestion selection. Only an exact saved code may be added on Enter.
+      if (/^\d+$/.test(cleaned)) {
+        try {
+          const exactCodeProduct = await findExactProductFast(cleaned);
+          if (exactCodeProduct) {
+            addProduct(exactCodeProduct, quantity);
+            return;
+          }
+          setSuggestions([]);
+          setSelectedSuggestion(0);
+          setErrorMessage(`No product found for code ${cleaned}.`);
+        } catch (err) {
+          setSuggestions([]);
+          setSelectedSuggestion(0);
+          setErrorMessage(`Product lookup failed for ${cleaned}. Check LAN and try again.`);
+        }
+        return;
+      }
+
+      if (selectedProduct) {
         addProduct(selectedProduct, quantity);
         return;
       }
@@ -2298,10 +2325,7 @@ export default function BillingTerminalView({ isActive = true }) {
         }
 
         const results = await searchProducts(cleaned);
-        const exactFromSearch = results.find((product) => (
-          String(product.barcode || '').toUpperCase() === cleaned.toUpperCase()
-          || String(product.product_code || '').toUpperCase() === cleaned.toUpperCase()
-        ));
+        const exactFromSearch = findExactSaleProduct(results, cleaned);
         if (exactFromSearch) {
           addProduct(exactFromSearch, quantity);
           return;
@@ -2937,7 +2961,22 @@ export default function BillingTerminalView({ isActive = true }) {
       text-align: right;
       white-space: nowrap;
     }
-    .sale-report-bill-range {
+    .sale-report-gst-detail {
+      padding: 3px 0;
+      border-bottom: 1px dotted #555;
+    }
+    .sale-report-gst-taxes {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 3px;
+      padding: 1px 0 3px;
+      font-size: 9px;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .sale-report-gst-taxes span:first-child {
+      text-align: left;
+    }    .sale-report-bill-range {
       align-items: flex-start;
       gap: 5px;
       font-size: 10px;
@@ -3058,10 +3097,10 @@ export default function BillingTerminalView({ isActive = true }) {
     return {
       from,
       to,
-      reportType: saleReportType,
-      counterNo: saleReportScope === 'CURRENT'
+      reportType: String(formData?.get('sale_report_type') || saleReportType).toUpperCase(),
+      counterNo: String(formData?.get('sale_report_scope') || saleReportScope) === 'CURRENT'
         ? counterNo
-        : (saleReportScope === 'ALL' ? '' : saleReportScope)
+        : (String(formData?.get('sale_report_scope') || saleReportScope) === 'ALL' ? '' : String(formData?.get('sale_report_scope') || saleReportScope))
     };
   }
 
@@ -3205,7 +3244,22 @@ export default function BillingTerminalView({ isActive = true }) {
     .sale-report-gst-row span:first-child {
       text-align: left;
     }
-    .sale-report-bill-range {
+    .sale-report-gst-detail {
+      padding: 3px 0;
+      border-bottom: 1px dotted #555;
+    }
+    .sale-report-gst-taxes {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 3px;
+      padding: 1px 0 3px;
+      font-size: 9px;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .sale-report-gst-taxes span:first-child {
+      text-align: left;
+    }    .sale-report-bill-range {
       align-items: flex-start;
       gap: 5px;
       font-size: 10px;
@@ -5053,6 +5107,11 @@ export default function BillingTerminalView({ isActive = true }) {
         ? effectiveMixedPaidTotal
         : totals.grand;
     const receivedPaise = moneyToPaise(received);
+    if (!Number.isFinite(received) || received < 0 || received > 99999999.99) {
+      setErrorMessage('Cash received must be between Rs. 0 and Rs. 9,99,99,999.99.');
+      window.setTimeout(() => cashReceivedRef.current?.focus(), 50);
+      return;
+    }
     if (activePaymentMode === 'Cash' && receivedPaise < payablePaiseForCheckout) {
       setErrorMessage('Cash received must be equal to or greater than the bill total.');
       window.setTimeout(() => cashReceivedRef.current?.focus(), 50);
@@ -5927,6 +5986,7 @@ export default function BillingTerminalView({ isActive = true }) {
                       className={`field cash-received-input ${cashReceivedFlashToken ? 'cash-received-flash' : ''}`}
                       type="number"
                       min="0"
+                      max="99999999.99"
                       value={cashReceived}
                       onAnimationEnd={() => setCashReceivedFlashToken(0)}
                       onKeyDown={(event) => handlePaymentEnter(event, 'Cash')}
@@ -6196,14 +6256,14 @@ export default function BillingTerminalView({ isActive = true }) {
                 <div className="sale-report-form-line">
                   <label>
                     <span className="field-label">All / GST</span>
-                    <select className="select" value={saleReportType} onChange={(event) => setSaleReportType(event.target.value)}>
+                    <select className="select" name="sale_report_type" value={saleReportType} onChange={(event) => setSaleReportType(event.target.value)}>
                       <option value="ALL">All Sales</option>
                       <option value="GST">GST Sale Report</option>
                     </select>
                   </label>
                   <label>
                     <span className="field-label">Counter</span>
-                    <select className="select" value={saleReportScope} onChange={(event) => setSaleReportScope(event.target.value)}>
+                    <select className="select" name="sale_report_scope" value={saleReportScope} onChange={(event) => setSaleReportScope(event.target.value)}>
                       <option value="ALL">All Counters</option>
                       <option value="CURRENT">Current Counter</option>
                       <option value="1">Counter 1</option>
@@ -6243,7 +6303,7 @@ export default function BillingTerminalView({ isActive = true }) {
                     <div className="summary-line"><span>Cash Sales</span><strong>{formatMoney(saleReport.paymentTotals?.cash || 0)}</strong></div>
                   </div>
                   <table className="history-table sale-report-gst-table">
-                    <thead><tr><th>GST</th><th>Bills</th><th>Qty</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                    <thead><tr><th>GST</th><th>Bills</th><th>Qty</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total Tax</th><th>Total</th></tr></thead>
                     <tbody>
                       {(saleReport.gst || []).map((row) => (
                         <tr key={row.gstPercent}>
@@ -6251,7 +6311,7 @@ export default function BillingTerminalView({ isActive = true }) {
                           <td>{Number(row.billCount || 0)}</td>
                           <td>{Number(row.quantity || 0).toFixed(2)}</td>
                           <td>{formatMoney(row.taxable || 0)}</td>
-                          <td>{formatMoney(row.gst || 0)}</td>
+                          <td>{formatMoney(row.cgst || 0)}</td><td>{formatMoney(row.sgst || 0)}</td><td>{formatMoney(row.igst || 0)}</td><td>{formatMoney(row.gst || 0)}</td>
                           <td><strong>{formatMoney(row.total || 0)}</strong></td>
                         </tr>
                       ))}

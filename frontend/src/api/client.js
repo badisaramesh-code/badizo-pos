@@ -421,9 +421,9 @@ export async function fetchDashboardReport() {
   return data;
 }
 
-export async function fetchDailySalesReport({ date, from, to, counter = '' } = {}) {
+export async function fetchDailySalesReport({ date, from, to, counter = '', search = '' } = {}) {
   const { data } = await api.get('/reports/daily-sales', {
-    params: { date, from, to, counter }
+    params: { date, from, to, counter, search }
   });
   return data;
 }
@@ -515,9 +515,9 @@ export async function fetchPosSaleReport({ from, to, reportType = 'ALL', counter
   };
 }
 
-export async function exportDailySalesReport({ date, from, to, counter = '' } = {}) {
+export async function exportDailySalesReport({ date, from, to, counter = '', search = '' } = {}) {
   const { data } = await api.get('/reports/daily-sales/export', {
-    params: { date, from, to, counter },
+    params: { date, from, to, counter, search },
     responseType: 'blob'
   });
   const rangeLabel = from && to ? `${from}_to_${to}` : date || 'today';
@@ -545,18 +545,18 @@ export async function fetchProductSalesReport({ from, to, search } = {}) {
   return data;
 }
 
-export async function fetchMonthlySalesReport(month) {
-  const { data } = await api.get('/reports/monthly-sales', { params: { month } });
+export async function fetchMonthlySalesReport({ from, to } = {}) {
+  const { data } = await api.get('/reports/monthly-sales', { params: { from, to } });
   return data;
 }
 
-export async function fetchStockReport(lowOnly = false) {
-  const { data } = await api.get('/reports/stock', { params: { low_only: lowOnly ? '1' : '' } });
+export async function fetchStockReport(lowOnly = false, search = '', includeAll = false) {
+  const { data } = await api.get('/reports/stock', { params: { low_only: lowOnly ? '1' : '', search, all: includeAll ? '1' : '' } });
   return Array.isArray(data) ? data : [];
 }
 
-export async function fetchTopProductsReport({ from, to, direction = 'DESC' } = {}) {
-  const { data } = await api.get('/reports/top-products', { params: { from, to, direction } });
+export async function fetchTopProductsReport({ from, to, direction = 'DESC', search = '' } = {}) {
+  const { data } = await api.get('/reports/top-products', { params: { from, to, direction, search } });
   return data;
 }
 
@@ -585,13 +585,13 @@ export async function fetchCounterHandoverReport({ from, to, counter = '' } = {}
   return data;
 }
 
-export async function fetchExceptionReport({ from, to } = {}) {
-  const { data } = await api.get('/reports/exceptions', { params: { from, to } });
+export async function fetchExceptionReport({ from, to, search = '' } = {}) {
+  const { data } = await api.get('/reports/exceptions', { params: { from, to, search } });
   return data;
 }
 
-export async function fetchExchangeBillsReport({ from, to, counter = '' } = {}) {
-  const { data } = await api.get('/reports/exchange-bills', { params: { from, to, counter } });
+export async function fetchExchangeBillsReport({ from, to, counter = '', search = '' } = {}) {
+  const { data } = await api.get('/reports/exchange-bills', { params: { from, to, counter, search } });
   return data;
 }
 
@@ -621,7 +621,10 @@ export async function checkout(payload) {
   } catch (error) {
     // A timed-out POST may already have committed on the server. Retrying with
     // the same checkout_request_id is safe and returns that committed invoice.
-    if (error?.code !== 'ECONNABORTED' && !/timeout/i.test(String(error?.message || ''))) throw error;
+    // A rolled-back database deadlock is also safe to retry once with that ID.
+    const timedOut = error?.code === 'ECONNABORTED' || /timeout/i.test(String(error?.message || ''));
+    const retryableDeadlock = error?.response?.status === 503 && error?.response?.data?.retryable === true;
+    if (!timedOut && !retryableDeadlock) throw error;
     const { data } = await api.post('/billing/checkout', payload, { timeout: 10000 });
     return data;
   }
@@ -678,11 +681,11 @@ export async function runBackup() {
   return data;
 }
 
-export async function downloadBackup(file) {
-  const { data } = await api.get(`/backup/download/${encodeURIComponent(file)}`, {
+export async function downloadBackup(fileKey, downloadName = fileKey) {
+  const { data } = await api.get(`/backup/download/${encodeURIComponent(fileKey)}`, {
     responseType: 'blob'
   });
-  downloadBlob(data, file);
+  downloadBlob(data, downloadName);
 }
 
 export async function restoreBackup(file, confirmation) {
@@ -822,6 +825,11 @@ export async function searchInwardSuppliers(search = '') {
   return Array.isArray(data) ? data : [];
 }
 
+export async function fetchPendingInwards() {
+  const { data } = await api.get('/inward/history');
+  return Array.isArray(data) ? data.filter((entry) => entry.posting_status === 'DRAFT') : [];
+}
+
 export async function fetchInwardDetails(id) {
   const { data } = await api.get(`/inward/${encodeURIComponent(id)}/details`);
   return data;
@@ -911,6 +919,11 @@ export async function fetchDayBook(dateOrRange) {
 export async function fetchAccountingBooks(dateOrRange) {
   const params = typeof dateOrRange === 'object' ? dateOrRange : { date: dateOrRange };
   const { data } = await api.get('/books/accounting', { params });
+  return data;
+}
+
+export async function saveNamedLedgerEntry(payload) {
+  const { data } = await api.post('/books/named-ledgers/manual', payload);
   return data;
 }
 

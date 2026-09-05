@@ -119,30 +119,47 @@ export default function App() {
         const health = await fetchBackupHealth();
         if (cancelled) return;
         const now = new Date();
-        if (now.getHours() < 10) {
+        if (now.getHours() < 9) {
           setBackupAlert(null);
           return;
         }
+
+        const isSameDay = (value) => value
+          && value.getFullYear() === now.getFullYear()
+          && value.getMonth() === now.getMonth()
+          && value.getDate() === now.getDate();
         const latestSuccess = health?.latestSuccessAt ? new Date(health.latestSuccessAt) : null;
-        const backedUpToday = latestSuccess
-          && latestSuccess.getFullYear() === now.getFullYear()
-          && latestSuccess.getMonth() === now.getMonth()
-          && latestSuccess.getDate() === now.getDate();
-        if (backedUpToday) {
+        const statusAt = health?.at ? new Date(health.at) : null;
+        const backedUpToday = isSameDay(latestSuccess) && health?.status === 'success';
+        const failedToday = isSameDay(statusAt) && health?.status === 'failed';
+
+        let alertStatus = '';
+        if (backedUpToday) alertStatus = 'success';
+        else if (failedToday) alertStatus = 'failed';
+        else if (now.getHours() >= 10) alertStatus = 'pending';
+        else {
           setBackupAlert(null);
           return;
         }
+
         const dayKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
-        const alertId = `daily-backup-missing-${dayKey}`;
-        if (window.sessionStorage.getItem('badizo_backup_alert_ack') === alertId) return;
-        setBackupAlert({ ...health, alertId });
+        const eventKey = alertStatus === 'success'
+          ? (health?.file || dayKey)
+          : (health?.at || health?.latestSuccessAt || dayKey);
+        const alertId = `daily-backup-${alertStatus}-${eventKey}`;
+        const acknowledgedAlert = window.localStorage.getItem('badizo_backup_alert_ack');
+        if (acknowledgedAlert === alertId) return;
+        if (alertStatus === 'success' && acknowledgedAlert?.startsWith('daily-backup-success-')) {
+          const legacyEvent = new Date(acknowledgedAlert.slice('daily-backup-success-'.length));
+          if (!Number.isNaN(legacyEvent.getTime()) && isSameDay(legacyEvent)) return;
+        }
+        setBackupAlert({ ...health, status: alertStatus, alertId });
       } catch (_err) {
         // Backend connectivity is monitored separately; do not show a false backup alarm.
       }
     };
-    const openedAfterWarningTime = new Date().getHours() >= 10;
-    const initialTimer = window.setTimeout(checkBackupHealth, openedAfterWarningTime ? 10 * 60 * 1000 : 0);
-    const timer = window.setInterval(checkBackupHealth, 5 * 60 * 1000);
+    const initialTimer = window.setTimeout(checkBackupHealth, 15 * 1000);
+    const timer = window.setInterval(checkBackupHealth, 60 * 1000);
     return () => {
       cancelled = true;
       window.clearTimeout(initialTimer);
@@ -198,19 +215,27 @@ export default function App() {
     <div className="app-shell">
       {backupAlert && (
         <div className="backup-alert-toast-wrap" role="alert" aria-live="assertive">
-          <div className="backup-alert-modal">
-            <h2>Today Backup Pending</h2>
-            <p>Local / Google Drive daily backup complete Ã Â°â€¢Ã Â°Â¾Ã Â°Â²Ã Â±â€¡Ã Â°Â¦Ã Â±Â.</p>
-            <p className="backup-alert-detail">{backupAlert.message || 'Please contact Admin / Server person.'}</p>
-            {backupAlert.latestSuccessAt && <p className="backup-alert-time">Last success: {new Date(backupAlert.latestSuccessAt).toLocaleString()}</p>}
-            <button type="button" onClick={() => {
-              window.sessionStorage.setItem('badizo_backup_alert_ack', backupAlert.alertId);
+          <div className={`backup-alert-modal ${backupAlert.status === 'success' ? 'backup-alert-success' : ''}`}>
+            <button className="backup-alert-close" type="button" aria-label="Close backup notification" onClick={() => {
+              window.localStorage.setItem('badizo_backup_alert_ack', backupAlert.alertId);
               setBackupAlert(null);
-            }}>OK Ã¢â‚¬â€ Inform Admin</button>
+            }}>×</button>
+            <h2>{backupAlert.status === 'success' ? 'Google Drive Backup Successful' : 'Google Drive Backup Pending'}</h2>
+            <p>{backupAlert.status === 'success'
+              ? 'Today database backup was uploaded to Google Drive.'
+              : 'Today Google Drive backup is not complete.'}</p>
+            <p className="backup-alert-detail">{backupAlert.status === 'success'
+              ? (backupAlert.message || 'Backup uploaded successfully.')
+              : (backupAlert.message || 'Backup has not run yet. Check server power, internet and Google authorization.')}</p>
+            {backupAlert.file && <p className="backup-alert-time">File: {backupAlert.file}</p>}
+            {backupAlert.at && <p className="backup-alert-time">Checked: {new Date(backupAlert.at).toLocaleString()}</p>}
+            <button type="button" onClick={() => {
+              window.localStorage.setItem('badizo_backup_alert_ack', backupAlert.alertId);
+              setBackupAlert(null);
+            }}>{backupAlert.status === 'success' ? 'OK' : 'OK — Inform Admin'}</button>
           </div>
         </div>
-      )}
-      <header className="topbar">
+      )}      <header className="topbar">
         <div className="brand-wrap">
           <img className="brand-image" src="/badizo-logo-transparent.png" alt="Badizo" />
           <span className="brand-pulse-dots" aria-hidden="true">

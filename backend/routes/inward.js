@@ -942,6 +942,25 @@ router.get('/recent', async (_req, res) => {
   }
 });
 
+router.get('/pending', async (_req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT id, inward_no, financial_year, serial_no, supplier_name, supplier_invoice_no, supplier_invoice_date, payment_mode,
+              payment_terms, due_date, paid_amount, due_amount, payment_status,
+              item_count, total_qty, taxable_total, gst_total, total_cgst, total_sgst, total_igst,
+              grand_total, tax_type, posting_status, created_by, created_at
+       FROM inward_entries
+       WHERE posting_status = 'DRAFT'
+       ORDER BY id DESC
+       LIMIT 500`
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Pending inward fetch failed:', err.message);
+    res.status(500).json({ error: 'Unable to fetch pending inward invoices.' });
+  }
+});
+
 router.get('/history', async (req, res) => {
   const { from, to, supplier = '', invoice = '' } = req.query || {};
   const clauses = [];

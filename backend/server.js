@@ -10,6 +10,30 @@ const { logError, logInfo } = require('./services/logger');
 
 const app = express();
 const heartbeatLogPath = path.join(__dirname, 'logs', 'heartbeat.log');
+const HEARTBEAT_LOG_MAX_BYTES = 20 * 1024 * 1024;
+const HEARTBEAT_LOG_KEEP_FILES = 5;
+let lastHeartbeatLogCheckAt = 0;
+
+function rotateHeartbeatLogIfNeeded() {
+  const now = Date.now();
+  if (now - lastHeartbeatLogCheckAt < 60 * 1000) return;
+  lastHeartbeatLogCheckAt = now;
+
+  try {
+    if (!fs.existsSync(heartbeatLogPath) || fs.statSync(heartbeatLogPath).size < HEARTBEAT_LOG_MAX_BYTES) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    fs.renameSync(heartbeatLogPath, path.join(path.dirname(heartbeatLogPath), `heartbeat-${stamp}.log`));
+    const archives = fs.readdirSync(path.dirname(heartbeatLogPath))
+      .filter((name) => /^heartbeat-.*\.log$/i.test(name))
+      .sort()
+      .reverse();
+    archives.slice(HEARTBEAT_LOG_KEEP_FILES).forEach((name) => {
+      fs.rmSync(path.join(path.dirname(heartbeatLogPath), name), { force: true });
+    });
+  } catch (_err) {
+    // Heartbeat logging must never interrupt billing or health responses.
+  }
+}
 
 function getCorsOptions() {
   const allowedOrigins = String(process.env.BADIZO_CORS_ORIGINS || '')
@@ -38,6 +62,7 @@ app.use(express.json({ limit: process.env.BADIZO_JSON_LIMIT || '250mb' }));
 function recordHealthPing(req) {
   try {
     fs.mkdirSync(path.dirname(heartbeatLogPath), { recursive: true });
+    rotateHeartbeatLogIfNeeded();
     const entry = {
       at: new Date().toISOString(),
       at_local: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true }),
@@ -160,6 +185,7 @@ function startLegacyFrontendRedirect(targetPort) {
 
 const scheduledDailyBackupDir = 'D:\\BadizoCloudBackups\\daily';
 const scheduledDailyBackupScript = path.join(__dirname, 'scripts', 'badizo_cloud_backup.js');
+const scheduledDailyBackupStatusFile = 'D:\\BadizoCloudBackups\\backup-status.json';
 let dailyCatchUpRunning = false;
 
 function localDatePrefix(date = new Date()) {
@@ -171,9 +197,20 @@ function hasTodayScheduledBackup() {
   try {
     const prefix = localDatePrefix();
     return fs.existsSync(scheduledDailyBackupDir)
-      && fs.readdirSync(scheduledDailyBackupDir).some((name) => name.startsWith(prefix) && name.endsWith('.sql'));
+      && fs.readdirSync(scheduledDailyBackupDir).some((name) => name.startsWith(prefix) && (name.endsWith('.sql.gz') || name.endsWith('.sql')));
   } catch (err) {
     logError('Daily backup catch-up check failed', err);
+    return false;
+  }
+}
+
+function hasTodaySuccessfulCloudBackup() {
+  try {
+    if (!fs.existsSync(scheduledDailyBackupStatusFile)) return false;
+    const status = JSON.parse(fs.readFileSync(scheduledDailyBackupStatusFile, 'utf8'));
+    return status.status === 'success' && String(status.file || '').startsWith(localDatePrefix());
+  } catch (err) {
+    logError('Daily cloud backup status check failed', err);
     return false;
   }
 }
@@ -181,11 +218,15 @@ function hasTodayScheduledBackup() {
 function checkDailyBackupCatchUp() {
   const now = new Date();
   const afterBackupGraceTime = now.getHours() > 9 || (now.getHours() === 9 && now.getMinutes() >= 5);
-  if (!afterBackupGraceTime || dailyCatchUpRunning || hasTodayScheduledBackup()) return;
+  if (!afterBackupGraceTime || dailyCatchUpRunning) return;
 
+  const hasTodayLocal = hasTodayScheduledBackup();
+  if (hasTodayLocal && hasTodaySuccessfulCloudBackup()) return;
+
+  const mode = hasTodayLocal ? 'sync-pending' : 'daily';
   dailyCatchUpRunning = true;
-  logInfo('Starting missed daily backup catch-up', { at: now.toISOString() });
-  const child = spawn(process.execPath, [scheduledDailyBackupScript, 'daily'], {
+  logInfo('Starting daily backup recovery', { at: now.toISOString(), mode });
+  const child = spawn(process.execPath, [scheduledDailyBackupScript, mode], {
     cwd: __dirname,
     windowsHide: true,
     stdio: 'ignore'

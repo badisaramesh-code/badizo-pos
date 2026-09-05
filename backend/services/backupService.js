@@ -14,6 +14,13 @@ const {
 } = require('./googleDriveBackupService');
 
 const backupDir = process.env.BACKUP_DIR || path.join(__dirname, '..', 'backups');
+const scheduledBackupDir = process.env.BADIZO_SCHEDULED_BACKUP_DIR || 'D:\\BadizoCloudBackups\\daily';
+const backupSources = [
+  { key: 'manual', dir: backupDir, label: 'Manual / System' },
+  { key: 'scheduled', dir: scheduledBackupDir, label: 'Scheduled / Google Drive' }
+].filter((source, index, sources) => (
+  sources.findIndex((item) => path.resolve(item.dir).toLowerCase() === path.resolve(source.dir).toLowerCase()) === index
+));
 
 function timestampForFile(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
@@ -107,17 +114,21 @@ async function ensureBackupDir() {
   await fs.promises.mkdir(backupDir, { recursive: true });
 }
 
-async function listBackups() {
-  await ensureBackupDir();
-  const files = await fs.promises.readdir(backupDir);
+async function listBackupsInDirectory(source) {
+  if (!fs.existsSync(source.dir)) return [];
+  const files = await fs.promises.readdir(source.dir);
   const backups = await Promise.all(
     files
       .filter((file) => file.endsWith('.sql'))
       .map(async (file) => {
-        const filePath = path.join(backupDir, file);
+        const filePath = path.join(source.dir, file);
         const stats = await fs.promises.stat(filePath);
         return {
           file,
+          fileKey: `${source.key}::${file}`,
+          source: source.key,
+          sourceLabel: source.label,
+          directory: source.dir,
           sizeBytes: stats.size,
           createdAt: stats.birthtime,
           modifiedAt: stats.mtime
@@ -125,11 +136,18 @@ async function listBackups() {
       })
   );
 
+  return backups;
+}
+
+async function listBackups() {
+  await ensureBackupDir();
+  const backups = (await Promise.all(backupSources.map(listBackupsInDirectory))).flat();
   return backups.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
 }
 
 async function pruneLocalBackups(keepCount = driveKeepCount()) {
-  const backups = await listBackups();
+  const backups = (await listBackupsInDirectory(backupSources.find((source) => source.key === 'manual')))
+    .sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
   const oldBackups = backups.slice(keepCount);
   const deleted = [];
   for (const backup of oldBackups) {
@@ -155,10 +173,17 @@ async function getDailyBackupTime() {
   }
 }
 
-function getBackupPath(fileName) {
+function getBackupPath(fileNameOrKey) {
+  const value = String(fileNameOrKey || '');
+  const separatorIndex = value.indexOf('::');
+  const sourceKey = separatorIndex > 0 ? value.slice(0, separatorIndex) : 'manual';
+  const fileName = separatorIndex > 0 ? value.slice(separatorIndex + 2) : value;
+  const source = backupSources.find((item) => item.key === sourceKey);
+  if (!source) return null;
   const safeName = path.basename(fileName);
+  if (safeName !== fileName) return null;
   if (!safeName.endsWith('.sql')) return null;
-  return path.join(backupDir, safeName);
+  return path.join(source.dir, safeName);
 }
 
 async function restoreDatabaseBackup(fileName) {
@@ -321,7 +346,9 @@ async function syncPendingBackupsToDrive() {
 
   cloudSyncRunning = true;
   try {
-    const [localBackups, driveBackups] = await Promise.all([listBackups(), listDriveBackups()]);
+    const manualSource = backupSources.find((source) => source.key === 'manual');
+    const [localRows, driveBackups] = await Promise.all([listBackupsInDirectory(manualSource), listDriveBackups()]);
+    const localBackups = localRows.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
     const uploadedNames = new Set(driveBackups.map((backup) => String(backup.name || '')));
     const pending = localBackups
       .slice(0, driveKeepCount())
@@ -363,6 +390,7 @@ function scheduleCloudBackupSync() {
 
 module.exports = {
   backupDir,
+  backupSources,
   getBackupPath,
   listBackups,
   pruneLocalBackups,

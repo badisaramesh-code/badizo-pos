@@ -8,6 +8,7 @@ router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
 const CASH_ACCOUNT_LEDGER = 'Counter Closing Cash Account';
 const CASH_ACCOUNT_MANUAL_SOURCE = 'CASH_ACCOUNT_MANUAL';
+const NAMED_LEDGER_MANUAL_SOURCE = 'NAMED_LEDGER_MANUAL';
 const COUNTER_CASH_DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
 
 async function hasColumn(tableName, columnName) {
@@ -306,27 +307,36 @@ router.get('/accounting', async (req, res) => {
               COALESCE((SELECT REPLACE(i.billing_counter, 'Counter', 'C') FROM invoices i WHERE DATE(i.created_at) = cle.entry_date AND i.billing_counter REGEXP CONCAT('Counter', cle.counter_no, '$') ORDER BY i.created_at DESC LIMIT 1), CONCAT('C', cle.counter_no)) AS counter_label,
               cle.source_id,
               chs.sheet_no,
-              UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END)) AS account_name,
+              CASE
+                WHEN cle.source_type = 'NAMED_LEDGER_MANUAL' THEN UPPER(TRIM(cle.account_name))
+                WHEN account_counts.entry_count >= 2
+                  THEN UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END))
+                ELSE 'GENERAL'
+              END AS account_name,
+              UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END)) AS source_account_name,
               cle.details,
+              cle.remarks,
               cle.direction,
               cle.amount,
               cle.created_by,
               DATE_FORMAT(cle.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
        FROM counter_cash_ledger_entries cle
        LEFT JOIN counter_handover_sheets chs ON chs.id = cle.source_id
-       INNER JOIN (
-         SELECT UPPER(TRIM(CASE WHEN account_name LIKE 'Expense - %' THEN SUBSTRING(account_name, 11) ELSE account_name END)) AS normalized_name
+       LEFT JOIN (
+         SELECT UPPER(TRIM(CASE WHEN account_name LIKE 'Expense - %' THEN SUBSTRING(account_name, 11) ELSE account_name END)) AS normalized_name,
+                COUNT(*) AS entry_count
          FROM counter_cash_ledger_entries
          WHERE source_type = 'COUNTER_HANDOVER'
            AND payment_mode NOT IN ('CLOSING_BASE', 'SALES', 'CASH_NOTES')
+           AND entry_date <= ?
          GROUP BY UPPER(TRIM(CASE WHEN account_name LIKE 'Expense - %' THEN SUBSTRING(account_name, 11) ELSE account_name END))
-         HAVING COUNT(*) >= 2
-       ) repeated ON repeated.normalized_name = UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END))
-       WHERE cle.source_type = 'COUNTER_HANDOVER'
-         AND cle.payment_mode NOT IN ('CLOSING_BASE', 'SALES', 'CASH_NOTES')
+       ) account_counts ON account_counts.normalized_name = UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END))
+       WHERE ((cle.source_type = 'COUNTER_HANDOVER'
+               AND cle.payment_mode NOT IN ('CLOSING_BASE', 'SALES', 'CASH_NOTES'))
+              OR cle.source_type = 'NAMED_LEDGER_MANUAL')
          AND cle.entry_date <= ?
        ORDER BY account_name ASC, cle.entry_date ASC, cle.created_at ASC, cle.id ASC`,
-      [to]
+      [to, to]
     );
 
     const [cashAccountManualEntries] = await db.query(
@@ -751,7 +761,8 @@ router.get('/accounting', async (req, res) => {
       pending: bankSettlementRows.reduce((sum, row) => sum + Number(row.Difference || 0), 0)
     };
 
-    const namedLedgerNames = [...new Set(namedLedgerEntries.map((row) => row.account_name))];
+    const namedLedgerNames = [...new Set(namedLedgerEntries.map((row) => row.account_name))]
+      .sort((left, right) => left === 'GENERAL' ? -1 : right === 'GENERAL' ? 1 : left.localeCompare(right));
     const namedLedgerBalances = {};
     const namedLedgerRows = [];
     namedLedgerEntries.forEach((row) => {
@@ -765,7 +776,10 @@ router.get('/accounting', async (req, res) => {
         Account: account,
         Counter: row.counter_label || ('C' + row.counter_no),
         Sheet: row.sheet_no || '',
-        Details: row.details || '',
+        Details: account === 'GENERAL'
+          ? [row.source_account_name, row.details].filter(Boolean).join(' - ')
+          : (row.details || ''),
+        Remarks: row.remarks || '',
         'DR Rs': row.direction === 'DR' ? amount : 0,
         'CR Rs': row.direction === 'CR' ? amount : 0,
         'Balance Rs': namedLedgerBalances[account],
@@ -785,7 +799,7 @@ router.get('/accounting', async (req, res) => {
           title: 'Named Ledgers',
           summary: { accounts: namedLedgerNames.length, entries: namedLedgerRows.length, dr: namedLedgerDr, cr: namedLedgerCr },
           accountNames: namedLedgerNames,
-          columns: ['Date', 'Account', 'Counter', 'Sheet', 'Details', 'DR Rs', 'CR Rs', 'Balance Rs', 'dr/cr', 'Posted By', 'Time'],
+          columns: ['Date', 'Account', 'Counter', 'Sheet', 'Details', 'Remarks', 'DR Rs', 'CR Rs', 'Balance Rs', 'dr/cr', 'Posted By', 'Time'],
           rows: namedLedgerRows
         },
         dayBook: {
@@ -1032,6 +1046,33 @@ router.get('/accounting', async (req, res) => {
   }
 });
 
+router.post('/named-ledgers/manual', async (req, res) => {
+  try {
+    const entryDate = normalizeDate(req.body?.entry_date || req.body?.date);
+    const accountName = String(req.body?.account_name || '').trim().toUpperCase().slice(0, 160);
+    const details = String(req.body?.details || '').trim().slice(0, 255);
+    const remarks = String(req.body?.remarks || '').trim().slice(0, 255);
+    const direction = String(req.body?.direction || '').trim().toUpperCase();
+    const amount = parseMoney(req.body?.amount);
+
+    if (!accountName) return res.status(400).json({ error: 'Ledger account is required.' });
+    if (!details) return res.status(400).json({ error: 'Details are required.' });
+    if (!['DR', 'CR'].includes(direction)) return res.status(400).json({ error: 'Select DR or CR.' });
+    if (amount <= 0) return res.status(400).json({ error: 'Amount must be greater than zero.' });
+
+    const [result] = await db.query(
+      `INSERT INTO counter_cash_ledger_entries
+       (entry_date, counter_no, source_type, source_id, account_name, details, remarks, direction, amount, payment_mode, created_by)
+       VALUES (?, NULL, ?, NULL, ?, ?, ?, ?, ?, 'MANUAL', ?)`,
+      [entryDate, NAMED_LEDGER_MANUAL_SOURCE, accountName, details, remarks, direction, amount, req.user.username]
+    );
+
+    res.json({ success: true, id: result.insertId, entry_date: entryDate, account_name: accountName, details, remarks, direction, amount });
+  } catch (err) {
+    console.error('Named ledger manual entry failed:', err.message);
+    res.status(500).json({ error: 'Unable to save named ledger entry.' });
+  }
+});
 router.post('/counter-closing-cash-account/manual', async (req, res) => {
   try {
     const entryDate = normalizeDate(req.body?.entry_date || req.body?.date);

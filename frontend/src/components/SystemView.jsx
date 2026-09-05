@@ -67,7 +67,7 @@ const DEFAULT_BARCODE_PRINTER_TEMPLATES = {
   'tsc-244-1-33x25-single.prn': {
     label: '38 x 25 mm Two-Up',
     printer: 'TSC TE244',
-    shares: ['\\\\localhost\\TSC-244-2']
+    shares: ['\\\\localhost\\TSC TTP-244 Pro', '\\\\localhost\\TSC-244-2', '\\\\localhost\\TSC TE244']
   },
   'tsc-te244-40x40-two-up.prn': {
     label: '40 x 40 mm Two-Up',
@@ -465,15 +465,15 @@ export default function SystemView() {
     }
   }
 
-  async function handleRestoreBackup(file) {
-    const confirmation = window.prompt(`Restore ${file}? This can overwrite current data. Type RESTORE BADIZO POS to continue.`);
+  async function handleRestoreBackup(fileKey, displayName = fileKey) {
+    const confirmation = window.prompt(`Restore ${displayName}? This can overwrite current data. Type RESTORE BADIZO POS to continue.`);
     if (confirmation !== 'RESTORE BADIZO POS') return;
 
     setStatusMessage('');
     setErrorMessage('');
     try {
-      await restoreBackup(file, confirmation);
-      setStatusMessage(`Backup restored from ${file}. Restart backend and refresh all counters.`);
+      await restoreBackup(fileKey, confirmation);
+      setStatusMessage(`Backup restored from ${displayName}. Restart backend and refresh all counters.`);
       await loadAuditLogs();
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to restore backup.');
@@ -1163,7 +1163,7 @@ export default function SystemView() {
             <div className="panel-body form-stack">
               <div className="change-box backup-folder-box">
                 <span>Daily backup runs at <strong>{settings.backup_daily_time || '09:00'}</strong>.</span>
-                <span>Backup folder: <strong>{backupInfo.backupDir || 'backend/backups'}</strong></span>
+                <span>Backup folders: <strong>{(backupInfo.backupDirs || []).map((item) => item.directory).join(' | ') || backupInfo.backupDir || 'backend/backups'}</strong></span>
               </div>
               <div className="settings-section settings-inline-section system-file-card setup-file-backup">
                 <label>
@@ -1188,14 +1188,14 @@ export default function SystemView() {
                     <tr><td colSpan="4">No backups created yet.</td></tr>
                   ) : (
                     backupInfo.backups.slice(0, 8).map((backup) => (
-                      <tr key={backup.file}>
-                        <td className="mono">{backup.file}</td>
+                      <tr key={backup.fileKey || backup.file}>
+                        <td className="mono">{backup.file}<br /><small>{backup.sourceLabel || 'System Backup'}</small></td>
                         <td>{formatBytes(backup.sizeBytes)}</td>
                         <td>{backup.modifiedAt ? new Date(backup.modifiedAt).toLocaleString() : '-'}</td>
                         <td>
                           <div className="table-actions">
-                            <button className="secondary-button" onClick={() => downloadBackup(backup.file)}>Download</button>
-                            <button className="danger-button" onClick={() => handleRestoreBackup(backup.file)}>Restore</button>
+                            <button className="secondary-button" onClick={() => downloadBackup(backup.fileKey || backup.file, backup.file)}>Download</button>
+                            <button className="danger-button" onClick={() => handleRestoreBackup(backup.fileKey || backup.file, backup.file)}>Restore</button>
                           </div>
                         </td>
                       </tr>

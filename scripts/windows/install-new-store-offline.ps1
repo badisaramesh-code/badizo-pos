@@ -103,6 +103,10 @@ try {
   New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot 'backend\logs') | Out-Null
 
   $serverIp = Set-FixedServerIp -IpAddress $fixedServerIp
+  $mysqlDump = Join-Path (Split-Path $mysql) 'mysqldump.exe'
+  if (!(Test-Path -LiteralPath $mysqlDump)) { throw 'mysqldump.exe was not found beside mysql.exe.' }
+  $backupRoot = if (Test-Path -LiteralPath 'D:\') { 'D:\BadizoPOSBackups' } else { 'C:\BadizoPOSBackups' }
+  New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
   $envLines = @(
     'DB_HOST=localhost',
     "DB_USER=$dbUser",
@@ -110,7 +114,14 @@ try {
     'DB_NAME=badizo_pos',
     'HOST=0.0.0.0',
     'PORT=5000',
-    'BADIZO_LEGACY_FRONTEND_PORT=3000'
+    'BADIZO_LEGACY_FRONTEND_PORT=3000',
+    "BACKUP_DIR=$backupRoot",
+    'BACKUP_DAILY_TIME=22:30',
+    "MYSQLDUMP_PATH=$mysqlDump",
+    "MYSQL_PATH=$mysql",
+    'GOOGLE_DRIVE_BACKUP_ENABLED=false',
+    'GOOGLE_DRIVE_BACKUP_KEEP_COUNT=3',
+    'GOOGLE_DRIVE_RETRY_MINUTES=10'
   )
   $envLines | Set-Content -LiteralPath (Join-Path $InstallRoot 'backend\.env') -Encoding UTF8
 
@@ -152,16 +163,20 @@ Set-Location $backend
   }
   if (!$healthy) { throw "Server did not become healthy. Check $InstallRoot\backend\logs\server.err.log" }
 
-  $desktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
-  $urlFile = Join-Path $desktop 'Badizo POS Server.url'
-  @("[InternetShortcut]", "URL=http://${serverIp}:5000") | Set-Content -LiteralPath $urlFile -Encoding ASCII
-
   Write-Host ''
   Write-Host 'BADIZO SERVER INSTALLATION SUCCESSFUL' -ForegroundColor Green
   Write-Host "Server URL: http://${serverIp}:5000" -ForegroundColor Green
   Write-Host "Health URL: http://${serverIp}:5000/api/health" -ForegroundColor Green
-  Write-Host 'IMPORTANT: Reserve this IP in the router or configure it as static.' -ForegroundColor Yellow
-  Start-Process "http://localhost:5000"
+  Write-Host "Local daily backup: $backupRoot at 22:30" -ForegroundColor Green
+  Write-Host 'IMPORTANT: Reserve 192.168.1.10 in the router to prevent IP conflicts.' -ForegroundColor Yellow
+
+  Step 'Installing Badizo desktop app with official B shortcut'
+  $clientSetup = Join-Path $payload 'setup-slave-app.ps1'
+  $desktopInstaller = Join-Path $payload 'Badizo Setup 1.0.0.exe'
+  $clientArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$clientSetup,'-ServerIp',$serverIp,'-LoginMode','server','-InstallerPath',$desktopInstaller)
+  $clientProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $clientArgs -Wait -PassThru
+  if ($clientProcess.ExitCode -ne 0) { throw 'Server desktop app installation failed.' }
+  Write-Host 'Use the Badizo B desktop shortcut. Browser URL is only for diagnostics.' -ForegroundColor Green
 } catch {
   Remove-Item Env:\MYSQL_PWD -ErrorAction SilentlyContinue
   Write-Host ''

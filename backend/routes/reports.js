@@ -287,12 +287,20 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
     const from = normalizeDate(req.query.from || req.query.date);
     const to = normalizeDate(req.query.to || from, from);
     const counter = normalizeCounter(req.query.counter);
+    const search = String(req.query.search || '').trim();
     const values = [from, to];
     let counterSql = '';
+    let searchSql = '';
 
     if (counter) {
       counterSql = 'AND LOWER(TRIM(i.billing_counter)) = LOWER(?)';
       values.push(counter);
+    }
+
+    if (search) {
+      searchSql = 'AND (i.invoice_no LIKE ? OR i.customer_phone LIKE ? OR i.customer_name LIKE ?)';
+      const like = `%${search}%`;
+      values.push(like, like, like);
     }
 
     const [rows] = await db.query(
@@ -301,6 +309,7 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
          DATE_FORMAT(i.created_at, '%d-%m-%Y') AS bill_date,
          TIME_FORMAT(i.created_at, '%H:%i') AS bill_time,
          i.customer_name,
+         i.customer_phone,
          COALESCE(item_counts.item_count, 0) AS item_count,
          i.sub_total,
          i.gst_total,
@@ -319,6 +328,7 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
        WHERE DATE(i.created_at) BETWEEN ? AND ?
        AND i.invoice_status <> 'CANCELLED'
        ${counterSql}
+       ${searchSql}
        ORDER BY i.created_at DESC`,
       values
     );
@@ -336,7 +346,7 @@ router.get('/daily-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
       exchangeNetTotal: acc.exchangeNetTotal + (Number(row.exchange_total || 0) > 0 ? Number(row.grand_total || 0) : 0)
     }), { billCount: 0, itemCount: 0, taxable: 0, gst: 0, saleTotal: 0, total: 0, exchangeBillCount: 0, exchangeSaleTotal: 0, exchangeLess: 0, exchangeNetTotal: 0 });
 
-    res.json({ from, to, counter: counter || 'ALL', rows, totals });
+    res.json({ from, to, counter: counter || 'ALL', search, rows, totals });
   } catch (err) {
     console.error('Daily sales report failed:', err.message);
     res.status(500).json({ error: 'Unable to load daily sales report.' });
@@ -348,8 +358,9 @@ router.get('/daily-sales/export', authorize('SERVER', 'ADMIN'), async (req, res)
     const from = normalizeDate(req.query.from || req.query.date);
     const to = normalizeDate(req.query.to || from, from);
     const counter = normalizeCounter(req.query.counter);
-    const { rows, totals } = await getDailySalesForExport(from, to, counter);
-    const headers = ['invoice_no', 'date', 'time', 'customer', 'items', 'taxable', 'gst', 'sale_total', 'exchange_less', 'net_total', 'payment_mode', 'counter'];
+    const search = String(req.query.search || '').trim();
+    const { rows, totals } = await getDailySalesForExport(from, to, counter, search);
+    const headers = ['invoice_no', 'date', 'time', 'customer', 'phone', 'items', 'taxable', 'gst', 'sale_total', 'exchange_less', 'net_total', 'payment_mode', 'counter'];
     const csv = [
       csvLine(headers),
       ...rows.map((row) => csvLine([
@@ -357,6 +368,7 @@ router.get('/daily-sales/export', authorize('SERVER', 'ADMIN'), async (req, res)
         row.bill_date,
         row.bill_time,
         row.customer_name,
+        row.customer_phone,
         row.item_count,
         row.sub_total,
         row.gst_total,
@@ -367,8 +379,8 @@ router.get('/daily-sales/export', authorize('SERVER', 'ADMIN'), async (req, res)
         row.billing_counter
       ])),
       '',
-      csvLine(['TOTAL', '', '', '', totals.itemCount, totals.taxable, totals.gst, totals.saleTotal, totals.exchangeLess, totals.total, '', counter || 'ALL']),
-      csvLine(['EXCHANGE BILLS', '', '', '', totals.exchangeBillCount, '', '', totals.exchangeSaleTotal, totals.exchangeLess, totals.exchangeNetTotal, '', counter || 'ALL'])
+      csvLine(['TOTAL', '', '', '', '', totals.itemCount, totals.taxable, totals.gst, totals.saleTotal, totals.exchangeLess, totals.total, '', counter || 'ALL']),
+      csvLine(['EXCHANGE BILLS', '', '', '', '', totals.exchangeBillCount, '', '', totals.exchangeSaleTotal, totals.exchangeLess, totals.exchangeNetTotal, '', counter || 'ALL'])
     ].join('\n');
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -599,16 +611,16 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
     }
 
     const [paymentRows] = await db.query(
-      `SELECT payment_mode, COALESCE(SUM(amount), 0) AS total
+      `SELECT invoice_no, payment_mode, amount, grand_total
        FROM (
-         SELECT ip.invoice_no, ip.payment_mode, ip.amount
+         SELECT ip.invoice_no, ip.payment_mode, ip.amount, i.grand_total
          FROM invoice_payments ip
          INNER JOIN invoices i ON i.invoice_no = ip.invoice_no
          WHERE i.created_at >= ? AND i.created_at < ?
            AND i.invoice_status <> 'CANCELLED'
            ${counterSql}
          UNION ALL
-         SELECT i.invoice_no, i.payment_mode, i.grand_total AS amount
+         SELECT i.invoice_no, i.payment_mode, i.grand_total AS amount, i.grand_total
          FROM invoices i
          LEFT JOIN invoice_payments ip ON ip.invoice_no = i.invoice_no
          WHERE i.created_at >= ? AND i.created_at < ?
@@ -616,7 +628,7 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
            AND ip.id IS NULL
            ${counterSql}
        ) payments
-       GROUP BY payment_mode`,
+       ORDER BY invoice_no`,
       counter ? [...paymentValues, ...paymentValues] : [start, nextEnd, start, nextEnd]
     );
 
@@ -627,7 +639,9 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
          COALESCE(SUM(gst_total), 0) AS gst_total,
          COALESCE(SUM(sub_total + gst_total), 0) AS sale_total,
          COALESCE(SUM(exchange_total), 0) AS exchange_total,
+         COALESCE(SUM(loyalty_redeemed_amount), 0) AS loyalty_redeemed_total,
          COALESCE(SUM(grand_total), 0) AS net_total,
+         COALESCE(SUM(grand_total + exchange_total + loyalty_redeemed_amount - sub_total - gst_total), 0) AS round_off_total,
          COALESCE(SUM(CASE WHEN exchange_total > 0 THEN 1 ELSE 0 END), 0) AS exchange_bill_count,
          COALESCE(SUM(CASE WHEN exchange_total > 0 THEN sub_total + gst_total ELSE 0 END), 0) AS exchange_sale_total,
          COALESCE(SUM(CASE WHEN exchange_total > 0 THEN grand_total ELSE 0 END), 0) AS exchange_net_total
@@ -689,14 +703,29 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
       total: 0
     };
 
-    paymentRows.forEach((row) => {
-      const mode = String(row.payment_mode || '').toUpperCase();
-      const total = Number(row.total || 0);
-      if (mode === 'UPI') paymentTotals.upi += total;
-      else if (mode === 'CARD') paymentTotals.card += total;
-      else if (mode === 'CASH') paymentTotals.cash += total;
-      else paymentTotals.other += total;
-      paymentTotals.total += total;
+    const paymentsByInvoice = paymentRows.reduce((map, row) => {
+      const invoiceNo = String(row.invoice_no || '');
+      if (!map.has(invoiceNo)) map.set(invoiceNo, []);
+      map.get(invoiceNo).push(row);
+      return map;
+    }, new Map());
+
+    paymentsByInvoice.forEach((rows) => {
+      const invoiceTotal = Number(rows[0]?.grand_total || 0);
+      const recordedTotal = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+      let allocated = 0;
+      rows.forEach((row, index) => {
+        const amount = index === rows.length - 1
+          ? invoiceTotal - allocated
+          : (recordedTotal > 0 ? invoiceTotal * Number(row.amount || 0) / recordedTotal : 0);
+        allocated += amount;
+        const mode = String(row.payment_mode || '').toUpperCase();
+        if (mode === 'UPI') paymentTotals.upi += amount;
+        else if (mode === 'CARD') paymentTotals.card += amount;
+        else if (mode === 'CASH') paymentTotals.cash += amount;
+        else paymentTotals.other += amount;
+      });
+      paymentTotals.total += invoiceTotal;
     });
 
     const baseGstSlabs = [0, 3, 5, 18, 40];
@@ -729,6 +758,8 @@ router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (r
       gst: Number(invoiceRows[0]?.gst_total || 0),
       saleTotal: Number(invoiceRows[0]?.sale_total || 0),
       exchangeTotal: Number(invoiceRows[0]?.exchange_total || 0),
+      loyaltyRedeemedTotal: Number(invoiceRows[0]?.loyalty_redeemed_total || 0),
+      roundOffTotal: Number(invoiceRows[0]?.round_off_total || 0),
       exchangeBillCount: Number(invoiceRows[0]?.exchange_bill_count || 0),
       exchangeSaleTotal: Number(invoiceRows[0]?.exchange_sale_total || 0),
       exchangeNetTotal: Number(invoiceRows[0]?.exchange_net_total || 0),
@@ -844,12 +875,18 @@ router.get('/counter-handover', authorize('SERVER', 'ADMIN'), async (req, res) =
   }
 });
 
-async function getDailySalesForExport(from, to, counter) {
+async function getDailySalesForExport(from, to, counter, search = '') {
   const values = [from, to];
   let counterSql = '';
+  let searchSql = '';
   if (counter) {
     counterSql = 'AND LOWER(TRIM(i.billing_counter)) = LOWER(?)';
     values.push(counter);
+  }
+  if (search) {
+    searchSql = 'AND (i.invoice_no LIKE ? OR i.customer_phone LIKE ? OR i.customer_name LIKE ?)';
+    const like = `%${search}%`;
+    values.push(like, like, like);
   }
 
   const [rows] = await db.query(
@@ -858,6 +895,7 @@ async function getDailySalesForExport(from, to, counter) {
        DATE_FORMAT(i.created_at, '%d-%m-%Y') AS bill_date,
        TIME_FORMAT(i.created_at, '%H:%i') AS bill_time,
        i.customer_name,
+       i.customer_phone,
        COALESCE(item_counts.item_count, 0) AS item_count,
        i.sub_total,
        i.gst_total,
@@ -876,6 +914,7 @@ async function getDailySalesForExport(from, to, counter) {
      WHERE DATE(i.created_at) BETWEEN ? AND ?
      AND i.invoice_status <> 'CANCELLED'
      ${counterSql}
+     ${searchSql}
      ORDER BY i.created_at DESC`,
     values
   );
@@ -1080,21 +1119,23 @@ router.get('/product-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
 
 router.get('/monthly-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
   try {
-    const month = String(req.query.month || todayIso().slice(0, 7));
-    const safeMonth = /^\d{4}-\d{2}$/.test(month) ? month : todayIso().slice(0, 7);
+    const currentFinancialYear = getFinancialYearBounds(getFinancialYear());
+    const from = normalizeDate(req.query.from, currentFinancialYear.from);
+    const to = normalizeDate(req.query.to, todayIso());
+    const { start, end, nextEnd } = dateRangeBounds(from, to);
     const [rows] = await db.query(
-      `SELECT DATE(created_at) AS sale_date,
+      `SELECT DATE_FORMAT(created_at, '%Y-%m') AS sale_month,
               COUNT(*) AS bill_count,
               COALESCE(SUM(sub_total), 0) AS taxable,
               COALESCE(SUM(gst_total), 0) AS gst,
               COALESCE(SUM(grand_total), 0) AS total
        FROM invoices
-       WHERE DATE_FORMAT(created_at, '%Y-%m') = ? AND invoice_status <> 'CANCELLED'
-       GROUP BY DATE(created_at)
-       ORDER BY sale_date ASC`,
-      [safeMonth]
+       WHERE created_at >= ? AND created_at < ? AND invoice_status <> 'CANCELLED'
+       GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+       ORDER BY sale_month ASC`,
+      [start, nextEnd]
     );
-    res.json({ month: safeMonth, rows });
+    res.json({ from: start, to: end, rows });
   } catch (err) {
     console.error('Monthly sales report failed:', err.message);
     res.status(500).json({ error: 'Unable to load monthly sales report.' });
@@ -1104,14 +1145,26 @@ router.get('/monthly-sales', authorize('SERVER', 'ADMIN'), async (req, res) => {
 router.get('/stock', authorize('SERVER', 'ADMIN'), async (req, res) => {
   try {
     const lowOnly = String(req.query.low_only || '') === '1';
-    const whereSql = lowOnly ? 'WHERE stock_qty <= min_stock_alert' : '';
+    const search = String(req.query.search || '').trim();
+    const includeAll = String(req.query.all || '') === '1';
+    const filters = [];
+    const values = [];
+    if (lowOnly) filters.push('stock_qty <= min_stock_alert');
+    if (search) {
+      filters.push('(barcode LIKE ? OR product_code LIKE ? OR product_name LIKE ? OR hsn_code LIKE ?)');
+      const like = `%${search}%`;
+      values.push(like, like, like, like);
+    }
+    const whereSql = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const limitSql = includeAll ? '' : 'LIMIT 1000';
     const [rows] = await db.query(
       `SELECT barcode, product_code, product_name, hsn_code, gst_percent, purchase_price, sale_price, stock_qty, min_stock_alert,
               stock_qty * purchase_price AS stock_value
        FROM products
        ${whereSql}
        ORDER BY product_name ASC
-       LIMIT 1000`
+       ${limitSql}`,
+      values
     );
     res.json(rows);
   } catch (err) {
@@ -1125,15 +1178,24 @@ router.get('/top-products', authorize('SERVER', 'ADMIN'), async (req, res) => {
     const from = normalizeDate(req.query.from, todayIso());
     const to = normalizeDate(req.query.to, from);
     const direction = String(req.query.direction || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    const search = String(req.query.search || '').trim();
+    const values = [from, to];
+    let searchSql = '';
+    if (search) {
+      searchSql = 'AND (ii.barcode LIKE ? OR ii.product_name LIKE ?)';
+      const like = `%${search}%`;
+      values.push(like, like);
+    }
     const [rows] = await db.query(
       `SELECT ii.barcode, ii.product_name, SUM(ii.quantity) AS quantity, SUM(ii.quantity * ii.sale_price) AS total
        FROM invoice_items ii
        INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
        WHERE DATE(i.created_at) BETWEEN ? AND ? AND i.invoice_status <> 'CANCELLED'
+       ${searchSql}
        GROUP BY ii.barcode, ii.product_name
        ORDER BY quantity ${direction}
        LIMIT 50`,
-      [from, to]
+      values
     );
     res.json({ from, to, rows });
   } catch (err) {
@@ -1171,12 +1233,19 @@ router.get('/exchange-bills', authorize('SERVER', 'ADMIN'), async (req, res) => 
     const from = normalizeDate(req.query.from, todayIso());
     const to = normalizeDate(req.query.to, from);
     const counter = normalizeCounter(req.query.counter);
+    const search = String(req.query.search || '').trim();
     const values = [from, to];
     let counterSql = '';
+    let searchSql = '';
 
     if (counter) {
       counterSql = 'AND i.billing_counter REGEXP ?';
       values.push(counterRegexForLabel(counter));
+    }
+    if (search) {
+      searchSql = 'AND (i.invoice_no LIKE ? OR i.customer_name LIKE ? OR i.customer_phone LIKE ?)';
+      const like = `%${search}%`;
+      values.push(like, like, like);
     }
 
     const [rows] = await db.query(
@@ -1213,6 +1282,7 @@ router.get('/exchange-bills', authorize('SERVER', 'ADMIN'), async (req, res) => 
          AND i.invoice_status <> 'CANCELLED'
          AND i.exchange_total > 0
        ${counterSql}
+       ${searchSql}
        ORDER BY i.created_at DESC`,
       values
     );
@@ -1242,7 +1312,7 @@ router.get('/exchange-bills', authorize('SERVER', 'ADMIN'), async (req, res) => 
       netTotal: acc.netTotal + Number(row.grand_total || 0)
     }), { billCount: 0, itemCount: 0, exchangeItemCount: 0, saleTotal: 0, exchangeTotal: 0, netTotal: 0 });
 
-    res.json({ from, to, counter: counter || 'ALL', rows: normalizedRows, totals });
+    res.json({ from, to, counter: counter || 'ALL', search, rows: normalizedRows, totals });
   } catch (err) {
     console.error('Exchange report failed:', err.message);
     res.status(500).json({ error: 'Unable to load exchange bills report.' });
@@ -1698,21 +1768,28 @@ router.get('/exceptions', authorize('SERVER', 'ADMIN'), async (req, res) => {
   try {
     const from = normalizeDate(req.query.from, todayIso());
     const to = normalizeDate(req.query.to, from);
+    const search = String(req.query.search || '').trim();
+    const like = `%${search}%`;
+    const cancelledSearchSql = search ? 'AND (invoice_no LIKE ? OR customer_name LIKE ? OR customer_phone LIKE ? OR cancel_reason LIKE ?)' : '';
+    const returnSearchSql = search ? 'AND (sr.return_no LIKE ? OR sr.invoice_no LIKE ? OR i.customer_name LIKE ? OR i.customer_phone LIKE ? OR sr.reason LIKE ?)' : '';
     const [cancelled] = await db.query(
-      `SELECT invoice_no, customer_name, grand_total, cancel_reason, cancelled_by, cancelled_at
+      `SELECT invoice_no, customer_name, customer_phone, grand_total, cancel_reason, cancelled_by, cancelled_at
        FROM invoices
        WHERE DATE(created_at) BETWEEN ? AND ? AND invoice_status = 'CANCELLED'
+       ${cancelledSearchSql}
        ORDER BY cancelled_at DESC`,
-      [from, to]
+      search ? [from, to, like, like, like, like] : [from, to]
     );
     const [returns] = await db.query(
-      `SELECT return_no, invoice_no, reason, refund_mode, refund_total, created_by, created_at
-       FROM sales_returns
-       WHERE DATE(created_at) BETWEEN ? AND ?
-       ORDER BY created_at DESC`,
-      [from, to]
+      `SELECT sr.return_no, sr.invoice_no, i.customer_name, i.customer_phone, sr.reason, sr.refund_mode, sr.refund_total, sr.created_by, sr.created_at
+       FROM sales_returns sr
+       LEFT JOIN invoices i ON i.invoice_no = sr.invoice_no
+       WHERE DATE(sr.created_at) BETWEEN ? AND ?
+       ${returnSearchSql}
+       ORDER BY sr.created_at DESC`,
+      search ? [from, to, like, like, like, like, like] : [from, to]
     );
-    res.json({ from, to, cancelled, returns });
+    res.json({ from, to, search, cancelled, returns });
   } catch (err) {
     console.error('Exception report failed:', err.message);
     res.status(500).json({ error: 'Unable to load exception report.' });

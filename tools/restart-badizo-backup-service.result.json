@@ -1,0 +1,10 @@
+{
+    "Name":  "BadizoServer",
+    "Status":  4,
+    "StartType":  2,
+    "RestartedAt":  {
+                        "value":  "\/Date(1787547689470)\/",
+                        "DisplayHint":  2,
+                        "DateTime":  "24 August 2026 10:31:29"
+                    }
+}

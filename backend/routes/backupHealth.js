@@ -7,6 +7,10 @@ const router = express.Router();
 const backupRoot = 'D:\\BadizoCloudBackups';
 const statusFile = path.join(backupRoot, 'backup-status.json');
 const dailyDir = path.join(backupRoot, 'daily');
+const configuredKeepCount = Number.parseInt(process.env.GOOGLE_DRIVE_BACKUP_KEEP_COUNT, 10);
+const dailyKeepCount = Number.isInteger(configuredKeepCount) && configuredKeepCount > 0
+  ? configuredKeepCount
+  : 3;
 
 router.use(authenticate);
 
@@ -18,7 +22,7 @@ router.get('/', async (_req, res) => {
     }
 
     const dailyFiles = fs.existsSync(dailyDir)
-      ? (await fs.promises.readdir(dailyDir)).filter((name) => /^badizo_daily_.*\.sql$/i.test(name))
+      ? (await fs.promises.readdir(dailyDir)).filter((name) => /^badizo_daily_.*\.sql(?:\.gz)?$/i.test(name))
       : [];
     const dailyEntries = await Promise.all(dailyFiles.map(async (name) => {
       const stats = await fs.promises.stat(path.join(dailyDir, name));
@@ -33,10 +37,11 @@ router.get('/', async (_req, res) => {
       kind: status?.kind || 'daily',
       at: status?.at || null,
       file: status?.file || latest?.name || null,
-      latestSuccessAt: latest?.modifiedAt || null,
+      latestSuccessAt: status?.status === 'success' ? (status.at || latest?.modifiedAt || null) : null,
+      latestLocalBackupAt: latest?.modifiedAt || null,
       message: status?.status === 'failed' ? String(status.message || 'Backup failed.') : '',
       retainedDailyBackups: dailyFiles.length,
-      keepDailyBackups: 3
+      keepDailyBackups: dailyKeepCount
     });
   } catch (_err) {
     res.status(500).json({ error: 'Unable to read backup health.' });

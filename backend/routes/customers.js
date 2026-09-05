@@ -10,8 +10,8 @@ function toCustomer(row) {
     id: row.id,
     customer_name: row.customer_name,
     phone: row.phone,
-    gstin: row.gstin || '',
-    address: row.address || '',
+    gstin: row.resolved_gstin || row.gstin || '',
+    address: row.resolved_address || row.address || '',
     loyalty_points: Number(row.loyalty_points || 0),
     total_spent: Number(row.total_spent || 0),
     visit_count: Number(row.visit_count || 0),
@@ -121,7 +121,7 @@ router.get('/lookup/:phone', async (req, res) => {
   }
 });
 
-router.get('/', authorize('SERVER', 'ADMIN'), async (req, res) => {
+router.get('/', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     const search = String(req.query.search || '').trim();
     const values = [];
@@ -133,6 +133,20 @@ router.get('/', authorize('SERVER', 'ADMIN'), async (req, res) => {
 
     const [rows] = await db.query(
       `SELECT c.*,
+              COALESCE(NULLIF(c.gstin, ''), (
+                SELECT i2.customer_gstin FROM invoices i2
+                WHERE i2.customer_phone = c.phone
+                  AND i2.invoice_status <> 'CANCELLED'
+                  AND COALESCE(i2.customer_gstin, '') <> ''
+                ORDER BY i2.created_at DESC LIMIT 1
+              ), '') AS resolved_gstin,
+              COALESCE(NULLIF(c.address, ''), (
+                SELECT i3.customer_address FROM invoices i3
+                WHERE i3.customer_phone = c.phone
+                  AND i3.invoice_status <> 'CANCELLED'
+                  AND COALESCE(i3.customer_address, '') <> ''
+                ORDER BY i3.created_at DESC LIMIT 1
+              ), '') AS resolved_address,
               COUNT(i.invoice_no) AS billing_count,
               MAX(i.created_at) AS last_invoice_at
        FROM customers c

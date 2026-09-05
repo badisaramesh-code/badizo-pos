@@ -6,6 +6,7 @@ import {
   deleteInwardEntry,
   fetchSupplierDues,
   fetchInwardDetails,
+  fetchPendingInwards,
   fetchInwardDetailsByNumber,
   fetchInwardHistory,
   fetchPurchaseOrders,
@@ -273,6 +274,13 @@ function normalizeHeader(value) {
     .replace(/[_/-]+/g, ' ')
     .replace(/\s+/g, ' ');
 }
+function isExactImportedProductMatch(line, product) {
+  const barcodeMatch = Boolean(line?.barcode && product?.barcode
+    && String(line.barcode).trim().toUpperCase() === String(product.barcode).trim().toUpperCase());
+  const nameMatch = Boolean(line?.product && product?.product_name
+    && normalizeHeader(line.product) === normalizeHeader(product.product_name));
+  return barcodeMatch || nameMatch;
+}
 
 function buildColumnMap(headers) {
   return headers.reduce((map, header, index) => {
@@ -353,6 +361,15 @@ function parseInvoiceRows(text) {
     .map((line) => line.trim())
     .filter(Boolean);
 
+  const twoLineTaxRows = parseTwoLineTaxInvoiceRows(sourceLines);
+  if (twoLineTaxRows.length) return twoLineTaxRows;
+
+  const chandrahasaRows = parsePcProductDetailsInvoiceRows(sourceLines);
+  if (chandrahasaRows.length) return chandrahasaRows;
+
+  const unileverRows = parseUnileverInvoiceRows(sourceLines);
+  if (unileverRows.length) return unileverRows;
+
   const scannedDpQtyRows = parseScannedDpQtyInvoiceRows(sourceLines);
   if (scannedDpQtyRows.length) return scannedDpQtyRows;
   if (hasScannedDpQtyInvoiceHeader(sourceLines) || looksLikeScannedDpQtyInvoiceBody(sourceLines)) return [];
@@ -377,9 +394,6 @@ function parseInvoiceRows(text) {
 
   const einvoiceIgstRows = parseEinvoiceIgstRows(sourceLines);
   if (einvoiceIgstRows.length) return einvoiceIgstRows;
-
-  const unileverRows = parseUnileverInvoiceRows(sourceLines);
-  if (unileverRows.length) return unileverRows;
 
   const packCaseRows = parsePackCaseInvoiceRows(sourceLines);
   if (packCaseRows.length) return packCaseRows;
@@ -1666,7 +1680,7 @@ function parseUnileverInvoiceRow(rawLine) {
   const caseQty = toNumber(cases);
   const looseQty = toNumber(loosePieces);
   const hasCases = caseQty > 0;
-  const qty = hasCases ? caseQty : looseQty;
+  const qty = (caseQty * upcCount) + looseQty;
   if (!cleanHsnToken(hsn) || !product || qty <= 0) return null;
 
   return {
@@ -1674,7 +1688,7 @@ function parseUnileverInvoiceRow(rawLine) {
     product: normalizeOcrProductName(product),
     hsn_code: cleanHsnToken(hsn),
     mrp: cleanNumber(mrp),
-    price: hasCases ? (toNumber(baseRate) * upcCount).toFixed(2) : cleanNumber(baseRate),
+    price: cleanNumber(baseRate),
     discount_type: 'VALUE',
     discount: cleanNumber(discountAmount),
     scheme_type: 'VALUE',
@@ -1682,10 +1696,10 @@ function parseUnileverInvoiceRow(rawLine) {
     free: '',
     gst_percent: normalizeGstPercent(gstPercent),
     qty: cleanNumber(qty),
-    unit: hasCases ? 'CASE' : 'PCS',
-    purchase_unit_type: hasCases ? 'Carton' : 'Loose',
+    unit: 'PCS',
+    purchase_unit_type: 'Loose',
     purchase_unit_size: hasCases ? cleanNumber(upc) : '1',
-    stock_conversion_factor: hasCases ? cleanNumber(upc) : '1',
+    stock_conversion_factor: '1',
     batch_no: String(batch || '').toUpperCase() === 'NA' ? '' : String(batch || '').toUpperCase(),
     expiry_date: normalizeUnileverExpiry(expiry),
     taxable_amount: cleanNumber(taxableAmount),
@@ -2008,6 +2022,190 @@ function parseTallyPurchaseRow(line) {
   };
 }
 
+function parseTwoLineTaxInvoiceRows(lines) {
+  const headerText = lines.join(' ');
+  const hasMainHeader = /Item\s+Name\s+UOM\s+MRP\s+Rate\s+Qty\s+GrossAmt\s+Free\s+Disc%/i.test(headerText);
+  const hasTaxHeader = /HSN\s*\|?\s*Qty\s+in\s+SUOM\s+Taxable\s+Amt\s+CGST/i.test(headerText);
+  if (!hasMainHeader || !hasTaxHeader) return [];
+
+  const rows = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const first = parseTwoLineTaxInvoiceMainLine(lines[index]);
+    if (!first) continue;
+    const second = parseTwoLineTaxInvoiceTaxLine(lines[index + 1]);
+    if (!second) continue;
+    rows.push({
+      barcode: '',
+      product: first.product,
+      hsn_code: second.hsn_code,
+      mrp: first.mrp,
+      price: first.rate,
+      discount_type: 'PERCENT',
+      discount: first.discount_percent,
+      scheme_type: 'PERCENT',
+      scheme: '0',
+      free: first.free_qty,
+      gst_percent: normalizeGstPercent(second.gst_percent),
+      qty: first.qty,
+      unit: first.unit,
+      purchase_unit_type: /^(?:CFC|CASE|BOX)$/i.test(first.unit) ? 'Carton' : 'Loose',
+      purchase_unit_size: '1',
+      stock_conversion_factor: '1',
+      taxable_amount: second.taxable_amount,
+      total_amount: first.total_amount,
+      last_amount_input: 'TOTAL',
+      supplier_product_code: first.supplier_product_code,
+      secondary_quantity: second.secondary_quantity,
+      secondary_unit: second.secondary_unit
+    });
+    index += 1;
+  }
+
+  if (rows.length < 2) return [];
+  const roundOffLine = lines.find((line) => /Round\s+Off\s+Amt/i.test(line));
+  const roundOffMatch = String(roundOffLine || '').match(/Round\s+Off\s+Amt\s*:?\s*(?:\(([-+])\)\s*)?([-+]?\s*[\d,]+(?:\.\d+)?)/i);
+  if (roundOffMatch) {
+    const explicitValue = toNumber(cleanNumber(String(roundOffMatch[2]).replace(/\s+/g, '')));
+    const amount = roundOffMatch[1] === '-' ? -Math.abs(explicitValue) : explicitValue;
+    if (amount !== 0) {
+      rows.push({
+        barcode: 'ADJ-TWO-LINE-INVOICE-ROUND-OFF',
+        product: 'INVOICE ROUND OFF',
+        hsn_code: '',
+        mrp: '',
+        price: cleanNumber(amount),
+        discount_type: 'PERCENT',
+        discount: '',
+        scheme_type: 'PERCENT',
+        scheme: '',
+        free: '',
+        gst_percent: '0',
+        qty: '1',
+        unit: 'ADJ',
+        purchase_unit_type: 'Loose',
+        purchase_unit_size: '1',
+        stock_conversion_factor: '1',
+        taxable_amount: cleanNumber(amount),
+        total_amount: cleanNumber(amount),
+        last_amount_input: 'TOTAL',
+        is_adjustment: true
+      });
+    }
+  }
+  return rows;
+}
+
+function parseTwoLineTaxInvoiceMainLine(rawLine) {
+  const line = String(rawLine || '').replace(/\s+/g, ' ').trim();
+  const match = line.match(/^(\d{1,3})\s+(.+?)\s+(CFC|PAC|Pcs?\.?|CASE|BOX|BAG|PKT|Nos?\.?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)$/i);
+  if (!match) return null;
+  const [, , rawProduct, rawUnit, mrp, rate, qty, , freeQty, discountPercent, , , , totalAmount] = match;
+  const codeMatch = rawProduct.match(/^(.*)_([A-Za-z0-9]+)$/);
+  const product = normalizeOcrProductName(codeMatch ? codeMatch[1] : rawProduct);
+  if (!product || toNumber(cleanNumber(qty)) <= 0) return null;
+  return {
+    product,
+    supplier_product_code: codeMatch ? codeMatch[2] : '',
+    unit: String(rawUnit || '').replace(/\.$/, '').toUpperCase(),
+    mrp: cleanNumber(mrp),
+    rate: cleanNumber(rate),
+    qty: cleanNumber(qty),
+    free_qty: cleanNumber(freeQty),
+    discount_percent: cleanNumber(discountPercent),
+    total_amount: cleanNumber(totalAmount)
+  };
+}
+
+function parseTwoLineTaxInvoiceTaxLine(rawLine) {
+  const line = String(rawLine || '').replace(/\s+/g, ' ').trim();
+  const match = line.match(/^(\d{4,8})\s*\|?\s*([\d,]+(?:\.\d+)?)\s*([A-Za-z_]+)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)$/i);
+  if (!match) return null;
+  const [, hsn, secondaryQty, secondaryUnit, taxableAmount, cgstPercent, , sgstPercent] = match;
+  return {
+    hsn_code: cleanHsnToken(hsn),
+    secondary_quantity: cleanNumber(secondaryQty),
+    secondary_unit: String(secondaryUnit || '').toUpperCase(),
+    taxable_amount: cleanNumber(taxableAmount),
+    gst_percent: cleanNumber(toNumber(cleanNumber(cgstPercent)) + toNumber(cleanNumber(sgstPercent)))
+  };
+}
+function parsePcProductDetailsInvoiceRows(lines) {
+  const normalizedText = lines.join(' ');
+  const hasPcProductHeader = /HSN\s+P[\/-]C\s+PRODUCT\s+DETAILS/i.test(normalizedText);
+  const hasAmountColumns = /D\.?PRICE\s+MRP\s+Qty\.?\s+Unit\s+Price\s+C\.?D\s+GST\s*%/i.test(normalizedText);
+  if (!hasPcProductHeader || !hasAmountColumns) return [];
+
+  const rows = lines.map(parsePcProductDetailsInvoiceRow).filter(Boolean);
+  if (rows.length < 2) return [];
+
+  const roundedOffLine = lines.find((line) => /(?:Less\s*:)?\s*Rounded\s+Off/i.test(line));
+  const roundedOffMatch = String(roundedOffLine || '').match(/Rounded\s+Off\s*\(([-+])\)\s*([\d,]+(?:\.\d+)?)/i);
+  if (roundedOffMatch && toNumber(cleanNumber(roundedOffMatch[2])) > 0) {
+    const sign = roundedOffMatch[1] === '-' ? -1 : 1;
+    const amount = sign * toNumber(cleanNumber(roundedOffMatch[2]));
+    rows.push({
+      barcode: 'ADJ-PC-INVOICE-ROUND-OFF',
+      product: 'INVOICE ROUND OFF',
+      hsn_code: '',
+      mrp: '',
+      price: cleanNumber(amount),
+      discount_type: 'PERCENT',
+      discount: '',
+      scheme_type: 'PERCENT',
+      scheme: '',
+      free: '',
+      gst_percent: '0',
+      qty: '1',
+      unit: 'ADJ',
+      purchase_unit_type: 'Loose',
+      purchase_unit_size: '1',
+      stock_conversion_factor: '1',
+      total_amount: cleanNumber(amount),
+      taxable_amount: cleanNumber(amount),
+      last_amount_input: 'TOTAL',
+      is_adjustment: true
+    });
+  }
+
+  return rows;
+}
+
+function parsePcProductDetailsInvoiceRow(rawLine) {
+  const line = String(rawLine || '').replace(/\s+/g, ' ').trim();
+  const match = line.match(/^(\d{4,8})\s+(\d+(?:\.\d+)?)\s+(.+?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(Case|Pcs?\.?|SET|KATTA|Box|Pack)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)%\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)$/i);
+  if (!match) return null;
+
+  const [, hsn, piecesPerCase, rawProduct, , mrp, invoiceQty, rawUnit, unitPrice, , gstPercent, , , totalAmount] = match;
+  const packCount = Math.max(toNumber(piecesPerCase), 1);
+  const quantity = toNumber(invoiceQty);
+  const isCase = /^case$/i.test(rawUnit);
+  const stockQty = isCase ? quantity * packCount : quantity;
+  const normalizedUnitPrice = toNumber(cleanNumber(unitPrice));
+  const purchaseRate = isCase ? normalizedUnitPrice / packCount : normalizedUnitPrice;
+  const product = normalizeOcrProductName(rawProduct.replace(/\s+\d+(?:\.\d+)?\/-\s*$/, ''));
+  if (!product || stockQty <= 0) return null;
+
+  return {
+    barcode: '',
+    product,
+    hsn_code: cleanHsnToken(hsn),
+    mrp: cleanNumber(mrp),
+    price: purchaseRate > 0 ? purchaseRate.toFixed(4).replace(/0+$/, '').replace(/\.$/, '') : '0',
+    discount_type: 'PERCENT',
+    discount: '0',
+    scheme_type: 'PERCENT',
+    scheme: '0',
+    free: '',
+    gst_percent: normalizeGstPercent(gstPercent),
+    qty: cleanNumber(stockQty),
+    unit: 'PCS',
+    purchase_unit_type: 'Loose',
+    purchase_unit_size: cleanNumber(packCount),
+    stock_conversion_factor: '1',
+    total_amount: cleanNumber(totalAmount),
+    last_amount_input: 'TOTAL'
+  };
+}
 function parseFlexiblePurchaseInvoiceRows(lines, text = '') {
   const headerIndex = lines.findIndex((line, index) => {
     const headerText = normalizeHeader(lines.slice(index, index + 5).join(' '));
@@ -2294,10 +2492,10 @@ function buildInvoiceImportCheckMessage(rows, nextTaxType, text) {
     const isMatched = Math.abs(computed - expected) <= 0.1;
     return `${totalText} Badrinath model check: ${isMatched ? 'OK' : 'Check manually'} against Rs. 458500.36 with IGST Rs. 21833.36.`;
   }
-  if (/CHANDRAHASA\s+AGENCIES/i.test(text || '') && /HSN\s+P\/C\s+PRODUCT\s+DETAILS/i.test(text || '')) {
+  if (/HSN\s+P[\/-]C\s+PRODUCT\s+DETAILS/i.test(text || '')) {
     const expected = extractGrandTotalFromText(text) || 154815;
     const isMatched = Math.abs(computed - expected) <= 0.5;
-    return `${totalText} Chandrahasa P/C model check: ${isMatched ? 'OK' : 'Check manually'} against invoice grand total ${formatMoney(expected)}.`;
+    return `${totalText} P/C Product Details format check: ${isMatched ? 'OK' : 'Check manually'} against invoice grand total ${formatMoney(expected)}.`;
   }
   if (/HUL\s+Code|HUL_MAIN|VINAYAKA\s+AGENCIES/i.test(text || '')) {
     const expected = extractUnileverGrandTotal(text) || 389997;
@@ -2608,6 +2806,8 @@ function parseOcrInvoiceRows(lines) {
   });
 }
 
+export { parseInvoiceRows, parseTwoLineTaxInvoiceRows, parseTwoLineTaxInvoiceMainLine, parseTwoLineTaxInvoiceTaxLine, parsePcProductDetailsInvoiceRows, parsePcProductDetailsInvoiceRow, parseUnileverInvoiceRows, parseUnileverInvoiceRow, parseUnileverAdjustmentRow, isExactImportedProductMatch };
+
 export default function InwardEntryView() {
   const suppressSupplierLookupRef = useRef(false);
   const [activeInwardSection, setActiveInwardSection] = useState(INWARD_SECTIONS.ENTRY);
@@ -2619,6 +2819,7 @@ export default function InwardEntryView() {
   const [schemeType, setSchemeType] = useState('PERCENT');
   const [lines, setLines] = useState([blankLine]);
   const [recentInwards, setRecentInwards] = useState([]);
+  const [pendingInwards, setPendingInwards] = useState([]);
   const [historyFilters, setHistoryFilters] = useState({ from: '', to: '', supplier: '', invoice: '' });
   const [viewedInward, setViewedInward] = useState(null);
   const [sourceDraftId, setSourceDraftId] = useState(null);
@@ -2675,6 +2876,7 @@ export default function InwardEntryView() {
 
   useEffect(() => {
     loadRecentInwards();
+    loadPendingInwards();
   }, []);
 
   useEffect(() => {
@@ -2767,16 +2969,20 @@ export default function InwardEntryView() {
       total: acc.total + calculated.amount
     };
   }, { qty: 0, taxable: 0, discount: 0, gst: 0, cgst: 0, sgst: 0, igst: 0, total: 0 }), [discountType, lines, schemeType, taxType]);
-  const pendingInwards = useMemo(() => (
-    recentInwards.filter((entry) => entry.posting_status === 'DRAFT')
-  ), [recentInwards]);
-
   async function loadRecentInwards() {
     try {
       const hasFilters = historyFilters.from || historyFilters.to || historyFilters.supplier || historyFilters.invoice;
       setRecentInwards(hasFilters ? await fetchInwardHistory(historyFilters) : await fetchRecentInwards());
     } catch (err) {
       setRecentInwards([]);
+    }
+  }
+
+  async function loadPendingInwards() {
+    try {
+      setPendingInwards(await fetchPendingInwards());
+    } catch (err) {
+      setPendingInwards([]);
     }
   }
 
@@ -2975,14 +3181,21 @@ export default function InwardEntryView() {
   }
 
   async function hydrateImportedProducts(importedRows) {
-    const settledRows = await Promise.all(importedRows.map(async (line) => {
-      try {
-        const product = await findProductForLine(line);
-        return { line: mergeProductIntoLine(line, product), matched: Boolean(product) };
-      } catch (err) {
-        return { line, matched: false };
-      }
-    }));
+    const settledRows = [];
+    const batchSize = 10;
+    for (let start = 0; start < importedRows.length; start += batchSize) {
+      const batch = importedRows.slice(start, start + batchSize);
+      const batchRows = await Promise.all(batch.map(async (line) => {
+        try {
+          const product = await findProductForLine(line);
+          const exactProduct = isExactImportedProductMatch(line, product) ? product : null;
+          return { line: mergeProductIntoLine(line, exactProduct), matched: Boolean(exactProduct) };
+        } catch (err) {
+          return { line, matched: false };
+        }
+      }));
+      settledRows.push(...batchRows);
+    }
 
     return {
       rows: settledRows.map((row) => row.line),
@@ -3068,6 +3281,9 @@ export default function InwardEntryView() {
     setPaymentMode('Credit');
     setSourceDraftId(null);
     setEditingInward(null);
+    setViewedInward(null);
+    setInvoiceImportText('');
+    setOcrProgress('');
     setLines([{ ...blankLine }]);
   }
 
@@ -3144,8 +3360,8 @@ export default function InwardEntryView() {
             ? `Inward S.No ${result.serial_no || result.id} (${result.inward_no}) posted for ${result.item_count} mapped products. ${result.pending_item_count} rows stayed in Pending Invoices.`
             : `Inward S.No ${result.serial_no || result.id} (${result.inward_no}) posted. Stock updated for ${result.item_count} products.`);
       resetInwardForm();
-      await loadRecentInwards();
-      if (result.id || result.inward_no) await handleViewInward(result);
+      await Promise.all([loadRecentInwards(), loadPendingInwards()]);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save inward entry.');
     } finally {
@@ -3244,7 +3460,7 @@ export default function InwardEntryView() {
       if (sourceDraftId === entry.id) resetInwardForm();
       setViewedInward((current) => (current?.entry?.id === entry.id ? null : current));
       setStatusMessage(`Pending invoice S.No ${entry.id} deleted.`);
-      await loadRecentInwards();
+      await Promise.all([loadRecentInwards(), loadPendingInwards()]);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to delete pending invoice.');
     } finally {
@@ -3281,6 +3497,8 @@ export default function InwardEntryView() {
         const directRows = parseInvoiceRows(directPdfText);
         if (directRows.length) {
           setInvoiceImportText(directPdfText);
+          setLines(directRows);
+          setStatusMessage(` rows read from invoice PDF text. Matching products...`);
           setOcrProgress('Matching products...');
           const { rows: hydratedRows, matchedCount } = await hydrateImportedProducts(directRows);
           const nextTaxType = detectInvoiceTaxType(directPdfText);
@@ -3814,16 +4032,16 @@ export default function InwardEntryView() {
             {taxType === 'LOCAL' && <><span>CGST: <strong>{formatMoney(totals.cgst)}</strong></span><span>SGST: <strong>{formatMoney(totals.sgst)}</strong></span></>}
             {taxType === 'INTERSTATE' && <span>IGST: <strong>{formatMoney(totals.igst)}</strong></span>}
             <span>Grand Total: <strong>{formatMoney(totals.total)}</strong></span>
-            <button className="secondary-button" onClick={addRow}>Add Row</button>
+            <button className="secondary-button" type="button" onClick={addRow}>Add Row</button>
             {(sourceDraftId || editingInward) && (
               <button className="secondary-button" type="button" onClick={closePendingInvoiceEdit} disabled={isSaving}>
                 {editingInward ? 'Close Edit' : 'Close Pending Invoice'}
               </button>
             )}
-            <button className="secondary-button" onClick={() => handleSave('DRAFT')} disabled={isSaving}>
+            <button className="secondary-button" type="button" onClick={() => handleSave('DRAFT')} disabled={isSaving}>
               {isSaving ? 'Saving...' : 'Save Draft Bill'}
             </button>
-            <button className="primary-button compact-primary" onClick={() => handleSave('POSTED')} disabled={isSaving}>
+            <button className="primary-button compact-primary" type="button" onClick={() => handleSave('POSTED')} disabled={isSaving}>
               {isSaving ? 'Saving...' : editingInward ? 'Update Inward' : hasUnmappedProductLines() && !sourceDraftId ? 'Move to Pending' : 'Post Inward'}
             </button>
           </div>
@@ -4467,3 +4685,6 @@ function InwardPrintSheet({ inward }) {
     </div>
   );
 }
+
+
+
