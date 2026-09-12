@@ -1,0 +1,6 @@
+.report-approval-notifications { position: fixed; top: 76px; right: 18px; width: min(380px, calc(100vw - 36px)); max-height: calc(100vh - 100px); overflow-y: auto; z-index: 20000; display: grid; gap: 12px; }
+.report-approval-card { background: #fff; color: #182b25; border: 2px solid #238654; border-radius: 12px; padding: 18px; box-shadow: 0 8px 30px #0003; overflow-wrap: anywhere; }
+.report-approval-card h3 { margin: 0 0 12px; }
+.report-approval-card p { margin: 8px 0; }
+.report-approval-actions { display: flex; gap: 12px; margin-top: 14px; }
+@media print { .report-approval-notifications { display: none !important; } }

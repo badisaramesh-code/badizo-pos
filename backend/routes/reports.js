@@ -44,6 +44,39 @@ function dateRangeBounds(from, to = from) {
 
 router.use(authenticate);
 
+const approvals = require('../services/reportApprovalService').createApprovalStore();
+router.post('/approvals', authorize('COUNTER'), (req, res) => {
+  try { res.json(approvals.request(req.user, req.body.kind, req.body.params || {}, req.socket.remoteAddress)); }
+  catch (err) { res.status(400).json({ error: err.message }); }
+});
+router.get('/approvals', authorize('SERVER'), (_req, res) => res.json(approvals.pending()));
+router.get('/approvals/:id', authorize('COUNTER'), (req, res) => {
+  const row = approvals.get(req.params.id, req.user);
+  if (!row) return res.status(404).json({ error: 'Report request expired. Please request again.' });
+  res.json(row);
+});
+router.delete('/approvals/:id', authorize('COUNTER'), (req, res) => {
+  approvals.cancel(req.params.id, req.user);
+  res.sendStatus(204);
+});
+router.post('/approvals/:id', authorize('SERVER'), (req, res) => {
+  if (typeof req.body.approved !== 'boolean') return res.status(400).json({ error: 'Approval decision required.' });
+  const row = approvals.decide(req.params.id, req.body.approved, req.user);
+  if (!row) return res.status(409).json({ error: 'Request expired or already handled.' });
+  res.json(row);
+});
+function requireReportApproval(req, res, next) {
+  if (req.user.role !== 'COUNTER') return next();
+  try {
+    if (!approvals.permits(req.headers['x-report-approval'], req.user, req.path.slice(1), req.query)) {
+      return res.status(403).json({ code: 'REPORT_APPROVAL_REQUIRED', error: 'Server approval is required to view or print this report.' });
+    }
+    req.query.counter = '';
+    req.query.counter_no = req.user.counter_no;
+    next();
+  } catch (err) { res.status(403).json({ error: err.message }); }
+}
+
 router.get('/financial-years', authorize('SERVER', 'ADMIN'), async (_req, res) => {
   try {
     const [invoiceYears] = await db.query(
@@ -457,7 +490,7 @@ router.get('/reprints', authorize('SERVER', 'ADMIN'), async (req, res) => {
   }
 });
 
-router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
+router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), requireReportApproval, async (req, res) => {
   try {
     const date = normalizeDate(req.query.date, todayIso());
     const requestedCounter = normalizeCounterNoFromLabel(req.query.counter)
@@ -580,7 +613,7 @@ router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async 
       date,
       counterNo,
       counter: counterTotals,
-      allCounters: allTotals
+      allCounters: req.user.role === 'COUNTER' ? null : allTotals
     });
   } catch (err) {
     console.error('Counter sale slip failed:', err.message);
@@ -588,7 +621,7 @@ router.get('/counter-sale-slip', authorize('SERVER', 'ADMIN', 'COUNTER'), async 
   }
 });
 
-router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
+router.get('/pos-sale-report', authorize('SERVER', 'ADMIN', 'COUNTER'), requireReportApproval, async (req, res) => {
   try {
     const from = normalizeDate(req.query.from || req.query.date, todayIso());
     const to = normalizeDate(req.query.to || from, from);

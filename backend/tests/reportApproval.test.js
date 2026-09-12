@@ -1,0 +1,47 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { createApprovalStore } = require('../services/reportApprovalService');
+const user = { id: 3, role: 'COUNTER', session_id: 'abc', counter_no: 2, system_no: 1, username: 'counter2' };
+const server = { role: 'SERVER', username: 'server' };
+const params = { from: '2026-09-12', to: '2026-09-12' };
+test('approval required, server only, bound to login and report dates/type', () => {
+  const store = createApprovalStore();
+  const row = store.request(user, 'pos-sale-report', params, '127.0.0.1');
+  assert.equal(store.permits(row.id, user, 'pos-sale-report', params), false);
+  assert.equal(store.decide(row.id, true, { role: 'ADMIN' }), null);
+  assert.equal(store.decide(row.id, true, user), null);
+  store.decide(row.id, true, server);
+  assert.equal(store.permits(row.id, user, 'pos-sale-report', params), true);
+  assert.equal(store.permits(row.id, {...user, session_id: 'other'}, 'pos-sale-report', params), false);
+  assert.equal(store.permits(row.id, user, 'pos-sale-report', {...params, to: '2026-09-13'}), false);
+  assert.equal(store.permits(row.id, user, 'pos-sale-report', {...params, report_type: 'GST'}), false);
+  assert.equal(store.permits(row.id, user, 'counter-sale-slip', {date: params.from}), false);
+  assert.equal(store.get(row.id, {...user, id: 4}), null);
+});
+test('duplicate requests reuse approval, counter scope comes from login, expiry fails closed', () => {
+  let now = 1000;
+  const store = createApprovalStore(() => now);
+  const row = store.request(user, 'pos-sale-report', {...params, counter_no: 6}, '');
+  assert.equal(row.counterNo, 2);
+  assert.equal(store.request(user, 'pos-sale-report', params, '').id, row.id);
+  store.decide(row.id, true, server);
+  assert.equal(store.request(user, 'pos-sale-report', params, '').id, row.id);
+  now += 300001;
+  assert.equal(store.permits(row.id, user, 'pos-sale-report', params), false);
+  assert.equal(createApprovalStore().permits(row.id, user, 'pos-sale-report', params), false);
+});
+test('rejection, cancellation and pending expiry do not grant access', () => {
+  let now = 1000;
+  const store = createApprovalStore(() => now);
+  const row = store.request(user, 'counter-sale-slip', {date: params.from}, '');
+  store.decide(row.id, false, server);
+  assert.equal(store.permits(row.id, user, 'counter-sale-slip', {date: params.from}), false);
+  const retry = store.request(user, 'counter-sale-slip', {date: params.from}, '');
+  store.cancel(retry.id, {...user, session_id: 'other'});
+  assert.ok(store.get(retry.id, user));
+  store.cancel(retry.id, user);
+  assert.equal(store.get(retry.id, user), null);
+  store.request(user, 'pos-sale-report', params, '');
+  now += 600001;
+  assert.deepEqual(store.pending(), []);
+});

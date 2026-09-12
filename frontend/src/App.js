@@ -19,6 +19,7 @@ import SystemView from './components/SystemView';
 import { clearAuthSession, fetchBackupHealth, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
 import { APP_TABS, canAccessTab } from './config/navigation';
 import './styles.css';
+import ReportApprovalNotifications from './components/ReportApprovalNotifications';
 
 function currentSessionLabel(user) {
   if (!user) return '';
@@ -213,6 +214,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <ReportApprovalNotifications currentUser={currentUser} />
       {backupAlert && (
         <div className="backup-alert-toast-wrap" role="alert" aria-live="assertive">
           <div className={`backup-alert-modal ${backupAlert.status === 'success' ? 'backup-alert-success' : ''}`}>

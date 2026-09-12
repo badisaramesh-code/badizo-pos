@@ -440,21 +440,56 @@ export async function fetchFinancialArchive({ financialYear = '', search = '', t
   return data;
 }
 
+
+const pendingReportApprovals = new Set();
+export function cancelPendingReportApprovals() {
+  for (const request of pendingReportApprovals) request.cancelled = true;
+}
+export async function fetchPendingReportApprovals() {
+  return (await api.get('/reports/approvals')).data;
+}
+export async function decideReportApproval(id, approved) {
+  return (await api.post('/reports/approvals/' + id, { approved })).data;
+}
+async function approvedReportGet(kind, params) {
+  if (getStoredUser()?.role !== 'COUNTER') return api.get('/reports/' + kind, { params });
+  const token = getAuthStorage().getItem(AUTH_TOKEN_KEY);
+  const pending = { cancelled: false };
+  pendingReportApprovals.add(pending);
+  window.dispatchEvent(new CustomEvent('report-approval-wait', { detail: pendingReportApprovals.size }));
+  let request;
+  try {
+    ({ data: request } = await api.post('/reports/approvals', { kind, params }));
+    const deadline = Date.now() + 10 * 60 * 1000;
+    while (request.status === 'PENDING') {
+      if (pending.cancelled || token !== getAuthStorage().getItem(AUTH_TOKEN_KEY)) throw new Error('Report request cancelled.');
+      if (Date.now() >= deadline) throw new Error('Server approval timed out. Please request again.');
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      request = (await api.get('/reports/approvals/' + request.id)).data;
+    }
+    if (pending.cancelled || token !== getAuthStorage().getItem(AUTH_TOKEN_KEY)) throw new Error('Report request cancelled.');
+    if (request.status !== 'APPROVED') throw new Error('Server rejected the report request.');
+    return await api.get('/reports/' + kind, { params, headers: { 'X-Report-Approval': request.id } });
+  } finally {
+    if (request?.status === 'PENDING' && token === getAuthStorage().getItem(AUTH_TOKEN_KEY)) {
+      await api.delete('/reports/approvals/' + request.id).catch(() => {});
+    }
+    pendingReportApprovals.delete(pending);
+    window.dispatchEvent(new CustomEvent('report-approval-wait', { detail: pendingReportApprovals.size }));
+  }
+}
+
 export async function fetchCounterSaleSlip({ date, counterNo } = {}) {
-  const { data } = await api.get('/reports/counter-sale-slip', {
-    params: { date, counter_no: counterNo }
-  });
+  const { data } = await approvedReportGet('counter-sale-slip', { date, counter_no: counterNo });
   return data;
 }
 
 export async function fetchPosSaleReport({ from, to, reportType = 'ALL', counterNo = '' } = {}) {
   try {
-    const { data } = await api.get('/reports/pos-sale-report', {
-      params: { from, to, report_type: reportType, counter_no: counterNo }
-    });
+    const { data } = await approvedReportGet('pos-sale-report', { from, to, report_type: reportType, counter_no: counterNo });
     return data;
   } catch (err) {
-    if (err.response?.status !== 404) throw err;
+    if (getStoredUser()?.role === 'COUNTER' || err.response?.status !== 404) throw err;
   }
 
   const counter = counterNo ? `Counter ${counterNo}` : '';

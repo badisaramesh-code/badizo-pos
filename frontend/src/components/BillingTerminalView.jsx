@@ -8,6 +8,7 @@ import {
   deleteHeldBill,
   fetchHeldBills,
   fetchCounterSaleSlip,
+  cancelPendingReportApprovals,
   fetchInvoiceDetails,
   fetchInvoiceHistory,
   fetchNextInvoice,
@@ -292,12 +293,14 @@ function CounterSaleSlip({ slip, shop, printedAt }) {
       <div className="counter-sale-slip-line"><span>Exchange Less</span><strong>{formatSlipAmount(counter.exchangeLess)}</strong></div>
       <div className="counter-sale-slip-total"><span>Exchange Net</span><strong>{formatSlipAmount(counter.exchangeNetTotal)}</strong></div>
       <div className="counter-sale-slip-rule" />
+      {slip?.allCounters && <>
       <div className="counter-sale-slip-total all-sale"><span>All Counter Sale</span><strong>{formatSlipAmount(allCounters.totalSale)}</strong></div>
       <div className="counter-sale-slip-line"><span>All Exchange Bills</span><strong>{Number(allCounters.exchangeBillCount || 0)}</strong></div>
       <div className="counter-sale-slip-line"><span>All Exchange Sale</span><strong>{formatSlipAmount(allCounters.exchangeSaleTotal)}</strong></div>
       <div className="counter-sale-slip-line"><span>All Exchange Less</span><strong>{formatSlipAmount(allCounters.exchangeLess)}</strong></div>
       <div className="counter-sale-slip-total"><span>All Exchange Net</span><strong>{formatSlipAmount(allCounters.exchangeNetTotal)}</strong></div>
       <div className="counter-sale-slip-line"><span>Net Sale</span><strong>{formatSlipAmount(allCounters.totalSale)}</strong></div>
+      </>}
       <div className="counter-sale-slip-rule" />
       <div className="counter-sale-slip-footer">Cash handover slip</div>
     </div>
@@ -547,7 +550,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [saleReportFromDate, setSaleReportFromDate] = useState(localIsoDate());
   const [saleReportToDate, setSaleReportToDate] = useState(localIsoDate());
   const [saleReportType, setSaleReportType] = useState('ALL');
-  const [saleReportScope, setSaleReportScope] = useState('ALL');
+  const [saleReportScope, setSaleReportScope] = useState(currentUser?.role === 'COUNTER' ? 'CURRENT' : 'ALL');
   const [saleReport, setSaleReport] = useState(null);
   const [isSaleReportLoading, setIsSaleReportLoading] = useState(false);
   const [saleReportError, setSaleReportError] = useState('');
@@ -3098,7 +3101,7 @@ export default function BillingTerminalView({ isActive = true }) {
       from,
       to,
       reportType: String(formData?.get('sale_report_type') || saleReportType).toUpperCase(),
-      counterNo: String(formData?.get('sale_report_scope') || saleReportScope) === 'CURRENT'
+      counterNo: currentUser?.role === 'COUNTER' ? counterNo : String(formData?.get('sale_report_scope') || saleReportScope) === 'CURRENT'
         ? counterNo
         : (String(formData?.get('sale_report_scope') || saleReportScope) === 'ALL' ? '' : String(formData?.get('sale_report_scope') || saleReportScope))
     };
@@ -3107,6 +3110,7 @@ export default function BillingTerminalView({ isActive = true }) {
   async function loadSaleReportForPos(event) {
     setIsSaleReportLoading(true);
     setSaleReportError('');
+    setSaleReport(null);
     setErrorMessage('');
     try {
       const reportRequest = getSaleReportRequest(event);
@@ -6151,7 +6155,7 @@ export default function BillingTerminalView({ isActive = true }) {
                   onClick={() => {
                     setSaleReport(null);
                     setSaleReportError('');
-                    setSaleReportScope('ALL');
+                    setSaleReportScope(currentUser?.role === 'COUNTER' ? 'CURRENT' : 'ALL');
                     setShowSaleReport(true);
                   }}
                 >
@@ -6229,6 +6233,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 className="close-action-button"
                 type="button"
                 onClick={() => {
+                  cancelPendingReportApprovals();
                   setShowSaleReport(false);
                   scannerRef.current?.focus();
                 }}
@@ -6263,7 +6268,7 @@ export default function BillingTerminalView({ isActive = true }) {
                   </label>
                   <label>
                     <span className="field-label">Counter</span>
-                    <select className="select" name="sale_report_scope" value={saleReportScope} onChange={(event) => setSaleReportScope(event.target.value)}>
+                    <select className="select" name="sale_report_scope" disabled={currentUser?.role === 'COUNTER'} value={saleReportScope} onChange={(event) => setSaleReportScope(event.target.value)}>
                       <option value="ALL">All Counters</option>
                       <option value="CURRENT">Current Counter</option>
                       <option value="1">Counter 1</option>
