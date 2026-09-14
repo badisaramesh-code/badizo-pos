@@ -11,6 +11,7 @@ export const APP_TABS = [
   { key: 'closing', label: 'Counter Closing', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN, USER_ROLES.COUNTER] },
   { key: 'cashLedger', label: 'Cash Ledger', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'gatePass', label: 'Gate Pass', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN, USER_ROLES.SECURITY] },
+  { key: 'hospitality', label: 'Hospitality', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'inventory', label: 'Products', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },
   { key: 'importHistory', label: 'Import History', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN], hidden: true },
   { key: 'orders', label: 'Orders', roles: [USER_ROLES.SERVER, USER_ROLES.ADMIN] },

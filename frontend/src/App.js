@@ -6,6 +6,8 @@ import CounterCashLedgerView from './components/CounterCashLedgerView';
 import CounterClosingView from './components/CounterClosingView';
 import DashboardView from './components/DashboardView';
 import GatePassView from './components/GatePassView';
+import AnviGrandWebsite from './components/AnviGrandWebsite';
+import HospitalityView from './components/HospitalityView';
 import InwardEntryView from './components/InwardEntryView';
 import InventoryDashboardView from './components/InventoryDashboardView';
 import LoginView from './components/LoginView';
@@ -167,6 +169,10 @@ export default function App() {
       window.clearInterval(timer);
     };
   }, [currentUser]);
+  if (window.location.pathname === '/anvi-grand') {
+    return <AnviGrandWebsite />;
+  }
+
   if (!currentUser) {
     return <LoginView onLogin={setCurrentUser} />;
   }
@@ -193,6 +199,7 @@ export default function App() {
     closing: <CounterClosingView onClose={() => setActiveWorkspace('billing')} />,
     cashLedger: <CounterCashLedgerView />,
     gatePass: <GatePassView />,
+    hospitality: <HospitalityView />,
     inventory: (
       <InventoryDashboardView
         isActive={activeWorkspace === 'inventory'}

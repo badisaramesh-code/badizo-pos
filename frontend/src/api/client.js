@@ -1097,4 +1097,64 @@ export async function fetchAuditLogs(limit = 100) {
   return Array.isArray(data) ? data : [];
 }
 
+export async function fetchHospitalityPublic() {
+  const { data } = await api.get('/hospitality/public');
+  return data;
+}
+
+export async function fetchHospitalitySummary() {
+  const { data } = await api.get('/hospitality/summary');
+  return data;
+}
+
+export async function fetchHospitalityContent(type = 'GALLERY') {
+  const { data } = await api.get('/hospitality/content', { params: { type } });
+  return Array.isArray(data.rows) ? data.rows : [];
+}
+
+export async function saveHospitalityContent(payload) {
+  const { data } = await api.post('/hospitality/content', payload);
+  return data;
+}
+
+export async function deleteHospitalityContent(id) {
+  const { data } = await api.delete(`/hospitality/content/${encodeURIComponent(id)}`);
+  return data;
+}
+
+export async function fetchHospitalityBookings({ from, to, type = 'ALL' } = {}) {
+  const { data } = await api.get('/hospitality/bookings', { params: { from, to, type } });
+  return Array.isArray(data.rows) ? data.rows : [];
+}
+
+export async function saveHospitalityBooking(payload) {
+  const { data } = await api.post('/hospitality/bookings', payload);
+  return data;
+}
+
+export async function saveHospitalityPublicBooking(payload) {
+  const { data } = await api.post('/hospitality/public/bookings', payload);
+  return data;
+}
+
+export async function fetchHospitalityTasks({ from, to } = {}) {
+  const { data } = await api.get('/hospitality/tasks', { params: { from, to } });
+  return Array.isArray(data.rows) ? data.rows : [];
+}
+
+export async function saveHospitalityTask(payload) {
+  const { data } = await api.post('/hospitality/tasks', payload);
+  return data;
+}
+
+export async function fetchHospitalityStockMovements({ from, to } = {}) {
+  const { data } = await api.get('/hospitality/stock-movements', { params: { from, to } });
+  return Array.isArray(data.rows) ? data.rows : [];
+}
+
+export async function saveHospitalityStockMovement(payload) {
+  const { data } = await api.post('/hospitality/stock-movements', payload);
+  return data;
+}
+
 export default api;

@@ -13,6 +13,7 @@ const routes = [
   ['/api/counter-cash-ledger', require('./counterCashLedger')],
   ['/api/customers', require('./customers')],
   ['/api/gate-pass', require('./gatePass')],
+  ['/api/hospitality', require('./hospitality')],
   ['/api/inward', require('./inward')],
   ['/api/local-accounts', require('./localAccounts')],
   ['/api/settings', require('./settings')],
