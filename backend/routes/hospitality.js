@@ -10,7 +10,11 @@ const BUSINESS_PROFILE = {
   restaurant_name: 'CHIGURU',
   platform_name: 'ANVI GRAND Hospitality Platform',
   address: 'Near Benz Circle, Eluru Road, Vijayawada, Krishna Dist, Andhra Pradesh',
-  phone: '7569494949'
+  phone: '7569494949',
+  email: 'dpanvigrand@gmail.com',
+  admin_phone: '7569494949',
+  reception_phone: '7569494949',
+  restaurant_phone: '7569494949'
 };
 
 const CONTENT_TYPES = new Set(['GALLERY', 'FOOD', 'ROOM', 'BANQUET']);
@@ -55,9 +59,32 @@ function taskStatus(value) {
   return TASK_STATUS.has(normalized) ? normalized : 'OPEN';
 }
 
+async function addColumnIfMissing(tableName, columnName, definition) {
+  try {
+    await db.query(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  } catch (err) {
+    if (err.code !== 'ER_DUP_FIELDNAME') throw err;
+  }
+}
+
+async function loadProfile() {
+  const [rows] = await db.query('SELECT setting_key, setting_value FROM hospitality_settings');
+  return rows.reduce((profile, row) => {
+    profile[row.setting_key] = row.setting_value || '';
+    return profile;
+  }, { ...BUSINESS_PROFILE });
+}
+
 async function ensureSchema() {
   if (!schemaReadyPromise) {
     schemaReadyPromise = (async () => {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS hospitality_settings (
+          setting_key VARCHAR(80) PRIMARY KEY,
+          setting_value TEXT DEFAULT NULL,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
       await db.query(`
         CREATE TABLE IF NOT EXISTS hospitality_content (
           id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -81,12 +108,16 @@ async function ensureSchema() {
           id BIGINT AUTO_INCREMENT PRIMARY KEY,
           booking_type ENUM('ROOM','FOOD','BANQUET') NOT NULL,
           booking_date DATE NOT NULL,
+          end_date DATE DEFAULT NULL,
           time_slot VARCHAR(80) DEFAULT '',
           customer_name VARCHAR(160) NOT NULL,
           customer_phone VARCHAR(20) NOT NULL,
           customer_address VARCHAR(500) DEFAULT '',
           item_title VARCHAR(160) DEFAULT '',
           guest_count INT DEFAULT NULL,
+          food_plan ENUM('WITH_FOOD','WITHOUT_FOOD') NOT NULL DEFAULT 'WITHOUT_FOOD',
+          food_details VARCHAR(500) DEFAULT '',
+          complimentary_breakfast VARCHAR(500) DEFAULT '',
           total_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
           advance_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
           balance_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
@@ -100,6 +131,10 @@ async function ensureSchema() {
           INDEX idx_hospitality_bookings_status (status, booking_date)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
+      await addColumnIfMissing('hospitality_bookings', 'end_date', 'DATE DEFAULT NULL AFTER booking_date');
+      await addColumnIfMissing('hospitality_bookings', 'food_plan', "ENUM('WITH_FOOD','WITHOUT_FOOD') NOT NULL DEFAULT 'WITHOUT_FOOD' AFTER guest_count");
+      await addColumnIfMissing('hospitality_bookings', 'food_details', "VARCHAR(500) DEFAULT '' AFTER food_plan");
+      await addColumnIfMissing('hospitality_bookings', 'complimentary_breakfast', "VARCHAR(500) DEFAULT '' AFTER food_details");
       await db.query(`
         CREATE TABLE IF NOT EXISTS hospitality_ops_tasks (
           id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -134,6 +169,12 @@ async function ensureSchema() {
           INDEX idx_hospitality_stock_date_direction (movement_date, direction)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
+
+      await db.query(
+        `INSERT IGNORE INTO hospitality_settings (setting_key, setting_value)
+         VALUES ?`,
+        [Object.entries(BUSINESS_PROFILE)]
+      );
 
       const [[existing]] = await db.query('SELECT COUNT(*) AS count FROM hospitality_content');
       if (Number(existing.count || 0) === 0) {
@@ -172,7 +213,7 @@ router.get('/public', async (_req, res) => {
      WHERE is_active = 1
      ORDER BY content_type, display_order, id`
   );
-  res.json({ profile: BUSINESS_PROFILE, content });
+  res.json({ profile: await loadProfile(), content });
 });
 
 async function saveBookingRecord(req, res, createdBy = '') {
@@ -183,15 +224,24 @@ async function saveBookingRecord(req, res, createdBy = '') {
 
   const total = parseMoney(req.body?.total_amount);
   const advance = parseMoney(req.body?.advance_amount);
+  const startDate = normalizeDate(req.body?.booking_date, todayIso());
+  const requestedEndDate = normalizeDate(req.body?.end_date, startDate);
+  const bookingStartDate = startDate <= requestedEndDate ? startDate : requestedEndDate;
+  const bookingEndDate = startDate <= requestedEndDate ? requestedEndDate : startDate;
+  const foodPlan = String(req.body?.food_plan || '').toUpperCase() === 'WITH_FOOD' ? 'WITH_FOOD' : 'WITHOUT_FOOD';
   const payload = [
     bookingType(req.body?.booking_type),
-    normalizeDate(req.body?.booking_date, todayIso()),
+    bookingStartDate,
+    bookingEndDate,
     cleanText(req.body?.time_slot, 80),
     customerName,
     customerPhone,
     cleanText(req.body?.customer_address, 500),
     cleanText(req.body?.item_title, 160),
     Number.parseInt(req.body?.guest_count, 10) || null,
+    foodPlan,
+    cleanText(req.body?.food_details, 500),
+    cleanText(req.body?.complimentary_breakfast, 500),
     total,
     advance,
     Math.max(total - advance, 0),
@@ -203,8 +253,9 @@ async function saveBookingRecord(req, res, createdBy = '') {
   if (id) {
     await db.query(
       `UPDATE hospitality_bookings
-       SET booking_type = ?, booking_date = ?, time_slot = ?, customer_name = ?, customer_phone = ?,
-           customer_address = ?, item_title = ?, guest_count = ?, total_amount = ?, advance_amount = ?,
+       SET booking_type = ?, booking_date = ?, end_date = ?, time_slot = ?, customer_name = ?, customer_phone = ?,
+           customer_address = ?, item_title = ?, guest_count = ?, food_plan = ?, food_details = ?,
+           complimentary_breakfast = ?, total_amount = ?, advance_amount = ?,
            balance_amount = ?, payment_mode = ?, status = ?, notes = ?
        WHERE id = ?`,
       [...payload, id]
@@ -214,9 +265,10 @@ async function saveBookingRecord(req, res, createdBy = '') {
 
   const [result] = await db.query(
     `INSERT INTO hospitality_bookings
-     (booking_type, booking_date, time_slot, customer_name, customer_phone, customer_address, item_title,
-      guest_count, total_amount, advance_amount, balance_amount, payment_mode, status, notes, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (booking_type, booking_date, end_date, time_slot, customer_name, customer_phone, customer_address, item_title,
+      guest_count, food_plan, food_details, complimentary_breakfast, total_amount, advance_amount, balance_amount,
+      payment_mode, status, notes, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [...payload, createdBy]
   );
   res.json({ success: true, id: result.insertId });
@@ -233,7 +285,7 @@ router.get('/summary', async (_req, res) => {
   const [[bookings]] = await db.query(
     `SELECT
        COUNT(*) AS total_bookings,
-       SUM(CASE WHEN booking_date = CURDATE() THEN 1 ELSE 0 END) AS today_bookings,
+       SUM(CASE WHEN booking_date <= CURDATE() AND COALESCE(end_date, booking_date) >= CURDATE() THEN 1 ELSE 0 END) AS today_bookings,
        COALESCE(SUM(advance_amount), 0) AS advance_total,
        COALESCE(SUM(balance_amount), 0) AS balance_total
      FROM hospitality_bookings
@@ -252,7 +304,26 @@ router.get('/summary', async (_req, res) => {
      FROM hospitality_stock_movements
      WHERE movement_date = CURDATE()`
   );
-  res.json({ profile: BUSINESS_PROFILE, bookings, tasks, stock });
+  res.json({ profile: await loadProfile(), bookings, tasks, stock });
+});
+
+router.get('/profile', async (_req, res) => {
+  res.json({ profile: await loadProfile() });
+});
+
+router.post('/profile', async (req, res) => {
+  const allowed = ['hotel_name', 'restaurant_name', 'platform_name', 'address', 'phone', 'email', 'admin_phone', 'reception_phone', 'restaurant_phone'];
+  const values = allowed.map((key) => [
+    key,
+    key.includes('phone') ? cleanPhone(req.body?.[key]) : cleanText(req.body?.[key], key === 'address' ? 500 : 180)
+  ]);
+  await db.query(
+    `INSERT INTO hospitality_settings (setting_key, setting_value)
+     VALUES ?
+     ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`,
+    [values]
+  );
+  res.json({ success: true, profile: await loadProfile() });
 });
 
 router.get('/content', async (req, res) => {
@@ -314,16 +385,19 @@ router.get('/bookings', async (req, res) => {
   const from = normalizeDate(req.query.from, todayIso());
   const to = normalizeDate(req.query.to, from);
   const type = String(req.query.type || 'ALL').toUpperCase();
-  const params = [from <= to ? from : to, from <= to ? to : from];
-  const where = ['booking_date BETWEEN ? AND ?'];
+  const rangeStart = from <= to ? from : to;
+  const rangeEnd = from <= to ? to : from;
+  const params = [rangeEnd, rangeStart];
+  const where = ['booking_date <= ? AND COALESCE(end_date, booking_date) >= ?'];
   if (BOOKING_TYPES.has(type)) {
     where.push('booking_type = ?');
     params.push(type);
   }
   const [rows] = await db.query(
-    `SELECT id, booking_type, DATE_FORMAT(booking_date, '%Y-%m-%d') AS booking_date, time_slot,
+    `SELECT id, booking_type, DATE_FORMAT(booking_date, '%Y-%m-%d') AS booking_date,
+            DATE_FORMAT(COALESCE(end_date, booking_date), '%Y-%m-%d') AS end_date, time_slot,
             customer_name, customer_phone, customer_address, item_title, guest_count, total_amount,
-            advance_amount, balance_amount, payment_mode, status, notes
+            food_plan, food_details, complimentary_breakfast, advance_amount, balance_amount, payment_mode, status, notes
      FROM hospitality_bookings
      WHERE ${where.join(' AND ')}
      ORDER BY booking_date DESC, id DESC

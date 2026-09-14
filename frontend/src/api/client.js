@@ -1107,6 +1107,16 @@ export async function fetchHospitalitySummary() {
   return data;
 }
 
+export async function fetchHospitalityProfile() {
+  const { data } = await api.get('/hospitality/profile');
+  return data.profile || {};
+}
+
+export async function saveHospitalityProfile(payload) {
+  const { data } = await api.post('/hospitality/profile', payload);
+  return data;
+}
+
 export async function fetchHospitalityContent(type = 'GALLERY') {
   const { data } = await api.get('/hospitality/content', { params: { type } });
   return Array.isArray(data.rows) ? data.rows : [];

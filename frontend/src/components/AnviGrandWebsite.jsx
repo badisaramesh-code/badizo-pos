@@ -61,8 +61,12 @@ const blankBooking = {
   customer_phone: '',
   customer_address: '',
   booking_date: todayIso(),
+  end_date: todayIso(),
   time_slot: '',
   guest_count: '',
+  food_plan: 'WITHOUT_FOOD',
+  food_details: '',
+  complimentary_breakfast: '',
   advance_amount: '',
   notes: ''
 };
@@ -76,6 +80,7 @@ export default function AnviGrandWebsite() {
   const [bookingMessage, setBookingMessage] = useState('');
   const [bookingError, setBookingError] = useState('');
   const [isBookingSaving, setIsBookingSaving] = useState(false);
+  const [activeNav, setActiveNav] = useState('home');
 
   useEffect(() => {
     fetchHospitalityPublic()
@@ -89,6 +94,11 @@ export default function AnviGrandWebsite() {
   const cartTotal = cart.reduce((sum, item) => sum + Number(item.price || 0), 0);
   const addToCart = (item) => {
     setCart((current) => [...current, item]);
+  };
+  const jumpToSection = (sectionId) => {
+    setActiveNav(sectionId);
+    const section = document.getElementById(sectionId);
+    if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   const openFoodBooking = () => {
     if (cart.length === 0) {
@@ -105,7 +115,10 @@ export default function AnviGrandWebsite() {
     setBookingForm({
       ...blankBooking,
       booking_date: todayIso(),
+      end_date: todayIso(),
       guest_count: 1,
+      food_plan: 'WITH_FOOD',
+      food_details: cart.map((item) => `1x ${item.title} - ${formatMoney(item.price)}`).join('\n'),
       notes: cart.map((item) => `1x ${item.title} - ${formatMoney(item.price)}`).join('\n')
     });
     setBookingMessage('');
@@ -116,7 +129,10 @@ export default function AnviGrandWebsite() {
     setBookingForm({
       ...blankBooking,
       booking_date: todayIso(),
-      guest_count: item.capacity ? Math.min(Number(item.capacity || 0), item.content_type === 'ROOM' ? 2 : 50) : ''
+      end_date: todayIso(),
+      guest_count: item.capacity ? Math.min(Number(item.capacity || 0), item.content_type === 'ROOM' ? 2 : 50) : '',
+      food_plan: 'WITHOUT_FOOD',
+      complimentary_breakfast: item.content_type === 'ROOM' ? 'Complimentary breakfast included' : ''
     });
     setBookingMessage('');
     setBookingError('');
@@ -142,12 +158,16 @@ export default function AnviGrandWebsite() {
       await saveHospitalityPublicBooking({
         booking_type: isFood ? 'FOOD' : isRoom ? 'ROOM' : 'BANQUET',
         booking_date: bookingForm.booking_date,
+        end_date: isFood ? bookingForm.booking_date : bookingForm.end_date,
         time_slot: bookingForm.time_slot,
         customer_name: bookingForm.customer_name,
         customer_phone: bookingForm.customer_phone,
         customer_address: bookingForm.customer_address,
         item_title: bookingTarget.title,
         guest_count: bookingForm.guest_count,
+        food_plan: isFood ? 'WITH_FOOD' : bookingForm.food_plan,
+        food_details: isFood ? bookingForm.notes : bookingForm.food_details,
+        complimentary_breakfast: isRoom ? bookingForm.complimentary_breakfast : '',
         total_amount: bookingTarget.price || 0,
         advance_amount: bookingForm.advance_amount || 0,
         payment_mode: 'Cash',
@@ -178,12 +198,12 @@ export default function AnviGrandWebsite() {
       <header className="anvi-nav">
         <strong className="anvi-logo">{profile.hotel_name || 'ANVI GRAND'}</strong>
         <nav>
-          <a href="#home">Home</a>
-          <a href="#rooms">Rooms</a>
-          <a href="#food">Dining ({profile.restaurant_name || 'CHIGURU'})</a>
-          <a href="#banquet">Banquet</a>
-          <a href="#gallery">Gallery</a>
-          <a className="anvi-book-now" href="#contact">Book Now</a>
+          <a href="#home" className={activeNav === 'home' ? 'active' : ''} onClick={(event) => { event.preventDefault(); jumpToSection('home'); }}>Home</a>
+          <a href="#rooms" className={activeNav === 'rooms' ? 'active' : ''} onClick={(event) => { event.preventDefault(); jumpToSection('rooms'); }}>Rooms</a>
+          <a href="#food" className={`anvi-dine-nav ${activeNav === 'food' ? 'active' : ''}`} onClick={(event) => { event.preventDefault(); jumpToSection('food'); }}>{profile.restaurant_name || 'CHIGURU'} Dine</a>
+          <a href="#banquet" className={activeNav === 'banquet' ? 'active' : ''} onClick={(event) => { event.preventDefault(); jumpToSection('banquet'); }}>Banquet</a>
+          <a href="#gallery" className={activeNav === 'gallery' ? 'active' : ''} onClick={(event) => { event.preventDefault(); jumpToSection('gallery'); }}>Gallery</a>
+          <a className="anvi-book-now" href="#contact" onClick={(event) => { event.preventDefault(); jumpToSection('contact'); }}>Book Now</a>
         </nav>
         <img className="anvi-badizo-mark" src="/badizo-logo-transparent.png" alt="Badizo" />
       </header>
@@ -229,7 +249,7 @@ export default function AnviGrandWebsite() {
               </section>
             </div>
 
-            <section id="food" className="anvi-section">
+            <section id="food" className={`anvi-section ${activeNav === 'food' ? 'anvi-section-focus' : ''}`}>
               <div className="anvi-section-heading">
                 <h2>Order from {profile.restaurant_name || 'CHIGURU'} Restaurant</h2>
               </div>
@@ -277,8 +297,13 @@ export default function AnviGrandWebsite() {
             <span>Contact</span>
             <h2>{profile.hotel_name || 'ANVI GRAND'}</h2>
             <p>{profile.address || 'Near Benz Circle, Eluru Road, Vijayawada, Krishna Dist, Andhra Pradesh'}</p>
+            {profile.email ? <a className="anvi-contact-email" href={`mailto:${profile.email}`}>{profile.email}</a> : null}
           </div>
-          <a href={`tel:${profile.phone || '7569494949'}`}>{profile.phone || '7569494949'}</a>
+          <div className="anvi-contact-numbers">
+            <a href={`tel:${profile.admin_phone || profile.phone || '7569494949'}`}>Admin: {profile.admin_phone || profile.phone || '7569494949'}</a>
+            <a href={`tel:${profile.reception_phone || profile.phone || '7569494949'}`}>Reception: {profile.reception_phone || profile.phone || '7569494949'}</a>
+            <a href={`tel:${profile.restaurant_phone || profile.phone || '7569494949'}`}>Restaurant: {profile.restaurant_phone || profile.phone || '7569494949'}</a>
+          </div>
         </section>
       </main>
       {bookingTarget && (
@@ -309,9 +334,15 @@ export default function AnviGrandWebsite() {
                 <input value={bookingForm.customer_phone} onChange={(event) => updateBookingField('customer_phone', event.target.value)} required />
               </label>
               <label>
-                Booking Date
+                Date From
                 <input type="date" value={bookingForm.booking_date} onChange={(event) => updateBookingField('booking_date', event.target.value)} required />
               </label>
+              {bookingTarget.content_type !== 'FOOD' && (
+                <label>
+                  Date To
+                  <input type="date" value={bookingForm.end_date || bookingForm.booking_date} onChange={(event) => updateBookingField('end_date', event.target.value)} required />
+                </label>
+              )}
               <label>
                 Time / Slot
                 <input value={bookingForm.time_slot} onChange={(event) => updateBookingField('time_slot', event.target.value)} placeholder={bookingTarget.content_type === 'ROOM' ? 'Check-in time' : bookingTarget.content_type === 'FOOD' ? 'Delivery / pickup time' : 'Morning / Evening / Full day'} />
@@ -320,6 +351,27 @@ export default function AnviGrandWebsite() {
                 Persons / Guests
                 <input type="number" min="1" value={bookingForm.guest_count} onChange={(event) => updateBookingField('guest_count', event.target.value)} />
               </label>
+              {bookingTarget.content_type !== 'FOOD' && (
+                <label>
+                  Food Option
+                  <select value={bookingForm.food_plan} onChange={(event) => updateBookingField('food_plan', event.target.value)}>
+                    <option value="WITHOUT_FOOD">Without Food</option>
+                    <option value="WITH_FOOD">With Food</option>
+                  </select>
+                </label>
+              )}
+              {bookingTarget.content_type !== 'FOOD' && bookingForm.food_plan === 'WITH_FOOD' && (
+                <label className="wide">
+                  Food Details
+                  <textarea rows="2" value={bookingForm.food_details} onChange={(event) => updateBookingField('food_details', event.target.value)} placeholder="Breakfast, lunch, dinner, buffet, veg/non-veg, plates..." />
+                </label>
+              )}
+              {bookingTarget.content_type === 'ROOM' && (
+                <label className="wide">
+                  Complimentary Breakfast
+                  <textarea rows="2" value={bookingForm.complimentary_breakfast} onChange={(event) => updateBookingField('complimentary_breakfast', event.target.value)} placeholder="Example: Complimentary breakfast included for 2 persons" />
+                </label>
+              )}
               <label>
                 Advance Amount
                 <input type="number" min="0" value={bookingForm.advance_amount} onChange={(event) => updateBookingField('advance_amount', event.target.value)} />

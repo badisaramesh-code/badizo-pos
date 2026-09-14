@@ -3,11 +3,13 @@ import {
   deleteHospitalityContent,
   fetchHospitalityBookings,
   fetchHospitalityContent,
+  fetchHospitalityProfile,
   fetchHospitalityStockMovements,
   fetchHospitalitySummary,
   fetchHospitalityTasks,
   saveHospitalityBooking,
   saveHospitalityContent,
+  saveHospitalityProfile,
   saveHospitalityStockMovement,
   saveHospitalityTask
 } from '../api/client';
@@ -31,12 +33,16 @@ const bookingBlank = {
   id: null,
   booking_type: 'ROOM',
   booking_date: today(),
+  end_date: today(),
   time_slot: '',
   customer_name: '',
   customer_phone: '',
   customer_address: '',
   item_title: '',
   guest_count: '',
+  food_plan: 'WITHOUT_FOOD',
+  food_details: '',
+  complimentary_breakfast: '',
   total_amount: '',
   advance_amount: '',
   payment_mode: 'Cash',
@@ -66,6 +72,18 @@ const stockBlank = {
   amount: '',
   purpose: '',
   notes: ''
+};
+
+const profileBlank = {
+  hotel_name: 'ANVI GRAND',
+  restaurant_name: 'CHIGURU',
+  platform_name: 'ANVI GRAND Hospitality Platform',
+  address: 'Near Benz Circle, Eluru Road, Vijayawada, Krishna Dist, Andhra Pradesh',
+  phone: '7569494949',
+  email: '',
+  admin_phone: '7569494949',
+  reception_phone: '7569494949',
+  restaurant_phone: '7569494949'
 };
 
 const contentTabs = [
@@ -104,6 +122,7 @@ export default function HospitalityView() {
   const [bookingForm, setBookingForm] = useState(bookingBlank);
   const [taskForm, setTaskForm] = useState(taskBlank);
   const [stockForm, setStockForm] = useState(stockBlank);
+  const [profileForm, setProfileForm] = useState(profileBlank);
   const [filters, setFilters] = useState({ from: today(), to: today(), bookingType: 'ALL' });
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -122,7 +141,9 @@ export default function HospitalityView() {
 
   async function loadSummary() {
     try {
-      setSummary(await fetchHospitalitySummary());
+      const [summaryData, profileData] = await Promise.all([fetchHospitalitySummary(), fetchHospitalityProfile()]);
+      setSummary(summaryData);
+      setProfileForm({ ...profileBlank, ...profileData });
     } catch (err) {
       setErrorMessage('Unable to load hospitality dashboard.');
     }
@@ -166,6 +187,19 @@ export default function HospitalityView() {
       await Promise.all([loadContent(activeContentType), loadSummary()]);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save website item.');
+    }
+  }
+
+  async function handleProfileSave(event) {
+    event.preventDefault();
+    resetMessages();
+    try {
+      const result = await saveHospitalityProfile(profileForm);
+      setProfileForm({ ...profileBlank, ...(result.profile || {}) });
+      setStatusMessage('Website contact/profile saved.');
+      await loadSummary();
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to save website profile.');
     }
   }
 
@@ -262,6 +296,26 @@ export default function HospitalityView() {
 
       <section className="panel">
         <div className="panel-header green">
+          <h2 className="panel-title">Website Profile & Contact Numbers</h2>
+        </div>
+        <div className="panel-body hospitality-section-body">
+          <form className="hospitality-form-grid" onSubmit={handleProfileSave}>
+            <Field label="Hotel Name"><input className="field" value={profileForm.hotel_name} onChange={(event) => setProfileForm((current) => ({ ...current, hotel_name: event.target.value }))} /></Field>
+            <Field label="Restaurant Name"><input className="field" value={profileForm.restaurant_name} onChange={(event) => setProfileForm((current) => ({ ...current, restaurant_name: event.target.value }))} /></Field>
+            <Field label="Email Address"><input className="field" type="email" value={profileForm.email} onChange={(event) => setProfileForm((current) => ({ ...current, email: event.target.value }))} placeholder="example@anvigrand.com" /></Field>
+            <Field label="Main Phone"><input className="field" value={profileForm.phone} onChange={(event) => setProfileForm((current) => ({ ...current, phone: event.target.value }))} /></Field>
+            <Field label="Admin Number"><input className="field" value={profileForm.admin_phone} onChange={(event) => setProfileForm((current) => ({ ...current, admin_phone: event.target.value }))} /></Field>
+            <Field label="Reception Number"><input className="field" value={profileForm.reception_phone} onChange={(event) => setProfileForm((current) => ({ ...current, reception_phone: event.target.value }))} /></Field>
+            <Field label="Restaurant Number"><input className="field" value={profileForm.restaurant_phone} onChange={(event) => setProfileForm((current) => ({ ...current, restaurant_phone: event.target.value }))} /></Field>
+            <Field label="Address"><textarea className="field" rows="2" value={profileForm.address} onChange={(event) => setProfileForm((current) => ({ ...current, address: event.target.value }))} /></Field>
+            <button className="primary-button compact-primary" type="submit">Save Contact</button>
+            <button className="secondary-button" type="button" onClick={() => setProfileForm(profileBlank)}>Clear / Default</button>
+          </form>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header green">
           <h2 className="panel-title">Website CMS: Gallery, Food Menu, Room Rent, Banquet Rent</h2>
         </div>
         <div className="panel-body hospitality-section-body">
@@ -339,16 +393,20 @@ export default function HospitalityView() {
         <div className="panel-body hospitality-section-body">
           <form className="hospitality-form-grid" onSubmit={handleBookingSave}>
             <Field label="Type"><select className="select" value={bookingForm.booking_type} onChange={(event) => setBookingForm((current) => ({ ...current, booking_type: event.target.value }))}>{bookingTypes.filter((type) => type !== 'ALL').map((type) => <option key={type} value={type}>{type}</option>)}</select></Field>
-            <Field label="Date"><input className="field" type="date" value={bookingForm.booking_date} onChange={(event) => setBookingForm((current) => ({ ...current, booking_date: event.target.value }))} /></Field>
+            <Field label="Date From"><input className="field" type="date" value={bookingForm.booking_date} onChange={(event) => setBookingForm((current) => ({ ...current, booking_date: event.target.value, end_date: current.end_date || event.target.value }))} /></Field>
+            <Field label="Date To"><input className="field" type="date" value={bookingForm.end_date || bookingForm.booking_date} onChange={(event) => setBookingForm((current) => ({ ...current, end_date: event.target.value }))} /></Field>
             <Field label="Time Slot"><input className="field" value={bookingForm.time_slot} onChange={(event) => setBookingForm((current) => ({ ...current, time_slot: event.target.value }))} placeholder="Lunch / 7 PM / Check-in" /></Field>
             <Field label="Customer Name"><input className="field" value={bookingForm.customer_name} onChange={(event) => setBookingForm((current) => ({ ...current, customer_name: event.target.value }))} required /></Field>
             <Field label="Phone"><input className="field" value={bookingForm.customer_phone} onChange={(event) => setBookingForm((current) => ({ ...current, customer_phone: event.target.value }))} required /></Field>
             <Field label="Item / Room / Hall"><input className="field" value={bookingForm.item_title} onChange={(event) => setBookingForm((current) => ({ ...current, item_title: event.target.value }))} /></Field>
             <Field label="Persons"><input className="field" type="number" value={bookingForm.guest_count} onChange={(event) => setBookingForm((current) => ({ ...current, guest_count: event.target.value }))} /></Field>
+            <Field label="Food Option"><select className="select" value={bookingForm.food_plan || 'WITHOUT_FOOD'} onChange={(event) => setBookingForm((current) => ({ ...current, food_plan: event.target.value }))}><option value="WITHOUT_FOOD">Without Food</option><option value="WITH_FOOD">With Food</option></select></Field>
             <Field label="Total"><input className="field" type="number" value={bookingForm.total_amount} onChange={(event) => setBookingForm((current) => ({ ...current, total_amount: event.target.value }))} /></Field>
             <Field label="Advance"><input className="field" type="number" value={bookingForm.advance_amount} onChange={(event) => setBookingForm((current) => ({ ...current, advance_amount: event.target.value }))} /></Field>
             <Field label="Status"><select className="select" value={bookingForm.status} onChange={(event) => setBookingForm((current) => ({ ...current, status: event.target.value }))}>{bookingStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field>
             <Field label="Address"><textarea className="field" rows="2" value={bookingForm.customer_address} onChange={(event) => setBookingForm((current) => ({ ...current, customer_address: event.target.value }))} /></Field>
+            <Field label="Food Details"><textarea className="field" rows="2" value={bookingForm.food_details || ''} onChange={(event) => setBookingForm((current) => ({ ...current, food_details: event.target.value }))} placeholder="With food menu / without food notes" /></Field>
+            <Field label="Complimentary Breakfast"><textarea className="field" rows="2" value={bookingForm.complimentary_breakfast || ''} onChange={(event) => setBookingForm((current) => ({ ...current, complimentary_breakfast: event.target.value }))} placeholder="Room booking breakfast details" /></Field>
             <Field label="Notes"><textarea className="field" rows="2" value={bookingForm.notes} onChange={(event) => setBookingForm((current) => ({ ...current, notes: event.target.value }))} /></Field>
             <button className="primary-button compact-primary" type="submit">{bookingForm.id ? 'Update Booking' : 'Save Booking'}</button>
             <button className="secondary-button" type="button" onClick={() => setBookingForm(bookingBlank)}>Clear</button>
@@ -360,14 +418,15 @@ export default function HospitalityView() {
           </div>
           <div className="table-scroll">
             <table className="history-table hospitality-table">
-              <thead><tr><th>Date</th><th>Type</th><th>Customer</th><th>Item</th><th>Total</th><th>Advance</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Dates</th><th>Type</th><th>Customer</th><th>Item</th><th>Food</th><th>Total</th><th>Advance</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
-                {bookings.length === 0 ? <tr><td colSpan="9">No bookings in selected dates.</td></tr> : bookings.map((row) => (
+                {bookings.length === 0 ? <tr><td colSpan="10">No bookings in selected dates.</td></tr> : bookings.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.booking_date}<span className="muted">{row.time_slot || ''}</span></td>
+                    <td>{row.booking_date}{row.end_date && row.end_date !== row.booking_date ? ` to ${row.end_date}` : ''}<span className="muted">{row.time_slot || ''}</span></td>
                     <td>{row.booking_type}</td>
                     <td><strong>{row.customer_name}</strong><span className="muted">{row.customer_phone}</span></td>
                     <td>{row.item_title || '-'}</td>
+                    <td>{row.food_plan === 'WITH_FOOD' ? 'With Food' : 'Without Food'}<span className="muted">{row.food_details || row.complimentary_breakfast || ''}</span></td>
                     <td>{formatMoney(row.total_amount)}</td>
                     <td>{formatMoney(row.advance_amount)}</td>
                     <td>{formatMoney(row.balance_amount)}</td>
