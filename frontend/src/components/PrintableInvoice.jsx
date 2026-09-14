@@ -236,7 +236,7 @@ function StoreHeader({ invoice }) {
       <p>Phone: {invoice.shop.phone || '-'}</p>
       <SectionLine />
       <strong>GST INVOICE</strong>
-      {invoice.isDuplicate && <strong className="duplicate-invoice-label">DUPLICATE INVOICE</strong>}
+      {invoice.isReprint && <strong className="duplicate-invoice-label">REPRINT</strong>}
       <strong className="print-tax-type-label">{taxBillLabel}</strong>
       <SectionLine />
     </div>
@@ -806,7 +806,7 @@ function A4StoreTop({ invoice }) {
         </div>
       </div>
       <div className="a4-store-meta">
-        {invoice.isDuplicate && <><span>Copy</span><strong className="duplicate-invoice-label">DUPLICATE INVOICE</strong></>}
+        {invoice.isReprint && <><span>Copy</span><strong className="duplicate-invoice-label">REPRINT</strong></>}
         <span>Invoice No.</span><strong>{invoice.invoiceNo}</strong>
         <span>Date</span><strong>{invoice.date}</strong>
         <span>payment mode</span><strong>{invoice.paymentMode}</strong>

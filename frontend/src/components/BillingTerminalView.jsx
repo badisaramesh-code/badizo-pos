@@ -1411,7 +1411,7 @@ export default function BillingTerminalView({ isActive = true }) {
     }
   }
 
-  function invoiceDetailsToPrintable(details, duplicate = false) {
+  function invoiceDetailsToPrintable(details, isReprint = false) {
     const invoice = details.invoice;
     const isInterstate = invoice.tax_type === 'INTERSTATE';
     let exchangeItemsFromInvoice = [];
@@ -1454,7 +1454,7 @@ export default function BillingTerminalView({ isActive = true }) {
 
     return {
       invoiceNo: invoice.invoice_no,
-      isDuplicate: duplicate,
+      isReprint,
       counterNo: parseCounterNoFromLabel(invoice.billing_counter, 1),
       counterLabel: counterDisplayLabel(invoice.billing_counter),
       date: invoice.created_at ? new Date(invoice.created_at).toLocaleDateString('en-IN') : '',
@@ -4915,7 +4915,7 @@ export default function BillingTerminalView({ isActive = true }) {
       const invoiceToPrint = invoiceDetailsToPrintable(details, true);
       setPrintableInvoice(invoiceToPrint);
       schedulePrint(reprintMode, () => refreshHistory(false), invoiceToPrint);
-      setStatusMessage(`${invoiceNoForReprint} duplicate bill printing in ${reprintMode} format.`);
+      setStatusMessage(`${invoiceNoForReprint} reprint is printing in ${reprintMode} format.`);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to reprint invoice.');
     }
