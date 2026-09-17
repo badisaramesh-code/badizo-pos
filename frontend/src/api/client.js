@@ -659,7 +659,7 @@ export async function checkout(payload) {
     // A rolled-back database deadlock is also safe to retry once with that ID.
     const timedOut = error?.code === 'ECONNABORTED' || /timeout/i.test(String(error?.message || ''));
     const retryableDeadlock = error?.response?.status === 503 && error?.response?.data?.retryable === true;
-    if (!timedOut && !retryableDeadlock) throw error;
+    if (!payload?.checkout_request_id || (!timedOut && !retryableDeadlock)) throw error;
     const { data } = await api.post('/billing/checkout', payload, { timeout: 10000 });
     return data;
   }
@@ -741,7 +741,8 @@ export async function fetchInvoiceDetails(invoiceNo, options = {}) {
       invoice_no: invoiceNo,
       checkout_request_id: options.checkoutRequestId || ''
     },
-    timeout: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 25000
+    timeout: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 25000,
+    __badizoNoRetry: options.noRetry === true
   });
   return data;
 }

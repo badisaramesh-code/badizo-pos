@@ -1,5 +1,7 @@
 param(
   [string]$OutputDir = '',
+  [string]$FrontendBuildDir = '',
+  [string]$InstallerPath = '',
   [switch]$CreateZip
 )
 
@@ -11,24 +13,31 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
 }
 
 function Copy-CleanFolder([string]$Source, [string]$Destination, [string[]]$Exclude) {
-  if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
+  if (Test-Path -LiteralPath $Destination) { throw 'Package destination already exists.' }
   New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-  Get-ChildItem -LiteralPath $Source -Force | Where-Object { $Exclude -notcontains $_.Name } |
+  Get-ChildItem -LiteralPath $Source -Force | Where-Object { $Exclude -notcontains $_.Name -and $_.Name -notlike '.env*' -and $_.Name -notlike '*.log' } |
     ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force }
 }
 
 $node = (Get-Command node.exe -ErrorAction Stop).Source
-$installer = Get-ChildItem -LiteralPath (Join-Path $appRoot 'electron\dist') -Filter 'Badizo Setup*.exe' -File |
-  Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($InstallerPath) {
+  $installer = Get-Item -LiteralPath $InstallerPath -ErrorAction Stop
+} else {
+  $installer = Get-ChildItem -LiteralPath (Join-Path $appRoot 'electron\dist') -Filter 'Badizo Setup*.exe' -File |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+}
 if (!$installer) { throw 'Badizo Setup installer is missing from electron\dist.' }
-foreach ($required in @('backend\node_modules', 'frontend\build\index.html')) {
+if (!$FrontendBuildDir) { $FrontendBuildDir = Join-Path $appRoot 'frontend\build' }
+if (!(Test-Path -LiteralPath (Join-Path $FrontendBuildDir 'index.html'))) { throw 'Frontend build is missing.' }
+$OutputDir = [IO.Path]::GetFullPath($OutputDir)
+foreach ($required in @('backend\node_modules')) {
   if (!(Test-Path -LiteralPath (Join-Path $appRoot $required))) { throw "Required build asset missing: $required" }
 }
 
-if (Test-Path -LiteralPath $OutputDir) { Remove-Item -LiteralPath $OutputDir -Recurse -Force }
+if (Test-Path -LiteralPath $OutputDir) { throw 'OutputDir must be a new directory; existing packages are preserved.' }
 New-Item -ItemType Directory -Force -Path (Join-Path $OutputDir 'payload\app') | Out-Null
 Copy-CleanFolder (Join-Path $appRoot 'backend') (Join-Path $OutputDir 'payload\app\backend') @('backups','logs','.env')
-Copy-CleanFolder (Join-Path $appRoot 'frontend\build') (Join-Path $OutputDir 'payload\app\frontend\build') @()
+Copy-CleanFolder $FrontendBuildDir (Join-Path $OutputDir 'payload\app\frontend\build') @()
 Copy-CleanFolder (Join-Path $appRoot 'barcode\templates') (Join-Path $OutputDir 'payload\app\barcode\templates') @()
 Copy-CleanFolder (Join-Path $appRoot 'thermal') (Join-Path $OutputDir 'payload\app\thermal') @()
 Copy-CleanFolder (Join-Path $appRoot 'electron\assets') (Join-Path $OutputDir 'payload\app\assets') @()
@@ -41,6 +50,10 @@ Copy-Item -LiteralPath (Join-Path $scriptRoot 'configure-google-drive-backup.ps1
 Copy-Item -LiteralPath (Join-Path $scriptRoot 'CONFIGURE_GOOGLE_DRIVE_BACKUP.bat') -Destination (Join-Path $OutputDir 'CONFIGURE_GOOGLE_DRIVE_BACKUP.bat') -Force
 Copy-Item -LiteralPath (Join-Path $scriptRoot 'CHECK_BADIZO_LAN.bat') -Destination (Join-Path $OutputDir 'CHECK_BADIZO_LAN.bat') -Force
 Copy-Item -LiteralPath (Join-Path $scriptRoot 'RUN_BADIZO_NEW_STORE_INSTALL.bat') -Destination (Join-Path $OutputDir 'RUN_BADIZO_NEW_STORE_INSTALL.bat') -Force
+Copy-Item -LiteralPath (Join-Path $scriptRoot 'START_BADIZO_SERVER_SETUP.ps1') -Destination (Join-Path $OutputDir 'START_BADIZO_SERVER_SETUP.ps1') -Force
+foreach ($doc in @('NEW_SHOP_INSTALLATION.md', 'THERMAL_PRINTER_SETUP_GUIDE.md', 'BARCODE_STICKER_SETUP_GUIDE.md', 'GOOGLE_DRIVE_BACKUP_SETUP_GUIDE.md')) {
+  Copy-Item -LiteralPath (Join-Path $appRoot $doc) -Destination (Join-Path $OutputDir $doc) -Force
+}
 $guide = Join-Path $appRoot 'output\pdf\BADIZO_NEW_STORE_INSTALL_GUIDE_TELUGU_ENGLISH.pdf'
 if (Test-Path -LiteralPath $guide) {
   Copy-Item -LiteralPath $guide -Destination (Join-Path $OutputDir 'BADIZO_NEW_STORE_INSTALL_GUIDE_TELUGU_ENGLISH.pdf') -Force

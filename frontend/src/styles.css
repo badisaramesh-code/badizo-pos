@@ -3855,7 +3855,6 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .inward-print-summary {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  border-bottom: 1px solid #111;
 }
 
 .inward-print-summary span {
@@ -7846,7 +7845,8 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   border-spacing: 0;
   empty-cells: show;
   table-layout: fixed;
-  font-size: 7.2px;
+  font-size: 8px;
+  line-height: 1.15;
   border-left: 1px solid #111;
   border-right: 1px solid #111;
   border-bottom: 1px solid #111;
@@ -7858,7 +7858,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   padding: 0.5px 2px;
   border: 1px solid #111;
   border-top: 0;
-  vertical-align: top;
+  vertical-align: middle;
   overflow: hidden;
 }
 
@@ -10860,4 +10860,22 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .anvi-site .anvi-hero {
   min-height: 150px !important;
+}
+/* Shared screen-only edges for panels and popup surfaces. */
+@media screen {
+  .panel:not(.books-report-modal-backdrop) {
+    border-color: var(--line-strong);
+    box-shadow: 0 3px 12px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.04);
+  }
+
+  .modal,
+  .report-view-modal,
+  .books-report-modal {
+    border-color: var(--line-strong);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.55), 0 10px 30px rgba(15, 23, 42, 0.16);
+  }
+
+  .backup-alert-modal {
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.55), 0 10px 30px rgba(15, 23, 42, 0.16);
+  }
 }

@@ -68,11 +68,23 @@ router.post('/approvals/:id', authorize('SERVER'), (req, res) => {
 function requireReportApproval(req, res, next) {
   if (req.user.role !== 'COUNTER') return next();
   try {
-    if (!approvals.permits(req.headers['x-report-approval'], req.user, req.path.slice(1), req.query)) {
-      return res.status(403).json({ code: 'REPORT_APPROVAL_REQUIRED', error: 'Server approval is required to view or print this report.' });
+    const kind = req.path.slice(1);
+    let approvalId = req.headers['x-report-approval'];
+    // Already-open counter clients predate the approval API. Queue their direct
+    // report request too, and allow a retry only after SERVER approves its scope.
+    if (!approvalId) {
+      approvalId = approvals.request(req.user, kind, req.query, req.socket.remoteAddress).id;
     }
+    if (!approvals.permits(approvalId, req.user, kind, req.query)) {
+      return res.status(403).json({
+        code: 'REPORT_APPROVAL_REQUIRED',
+        requestId: approvalId,
+        error: 'Request sent to SERVER. Ask the server person to press OK, then click View or Print again. If no alert appears, refresh the SERVER screen once.'
+      });
+    }
+    const approvedScope = approvals.scope(req.user, kind, req.query);
     req.query.counter = '';
-    req.query.counter_no = req.user.counter_no;
+    req.query.counter_no = approvedScope.reportCounterNo;
     next();
   } catch (err) { res.status(403).json({ error: err.message }); }
 }

@@ -1,3 +1,5 @@
+const { protectAsyncRoutes, apiErrorHandler } = require('../middleware/asyncRoutes');
+
 const routes = [
   ['/api/auth', require('./auth')],
   ['/api/audit', require('./audit')],
@@ -26,8 +28,9 @@ const routes = [
 
 function mountRoutes(app) {
   routes.forEach(([path, router]) => {
-    app.use(path, router);
+    app.use(path, protectAsyncRoutes(router));
   });
+  app.use(apiErrorHandler);
 }
 
 module.exports = { mountRoutes };

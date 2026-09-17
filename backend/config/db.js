@@ -160,7 +160,6 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         qty_3_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         qty_6_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         qty_12_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-        qty_12_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         discount_type ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT',
         discount_value DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         bulk_discount_value DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -1286,7 +1285,6 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'products', 'wholesale_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER sale_price');
     await ensureColumn(connection, 'products', 'qty_3_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER wholesale_price');
     await ensureColumn(connection, 'products', 'qty_6_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER qty_3_price');
-    await ensureColumn(connection, 'products', 'qty_12_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER qty_6_price');
     await ensureColumn(connection, 'products', 'qty_12_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER qty_6_price');
     await ensureColumn(connection, 'products', 'product_code', 'VARCHAR(60) DEFAULT NULL UNIQUE AFTER id');
     await ensureColumn(connection, 'products', 'alias_names', 'TEXT DEFAULT NULL AFTER product_name');

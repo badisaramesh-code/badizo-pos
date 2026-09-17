@@ -38,6 +38,9 @@
         "filter": [
           "**/*",
           "!node_modules/**",
+          "!.env",
+          "!.env.*",
+          "!logs/**",
           "!backups/**",
           "!*.log"
         ]

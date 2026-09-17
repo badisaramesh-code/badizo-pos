@@ -4,3 +4,11 @@
 .report-approval-card p { margin: 8px 0; }
 .report-approval-actions { display: flex; gap: 12px; margin-top: 14px; }
 @media print { .report-approval-notifications { display: none !important; } }
+
+/* Only permission alerts use half their original on-screen dimensions. */
+@media screen {
+  .report-approval-notifications {
+    transform: scale(0.5);
+    transform-origin: top right;
+  }
+}
