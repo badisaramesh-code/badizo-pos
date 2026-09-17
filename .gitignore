@@ -27,6 +27,8 @@ frontend/src/components/*_backup_*.jsx
 counter-system-install/
 
 # Temporary folders
+.codex-temp/
+__pycache__/
 SYSTEM3_READY*/
 SERVER_LAN_FIX*/
 START_BADIZO_SERVER/

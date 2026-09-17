@@ -11,7 +11,11 @@ function createApprovalStore(now = Date.now) {
     if (!user.session_id || !(Number(user.counter_no) > 0)) throw new Error('Please log in to your counter again.');
     const from = normalizeDate(kind === 'counter-sale-slip' ? query.date : query.from || query.date, todayIso());
     const to = kind === 'counter-sale-slip' ? from : normalizeDate(query.to || from, from);
-    return { kind, from, to, counterNo: Number(user.counter_no), reportType: kind === 'pos-sale-report' && String(query.report_type || '').toUpperCase() === 'GST' ? 'GST' : 'ALL' };
+    const counterMatch = String(query.counter || '').trim().match(/(?:^|\/)Counter\s*(\d+)$/i);
+    const requestedCounter = Number.parseInt(counterMatch?.[1], 10) || Number.parseInt(query.counter_no, 10) || 0;
+    const reportCounterNo = kind === 'counter-sale-slip' ? Number(user.counter_no)
+      : (requestedCounter >= 1 && requestedCounter <= 6 ? requestedCounter : 0);
+    return { kind, from, to, reportCounterNo, counterNo: Number(user.counter_no), reportType: kind === 'pos-sale-report' && String(query.report_type || '').toUpperCase() === 'GST' ? 'GST' : 'ALL' };
   }
   return {
     scope,

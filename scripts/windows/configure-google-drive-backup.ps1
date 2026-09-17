@@ -36,7 +36,8 @@ try {
   $code=$LASTEXITCODE
   Pop-Location
   if($code -ne 0){throw 'Google authorization did not complete.'}
-  Restart-ScheduledTask -TaskName 'Badizo POS Backend' -ErrorAction Stop
+  Stop-ScheduledTask -TaskName 'Badizo POS Backend' -ErrorAction Stop
+  Start-ScheduledTask -TaskName 'Badizo POS Backend' -ErrorAction Stop
   Write-Host 'Google Drive backup enabled. Offline backups retry when internet returns.' -ForegroundColor Green
   Write-Host 'The Badizo popup reports successful or pending cloud backup.' -ForegroundColor Green
 } catch {

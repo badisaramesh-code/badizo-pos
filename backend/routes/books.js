@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { normalizeDate, parseMoney } = require('../utils/formatters');
+const { buildCounterLabels, applyCounterLabel } = require('../utils/bookCounterLabels');
 
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
@@ -304,7 +305,7 @@ router.get('/accounting', async (req, res) => {
       `SELECT cle.id,
               DATE_FORMAT(cle.entry_date, '%Y-%m-%d') AS entry_date,
               cle.counter_no,
-              COALESCE((SELECT REPLACE(i.billing_counter, 'Counter', 'C') FROM invoices i WHERE DATE(i.created_at) = cle.entry_date AND i.billing_counter REGEXP CONCAT('Counter', cle.counter_no, '$') ORDER BY i.created_at DESC LIMIT 1), CONCAT('C', cle.counter_no)) AS counter_label,
+              CONCAT('C', cle.counter_no) AS counter_label,
               cle.source_id,
               chs.sheet_no,
               CASE
@@ -349,7 +350,7 @@ router.get('/accounting', async (req, res) => {
     );
 
     const [handoverSheets] = await db.query(
-      `SELECT id, closing_date, counter_no, COALESCE((SELECT REPLACE(i.billing_counter, 'Counter', 'C') FROM invoices i WHERE DATE(i.created_at) = counter_handover_sheets.closing_date AND i.billing_counter REGEXP CONCAT('Counter', counter_handover_sheets.counter_no, '$') ORDER BY i.created_at DESC LIMIT 1), CONCAT('C', counter_handover_sheets.counter_no)) AS counter_label,
+      `SELECT id, closing_date, counter_no, CONCAT('C', counter_no) AS counter_label,
                sheet_no, opening_cash, counter_sales, all_counter_sales,
                cash_sales, upi_sales, card_sales, dr_total, cr_total, notes_total, cash_balance,
                variance_amount, handed_over_by, taken_over_by,
@@ -360,6 +361,20 @@ router.get('/accounting', async (req, res) => {
         ORDER BY closing_date ASC, counter_no ASC`,
       [from, to]
     );
+    // Resolve counter labels once, instead of scanning invoices for every ledger row.
+    const [counterLabelRows] = await db.query(
+      `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS invoice_date,
+              billing_counter, MAX(created_at) AS latest_at
+       FROM invoices
+       WHERE created_at < DATE_ADD(?, INTERVAL 1 DAY)
+         AND billing_counter REGEXP 'Counter[0-9]+$'
+       GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d'), billing_counter`,
+      [to]
+    );
+    const counterLabels = buildCounterLabels(counterLabelRows);
+    namedLedgerEntries.forEach((row) => applyCounterLabel(counterLabels, row, row.entry_date));
+    handoverSheets.forEach((row) => applyCounterLabel(counterLabels, row, row.closing_date));
+
     const handoverDenominationsBySheet = {};
     if (handoverSheets.length) {
       const [handoverDenominations] = await db.query(

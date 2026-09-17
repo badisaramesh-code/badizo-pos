@@ -60,6 +60,7 @@ export default function ReportApprovalNotifications({ currentUser }) {
           <p><strong>System {row.systemNo || '-'} / Counter {row.counterNo}</strong></p>
           <p>Person: {row.personName || row.username} ({row.username})</p>
           <p>{row.kind === 'counter-sale-slip' ? 'Counter Sale Slip' : `${row.reportType} Sale Report`}</p>
+          <p>Report scope: {row.reportCounterNo === 0 ? 'All Counters' : `Counter ${row.reportCounterNo ?? row.counterNo}`}</p>
           <p>Dates: {row.from} to {row.to}</p>
           <p>Requested: {new Date(row.requestedAt).toLocaleString('en-IN')}</p>
           <p>Computer: {row.ip || '-'}</p>

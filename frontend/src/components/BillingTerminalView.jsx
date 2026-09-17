@@ -28,6 +28,7 @@ import {
 } from '../api/client';
 import { amountInWords, formatMoney, toNumber } from '../utils/money';
 import { findExactSaleProduct } from '../utils/productLookup';
+import { shouldRecoverCheckout } from '../utils/checkoutRecovery';
 import PrintableInvoice from './PrintableInvoice';
 import PrintableQuotation from './PrintableQuotation';
 
@@ -3101,7 +3102,7 @@ export default function BillingTerminalView({ isActive = true }) {
       from,
       to,
       reportType: String(formData?.get('sale_report_type') || saleReportType).toUpperCase(),
-      counterNo: currentUser?.role === 'COUNTER' ? counterNo : String(formData?.get('sale_report_scope') || saleReportScope) === 'CURRENT'
+      counterNo: String(formData?.get('sale_report_scope') || saleReportScope) === 'CURRENT'
         ? counterNo
         : (String(formData?.get('sale_report_scope') || saleReportScope) === 'ALL' ? '' : String(formData?.get('sale_report_scope') || saleReportScope))
     };
@@ -5128,6 +5129,12 @@ export default function BillingTerminalView({ isActive = true }) {
       return;
     }
 
+    if (activePaymentMode === 'Mixed' && (Object.values({ cash: effectiveMixedPayment.cash, upi: effectiveMixedPayment.upi, card: effectiveMixedPayment.card }).some(amount => toNumber(amount) < 0)
+      || moneyToPaise(toNumber(effectiveMixedPayment.upi) + toNumber(effectiveMixedPayment.card)) > payablePaiseForCheckout)) {
+      setErrorMessage('UPI and Card total cannot exceed the bill amount. Enter valid non-negative payment amounts.');
+      return;
+    }
+
     if (activePaymentMode === 'Mixed' && receivedPaise < payablePaiseForCheckout) {
       setErrorMessage('Mixed payment total must be equal to or greater than the bill total.');
       window.setTimeout(() => mixedCashRef.current?.focus(), 50);
@@ -5293,7 +5300,8 @@ export default function BillingTerminalView({ isActive = true }) {
     async function recoverCommittedCheckout() {
       const details = await fetchInvoiceDetails('', {
         checkoutRequestId,
-        timeoutMs: 8000
+        timeoutMs: 8000,
+        noRetry: true
       });
       const savedInvoice = details?.invoice || {};
       const savedTotalPaise = moneyToPaise(savedInvoice.grand_total);
@@ -5301,7 +5309,7 @@ export default function BillingTerminalView({ isActive = true }) {
       const sameCounter = counterLabelMatches(savedCounter, counterNo);
       const sameTotal = Math.abs(savedTotalPaise - payablePaiseForCheckout) <= 1;
 
-      if (savedInvoice.invoice_no && sameCounter && sameTotal && savedInvoice.invoice_status !== 'VOID') {
+      if (savedInvoice.invoice_no && sameCounter && sameTotal && savedInvoice.invoice_status === 'PAID') {
         const recoveredFreeItems = Array.isArray(details?.items)
           ? details.items.filter((item) => Number(item.is_free_bonus) === 1)
           : [];
@@ -5318,22 +5326,9 @@ export default function BillingTerminalView({ isActive = true }) {
       completeSuccessfulCheckout(checkoutResult.invoice_no || invoiceNo, checkoutResult.free_items || []);
     } catch (err) {
       try {
-        if (checkoutRequestId && await recoverCommittedCheckout()) return;
-        const details = await fetchInvoiceDetails(invoiceNo);
-        const savedInvoice = details?.invoice || {};
-        const savedTotalPaise = moneyToPaise(savedInvoice.grand_total);
-        const savedCounter = String(savedInvoice.billing_counter || '').trim().toLowerCase();
-        const sameInvoice = String(savedInvoice.invoice_no || '') === String(invoiceNo);
-        const sameCounter = counterLabelMatches(savedCounter, counterNo);
-        const sameTotal = Math.abs(savedTotalPaise - payablePaiseForCheckout) <= 1;
-
-        if (sameInvoice && sameCounter && sameTotal && savedInvoice.invoice_status !== 'VOID') {
-          const recoveredFreeItems = Array.isArray(details?.items)
-            ? details.items.filter((item) => Number(item.is_free_bonus) === 1)
-            : [];
-          completeSuccessfulCheckout(savedInvoice.invoice_no, recoveredFreeItems, true);
-          return;
-        }
+        // Preview numbers can belong to a different concurrent sale. Recover
+        // uncertain saves only by this checkout's unique request ID.
+        if (shouldRecoverCheckout(err) && checkoutRequestId && await recoverCommittedCheckout()) return;
       } catch (recoveryErr) {
         // Keep the original checkout error below; recovery is only for confirmed saved invoices.
       }
@@ -6268,7 +6263,7 @@ export default function BillingTerminalView({ isActive = true }) {
                   </label>
                   <label>
                     <span className="field-label">Counter</span>
-                    <select className="select" name="sale_report_scope" disabled={currentUser?.role === 'COUNTER'} value={saleReportScope} onChange={(event) => setSaleReportScope(event.target.value)}>
+                    <select className="select" name="sale_report_scope" value={saleReportScope} onChange={(event) => setSaleReportScope(event.target.value)}>
                       <option value="ALL">All Counters</option>
                       <option value="CURRENT">Current Counter</option>
                       <option value="1">Counter 1</option>

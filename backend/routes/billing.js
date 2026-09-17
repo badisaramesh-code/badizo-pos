@@ -11,8 +11,9 @@ const {
   getFinancialYear,
   normalizeCounterNo
 } = require('../services/invoiceNumberService');
-const { normalizePaymentMode, normalizePaymentSplits } = require('../services/paymentService');
+const { normalizePaymentMode, calculatePaymentSettlement } = require('../services/paymentService');
 const { sendBillSms } = require('../services/smsService');
+const { findSavedCheckout } = require('../services/checkoutRecoveryService');
 const { sendBillWhatsApp } = require('../services/whatsappService');
 const { logError, logInfo } = require('../services/logger');
 const { normalizePhone, parseMoney } = require('../utils/formatters');
@@ -189,7 +190,9 @@ async function validateCurrentCheckoutPrices(connection, items, billingTier) {
     const submittedPrice = parseMoney(item.sale_price);
     const currentPrice = currentCheckoutPrice(product, item.quantity, billingTier);
     if (moneyToPaise(submittedPrice) !== moneyToPaise(currentPrice)) {
-      throw new Error(`Rate updated for ${product.product_name || barcode}: current rate Rs.${currentPrice.toFixed(2)}. Remove this item and scan it again.`);
+      const error = new Error(`Rate updated for ${product.product_name || barcode}: current rate Rs.${currentPrice.toFixed(2)}. Remove this item and scan it again.`);
+      error.code = 'PRICE_CHANGED';
+      throw error;
     }
   }
 }
@@ -563,29 +566,8 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       return res.status(400).json({ error: 'Cart must contain at least one item.' });
     }
 
-    const [existingCheckoutRows] = checkoutRequestId
-      ? await connection.query(
-        `SELECT invoice_no, grand_total, billing_counter
-         FROM invoices
-         WHERE checkout_request_id = ?
-         LIMIT 1`,
-        [checkoutRequestId]
-      )
-      : [[]];
-    if (existingCheckoutRows.length) {
-      const existing = existingCheckoutRows[0];
-      const requestedTotal = Math.round(parseCurrency(grand_total));
-      if (Math.abs(moneyToPaise(existing.grand_total) - moneyToPaise(requestedTotal)) > 1) {
-        return res.status(409).json({ error: 'This checkout was already saved with a different total.' });
-      }
-      return res.json({
-        success: true,
-        duplicate_prevented: true,
-        message: 'Invoice was already committed successfully.',
-        invoice_no: existing.invoice_no,
-        free_items: []
-      });
-    }
+    const savedCheckout = await findSavedCheckout(connection, req.body);
+    if (savedCheckout) return res.status(savedCheckout.status).json(savedCheckout.body);
 
     await connection.beginTransaction();
     checkoutTimer.mark('begin-transaction');
@@ -625,18 +607,10 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     checkoutTimer.mark('loyalty-redeem');
     const normalizedPaymentMode = normalizePaymentMode(payment_mode);
     const grandTotal = Math.round(parseCurrency(saleGrandBeforeRedeem - loyaltyRedeemResult.amount));
-    const paymentSplits = normalizePaymentSplits(normalizedPaymentMode, payment_splits, grandTotal, payment_reference);
-    const paidTotalPaise = paymentSplits.reduce((sum, row) => sum + moneyToPaise(row.amount), 0);
-    const tenderTotalPaise = normalizedPaymentMode === 'Mixed' ? moneyToPaise(cash_received || paiseToMoney(paidTotalPaise)) : paidTotalPaise;
-    const grandTotalPaise = moneyToPaise(grandTotal);
-    const cashReceivedAmount = normalizedPaymentMode === 'Cash' ? parseCurrency(cash_received) : paiseToMoney(tenderTotalPaise);
-    if (!Number.isFinite(cashReceivedAmount) || cashReceivedAmount < 0 || cashReceivedAmount > 99999999.99) {
-      throw new Error('Cash received must be between Rs. 0 and Rs. 9,99,99,999.99.');
-    }
-    if (normalizedPaymentMode === 'Cash' && moneyToPaise(cash_received) < grandTotalPaise) {
-      throw new Error('Cash received must be equal to or greater than the bill total.');
-    }
-    const changeReturned = paiseToMoney(Math.max(tenderTotalPaise - grandTotalPaise, 0));
+    const settlement = calculatePaymentSettlement(normalizedPaymentMode, payment_splits, grandTotal, cash_received, payment_reference);
+    const paymentSplits = settlement.payments;
+    const cashReceivedAmount = settlement.cashReceived;
+    const changeReturned = settlement.changeReturned;
     const referenceText = normalizedPaymentMode === 'Mixed'
       ? paymentSplits
         .filter((row) => row.payment_reference)
@@ -663,7 +637,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         parseCurrency(gst_total),
         grandTotal,
         cashReceivedAmount,
-        normalizedPaymentMode === 'Cash' ? parseCurrency(change_returned) : changeReturned,
+        changeReturned,
         normalizedPaymentMode,
         payment_status || 'PAID',
         referenceText,
@@ -697,12 +671,12 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     const soldItemsForPromotions = [];
 
     for (const item of items) {
-      const quantity = parseMoney(item.quantity) || 1;
+      const quantity = Number(item.quantity);
       const salePrice = parseMoney(item.sale_price);
       const gstPercent = parseMoney(item.gst_percent);
 
-      if (!item.barcode || quantity <= 0) {
-        throw new Error('Every bill line needs a valid barcode and quantity.');
+      if (!item.barcode || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(salePrice) || salePrice < 0) {
+        throw Object.assign(new Error('Every bill line needs a valid barcode, positive quantity and non-negative rate.'), { code: 'INVALID_BILL_LINE' });
       }
 
       const lineGrossTotal = salePrice * quantity;
@@ -847,22 +821,8 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     await connection.rollback();
     checkoutTimer.mark('rollback');
     if (err?.code === 'ER_DUP_ENTRY') {
-      const checkoutRequestId = String(req.body?.checkout_request_id || '').trim();
-      if (checkoutRequestId) {
-        const [savedRows] = await connection.query(
-          `SELECT invoice_no FROM invoices WHERE checkout_request_id = ? LIMIT 1`,
-          [checkoutRequestId]
-        );
-        if (savedRows.length) {
-          return res.json({
-            success: true,
-            duplicate_prevented: true,
-            message: 'Invoice was already committed successfully.',
-            invoice_no: savedRows[0].invoice_no,
-            free_items: []
-          });
-        }
-      }
+      const savedCheckout = await findSavedCheckout(connection, req.body);
+      if (savedCheckout) return res.status(savedCheckout.status).json(savedCheckout.body);
     }
     logError('Checkout rollback', err, {
       invoiceNo,
@@ -871,7 +831,9 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     });
     console.error('Checkout rollback:', err.message);
     const retryableDeadlock = err?.code === 'ER_LOCK_DEADLOCK' || Number(err?.errno) === 1213;
-    res.status(retryableDeadlock ? 503 : 500).json({
+    const validationError = ['PRICE_CHANGED', 'INVALID_PAYMENT', 'INVALID_BILL_LINE'].includes(err.code);
+    res.status(err.code === 'PRICE_CHANGED' ? 409 : validationError ? 400 : retryableDeadlock ? 503 : 500).json({
+      code: validationError ? err.code : undefined,
       error: retryableDeadlock ? 'Checkout was temporarily busy. Retrying safely.' : err.message,
       retryable: retryableDeadlock
     });

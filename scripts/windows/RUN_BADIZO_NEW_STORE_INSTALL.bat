@@ -20,7 +20,8 @@ echo   3. ADMIN PC
 echo   4. SECURITY PC
 echo   5. Exit
 echo.
-set /p "BADIZO_CHOICE=Select this computer type [1-5]: "
+choice /C 12345 /N /M "Select this computer type [1-5]: "
+set "BADIZO_CHOICE=%ERRORLEVEL%"
 
 if "%BADIZO_CHOICE%"=="1" goto server
 if "%BADIZO_CHOICE%"=="2" goto counter
@@ -32,8 +33,8 @@ pause
 exit /b 1
 
 :server
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -Verb RunAs -FilePath powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','\"%~dp0payload\install-new-store.ps1\"','-PackageRoot','\"%~dp0\"'"
-exit /b 0
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0START_BADIZO_SERVER_SETUP.ps1" -PackageRoot "%~dp0."
+exit /b %ERRORLEVEL%
 
 :counter
 set "BADIZO_ROLE=counter"
@@ -47,6 +48,7 @@ goto client
 
 :client
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0payload\setup-slave-app.ps1" -ServerIp "192.168.1.10" -LoginMode "%BADIZO_ROLE%" -InstallerPath "%~dp0payload\Badizo Setup 1.0.0.exe"
+set "BADIZO_EXIT=%ERRORLEVEL%"
 echo.
 pause
-exit /b %ERRORLEVEL%
+exit /b %BADIZO_EXIT%

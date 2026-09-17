@@ -6,7 +6,7 @@ const { JWT_SECRET } = require('../middleware/auth');
 let queries = [];
 require.cache[require.resolve('../config/db')] = { exports: { query: async (sql, params) => { queries.push({sql, params}); return [[]]; } } };
 const router = require('../routes/reports');
-test('HTTP approval flow blocks data before OK and enforces counter ownership', async () => {
+test('HTTP approval flow blocks data before OK and enforces approved report scope and request ownership', async () => {
   const app = express(); app.use(express.json()); app.use('/reports', router);
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
@@ -25,12 +25,58 @@ test('HTTP approval flow blocks data before OK and enforces counter ownership', 
     assert.equal((await call('/approvals/' + row.id, {...counter, session_id: 'other'})).status, 404);
     assert.equal((await call('/approvals/' + row.id, {role: 'ADMIN'}, 'POST', {approved: true})).status, 403);
     const approver = {role: 'SERVER', username: 'server'};
-    assert.equal((await (await call('/approvals', approver)).json()).length, 1);
+    assert.ok((await (await call('/approvals', approver)).json()).some(request => request.id === row.id));
     assert.equal((await call('/approvals/' + row.id, approver, 'POST', {approved: true})).status, 200);
     const result = await call('/pos-sale-report?' + new URLSearchParams(params), counter, 'GET', null, row.id);
     assert.equal(result.status, 200);
-    assert.equal((await result.json()).counter, 'Counter 2');
-    assert.ok(queries.some(q => q.params?.some(p => String(p).includes('Counter[[:space:]]*2'))));
+    assert.equal((await result.json()).counter, 'Counter 6');
+    assert.equal((await call('/pos-sale-report?' + new URLSearchParams({...params, counter_no: ''}), counter, 'GET', null, row.id)).status, 403);
+    const allParams = {...params, counter_no: ''};
+    const allRequest = await (await call('/approvals', counter, 'POST', {kind: 'pos-sale-report', params: allParams})).json();
+    assert.equal(allRequest.reportCounterNo, 0);
+    assert.equal(allRequest.counterNo, 2);
+    await call('/approvals/' + allRequest.id, approver, 'POST', {approved: true});
+    queries = [];
+    const allResponse = await call('/pos-sale-report?' + new URLSearchParams(allParams), counter, 'GET', null, allRequest.id);
+    assert.equal(allResponse.status, 200);
+    assert.equal((await allResponse.json()).counter, 'ALL');
+    assert.ok(queries.length > 0);
+    assert.ok(queries.every(q => !q.sql.includes('billing_counter REGEXP')));
+    assert.equal((await call('/pos-sale-report?' + new URLSearchParams(params), counter, 'GET', null, allRequest.id)).status, 403);
+    // GST reports support both all counters and an individually approved counter.
+    for (const scope of ['', '2']) {
+      const gstParams = {...params, counter_no: scope, report_type: 'GST'};
+      const request = await (await call('/approvals', counter, 'POST', {kind: 'pos-sale-report', params: gstParams})).json();
+      assert.equal(request.reportType, 'GST');
+      assert.equal(request.reportCounterNo, scope ? 2 : 0);
+      assert.equal((await call('/pos-sale-report?' + new URLSearchParams(gstParams), counter, 'GET', null, request.id)).status, 403);
+      await call('/approvals/' + request.id, approver, 'POST', {approved: true});
+      queries = [];
+      const response = await call('/pos-sale-report?' + new URLSearchParams(gstParams), counter, 'GET', null, request.id);
+      assert.equal(response.status, 200);
+      const report = await response.json();
+      assert.equal(report.reportType, 'GST');
+      assert.equal(report.counter, scope ? 'Counter 2' : 'ALL');
+      assert.ok(Array.isArray(report.gst));
+      const gstQuery = queries.find(q => q.sql.includes('GROUP BY ii.gst_percent'));
+      assert.ok(gstQuery);
+      assert.equal(gstQuery.sql.includes('billing_counter REGEXP'), Boolean(scope));
+      if (scope) assert.ok(gstQuery.params.some(p => String(p).includes('Counter[[:space:]]*2')));
+      assert.equal((await call('/pos-sale-report?' + new URLSearchParams({...gstParams, report_type: 'ALL'}), counter, 'GET', null, request.id)).status, 403);
+    }
+    // Old clients do not send an approval header or a POST request.
+    const legacyUser = {...counter, session_id: 'legacy-client'};
+    const legacyResponse = await call('/pos-sale-report?' + new URLSearchParams(params), legacyUser);
+    assert.equal(legacyResponse.status, 403);
+    const legacyRequest = await legacyResponse.json();
+    assert.ok(legacyRequest.requestId);
+    assert.ok((await (await call('/approvals', approver)).json()).some(request => request.id === legacyRequest.requestId));
+    await call('/approvals/' + legacyRequest.requestId, approver, 'POST', {approved: true});
+    const legacyRetry = await call('/pos-sale-report?' + new URLSearchParams(params), legacyUser);
+    assert.equal(legacyRetry.status, 200);
+    assert.equal((await legacyRetry.json()).counter, 'Counter 6');
+    assert.equal((await call('/pos-sale-report?from=2026-09-13', legacyUser)).status, 403);
+    assert.ok(queries.some(q => q.params?.some(p => String(p).includes('Counter[[:space:]]*6'))));
     assert.equal((await call('/pos-sale-report?from=2026-09-13', counter, 'GET', null, row.id)).status, 403);
     assert.equal((await call('/counter-sale-slip?date=2026-09-12', counter, 'GET', null, row.id)).status, 403);
     const slip = await (await call('/approvals', counter, 'POST', {kind: 'counter-sale-slip', params: {date: '2026-09-12'}})).json();
