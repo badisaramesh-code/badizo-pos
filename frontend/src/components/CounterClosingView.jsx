@@ -12,6 +12,10 @@ import { formatMoney, toNumber } from '../utils/money';
 
 const DEFAULT_DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
 const HANDOVER_TRANSACTION_ROWS = 30;
+const REQUIRED_ENTRY_DETAILS = [
+  'UPI SALE', 'NUMBER', 'PURCHASE', 'RETURN', 'LESS', 'TRANSPORT',
+  'HAMALI', 'SADARA', 'SALARIES', 'HF STAFF', 'XXX'
+];
 const HANDOVER_PRINT_MANUAL_ROWS = 23;
 const HANDOVER_PRINT_DENOMINATION_ROWS = 8;
 const AUTO_ENTRY_DETAILS = new Set(['Counter Closing Cash', 'Today Sale']);
@@ -51,13 +55,20 @@ function isEntryFilled(entry) {
 
 function normalizeEntryCount(rows) {
   const sourceRows = Array.isArray(rows) ? rows : [];
-  const normalized = sourceRows.slice(0, HANDOVER_TRANSACTION_ROWS).map((entry) => ({
+  const remaining = sourceRows.map((entry) => ({
     ...blankEntry(entry.direction === 'DR' ? 'DR' : 'CR'),
     ...entry,
     details: entry.details || '',
     remarks: entry.remarks || '',
     amount: entry.amount === undefined || entry.amount === null ? '' : String(entry.amount)
   }));
+  const normalized = REQUIRED_ENTRY_DETAILS.map((details) => {
+    const index = remaining.findIndex((entry) => String(entry.details).trim().toUpperCase() === details);
+    return index >= 0
+      ? { ...remaining.splice(index, 1)[0], details }
+      : { ...blankEntry(), details };
+  });
+  normalized.push(...remaining.filter(isEntryFilled));
 
   while (normalized.length < HANDOVER_TRANSACTION_ROWS) {
     normalized.push(blankEntry());
@@ -233,7 +244,7 @@ export default function CounterClosingView({ onClose }) {
   ), [entries]);
 
   const displayEntryRows = useMemo(() => (
-    normalizeEntryCount(entries).map((entry, index) => ({ entry, index }))
+    entries.map((entry, index) => ({ entry, index }))
   ), [entries]);
 
   const entryTotals = useMemo(() => {
@@ -392,6 +403,7 @@ export default function CounterClosingView({ onClose }) {
   }
 
   function updateEntry(index, field, value) {
+    if (field === 'details' && index < REQUIRED_ENTRY_DETAILS.length) return;
     setActiveEntryIndex(index);
     if (isExistingSheet) setIsExistingSheet(false);
     setEntries((current) => current.map((entry, rowIndex) => (
@@ -425,7 +437,7 @@ export default function CounterClosingView({ onClose }) {
     if (event.key !== 'Enter') return;
     event.preventDefault();
     formatEntryAmount(index);
-    focusEntryDetails(Math.min(index + 1, HANDOVER_TRANSACTION_ROWS - 1));
+    focusEntryDetails(Math.min(index + 1, entries.length - 1));
   }
 
   function moveBetweenDenominations(event, index) {
@@ -445,7 +457,7 @@ export default function CounterClosingView({ onClose }) {
 
   function clearEntry(index) {
     setEntries((current) => current.map((entry, rowIndex) => (
-      rowIndex === index ? blankEntry() : entry
+      rowIndex === index ? { ...blankEntry(), details: REQUIRED_ENTRY_DETAILS[index] || '' } : entry
     )));
     setActiveEntryIndex(index);
     setIsExistingSheet(false);
@@ -455,9 +467,9 @@ export default function CounterClosingView({ onClose }) {
   function startCashEntry(direction, details) {
     const nextDetails = details || (direction === 'DR' ? 'Cash Outgoing' : 'Cash Incoming');
     const emptyIndex = entries.findIndex((entry) => !isEntryFilled(entry));
-    const targetIndex = emptyIndex >= 0 ? emptyIndex : Math.min(activeEntryIndex + 1, HANDOVER_TRANSACTION_ROWS - 1);
+    const targetIndex = emptyIndex >= 0 ? emptyIndex : entries.length;
 
-    setEntries((current) => current.map((entry, rowIndex) => (
+    setEntries((current) => (targetIndex === current.length ? [...current, blankEntry()] : current).map((entry, rowIndex) => (
       rowIndex === targetIndex
         ? { ...entry, details: entry.details || nextDetails, direction, amount: entry.amount || '' }
         : entry
@@ -1020,6 +1032,7 @@ export default function CounterClosingView({ onClose }) {
                           ref={(element) => { entryDetailRefs.current[index] = element; }}
                           className="field handover-details-input"
                           value={entry.details}
+                          readOnly={index < REQUIRED_ENTRY_DETAILS.length}
                           onFocus={() => setActiveEntryIndex(index)}
                           onChange={(event) => updateEntry(index, 'details', event.target.value)}
                           onKeyDown={(event) => {
