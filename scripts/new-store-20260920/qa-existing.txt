@@ -1,0 +1,16 @@
+
+ const {bootstrapExisting}=require(path.join(__dirname,'database-existing.cjs'));
+ const suffix=require('crypto').randomBytes(6).toString('hex');
+ const isolatedSettings={dbName:'badizo_new_'+suffix,dbUser:'bz_'+suffix,appPassword:require('crypto').randomBytes(24).toString('hex'),installId:require('crypto').randomBytes(24).toString('hex')};
+ await bootstrapExisting(mysql,isolatedSettings,{user:'root',password},33360);
+ let existingApp=await mysql.createConnection({host:'127.0.0.1',port:33360,user:isolatedSettings.dbUser,password:isolatedSettings.appPassword,database:isolatedSettings.dbName});
+ await existingApp.query('CREATE TABLE retry_sentinel (id INT PRIMARY KEY)');
+ await existingApp.query('INSERT INTO retry_sentinel VALUES (42)');
+ await existingApp.end();
+ await bootstrapExisting(mysql,isolatedSettings,{user:'root',password},33360);
+ await assert.rejects(()=>bootstrapExisting(mysql,{...isolatedSettings,installId:'wrong-owner'},{user:'root',password},33360),/ownership mismatch/);
+ await assert.rejects(()=>bootstrapExisting(mysql,isolatedSettings,{user:'root',password:'wrong-test-password'},33360));
+ const rootStillWorks=await mysql.createConnection({host:'127.0.0.1',port:33360,user:'root',password});
+ const [[sentinel]]=await rootStillWorks.query('SELECT id FROM '+isolatedSettings.dbName+'.retry_sentinel');assert.equal(sentinel.id,42);
+ const [[original]]=await rootStillWorks.query('SELECT COUNT(*) n FROM badizo_release_qa.invoices');assert.equal(Number(original.n),1);await rootStillWorks.end();
+ results.push({check:'Existing MySQL 8.0 reuse: new separate DB/user, safe retry, wrong owner/password rejection, old data + root password preserved',status:'PASS'});

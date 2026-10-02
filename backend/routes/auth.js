@@ -41,7 +41,7 @@ function passwordMatches(user, password) {
     });
   }
 
-  return verifyLegacyDefaultPassword(user?.username, password);
+  return process.env.BADIZO_ALLOW_LEGACY_DEFAULT_PASSWORDS === 'true' && verifyLegacyDefaultPassword(user?.username, password);
 }
 
 function publicUser(row) {

@@ -100,7 +100,18 @@ function displayNumber(value, decimals = 2) {
   return amount.toFixed(decimals);
 }
 
-export default function BarcodeStickersView() {
+export default function BarcodeStickersView({ isActive = false, onBackToProductForm } = {}) {
+  useEffect(() => {
+    if (!isActive || !onBackToProductForm) return undefined;
+    const handleProductShortcut = (event) => {
+      if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        onBackToProductForm();
+      }
+    };
+    window.addEventListener('keydown', handleProductShortcut);
+    return () => window.removeEventListener('keydown', handleProductShortcut);
+  }, [isActive, onBackToProductForm]);
   const savedStoreSettings = loadBarcodeStoreSettings();
   const [screenMode, setScreenMode] = useState('print');
   const [templateName, setTemplateName] = useState(loadBarcodeLabelFormat);
@@ -203,6 +214,17 @@ export default function BarcodeStickersView() {
       focusStickerSearch(12);
     }
   }, [screenMode]);
+
+  useEffect(() => {
+    if (!isActive || screenMode !== 'print') return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const input = searchRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      input.setSelectionRange?.(input.value.length, input.value.length);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isActive, screenMode]);
 
   function focusStickerSearch(attempts = 12) {
     const focusAttempt = (remaining) => {
@@ -596,6 +618,7 @@ export default function BarcodeStickersView() {
                     </button>
                   </div>
                   <button className="secondary-button" type="button" onClick={() => searchRef.current?.focus()}>Focus Search</button>
+                  {onBackToProductForm && <button className="close-action-button" type="button" onClick={onBackToProductForm} aria-keyshortcuts="Alt+P">Back to Add / Edit Product (Alt+P)</button>}
                 </div>
               </div>
 
@@ -739,6 +762,7 @@ export default function BarcodeStickersView() {
         <section className="panel">
           <div className="panel-header green">
             <h2 className="panel-title">PRN Template Setup</h2>
+            {onBackToProductForm && <button className="close-action-button" type="button" onClick={onBackToProductForm} aria-keyshortcuts="Alt+P">Back to Add / Edit Product (Alt+P)</button>}
             <div className="barcode-mode-row barcode-mode-row-inline">
               <button
                 className={`segment-button ${screenMode === 'print' ? 'active' : ''}`}

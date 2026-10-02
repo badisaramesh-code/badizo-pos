@@ -43,3 +43,6 @@ Desktop.ini
 output/
 tmp/
 /38x25_2up.prn
+
+# Local generated reports, repair backups, and temporary worktrees
+/outputs/

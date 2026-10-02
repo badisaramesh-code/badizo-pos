@@ -87,6 +87,7 @@ async function createMysqlDefaultsFile() {
     `host="${escapeMysqlOptionValue(process.env.DB_HOST || 'localhost')}"`,
     `user="${escapeMysqlOptionValue(process.env.DB_USER || 'root')}"`,
     `password="${escapeMysqlOptionValue(process.env.DB_PASSWORD || '1234')}"`,
+    'port=' + (Number.parseInt(process.env.DB_PORT, 10) || 3306),
     'default-character-set=utf8mb4',
     ''
   ].join('\r\n');
@@ -240,6 +241,7 @@ async function runDatabaseBackup() {
   const args = [
     `--defaults-extra-file=${defaults.defaultsFile}`,
     '--single-transaction',
+    '--no-tablespaces',
     '--quick',
     '--routines',
     '--triggers',

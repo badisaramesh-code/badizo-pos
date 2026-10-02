@@ -1169,3 +1169,8 @@ export async function saveHospitalityStockMovement(payload) {
 }
 
 export default api;
+
+export async function editNamedLedgerDetails(id, payload) {
+  const { data } = await api.patch('/books/named-ledgers/' + id + '/details', payload);
+  return data;
+}

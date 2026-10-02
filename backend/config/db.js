@@ -18,6 +18,7 @@ const DB_RETRYABLE_ERRORS = new Set([
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
+  port: Number.parseInt(process.env.DB_PORT, 10) || 3306,
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '1234',
   database: process.env.DB_NAME || 'badizo_pos',
@@ -1250,12 +1251,30 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         ('loyalty_earn_points', '10'),
         ('loyalty_redeem_points', '10'),
         ('loyalty_redeem_amount', '0.5'),
-        ('backup_daily_time', '09:00'),
+        ('backup_daily_time', '22:30'),
         ('barcode_printer_templates', '{"tsc-244-pro-50x50-two-up.prn":{"label":"50 x 50 mm Two-Up","printer":"TSC TTP-244 Pro","shares":["\\\\\\\\localhost\\\\TSC TTP-244 Pro","\\\\\\\\localhost\\\\TSC-244-Pro"]},"tsc-244-1-33x25-single.prn":{"label":"38 x 25 mm Two-Up","printer":"TSC TE244","shares":["\\\\\\\\localhost\\\\TSC-244-2"]},"tsc-244-2-jewellery-100x15-tail.prn":{"label":"100 x 15 mm Jewellery Tail","printer":"TSC 244-2","shares":["\\\\\\\\localhost\\\\TSC 244-2"]}}')
     `);
 
+    if (process.env.BADIZO_NEW_STORE === 'true') {
+      const [configured] = await connection.query("SELECT 1 FROM app_settings WHERE setting_key = 'new_store_initialized'");
+      if (!configured.length) {
+        const settings = {
+          shop_name: 'NEW STORE - CONFIGURE SYSTEM', gst_number: '', phone: '', address: '',
+          bank_name: '', bank_account_name: '', bank_account_no: '', bank_ifsc: '', bank_branch: '', upi_id: '',
+          thermal_footer_line_1: 'Thank you for shopping with us.', thermal_footer_line_2: '',
+          thermal_footer_line_3: '', thermal_footer_line_4: '', backup_daily_time: '09:00',
+          new_store_initialized: 'true'
+        };
+        for (const [key, value] of Object.entries(settings)) {
+          await connection.query('INSERT INTO app_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)', [key, value]);
+        }
+      }
+    }
+
     await ensureColumn(connection, 'local_account_entries', 'is_cleared', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER remarks');
     await ensureColumn(connection, 'counter_cash_ledger_entries', 'remarks', "VARCHAR(255) DEFAULT '' AFTER details");
+    await ensureColumn(connection, 'counter_cash_ledger_entries', 'named_ledger_account', 'VARCHAR(160) DEFAULT NULL');
+    await ensureColumn(connection, 'counter_cash_ledger_entries', 'named_ledger_details', 'VARCHAR(255) DEFAULT NULL');
     await ensureColumn(connection, 'products', 'purchase_price', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER mrp');
     await ensureColumn(connection, 'staff_salary_sheets', 'da_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER overtime_amount');
     await ensureColumn(connection, 'staff_salary_sheets', 'hra_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER da_amount');
@@ -1313,6 +1332,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     await ensureColumn(connection, 'products', 'default_expiry_date', 'DATE DEFAULT NULL AFTER default_mfd_date');
     await ensureColumn(connection, 'products', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER default_expiry_date');
     await ensureColumn(connection, 'products', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at');
+    await require('../services/productTimestampHistory').ensureProductTimestampHistory(connection);
     await connection.query("ALTER TABLE product_import_jobs MODIFY status ENUM('QUEUED', 'RUNNING', 'SUCCESS', 'FAILED', 'PARTIAL SUCCESS', 'ROLLED BACK') NOT NULL DEFAULT 'QUEUED'");
     await ensureColumn(connection, 'invoices', 'transaction_type', "ENUM('B2C', 'B2B') NOT NULL DEFAULT 'B2C' AFTER created_at");
     await ensureColumn(connection, 'invoices', 'financial_year', "VARCHAR(7) DEFAULT NULL AFTER invoice_no");

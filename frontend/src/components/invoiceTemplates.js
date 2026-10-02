@@ -61,11 +61,7 @@ export const A4_TAX_INVOICE_TEMPLATE = {
     { key: 'amount', label: 'Amount', width: '11%', align: 'right' }
   ],
   declaration: 'We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.',
-  bankDetails: [
-    ['Bank Name', 'ICICI BANK'],
-    ['A/c No.', '363305001255'],
-    ['Branch & IFS Code', 'KODAD & ICIC0003633']
-  ]
+  bankDetails: []
 };
 
 export const INVOICE_TEMPLATES = {

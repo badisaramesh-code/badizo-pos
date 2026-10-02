@@ -36,6 +36,7 @@ function currentSessionLabel(user) {
 export default function App() {
   const [activeWorkspace, setActiveWorkspace] = useState('billing');
   const [workspaceNavigationKey, setWorkspaceNavigationKey] = useState(0);
+  const [productFormNavigationKey, setProductFormNavigationKey] = useState(0);
   const [mountedWorkspaces, setMountedWorkspaces] = useState(() => new Set(['billing']));
   const [currentUser, setCurrentUser] = useState(getStoredUser);
   const [backupAlert, setBackupAlert] = useState(null);
@@ -120,6 +121,7 @@ export default function App() {
       try {
         const health = await fetchBackupHealth();
         if (cancelled) return;
+        if (health?.enabled === false) { setBackupAlert(null); return; }
         const now = new Date();
         if (now.getHours() < 9) {
           setBackupAlert(null);
@@ -202,13 +204,17 @@ export default function App() {
       <InventoryDashboardView
         isActive={activeWorkspace === 'inventory'}
         navigationKey={workspaceNavigationKey}
+        productFormNavigationKey={productFormNavigationKey}
         setActiveWorkspace={setActiveWorkspace}
       />
     ),
     importHistory: <ProductImportHistoryView onClose={() => setActiveWorkspace('inventory')} />,
     orders: <OrdersView />,
     priceList: <PriceListView />,
-    barcode: <BarcodeStickersView />,
+    barcode: <BarcodeStickersView isActive={activeWorkspace === 'barcode'} onBackToProductForm={() => {
+      setProductFormNavigationKey((current) => current + 1);
+      setActiveWorkspace('inventory');
+    }} />,
     inward: <InwardEntryView />,
     staffPayroll: <StaffPayrollView />,
     reports: <ReportsView isActive={activeWorkspace === 'reports'} onClose={() => setActiveWorkspace('billing')} />,

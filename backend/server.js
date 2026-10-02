@@ -242,6 +242,7 @@ function checkDailyBackupCatchUp() {
 }
 
 function scheduleDailyBackupCatchUpCheck() {
+  if (String(process.env.BADIZO_DISABLE_SCHEDULED_CLOUD_BACKUP).toLowerCase() === 'true') return null;
   setTimeout(checkDailyBackupCatchUp, 60 * 1000).unref?.();
   const timer = setInterval(checkDailyBackupCatchUp, 5 * 60 * 1000);
   timer.unref?.();
@@ -256,6 +257,11 @@ function startServer(port = PORT) {
       logInfo('Backend started', { host: HOST, port: listenPort });
       startLegacyFrontendRedirect(listenPort);
       scheduleDailySaleAlerts();
+      if (process.env.BADIZO_ENABLE_LOCAL_BACKUP_SCHEDULE === 'true') {
+        const { scheduleDailyBackup, scheduleCloudBackupSync } = require('./services/backupService');
+        scheduleDailyBackup();
+        scheduleCloudBackupSync();
+      }
       scheduleDailyBackupCatchUpCheck();
       resolve(server);
     });
