@@ -10,7 +10,7 @@ const emptyProfile=()=>({address_details:'',phone_number:'',gst_number:''});
 const safe=(v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
 const capitalizeFirstLetter=(value)=>String(value||'').replace(/[A-Za-z]/,letter=>letter.toUpperCase());
 const formatLedgerAmount=(value)=>Number(value||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
-const ledgerEntryType=(row)=>Number(row?.cr_amount||0)>0?'CR':'DR';
+const ledgerEntryType=(row)=>Number(row?.balance||0)<0?'CR':'DR';
 const formatLedgerDate=(value)=>{const [year,month,day]=String(value||'').slice(0,10).split('-');return year&&month&&day?(String(day).padStart(2,'0')+'-'+String(month).padStart(2,'0')+'-'+year):'-';};
 export default function LocalAccountsView(){
  const[scope,setScope]=useState('LOCAL'),[from,setFrom]=useState(financialYearStartIso()),[to,setTo]=useState(todayIso()),[data,setData]=useState({rows:[],ledgers:[]});

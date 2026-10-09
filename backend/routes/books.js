@@ -1,4 +1,7 @@
+const { lockLedgerSource, syncNamedLedgerDetails } = require('../utils/syncNamedLedgerDetails');
 const express = require('express');
+const { fetchNamedLedgers } = require('../utils/namedLedgers');
+const { writeAuditLog } = require('../services/auditService');
 const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
@@ -301,44 +304,7 @@ router.get('/accounting', async (req, res) => {
       [from, to]
     );
 
-    const [namedLedgerEntries] = await db.query(
-      `SELECT cle.id,
-              DATE_FORMAT(cle.entry_date, '%Y-%m-%d') AS entry_date,
-              cle.counter_no,
-              CONCAT('C', cle.counter_no) AS counter_label,
-              cle.source_id,
-              chs.sheet_no,
-              CASE
-                WHEN cle.source_type = 'NAMED_LEDGER_MANUAL' THEN UPPER(TRIM(cle.account_name))
-                WHEN account_counts.entry_count >= 2
-                  THEN UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END))
-                ELSE 'GENERAL'
-              END AS account_name,
-              UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END)) AS source_account_name,
-              cle.details,
-              cle.remarks,
-              cle.direction,
-              cle.amount,
-              cle.created_by,
-              DATE_FORMAT(cle.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
-       FROM counter_cash_ledger_entries cle
-       LEFT JOIN counter_handover_sheets chs ON chs.id = cle.source_id
-       LEFT JOIN (
-         SELECT UPPER(TRIM(CASE WHEN account_name LIKE 'Expense - %' THEN SUBSTRING(account_name, 11) ELSE account_name END)) AS normalized_name,
-                COUNT(*) AS entry_count
-         FROM counter_cash_ledger_entries
-         WHERE source_type = 'COUNTER_HANDOVER'
-           AND payment_mode NOT IN ('CLOSING_BASE', 'SALES', 'CASH_NOTES')
-           AND entry_date <= ?
-         GROUP BY UPPER(TRIM(CASE WHEN account_name LIKE 'Expense - %' THEN SUBSTRING(account_name, 11) ELSE account_name END))
-       ) account_counts ON account_counts.normalized_name = UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END))
-       WHERE ((cle.source_type = 'COUNTER_HANDOVER'
-               AND cle.payment_mode NOT IN ('CLOSING_BASE', 'SALES', 'CASH_NOTES'))
-              OR cle.source_type = 'NAMED_LEDGER_MANUAL')
-         AND cle.entry_date <= ?
-       ORDER BY account_name ASC, cle.entry_date ASC, cle.created_at ASC, cle.id ASC`,
-      [to, to]
-    );
+    const namedLedgerEntries = await fetchNamedLedgers(db, to);
 
     const [cashAccountManualEntries] = await db.query(
       `SELECT id, entry_date, counter_no, details, direction, amount, created_by, created_at
@@ -787,13 +753,14 @@ router.get('/accounting', async (req, res) => {
         + (row.direction === 'DR' ? amount : -amount);
       if (row.entry_date < from) return;
       namedLedgerRows.push({
+        entryId: row.id,
         Date: row.entry_date,
         Account: account,
         Counter: row.counter_label || ('C' + row.counter_no),
         Sheet: row.sheet_no || '',
-        Details: account === 'GENERAL'
+        Details: row.named_ledger_details ?? (account === 'GENERAL'
           ? [row.source_account_name, row.details].filter(Boolean).join(' - ')
-          : (row.details || ''),
+          : (row.details || '')),
         Remarks: row.remarks || '',
         'DR Rs': row.direction === 'DR' ? amount : 0,
         'CR Rs': row.direction === 'CR' ? amount : 0,
@@ -1058,6 +1025,46 @@ router.get('/accounting', async (req, res) => {
   } catch (err) {
     console.error('Accounting books failed:', err.message);
     res.status(500).json({ error: 'Unable to load accounting books.' });
+  }
+});
+
+router.patch('/named-ledgers/:id/details', async (req, res) => {
+  const id = Number(req.params.id);
+  const details = typeof req.body?.details === 'string' ? req.body.details.trim() : '';
+  const to = String(req.body?.to || '');
+  if (!Number.isSafeInteger(id) || id <= 0 || !details || details.length > 255 || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ error: 'Valid entry, report date and details (1–255 characters) are required.' });
+  }
+  if (Object.keys(req.body).some(key => !['details', 'to'].includes(key))) {
+    return res.status(400).json({ error: 'Only Details can be edited.' });
+  }
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const sourceEntry = await lockLedgerSource(connection, id);
+    const rows = await fetchNamedLedgers(connection, to);
+    const entry = rows.find(row => Number(row.id) === id);
+    if (!sourceEntry || !entry || entry.account_name !== 'GENERAL') {
+      await connection.rollback();
+      return res.status(409).json({ error: 'Only current GENERAL ledger entries can be edited. Reload the book.' });
+    }
+    const account = rows.find(row => row.account_name.toUpperCase() === details.toUpperCase())?.account_name || 'GENERAL';
+    await syncNamedLedgerDetails(connection, sourceEntry, details);
+    await connection.query(
+      'UPDATE counter_cash_ledger_entries SET named_ledger_details = ?, named_ledger_account = ? WHERE id = ?',
+      [details, account, id]
+    );
+    await writeAuditLog({ user: req.user, action: 'NAMED_LEDGER_DETAILS_EDITED', entityType: 'COUNTER_CASH_LEDGER', entityId: String(id),
+      details: { previousDetails: entry.named_ledger_details ?? entry.details, details, previousAccount: 'GENERAL', account }, connection });
+    await connection.commit();
+    res.json({ success: true, account_name: account });
+  } catch (err) {
+    if (connection) await connection.rollback();
+    console.error('Named ledger details edit failed:', err.message);
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Unable to save ledger details.' });
+  } finally {
+    if (connection) connection.release();
   }
 });
 

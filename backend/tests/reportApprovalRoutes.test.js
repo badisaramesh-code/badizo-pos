@@ -30,6 +30,7 @@ test('HTTP approval flow blocks data before OK and enforces approved report scop
     const result = await call('/pos-sale-report?' + new URLSearchParams(params), counter, 'GET', null, row.id);
     assert.equal(result.status, 200);
     assert.equal((await result.json()).counter, 'Counter 6');
+    assert.equal((await call('/pos-sale-report?' + new URLSearchParams(params), counter, 'GET', null, row.id)).status, 403);
     assert.equal((await call('/pos-sale-report?' + new URLSearchParams({...params, counter_no: ''}), counter, 'GET', null, row.id)).status, 403);
     const allParams = {...params, counter_no: ''};
     const allRequest = await (await call('/approvals', counter, 'POST', {kind: 'pos-sale-report', params: allParams})).json();
@@ -75,6 +76,7 @@ test('HTTP approval flow blocks data before OK and enforces approved report scop
     const legacyRetry = await call('/pos-sale-report?' + new URLSearchParams(params), legacyUser);
     assert.equal(legacyRetry.status, 200);
     assert.equal((await legacyRetry.json()).counter, 'Counter 6');
+    assert.equal((await call('/pos-sale-report?' + new URLSearchParams(params), legacyUser)).status, 403);
     assert.equal((await call('/pos-sale-report?from=2026-09-13', legacyUser)).status, 403);
     assert.ok(queries.some(q => q.params?.some(p => String(p).includes('Counter[[:space:]]*6'))));
     assert.equal((await call('/pos-sale-report?from=2026-09-13', counter, 'GET', null, row.id)).status, 403);

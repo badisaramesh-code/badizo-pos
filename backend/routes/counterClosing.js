@@ -1,3 +1,4 @@
+const { overrideKey } = require('../utils/namedLedgers');
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
@@ -390,6 +391,15 @@ router.post('/handover', async (req, res) => {
       const savedCreatedAt = sheetRows[0].created_at || '';
       const savedUpdatedAt = sheetRows[0].updated_at || '';
 
+      // Keep details edits when an unchanged closing line is regenerated.
+      const [previousLedgerRows] = await connection.query(
+        "SELECT * FROM counter_cash_ledger_entries WHERE source_type = 'COUNTER_HANDOVER' AND source_id = ? ORDER BY id FOR UPDATE", [sheetId]);
+      const ledgerOverrides = new Map();
+      for (const row of previousLedgerRows) {
+        const key = overrideKey(row);
+        if (!ledgerOverrides.has(key)) ledgerOverrides.set(key, []);
+        ledgerOverrides.get(key).push([row.named_ledger_account, row.named_ledger_details]);
+      }
       await connection.query('DELETE FROM counter_handover_entries WHERE sheet_id = ?', [sheetId]);
       await connection.query('DELETE FROM counter_handover_denominations WHERE sheet_id = ?', [sheetId]);
       await connection.query(
@@ -437,6 +447,15 @@ router.post('/handover', async (req, res) => {
            VALUES ?`,
           [savedDenominationRows]
         );
+      }
+
+      const [regeneratedLedgerRows] = await connection.query(
+        "SELECT * FROM counter_cash_ledger_entries WHERE source_type = 'COUNTER_HANDOVER' AND source_id = ? ORDER BY id", [sheetId]);
+      for (const row of regeneratedLedgerRows) {
+        const override = ledgerOverrides.get(overrideKey(row))?.shift();
+        if (override && override[0] != null) {
+          await connection.query('UPDATE counter_cash_ledger_entries SET named_ledger_account = ?, named_ledger_details = ? WHERE id = ?', [...override, row.id]);
+        }
       }
 
       let ledgerEntryCount = closingEntries.length;

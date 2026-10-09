@@ -133,6 +133,7 @@ function toProduct(row) {
     default_batch_no: row.default_batch_no || '',
     default_mfd_date: row.default_mfd_date,
     default_expiry_date: row.default_expiry_date,
+    previous_updated_at: row.previous_updated_at || null,
     created_at: row.created_at,
     updated_at: row.updated_at
   };

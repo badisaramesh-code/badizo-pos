@@ -48,3 +48,16 @@ test('rejection, cancellation and pending expiry do not grant access', () => {
   now += 600001;
   assert.deepEqual(store.pending(), []);
 });
+
+test('each report fetch consumes approval and the next request needs fresh SERVER OK', () => {
+  const store = createApprovalStore();
+  const row = store.request(user, 'pos-sale-report', params, '');
+  assert.equal(store.consume(row.id, user, 'pos-sale-report', params), null);
+  store.decide(row.id, true, server);
+  assert.equal(store.consume(row.id, user, 'pos-sale-report', {...params, to: '2026-09-13'}), null);
+  assert.ok(store.consume(row.id, user, 'pos-sale-report', params));
+  assert.equal(store.consume(row.id, user, 'pos-sale-report', params), null);
+  const next = store.request(user, 'pos-sale-report', params, '');
+  assert.notEqual(next.id, row.id);
+  assert.equal(next.status, 'PENDING');
+});

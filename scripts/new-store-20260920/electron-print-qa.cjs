@@ -1,0 +1,4 @@
+const {app,BrowserWindow}=require('electron');const fs=require('fs'),path=require('path');
+const out=path.resolve(__dirname,'../../output/new-store-20260920/qa');
+app.setPath('userData',path.join(out,'electron-profile'));app.on('window-all-closed',()=>{});
+app.whenReady().then(async()=>{try{for(const name of ['a4-short','a4-long','thermal-80']){const w=new BrowserWindow({show:false,width:name==='thermal-80'?303:794,height:1123,webPreferences:{sandbox:true}});await w.loadFile(path.join(out,name+'.html'));await w.webContents.executeJavaScript('document.fonts.ready');const data=await w.webContents.printToPDF({printBackground:true,preferCSSPageSize:true,pageSize:name==='thermal-80'?{width:80000,height:250000}:'A4',margins:{top:0,bottom:0,left:0,right:0}});fs.writeFileSync(path.join(out,name+'.pdf'),data);w.destroy();}console.log('PRINT_PDF_PASS');app.exit(0)}catch(e){console.error(e);app.exit(1)}});

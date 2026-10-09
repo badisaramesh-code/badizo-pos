@@ -5678,6 +5678,10 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   line-height: 1.2;
 }
 
+.counter-cash-ledger-view .cash-ledger-credit-balance {
+  color: #dc2626;
+}
+
 .cash-ledger-table thead th {
   position: sticky;
   z-index: 2;
@@ -6160,7 +6164,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .handover-details-input,
 .handover-details-cell {
-  font-weight: 800;
+  font-weight: 400;
 }
 
 .handover-table th,
@@ -6348,7 +6352,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 }
 
 .handover-print-sheet .handover-details-cell {
-  font-weight: 800;
+  font-weight: 400;
 }
 
 .handover-print-sheet th:nth-child(1),
@@ -10878,4 +10882,16 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   .backup-alert-modal {
     box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.55), 0 10px 30px rgba(15, 23, 42, 0.16);
   }
+}
+
+.named-ledger-details-editor { display: flex; gap: 6px; align-items: center; }
+.named-ledger-details-editor .field { min-width: 240px; flex: 1; }
+
+.product-form-shortcut-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+}
+
+.product-form-shortcut-header > .close-action-button {
+  justify-self: end;
 }

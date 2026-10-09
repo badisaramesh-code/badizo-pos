@@ -16,6 +16,9 @@ router.use(authenticate);
 
 router.get('/', async (_req, res) => {
   try {
+    if (process.env.BADIZO_DISABLE_SCHEDULED_CLOUD_BACKUP === 'true') {
+      return res.json({ enabled: false, status: 'disabled', message: 'Scheduled cloud backup is not configured for this store.' });
+    }
     let status = null;
     if (fs.existsSync(statusFile)) {
       status = JSON.parse(await fs.promises.readFile(statusFile, 'utf8'));
