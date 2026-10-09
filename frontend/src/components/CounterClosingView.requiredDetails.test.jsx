@@ -10,7 +10,7 @@ jest.mock('../api/client', () => ({
 }));
 jest.mock('xlsx', () => ({}));
 
-const labels = ['UPI SALE', 'NUMBER', 'PURCHASE', 'RETURN', 'LESS', 'TRANSPORT', 'HAMALI', 'SADARA', 'SALARIES', 'HF STAFF', 'XXX'];
+const labels = ['UPI SALE', 'NUMBER'];
 let container;
 let root;
 beforeEach(() => {
@@ -33,18 +33,19 @@ const button = (text) => [...container.querySelectorAll('button')].find((item) =
 
 test('required details survive Clear and Reset; Cash In uses a custom row', async () => {
   await act(async () => root.render(<CounterClosingView />));
-  expect(details().slice(0, 11).map((input) => input.value)).toEqual(labels);
-  expect(details().slice(0, 11).every((input) => input.readOnly)).toBe(true);
+  expect(details().slice(0, 2).map((input) => input.value)).toEqual(labels);
+  expect(details().slice(0, 2).every((input) => input.readOnly)).toBe(true);
+  expect(details().slice(2).every((input) => input.value === '' && !input.readOnly)).toBe(true);
   const firstRow = details()[0].closest('tr');
   await act(async () => Simulate.change(firstRow.querySelector('.handover-remarks-input'), { target: { value: 'remark' } }));
   await act(async () => Simulate.click(firstRow.querySelector('button')));
   expect(details()[0].value).toBe('UPI SALE');
   expect(firstRow.querySelector('.handover-remarks-input').value).toBe('');
   await act(async () => Simulate.click(button('Cash In')));
-  expect(details()[11].value).toBe('Cash Incoming');
+  expect(details()[2].value).toBe('Cash Incoming');
   await act(async () => Simulate.click(button('Reset Rows From Sales')));
-  expect(details().slice(0, 11).map((input) => input.value)).toEqual(labels);
-  expect(details()[11].value).toBe('');
+  expect(details().slice(0, 2).map((input) => input.value)).toEqual(labels);
+  expect(details()[2].value).toBe('');
 });
 
 test('loading saved entries preserves matching amounts and all custom rows', async () => {
@@ -53,7 +54,18 @@ test('loading saved entries preserves matching amounts and all custom rows', asy
     ...Array.from({ length: 29 }, (_, index) => ({ details: `Custom ${index}`, direction: 'CR', amount: index + 1 }))
   ] } });
   await act(async () => root.render(<CounterClosingView />));
-  expect(details().slice(0, 11).map((input) => input.value)).toEqual(labels);
+  expect(details().slice(0, 2).map((input) => input.value)).toEqual(labels);
   expect(details()[0].closest('tr').querySelector('.handover-dr-input').value).toBe('123');
-  expect(details().slice(11).map((input) => input.value)).toEqual(Array.from({ length: 29 }, (_, index) => `Custom ${index}`));
+  expect(details().slice(2).map((input) => input.value)).toEqual(Array.from({ length: 29 }, (_, index) => `Custom ${index}`));
+});
+
+test('saved PURCHASE through XXX entries remain editable with their amounts', async () => {
+  const savedLabels = ['PURCHASE', 'RETURN', 'LESS', 'TRANSPORT', 'HAMALI', 'SADARA', 'SALARIES', 'HF STAFF', 'XXX'];
+  api.fetchCounterHandover.mockResolvedValue({ snapshot: {}, sheet: { entries:
+    savedLabels.map((details, index) => ({ details, direction: 'CR', amount: index + 1 }))
+  } });
+  await act(async () => root.render(<CounterClosingView />));
+  expect(details().slice(2, 11).map(input => input.value)).toEqual(savedLabels);
+  expect(details().slice(2).every(input => !input.readOnly)).toBe(true);
+  expect([...details()[2].closest('tr').querySelectorAll('.amount-field')].at(-1).value).toBe('1');
 });
