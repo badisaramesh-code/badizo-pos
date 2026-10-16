@@ -3,10 +3,13 @@ import * as XLSX from 'xlsx';
 import {
   fetchCounterCashLedger,
   fetchSettings,
-  saveCounterCashLedgerEntry
+  saveCounterCashLedgerEntry,
+  updateCounterCashLedgerEntry,
+  deleteCounterCashLedgerEntry
 } from '../api/client';
 import { formatDisplayDate, normalizeDateInput, todayIso } from '../utils/date';
 import { formatMoney, toNumber } from '../utils/money';
+import { createCashLedgerPdf } from '../utils/cashLedgerPdf';
 
 const blankEntry = {
   date: todayIso(),
@@ -71,6 +74,8 @@ export default function CounterCashLedgerView({ initialFrom = '', initialTo = ''
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -128,7 +133,8 @@ export default function CounterCashLedgerView({ initialFrom = '', initialTo = ''
       const cr = toNumber(row.cr_amount);
       balance += dr - cr;
       expandedRows.push({
-        key: row.id,
+        key: `${row.source_type}-${row.id}`,
+        manualRow: row.source_type === 'MANUAL_CASH_USAGE' ? row : null,
         date: row.entry_date,
         details: row.details,
         noteDetail: '',
@@ -192,9 +198,12 @@ export default function CounterCashLedgerView({ initialFrom = '', initialTo = ''
     setErrorMessage('');
     setIsSaving(true);
     try {
-      await saveCounterCashLedgerEntry({
+      const saveEntry = editingId
+        ? (payload) => updateCounterCashLedgerEntry(editingId, payload)
+        : saveCounterCashLedgerEntry;
+      await saveEntry({
         date: normalizeDateInput(manualEntry.date),
-        counter_no: manualEntry.counter_no || counterNo || '',
+        counter_no: editingId ? manualEntry.counter_no : manualEntry.counter_no || counterNo || '',
         details: manualEntry.details,
         cr_amount: manualEntry.cr_amount,
         dr_amount: manualEntry.dr_amount
@@ -204,12 +213,64 @@ export default function CounterCashLedgerView({ initialFrom = '', initialTo = ''
         date: normalizeDateInput(current.date),
         counter_no: current.counter_no
       }));
-      setStatusMessage('Manual cash ledger entry saved.');
+      setEditingId(null);
       await loadLedger();
+      setStatusMessage('Manual cash ledger entry saved.');
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save manual cash entry.');
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  function editEntry(row) {
+    setEditingId(row.id);
+    setManualEntry({ date: row.entry_date, counter_no: String(row.counter_no || ''), details: row.details, dr_amount: row.dr_amount || '', cr_amount: row.cr_amount || '' });
+    setErrorMessage('');
+    setStatusMessage('Edit the selected entry below, then click Save Changes.');
+    document.querySelector('.cash-ledger-entry-bar')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setManualEntry({ ...blankEntry, date: todayIso(), counter_no: counterNo });
+    setStatusMessage('');
+  }
+
+  async function deleteEntry(row) {
+    if (!window.confirm(`Delete manual cash entry "${row.details}" (${formatMoney(row.amount)})?`)) return;
+    setIsSaving(true);
+    setErrorMessage('');
+    try {
+      await deleteCounterCashLedgerEntry(row.id);
+      if (editingId === row.id) cancelEdit();
+      await loadLedger();
+      setStatusMessage('Manual cash ledger entry deleted.');
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to delete manual cash entry.');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function exportLedgerPdf() {
+    setIsExportingPdf(true);
+    setErrorMessage('');
+    try {
+      const pdf = await createCashLedgerPdf({
+        from: formatLedgerDate(ledger.from || from),
+        to: formatLedgerDate(ledger.to || to),
+        counter: ledger.counter_no,
+        rows: sheetRows.map(row => ({ ...row, date: formatLedgerDate(row.date) })),
+        openingBalance: toNumber(ledger.opening_balance),
+        totals: ledger.totals,
+        closingBalance: toNumber(ledger.closing_balance)
+      });
+      pdf.save(`BADIZO-Cash-Ledger-${ledger.from || from}-${ledger.to || to}.pdf`);
+    } catch (err) {
+      setErrorMessage('Unable to export cash ledger PDF. Please try again.');
+    } finally {
+      setIsExportingPdf(false);
     }
   }
 
@@ -264,6 +325,7 @@ export default function CounterCashLedgerView({ initialFrom = '', initialTo = ''
             </label>
             <button className="secondary-button" type="submit" disabled={isLoading}>{isLoading ? 'Loading...' : 'View'}</button>
             <button className="secondary-button" type="button" onClick={exportLedgerExcel}>Export Excel</button>
+            <button className="secondary-button" type="button" onClick={exportLedgerPdf} disabled={isLoading || isExportingPdf}>{isExportingPdf ? 'Exporting...' : 'Export PDF'}</button>
           </form>
         </div>
 
@@ -298,7 +360,10 @@ export default function CounterCashLedgerView({ initialFrom = '', initialTo = ''
                   <tr key={row.key}>
                     <td>{formatLedgerDate(row.date)}</td>
                     <td>{row.details}</td>
-                    <td>{row.noteDetail}</td>
+                    <td>{row.noteDetail}{row.manualRow && <span style={{ display: 'inline-flex', gap: '6px' }}>
+                      <button type="button" className="secondary-button" disabled={isSaving} onClick={() => editEntry(row.manualRow)}>Edit</button>
+                      <button type="button" className="secondary-button" disabled={isSaving} onClick={() => deleteEntry(row.manualRow)}>Delete</button>
+                    </span>}</td>
                     <td>{formatSheetAmount(row.dr)}</td>
                     <td>{formatSheetAmount(row.cr)}</td>
                     <td className={row.balanceType === 'Cr' ? 'cash-ledger-credit-balance' : undefined}>{toNumber(row.balance).toFixed(2)}</td>
@@ -339,7 +404,8 @@ export default function CounterCashLedgerView({ initialFrom = '', initialTo = ''
             </tr>
           </tbody>
         </table>
-        <button className="primary-button cash-ledger-post-button" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Post Entry'}</button>
+        <button className="primary-button cash-ledger-post-button" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : editingId ? 'Save Changes' : 'Post Entry'}</button>
+        {editingId && <button className="secondary-button" style={{ gridColumn: '1 / -1' }} type="button" disabled={isSaving} onClick={cancelEdit}>Cancel</button>}
       </form>
     </div>
   );

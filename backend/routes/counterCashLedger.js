@@ -233,4 +233,40 @@ router.post('/', async (req, res) => {
   }
 });
 
+router.put('/:id', async (req, res) => {
+  try {
+    const entryDate = normalizeDate(req.body?.date);
+    const counterNo = normalizeCounterNo(req.body?.counter_no) || null;
+    const details = String(req.body?.details || '').trim().slice(0, 255);
+    const { direction, amount } = normalizeManualAmount(req.body);
+    if (!details) return res.status(400).json({ error: 'Details are required.' });
+    if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Enter an amount greater than zero.' });
+    const [result] = await db.query(
+      `UPDATE counter_cash_ledger_entries
+       SET entry_date = ?, counter_no = ?, account_name = ?, details = ?, direction = ?, amount = ?
+       WHERE id = ? AND source_type = 'MANUAL_CASH_USAGE'`,
+      [entryDate, counterNo, direction === 'CR' ? 'Cash Used / Deposit' : 'Cash Received / Return', details, direction, amount, req.params.id]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Manual cash ledger entry not found.' });
+    await writeAuditLog({ user: req.user, action: 'COUNTER_CASH_LEDGER_MANUAL_UPDATE', entityType: 'COUNTER_CASH_LEDGER', entityId: req.params.id, details: { entryDate, counterNo, details, direction, amount } });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Unable to update cash ledger entry.' });
+  }
+});
+
+router.delete('/:id', async (req, res) => {
+  try {
+    const [result] = await db.query(
+      "DELETE FROM counter_cash_ledger_entries WHERE id = ? AND source_type = 'MANUAL_CASH_USAGE'",
+      [req.params.id]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Manual cash ledger entry not found.' });
+    await writeAuditLog({ user: req.user, action: 'COUNTER_CASH_LEDGER_MANUAL_DELETE', entityType: 'COUNTER_CASH_LEDGER', entityId: req.params.id });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Unable to delete cash ledger entry.' });
+  }
+});
+
 module.exports = router;

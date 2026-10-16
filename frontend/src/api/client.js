@@ -1083,6 +1083,16 @@ export async function saveCounterCashLedgerEntry(payload) {
   return data;
 }
 
+export async function updateCounterCashLedgerEntry(id, payload) {
+  const { data } = await api.put(`/counter-cash-ledger/${id}`, payload);
+  return data;
+}
+
+export async function deleteCounterCashLedgerEntry(id) {
+  const { data } = await api.delete(`/counter-cash-ledger/${id}`);
+  return data;
+}
+
 export async function fetchUsers() {
   const { data } = await api.get('/users');
   return Array.isArray(data) ? data : [];
