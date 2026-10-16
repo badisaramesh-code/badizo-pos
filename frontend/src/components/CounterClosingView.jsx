@@ -19,6 +19,7 @@ const HANDOVER_PRINT_MANUAL_ROWS = 23;
 const HANDOVER_PRINT_DENOMINATION_ROWS = 8;
 const AUTO_ENTRY_DETAILS = new Set(['Counter Closing Cash', 'Today Sale']);
 const COUNTER_CLOSING_VIEW_REQUEST_KEY = 'badizo_counter_closing_view_request';
+const COUNTER_CLOSING_LAST_SELECTION_KEY = 'badizo_counter_closing_last_selection';
 const EMPTY_SNAPSHOT = {
   counter_sales: 0,
   all_counter_sales: 0,
@@ -104,6 +105,18 @@ function makeDefaultEntries() {
   return normalizeEntryCount([]);
 }
 
+function readLastCounterClosingSelection(fallbackCounterNo) {
+  try {
+    const stored = JSON.parse(window.sessionStorage.getItem(COUNTER_CLOSING_LAST_SELECTION_KEY) || 'null');
+    return {
+      date: normalizeDateInput(stored?.date || todayIso()),
+      counterNo: Math.max(Number.parseInt(stored?.counterNo, 10) || fallbackCounterNo, 1)
+    };
+  } catch (_err) {
+    return { date: todayIso(), counterNo: fallbackCounterNo };
+  }
+}
+
 function counterDisplayLabel(currentUser, counterNo) {
   if (currentUser?.role === 'COUNTER' && currentUser?.system_no) {
     return `S${currentUser.system_no}/Counter${counterNo}`;
@@ -171,11 +184,12 @@ export default function CounterClosingView({ onClose }) {
   const currentUser = getStoredUser();
   const isCounterUser = currentUser?.role === 'COUNTER';
   const userCounterNo = currentUser?.counter_no || 1;
+  const [initialSelection] = useState(() => readLastCounterClosingSelection(userCounterNo));
 
-  const [date, setDate] = useState(todayIso());
-  const [historyFrom, setHistoryFrom] = useState(todayIso());
-  const [historyTo, setHistoryTo] = useState(todayIso());
-  const [counterNo, setCounterNo] = useState(userCounterNo);
+  const [date, setDate] = useState(initialSelection.date);
+  const [historyFrom, setHistoryFrom] = useState(initialSelection.date);
+  const [historyTo, setHistoryTo] = useState(initialSelection.date);
+  const [counterNo, setCounterNo] = useState(isCounterUser ? userCounterNo : initialSelection.counterNo);
   const currentCounterLabel = counterDisplayLabel(currentUser, counterNo);
   const [counterCount, setCounterCount] = useState(6);
   const [shopName, setShopName] = useState('Hyper Fresh Mart LLP');
@@ -225,6 +239,10 @@ export default function CounterClosingView({ onClose }) {
   useEffect(() => {
     loadHandover();
     if (!isCounterUser) loadHistory();
+  }, [date, counterNo]);
+
+  useEffect(() => {
+    window.sessionStorage.setItem(COUNTER_CLOSING_LAST_SELECTION_KEY, JSON.stringify({ date, counterNo }));
   }, [date, counterNo]);
 
   const denominationRows = useMemo(() => {

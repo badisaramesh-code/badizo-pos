@@ -18,6 +18,7 @@ beforeEach(() => {
   api.getStoredUser.mockReturnValue({ role: 'COUNTER', counter_no: 1 });
   api.fetchSettings.mockResolvedValue({});
   api.fetchCounterHandover.mockResolvedValue({ snapshot: {} });
+  api.fetchCounterHandoverHistory.mockResolvedValue({ rows: [] });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -68,4 +69,20 @@ test('saved PURCHASE through XXX entries remain editable with their amounts', as
   expect(details().slice(2, 11).map(input => input.value)).toEqual(savedLabels);
   expect(details().slice(2).every(input => !input.readOnly)).toBe(true);
   expect([...details()[2].closest('tr').querySelectorAll('.amount-field')].at(-1).value).toBe('1');
+});
+
+test('server users return to their last selected handover date and counter', async () => {
+  api.getStoredUser.mockReturnValue({ role: 'SERVER' });
+  api.fetchSettings.mockResolvedValue({ counter_count: 6 });
+  window.sessionStorage.clear();
+  await act(async () => root.render(<CounterClosingView />));
+  await act(async () => Simulate.change(container.querySelector('select.select'), { target: { value: '2' } }));
+  await act(async () => Simulate.change(container.querySelector('input[type="date"]'), { target: { value: '2026-10-16' } }));
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  api.fetchCounterHandover.mockClear();
+  await act(async () => root.render(<CounterClosingView />));
+  expect(container.querySelector('select.select').value).toBe('2');
+  expect(container.querySelector('input[type="date"]').value).toBe('2026-10-16');
+  expect(api.fetchCounterHandover).toHaveBeenCalledWith('2026-10-16', 2);
 });
