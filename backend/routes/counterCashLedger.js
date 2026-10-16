@@ -243,8 +243,10 @@ router.put('/:id', async (req, res) => {
     if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Enter an amount greater than zero.' });
     const [result] = await db.query(
       `UPDATE counter_cash_ledger_entries
-       SET entry_date = ?, counter_no = ?, account_name = ?, details = ?, direction = ?, amount = ?
-       WHERE id = ? AND source_type = 'MANUAL_CASH_USAGE'`,
+       SET entry_date = ?, counter_no = ?,
+           account_name = CASE WHEN source_type = 'MANUAL_CASH_USAGE' THEN ? ELSE account_name END,
+           details = ?, direction = ?, amount = ?
+       WHERE id = ? AND source_type IN ('MANUAL_CASH_USAGE', 'NAMED_LEDGER_MANUAL')`,
       [entryDate, counterNo, direction === 'CR' ? 'Cash Used / Deposit' : 'Cash Received / Return', details, direction, amount, req.params.id]
     );
     if (!result.affectedRows) return res.status(404).json({ error: 'Manual cash ledger entry not found.' });
@@ -258,7 +260,7 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const [result] = await db.query(
-      "DELETE FROM counter_cash_ledger_entries WHERE id = ? AND source_type = 'MANUAL_CASH_USAGE'",
+      "DELETE FROM counter_cash_ledger_entries WHERE id = ? AND source_type IN ('MANUAL_CASH_USAGE', 'NAMED_LEDGER_MANUAL')",
       [req.params.id]
     );
     if (!result.affectedRows) return res.status(404).json({ error: 'Manual cash ledger entry not found.' });

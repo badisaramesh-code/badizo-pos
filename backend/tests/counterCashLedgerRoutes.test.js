@@ -5,14 +5,15 @@ const jwt = require('jsonwebtoken');
 const { JWT_SECRET } = require('../middleware/auth');
 const entries = new Map([
   ['1', { source_type: 'MANUAL_CASH_USAGE', amount: 100 }],
-  ['2', { source_type: 'COUNTER_HANDOVER', amount: 500 }]
+  ['2', { source_type: 'COUNTER_HANDOVER', amount: 500 }],
+  ['3', { source_type: 'NAMED_LEDGER_MANUAL', amount: 580000, account_name: 'BR VADAKAM' }]
 ]);
 require.cache[require.resolve('../config/db')] = { exports: { query: async (sql, params) => {
   if (sql.includes('audit_logs')) return [{}];
-  assert.match(sql, /source_type = 'MANUAL_CASH_USAGE'/);
+  assert.match(sql, /source_type IN \('MANUAL_CASH_USAGE', 'NAMED_LEDGER_MANUAL'\)/);
   const id = String(params[params.length - 1]);
   const entry = entries.get(id);
-  if (!entry || entry.source_type !== 'MANUAL_CASH_USAGE') return [{ affectedRows: 0 }];
+  if (!entry || !['MANUAL_CASH_USAGE', 'NAMED_LEDGER_MANUAL'].includes(entry.source_type)) return [{ affectedRows: 0 }];
   if (sql.startsWith('DELETE')) entries.delete(id);
   else Object.assign(entry, { date: params[0], counter_no: params[1], details: params[3], direction: params[4], amount: params[5] });
   return [{ affectedRows: 1 }];
@@ -39,6 +40,11 @@ test('manual entries can be corrected and deleted; handovers and unauthorized ac
     assert.equal((await call(2, 'PUT', payload)).status, 404);
     assert.equal((await call(2, 'DELETE')).status, 404);
     assert.equal(entries.get('2').amount, 500);
+    assert.equal((await call(3, 'PUT', { ...payload, details: 'Corrected BR entry', cr_amount: 10 })).status, 200);
+    assert.equal(entries.get('3').amount, 10);
+    assert.equal(entries.get('3').account_name, 'BR VADAKAM');
+    assert.equal((await call(3, 'DELETE')).status, 200);
+    assert.equal(entries.has('3'), false);
     assert.equal((await call(1, 'PUT', payload)).status, 200);
     assert.equal(entries.get('1').amount, 250);
     assert.equal(entries.get('1').direction, 'CR');

@@ -134,7 +134,7 @@ export default function CounterCashLedgerView({ initialFrom = '', initialTo = ''
       balance += dr - cr;
       expandedRows.push({
         key: `${row.source_type}-${row.id}`,
-        manualRow: row.source_type === 'MANUAL_CASH_USAGE' ? row : null,
+        manualRow: ['MANUAL_CASH_USAGE', 'NAMED_LEDGER_MANUAL'].includes(row.source_type) ? row : null,
         date: row.entry_date,
         details: row.details,
         noteDetail: '',
