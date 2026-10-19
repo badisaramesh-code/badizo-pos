@@ -10,7 +10,7 @@ import {
 import { formatDisplayDate, normalizeDateInput, todayIso } from '../utils/date';
 import { formatMoney, toNumber } from '../utils/money';
 
-const DEFAULT_DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
+const DEFAULT_DENOMINATIONS = [500, 200, 100, 50, 20, 10, 5, 2, 1];
 const HANDOVER_TRANSACTION_ROWS = 30;
 const REQUIRED_ENTRY_DETAILS = [
   'UPI SALE', 'NUMBER'
@@ -217,6 +217,21 @@ export default function CounterClosingView({ onClose }) {
   const historySectionRef = useRef(null);
 
   useEffect(() => {
+    function focusNotesDenomination(event) {
+      if (!event.ctrlKey || !event.altKey || event.shiftKey || event.metaKey || event.repeat) return;
+      if (!['Control', 'Alt'].includes(event.key) || event.getModifierState?.('AltGraph')) return;
+      const input = denominationInputRefs.current[0];
+      if (!input) return;
+      event.preventDefault();
+      input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      input.focus({ preventScroll: true });
+      input.select();
+    }
+    window.addEventListener('keydown', focusNotesDenomination);
+    return () => window.removeEventListener('keydown', focusNotesDenomination);
+  }, []);
+
+  useEffect(() => {
     loadSettings();
   }, []);
 
@@ -345,7 +360,7 @@ export default function CounterClosingView({ onClose }) {
     try {
       const result = await fetchCounterHandover(saleDate, counterNo);
       const nextSnapshot = normalizeSnapshot(result.snapshot);
-      const nextDenominations = result.denominations || DEFAULT_DENOMINATIONS;
+      const nextDenominations = (result.denominations || DEFAULT_DENOMINATIONS).filter((value) => Number(value) !== 2000);
       const savedSheet = result.sheet;
       setSheetNo(savedSheet?.sheet_no || result.sheet_no || '');
       setSheetMeta(savedSheet ? { created_at: savedSheet.created_at || '', updated_at: savedSheet.updated_at || '' } : { created_at: '', updated_at: '' });
@@ -359,7 +374,7 @@ export default function CounterClosingView({ onClose }) {
         setIsExistingSheet(true);
         setDenominations({
           ...emptyDenominations(nextDenominations),
-          ...(savedSheet.denominations || []).reduce((acc, row) => ({ ...acc, [Number(row.denomination_value)]: String(toNumber(row.quantity)) }), {})
+          ...(savedSheet.denominations || []).filter((row) => nextDenominations.includes(Number(row.denomination_value))).reduce((acc, row) => ({ ...acc, [Number(row.denomination_value)]: String(toNumber(row.quantity)) }), {})
         });
         setHandedOverBy(savedSheet.handed_over_by || '');
         setTakenOverBy(savedSheet.taken_over_by || '');
@@ -1124,7 +1139,7 @@ export default function CounterClosingView({ onClose }) {
 
           <section className="panel">
             <div className="panel-header handover-denomination-header">
-              <h3 className="panel-title">Notes Denomination</h3>
+              <h3 className="panel-title">Notes Denomination <small>(Ctrl + Alt)</small></h3>
               <strong>Today Cash Notes Count Balance: {formatMoney(cashBalance)}</strong>
             </div>
             <div className="panel-body handover-denomination-grid">
