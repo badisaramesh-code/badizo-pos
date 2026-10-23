@@ -15,6 +15,20 @@ const api = axios.create({
   timeout: 25000
 });
 
+function updateServerConnection(connection) {
+  try {
+    const url = new URL(connection?.apiBaseUrl);
+    if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/api' || url.username || url.password) return;
+    api.defaults.baseURL = url.href.replace(/\/$/, '');
+  } catch (_err) { }
+}
+
+const desktopBridge = typeof window !== 'undefined' ? window.badizoDesktop : null;
+desktopBridge?.onServerConnectionChanged?.(updateServerConnection);
+const serverConnectionReady = desktopBridge?.getServerConnection
+  ? desktopBridge.getServerConnection().then(updateServerConnection).catch(() => {})
+  : Promise.resolve();
+
 const AUTH_TOKEN_KEY = 'badizo_token';
 const AUTH_USER_KEY = 'badizo_user';
 let exitLogoutSent = false;
@@ -28,7 +42,9 @@ function clearLegacyAuthSession() {
   window.localStorage.removeItem(AUTH_USER_KEY);
 }
 
-api.interceptors.request.use((config) => {
+api.interceptors.request.use(async (config) => {
+  await serverConnectionReady;
+  if (String(config.url || '').startsWith('/')) config.baseURL = api.defaults.baseURL;
   const token = getAuthStorage().getItem(AUTH_TOKEN_KEY);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;

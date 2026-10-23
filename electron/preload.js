@@ -1,6 +1,17 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('badizoDesktop', {
+  getServerConnection() {
+    return ipcRenderer.invoke('badizo:get-server-connection');
+  },
+  onServerConnectionChanged(callback) {
+    const listener = (_event, connection) => callback(connection);
+    ipcRenderer.on('badizo:server-connection-changed', listener);
+    return () => ipcRenderer.removeListener('badizo:server-connection-changed', listener);
+  },
+  getBarcodePrinters() {
+    return ipcRenderer.invoke('badizo:get-barcode-printers');
+  },
   printThermalHtml(payload) {
     return ipcRenderer.invoke('badizo:print-thermal-html', payload);
   },

@@ -40,6 +40,7 @@ const emptyForm = {
   purchase_price: '',
   sale_price: '',
   wholesale_price: '',
+  wholesale_price_overridden: false,
   qty_3_price: '',
   qty_6_price: '',
   qty_12_price: '',
@@ -721,16 +722,23 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       }
 
       if (field === 'wholesale_price') {
+        next.wholesale_price_overridden = String(value ?? '').trim() !== '';
         next.bulk_discount_value = calculateDiscountFromPrice(next.mrp, value, discountType);
       }
 
       if (field === 'bulk_discount_value') {
+        next.wholesale_price_overridden = String(value ?? '').trim() !== '';
         next.wholesale_price = calculatePriceFromDiscount(next.mrp, value, discountType);
       }
 
       if (field === 'discount_type') {
         if (next.sale_price !== '') next.discount_value = calculateDiscountFromPrice(next.mrp, next.sale_price, value);
         if (next.wholesale_price !== '') next.bulk_discount_value = calculateDiscountFromPrice(next.mrp, next.wholesale_price, value);
+      }
+
+      if (!next.wholesale_price_overridden) {
+        next.wholesale_price = next.sale_price;
+        next.bulk_discount_value = calculateDiscountFromPrice(next.mrp, next.sale_price, discountType);
       }
 
       return next;
@@ -774,7 +782,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       default_batch_no: String(source.default_batch_no ?? '').trim().toUpperCase(),
       default_mfd_date: dateInputValue(source.default_mfd_date),
       default_expiry_date: dateInputValue(source.default_expiry_date),
-      wholesale_price: String(source.wholesale_price ?? '').trim(),
+      wholesale_price: source.wholesale_price_overridden === false
+        ? String(source.sale_price ?? '').trim()
+        : String(source.wholesale_price ?? '').trim() || String(source.sale_price ?? '').trim(),
       discount_value: String(source.discount_value ?? '').trim() === '' ? '0' : source.discount_value,
       bulk_discount_value: String(source.bulk_discount_value ?? '').trim() === '' ? '0' : source.bulk_discount_value,
       free_promo_qty_per_sale: String(source.free_promo_qty_per_sale ?? '').trim() === '' ? '1' : source.free_promo_qty_per_sale,
@@ -848,13 +858,14 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       mrp: String(product.mrp ?? ''),
       purchase_price: String(product.purchase_price ?? ''),
       sale_price: String(product.sale_price ?? ''),
-      wholesale_price: Number(product.wholesale_price) > 0 ? String(product.wholesale_price) : '',
+      wholesale_price: String(product.sale_price ?? ''),
+      wholesale_price_overridden: false,
       qty_3_price: Number(product.qty_3_price) > 0 ? String(product.qty_3_price) : '',
       qty_6_price: Number(product.qty_6_price) > 0 ? String(product.qty_6_price) : '',
       qty_12_price: Number(product.qty_12_price) > 0 ? String(product.qty_12_price) : '',
       discount_type: product.discount_type || 'PERCENT',
       discount_value: String(product.discount_value ?? ''),
-      bulk_discount_value: String(product.bulk_discount_value ?? ''),
+      bulk_discount_value: calculateDiscountFromPrice(product.mrp, product.sale_price, product.discount_type || 'PERCENT'),
       is_free_item: Boolean(product.is_free_item),
       free_promo_enabled: Boolean(product.free_promo_enabled),
       free_promo_name: product.free_promo_name || '',
@@ -1419,7 +1430,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
           <label className="product-field-order-15">
             <span className="field-label">Wholesale price (optional)</span>
-            <input ref={wholesalePriceRef} className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} onBlur={formatProductAmounts} onKeyDown={(event) => moveOnEnter(event, unitRef)} placeholder="Leave empty unless wholesale price is needed" />
+            <input ref={wholesalePriceRef} className="field" type="number" step="0.01" min="0" value={form.wholesale_price} onChange={(event) => updateField('wholesale_price', event.target.value)} onBlur={formatProductAmounts} onKeyDown={(event) => moveOnEnter(event, unitRef)} placeholder={`Default: retail price ${form.sale_price || '0.00'}`} />
           </label>
 
           <label className="product-field-order-12">

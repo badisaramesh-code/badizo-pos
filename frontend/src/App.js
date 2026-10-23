@@ -211,7 +211,7 @@ export default function App() {
     importHistory: <ProductImportHistoryView onClose={() => setActiveWorkspace('inventory')} />,
     orders: <OrdersView />,
     priceList: <PriceListView />,
-    barcode: <BarcodeStickersView isActive={activeWorkspace === 'barcode'} onBackToProductForm={() => {
+    barcode: <BarcodeStickersView key={`${currentUser.role}:${currentUser.username}`} printerProfile={`${currentUser.role}:${currentUser.username}`} useServerPrinter={currentUser?.role === 'SERVER'} isActive={activeWorkspace === 'barcode'} onBackToProductForm={() => {
       setProductFormNavigationKey((current) => current + 1);
       setActiveWorkspace('inventory');
     }} />,
