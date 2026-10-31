@@ -427,7 +427,7 @@ export default function ReportsView({ isActive = true, onClose }) {
   }, [activeReport, hsnProductSearch]);
 
   useEffect(() => {
-    if (activeReport !== 'productSales') {
+    if (activeReport !== 'productSales' || !isProductSalesSuggestionOpen) {
       setProductSalesSuggestions([]);
       setIsProductSalesSuggestionOpen(false);
       return undefined;
@@ -460,7 +460,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [activeReport, productSalesSearch]);
+  }, [activeReport, productSalesSearch, isProductSalesSuggestionOpen]);
 
   async function selectHsnProduct(product) {
     const searchText = product.barcode || product.product_code || product.product_name || '';
@@ -507,6 +507,8 @@ export default function ReportsView({ isActive = true, onClose }) {
   }
 
   async function loadProductSales(searchText = productSalesSearch) {
+    setIsProductSalesSuggestionOpen(false);
+    setProductSalesSuggestions([]);
     const search = String(searchText || '').trim();
     if (!search) {
       setProductSalesError('Enter product code, barcode, or product name.');
@@ -1723,11 +1725,19 @@ export default function ReportsView({ isActive = true, onClose }) {
             <ReportHeader title="Product Sales" onExcel={exportProductSalesExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body form-stack">
               <form className="report-filter-row hsn-product-detail-form" onSubmit={handleProductSalesSubmit}>
-                <label className="hsn-product-detail-search supplier-lookup-field">
+                <label className="hsn-product-detail-search supplier-lookup-field" onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget)) setIsProductSalesSuggestionOpen(false);
+                }}>
                   <span className="field-label">Product Code / Name</span>
                   <input
                     className="field"
                     value={productSalesSearch}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        setIsProductSalesSuggestionOpen(false);
+                      }
+                    }}
                     onChange={(event) => {
                       setProductSalesSearch(event.target.value);
                       setIsProductSalesSuggestionOpen(event.target.value.trim().length >= 3);
