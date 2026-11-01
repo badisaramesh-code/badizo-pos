@@ -5551,6 +5551,15 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   line-height: 1.1;
 }
 
+.named-ledger-table tbody .named-ledger-credit-row td {
+  font-weight: 700;
+}
+
+.named-ledger-entry-actions { display: grid; gap: 4px; }
+.named-ledger-row-actions { display: flex; gap: 6px; white-space: nowrap; }
+.named-ledger-table th:last-child,
+.named-ledger-table td:last-child { position: sticky; right: 0; background: #f0fff3; }
+
 .named-ledger-entry-row {
   grid-column: auto;
   grid-template-columns: 150px 180px minmax(180px, 1fr) minmax(180px, 1fr) 140px 140px 190px;

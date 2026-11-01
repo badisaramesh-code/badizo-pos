@@ -754,6 +754,7 @@ router.get('/accounting', async (req, res) => {
       if (row.entry_date < from) return;
       namedLedgerRows.push({
         entryId: row.id,
+        isManual: row.source_type === NAMED_LEDGER_MANUAL_SOURCE,
         Date: row.entry_date,
         Account: account,
         Counter: row.counter_label || ('C' + row.counter_no),
@@ -1095,6 +1096,44 @@ router.post('/named-ledgers/manual', async (req, res) => {
     res.status(500).json({ error: 'Unable to save named ledger entry.' });
   }
 });
+router.put('/named-ledgers/manual/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const { entry_date, direction } = req.body || {};
+  const details = String(req.body?.details || '').trim();
+  const remarks = String(req.body?.remarks || '').trim();
+  const amount = Number(req.body?.amount);
+  const date = new Date(`${entry_date}T00:00:00Z`);
+  if (!Number.isSafeInteger(id) || id <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(entry_date || '') ||
+      !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== entry_date ||
+      !details || details.length > 255 || remarks.length > 255 || !['DR', 'CR'].includes(direction) || !Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'Valid date, details, DR/CR and positive amount are required.' });
+  }
+  try {
+    const [result] = await db.query(
+      `UPDATE counter_cash_ledger_entries SET entry_date = ?, details = ?, named_ledger_details = ?, remarks = ?, direction = ?, amount = ? WHERE id = ? AND source_type = ?`,
+      [entry_date, details, details, remarks, direction, parseMoney(amount), id, NAMED_LEDGER_MANUAL_SOURCE]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Manual ledger entry not found. Reload the book.' });
+    res.json({ success: true, entry_date });
+  } catch (err) {
+    console.error('Named ledger manual edit failed:', err.message);
+    res.status(500).json({ error: 'Unable to update ledger entry.' });
+  }
+});
+
+router.delete('/named-ledgers/manual/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: 'Valid entry is required.' });
+  try {
+    const [result] = await db.query('DELETE FROM counter_cash_ledger_entries WHERE id = ? AND source_type = ?', [id, NAMED_LEDGER_MANUAL_SOURCE]);
+    if (!result.affectedRows) return res.status(404).json({ error: 'Manual ledger entry not found. Reload the book.' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Named ledger manual delete failed:', err.message);
+    res.status(500).json({ error: 'Unable to delete ledger entry.' });
+  }
+});
+
 router.post('/counter-closing-cash-account/manual', async (req, res) => {
   try {
     const entryDate = normalizeDate(req.body?.entry_date || req.body?.date);

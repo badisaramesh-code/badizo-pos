@@ -1200,3 +1200,13 @@ export async function editNamedLedgerDetails(id, payload) {
   const { data } = await api.patch('/books/named-ledgers/' + id + '/details', payload);
   return data;
 }
+
+export async function updateNamedLedgerEntry(id, payload) {
+  const { data } = await api.put('/books/named-ledgers/manual/' + id, payload);
+  return data;
+}
+
+export async function deleteNamedLedgerEntry(id) {
+  const { data } = await api.delete('/books/named-ledgers/manual/' + id);
+  return data;
+}
