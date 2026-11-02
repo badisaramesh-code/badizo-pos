@@ -2,6 +2,17 @@
 
 Badizo POS is a supermarket billing application for retail/wholesale checkout, GST/IGST billing, product inventory, barcode stickers, inward purchase entry, reports, books, and multi-counter operation.
 
+## New shop installation: server and slave PCs
+
+For a new shop, follow [NEW_SHOP_INSTALLATION.md](NEW_SHOP_INSTALLATION.md). It covers preparing the latest offline package, installing the server, connecting counter/admin/security PCs, shop settings, printers, backups and final checks.
+
+- Server: run `RUN_BADIZO_NEW_STORE_INSTALL.bat` from the complete generated package and choose **1. SERVER PC**.
+- Slave PCs: copy the same complete package, run the same BAT and choose **2. COUNTER**, **3. ADMIN** or **4. SECURITY**.
+- The current installer sets the server to **192.168.1.10**, with the app on port **5000**. Check the shop LAN before running it.
+- The database and backend run on the server. Slaves connect to that server; do not install a separate shop database on each slave.
+
+The source-development instructions below are separate from the new-shop offline installation procedure.
+
 ## Current Modules
 
 - Dashboard: daily sales, bills, stock alerts, payment summary.
