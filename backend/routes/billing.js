@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
+const { captureCheckout } = require('../services/checkoutSyncCapture');
 const { authenticate, authorize } = require('../middleware/auth');
 const { writeAuditLog } = require('../services/auditService');
 const {
@@ -775,6 +776,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     );
     checkoutTimer.mark('loyalty-award');
 
+    await captureCheckout(connection, invoiceNo);
     await connection.commit();
     checkoutTimer.mark('commit');
     if (checkoutTimer.totalMs() > 2000) {
