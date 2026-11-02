@@ -10,7 +10,16 @@ function createStagedRestoreJobs({directory,shopId,configPath,python='python',sc
     const file=filename(job.id),temporary=file+'.'+crypto.randomUUID()+'.tmp';
     const handle=await fs.open(temporary,'wx',0o600);
     try{await handle.writeFile(JSON.stringify(job));await handle.sync();}finally{await handle.close();}
-    await fs.rename(temporary,file);
+    // Windows can briefly deny replacement while a status reader or scanner
+    // holds the destination. Retry the atomic rename; never delete the prior
+    // durable status as a workaround.
+    for(let attempt=0;;attempt++){
+      try{await fs.rename(temporary,file);break;}
+      catch(error){
+        if(!['EPERM','EACCES','EBUSY'].includes(error.code) || attempt>=20)throw error;
+        await new Promise(resolve=>setTimeout(resolve,25*(attempt+1)));
+      }
+    }
   }
   async function read(id) {
     const job=JSON.parse(await fs.readFile(filename(id),'utf8'));

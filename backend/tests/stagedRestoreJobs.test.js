@@ -1,7 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
 const {createStagedRestoreJobs}=require('../services/stagedRestoreJobs');
 async function setup(t,run){const root=await fs.mkdtemp(path.join(os.tmpdir(),'restore-jobs-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const configPath=path.join(root,'private.json');await fs.writeFile(configPath,JSON.stringify({shopId:'HFM001',database:'badizo_recovery_validation'}));return createStagedRestoreJobs({directory:path.join(root,'jobs'),shopId:'HFM001',configPath,run});}
-async function terminal(jobs,id){for(let i=0;i<100;i++){const job=await jobs.read(id);if(job.state!=='running')return job;await new Promise(resolve=>setTimeout(resolve,10));}throw Error('Job did not complete');}
+async function terminal(jobs,id){const deadline=Date.now()+15000;while(Date.now()<deadline){const job=await jobs.read(id);if(job.state!=='running')return job;await new Promise(resolve=>setTimeout(resolve,25));}throw Error('Job did not complete');}
 test('job persists verified result and refuses concurrent restore',async t=>{
   let finish;const jobs=await setup(t,()=>new Promise(resolve=>{finish=resolve;}));const initial=await jobs.start('owner');await assert.rejects(jobs.start('owner'));
   finish({shopId:'HFM001',database:'badizo_recovery_validation',stagedRestoreVerified:true,activated:false,tableCount:50,products:100,invoices:20});
