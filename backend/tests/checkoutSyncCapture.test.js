@@ -1,7 +1,12 @@
 const test=require('node:test'),assert=require('node:assert/strict');
-const {captureCheckout}=require('../services/checkoutSyncCapture');
+const {captureCheckout,captureInvoiceLifecycle}=require('../services/checkoutSyncCapture');
 test('existing installations do not access any sync tables by default',async()=>{
   assert.equal(await captureCheckout({query(){throw Error('Unexpected query');},execute(){throw Error('Unexpected write');}},'invoice',{}),null);
+  assert.equal(await captureInvoiceLifecycle({query(){throw Error('Unexpected query');}},'invoice',{kind:'return'},{}),null);
+});
+test('enabled lifecycle capture rejects incomplete operation identity',()=>{
+  assert.throws(()=>captureInvoiceLifecycle({},'invoice',{kind:'return'},{BADIZO_SYNC_CHECKOUT_CAPTURE:'true'}));
+  assert.throws(()=>captureInvoiceLifecycle({},'invoice',{kind:'arbitrary'},{BADIZO_SYNC_CHECKOUT_CAPTURE:'true'}));
 });
 test('enabled capture enqueues only after reading complete checkout records without committing',async()=>{
   let writes=0;

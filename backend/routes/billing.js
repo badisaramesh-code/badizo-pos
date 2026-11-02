@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
-const { captureCheckout } = require('../services/checkoutSyncCapture');
+const { captureCheckout, captureInvoiceLifecycle } = require('../services/checkoutSyncCapture');
 const { authenticate, authorize } = require('../middleware/auth');
 const { writeAuditLog } = require('../services/auditService');
 const {
@@ -1035,6 +1035,7 @@ router.post('/invoice/void', authenticate, authorize('SERVER', 'ADMIN'), async (
       connection
     });
 
+    await captureInvoiceLifecycle(connection,invoiceNo,{kind:'void'});
     await connection.commit();
     res.json({ success: true });
   } catch (err) {
@@ -1199,6 +1200,7 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
       connection
     });
 
+    await captureInvoiceLifecycle(connection,invoiceNo,{kind:'return',returnNo});
     await connection.commit();
     res.json({
       success: true,
