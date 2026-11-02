@@ -27,7 +27,7 @@ const routes = [
 ];
 
 function mountRoutes(app, { cloudSyncRuntime, recoveryExecutorFactory } = {}) {
-  if(cloudSyncRuntime?.financialCases)app.use('/api/recovery-cases',require('./financialConflicts').createRouter({cases:cloudSyncRuntime.financialCases,receive:cloudSyncRuntime.retryFinancial,pool:require('../config/db'),canApply:async()=>(await cloudSyncRuntime.status()).ready===true}));
+  if(cloudSyncRuntime?.financialCases)app.use('/api/recovery-cases',require('./financialConflicts').createRouter({cases:cloudSyncRuntime.financialCases,corrections:cloudSyncRuntime.financialCorrections,receive:cloudSyncRuntime.retryFinancial,pool:require('../config/db'),canApply:async()=>(await cloudSyncRuntime.status()).ready===true}));
   if (process.env.BADIZO_RECOVERY_CONTROL_CONFIG) {
     const control = require('../services/recoveryControl').createRecoveryControl({configPath:process.env.BADIZO_RECOVERY_CONTROL_CONFIG,shopId:process.env.BADIZO_SHOP_ID});
     app.use('/api/recovery-control',require('./recoveryControl').createRouter(control));
@@ -53,6 +53,7 @@ function mountRoutes(app, { cloudSyncRuntime, recoveryExecutorFactory } = {}) {
       : router;
     app.use(path, protectAsyncRoutes(mountedRouter));
   });
+  if(process.env.BADIZO_RUNTIME_BINDING)require('../services/recoveryRouteCompletion').installRecoveryRouteCompletion(app);
   app.use(apiErrorHandler);
 }
 

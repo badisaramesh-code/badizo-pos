@@ -9,7 +9,7 @@ const {createOutgoingFeed}=require('./syncOutgoingFeed');
 const {peerAuthentication}=require('../routes/syncReceiver');
 const runtimeBinding=require('./recoveryRuntimeBinding');
 const captureFlags=['BADIZO_SYNC_PRODUCT_CAPTURE','BADIZO_SYNC_STOCK_CAPTURE','BADIZO_SYNC_PURCHASE_CAPTURE','BADIZO_SYNC_CHECKOUT_CAPTURE'];
-const requiredTables=['sync_enrollment','sync_inbox','sync_outbox','sync_worker_state','sync_invoice_map','sync_invoice_item_map','sync_invoice_batch_map','sync_stock_adjustment_map','sync_supplier_payment_map','sync_recovery_applications'];
+const requiredTables=['sync_enrollment','sync_inbox','sync_outbox','sync_worker_state','sync_invoice_map','sync_invoice_item_map','sync_invoice_batch_map','sync_stock_adjustment_map','sync_supplier_payment_map','sync_recovery_applications','sync_checkout_requests'];
 function validateConfiguration(value,env){
   const keys=['schemaVersion','shopId','installationId','peerInstallationId','nodeRole','databaseName','baselineId','activationId','contractVersion','settingsDirectory','reviewDirectory','incomingToken','peer'];
   if(!value||Object.keys(value).some(key=>!keys.includes(key))||value.schemaVersion!==1||value.contractVersion!==1
@@ -29,6 +29,7 @@ async function createEnrolledSyncRuntime({pool,configPath,env=process.env,withTr
   if(!path.isAbsolute(configPath||''))throw Error('Protected enrollment configuration path required.');
   const config=validateConfiguration(JSON.parse(await fs.readFile(configPath,'utf8')),env);
   for(const flag of captureFlags)env[flag]='false';
+  env.BADIZO_CHECKOUT_REQUEST_GUARD='false';
   const binding=runtimeBinding.read(env);
   if(!binding)throw Error('Enrolled sync requires a verified runtime database binding.');
   const identity={shopId:config.shopId,localInstallationId:config.installationId,peerInstallationId:config.peerInstallationId};
@@ -55,8 +56,10 @@ async function createEnrolledSyncRuntime({pool,configPath,env=process.env,withTr
     const state=runtimeBinding.read(env);
     return state?.activationId===config.activationId&&state.phase==='active'&&await enrolled();
   }
-  const financialCases=require('./financialConflictCases').createFinancialConflictCases({directory:path.join(config.reviewDirectory,'financial'),identity});
-  const receiveBase=createPosSyncReceiver({pool,identity,reviewStore:config.nodeRole==='local-server'?reviewStore:null,localPriority:async()=>{
+  async function canCorrect(){return config.nodeRole==='local-server'&&!runtimeBinding.read(env)?.handoffId&&await canTransfer();}
+  const financialCorrections=require('./financialCorrectionExecution').createFinancialCorrectionExecution({pool,identity,nodeRole:config.nodeRole,canApply:canCorrect,withWriteLease:withTransfer});
+  const financialCases=require('./financialConflictCases').createFinancialConflictCases({directory:path.join(config.reviewDirectory,'financial'),identity,pool});
+  const receiveBase=createPosSyncReceiver({pool,identity,retainReceived:true,reviewStore:config.nodeRole==='local-server'?reviewStore:null,localPriority:async()=>{
     const state=runtimeBinding.read(env);return config.nodeRole==='local-server'&&state?.preferLocalConflicts===true&&await canTransfer();
   }});
   const receive=async event=>{try{return await receiveBase(event);}catch(error){if(!error.code)await financialCases.record(event);throw error;}};
@@ -87,7 +90,12 @@ async function createEnrolledSyncRuntime({pool,configPath,env=process.env,withTr
       const control=require('./recoveryControl').createRecoveryControl({configPath:env.BADIZO_RECOVERY_CONTROL_CONFIG,shopId:config.shopId});
       router.get('/handoff',async(_req,res)=>{
         try{
-          if(!await canTransfer())throw Error('Enrollment unavailable');
+          // The supervisor must be able to observe a legitimate write-drain
+          // phase. Transfer endpoints still reject validating, but hiding
+          // status during that phase turns ordinary polling into a failed
+          // switch depending on request timing.
+          const state=runtimeBinding.read(env);
+          if(state?.activationId!==config.activationId||!await enrolled())throw Error('Enrollment unavailable');
           const [[row]]=await pool.execute('SELECT COUNT(*) AS n FROM sync_outbox WHERE shop_id=? AND origin_installation_id=? AND acknowledged_at IS NULL',[identity.shopId,identity.localInstallationId]);
           res.json({...await control.status(),shopId:config.shopId,installationId:config.installationId,peerInstallationId:config.peerInstallationId,baselineId:config.baselineId,activeWrites:runtimeBinding.status()?.activeWrites??-1,pending:Number(row.n)});
         }catch{res.status(409).json({error:'Handoff state unavailable.'});}
@@ -114,6 +122,7 @@ async function createEnrolledSyncRuntime({pool,configPath,env=process.env,withTr
   }
   env.BADIZO_INSTALLATION_ID=config.installationId;env.BADIZO_SYNC_PEER_INSTALLATION_ID=config.peerInstallationId;
   for(const flag of captureFlags)env[flag]='true';
-  return {settings,reviewStore,financialCases,retryFinancial:receive,identity,mount,status,worker:workerRuntime?.worker,start:()=>workerRuntime?.start(),stop:()=>workerRuntime?.stop()};
+  env.BADIZO_CHECKOUT_REQUEST_GUARD='true';
+  return {settings,reviewStore,financialCases,financialCorrections,retryFinancial:receive,identity,mount,status,worker:workerRuntime?.worker,start:()=>workerRuntime?.start(),stop:()=>workerRuntime?.stop()};
 }
 module.exports={createEnrolledSyncRuntime,validateConfiguration,requiredTables};

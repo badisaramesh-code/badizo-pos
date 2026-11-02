@@ -38,6 +38,10 @@
     {
       "file": "optional-sync-worker.sql",
       "sha256": "c0fe22eafd602a6556b719963d0a4e3ecf57243ca5ed999c4c7fe3514be726b0"
+    },
+    {
+      "file": "optional-sync-checkout-requests.sql",
+      "sha256": "724dc20f89478a78dab958e589426e6ba50b5cd7e30139c6b9de623d2d2eb602"
     }
   ]
 }

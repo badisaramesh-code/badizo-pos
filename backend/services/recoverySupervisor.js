@@ -26,7 +26,16 @@ async function verifyDatabase(binding,expected){
     if(tables.length!==5||tables.some(row=>row.ENGINE!=='InnoDB'&&row.engine!=='InnoDB'))throw Error('Recovery schema is not ready.');
   }finally{await connection.end();}
 }
-function createRecoverySupervisor(config,{runCommand=command,verify=verifyDatabase,fetchReady}={}){
+async function lockRecoveryDatabase(binding){
+  const connection=await mysql.createConnection({...binding.database,connectTimeout:10000});
+  try{
+    const [[locked]]=await connection.execute('SELECT GET_LOCK(?,0) AS acquired',['badizo-rebuild:'+binding.database.database]);
+    if(Number(locked.acquired)!==1)throw Error('Recovery reconstruction is still using this database.');
+    // Closing the dedicated connection releases the fence, including crashes.
+    return async()=>{await connection.end();};
+  }catch(error){await connection.end().catch(()=>{});throw error;}
+}
+function createRecoverySupervisor(config,{runCommand=command,verify=verifyDatabase,fetchReady,acquireDatabaseFence=lockRecoveryDatabase}={}){
   if(!config||!path.isAbsolute(config.directory||'')||!path.isAbsolute(config.bindingPath||'')||!path.isAbsolute(config.restoreConfigPath||'')||!path.isAbsolute(config.restoreJobDirectory||''))throw Error('Absolute supervisor paths required.');
   if(!/^[A-Z][A-Z0-9_-]{2,31}$/.test(config.shopId||'')||!['local-server','cloud-standby','cloud-active'].includes(config.nodeRole))throw Error('Explicit shop and node role required.');
   const url=new URL(config.readyUrl);
@@ -135,7 +144,7 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
       await fs.unlink(requestPath);return;
     }
     operation={id:request.id,kind:request.kind,actor:request.actor,shopId:config.shopId,state:'preparing',startedAt:new Date().toISOString()};
-    let frozen=false,committed=false;
+    let frozen=false,committed=false,releaseDatabaseFence=null;
     try{
       const old=await binding();
       if(old.generation!==request.expectedGeneration)throw Error('Runtime state changed.');
@@ -147,6 +156,7 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
         const restore=await json(config.restoreConfigPath);
         if(job.shopId!==config.shopId||restore.shopId!==config.shopId||job.state!=='verified'||job.result?.database!==restore.database||job.result.activated!==false||!/^badizo_recovery_[a-z0-9]{8,32}$/.test(restore.database)||old.database.database===restore.database)throw Error('Restore is not eligible for activation.');
         candidate=validate({...old,activationId:crypto.randomUUID(),generation:old.generation+1,phase:'validating',billingMode:'active',reconciliationRequired:true,database:{host:restore.host,user:restore.user,password:restore.password,database:restore.database}},config.shopId);
+        releaseDatabaseFence=await acquireDatabaseFence(candidate);
         await verify(candidate,job.result);
       }else{
         if(request.kind.startsWith('handoff-')){
@@ -178,8 +188,8 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
       await record({...operation,state:'failed',message:'Recovery did not complete. Inspect the supervisor before retrying; databases were retained.'});
       // A failed rollback keeps the request and paused binding for inspection.
       if(!frozen)await fs.unlink(requestPath);
-    }
+    }finally{if(releaseDatabaseFence)await releaseDatabaseFence();}
   }
   return {tick};
 }
-module.exports={createRecoverySupervisor,verifyDatabase};
+module.exports={createRecoverySupervisor,verifyDatabase,lockRecoveryDatabase};

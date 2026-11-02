@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),path=requir
 const {loadManifest,statements,definition}=require('../services/syncSchemaInstaller');
 test('release pins every optional sync table and only permits additive infrastructure',async()=>{
   const {migrations}=await loadManifest(path.resolve(__dirname,'../../database/migrations'));
-  assert.equal(migrations.flatMap(m=>m.steps).length,10);
+  assert.equal(migrations.flatMap(m=>m.steps).length,11);
   for(const sql of ['DROP TABLE invoices;','ALTER TABLE products ADD COLUMN x INT;','CREATE TABLE invoices (id INT) ENGINE=InnoDB;'])assert.throws(()=>statements(sql));
 });
 test('schema verification ignores only table name, temporary marker and next sequence',()=>{

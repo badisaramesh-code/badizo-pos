@@ -52,7 +52,11 @@ function middleware(req,res,next) {
   };
   // An aborted response is not proof its database work finished. Keep the
   // gate busy in that case; activation times out instead of killing work.
-  res.once('finish',()=>{finished = true; activeWrites--;});
+  const complete=()=>{if(!finished){finished=true;activeWrites--;}};
+  // A disconnected response does not release the lease. A handler which
+  // owns its full transaction may release it in finally after commit/rollback.
+  req.completeRecoveryWrite=complete;
+  res.once('finish',complete);
   next();
 }
 async function withWriteLease(operation){

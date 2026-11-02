@@ -20,7 +20,7 @@ async function main(){
   async function start(){
     const binding=await json(config.bindingPath);
     if(simulateFailure&&binding.database.database===inputs[1].database)return;
-    child=spawn(process.execPath,['server.js'],{cwd:process.cwd(),env:{...process.env,PORT:'5002',HOST:'127.0.0.1',BADIZO_NODE_ROLE:testNodeRole,BADIZO_RUNTIME_BINDING:config.bindingPath,BADIZO_RECOVERY_CONTROL_CONFIG:configPath,BADIZO_SHOP_ID:'HFM001',BADIZO_DB_BOOTSTRAP:'false',BADIZO_DISABLE_3000_REDIRECT:'true',BADIZO_SMS_ENABLED:'false',BADIZO_WHATSAPP_ENABLED:'false'},stdio:'ignore'});
+    child=spawn(process.execPath,['server.js'],{cwd:process.cwd(),env:{...process.env,PORT:'5002',HOST:'127.0.0.1',BADIZO_LOOPBACK_ONLY:'true',BADIZO_DISABLE_SCHEDULED_JOBS:'true',BADIZO_SYNC_ENROLLMENT_CONFIG:'',BADIZO_CHECKOUT_REQUEST_GUARD:'false',BADIZO_NODE_ROLE:testNodeRole,BADIZO_RUNTIME_BINDING:config.bindingPath,BADIZO_RECOVERY_CONTROL_CONFIG:configPath,BADIZO_SHOP_ID:'HFM001',BADIZO_DB_BOOTSTRAP:'false',BADIZO_DISABLE_3000_REDIRECT:'true',BADIZO_SMS_ENABLED:'false',BADIZO_WHATSAPP_ENABLED:'false'},stdio:'ignore'});
   }
   async function ready(){const response=await fetch(config.readyUrl,{signal:AbortSignal.timeout(1000)});assert.equal(response.status,200);return response.json();}
   async function awaitReady(){for(let i=0;i<40;i++){try{return await ready();}catch{}await new Promise(resolve=>setTimeout(resolve,250));}throw Error('Isolated POS did not start');}
@@ -32,7 +32,7 @@ async function main(){
   }});
   async function request(kind){
     await atomic(path.join(directory,'heartbeat.json'),{shopId:'HFM001',at:new Date().toISOString()});
-    const phrases={'standby':'PAUSE BILLING','emergency-local':'START LOCAL AND RECONCILE LATER','activate-restore':'USE VERIFIED RESTORE','emergency-cloud':'LOCAL BILLING IS STOPPED - USE CLOUD'};
+    const phrases={'standby':'PAUSE BILLING','emergency-local':'CLOUD BILLING IS STOPPED - USE LOCAL','activate-restore':'USE VERIFIED RESTORE','emergency-cloud':'LOCAL BILLING IS STOPPED - USE CLOUD'};
     const response=await fetch('http://127.0.0.1:5002/api/recovery-control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+jwt.sign({role:'SERVER',username:'isolated-owner'},process.env.JWT_SECRET)},body:JSON.stringify({kind,jobId:kind==='activate-restore'?jobId:undefined,expectedGeneration:(await json(config.bindingPath)).generation,confirmation:phrases[kind]})});
     assert.equal(response.status,202);await supervisor.tick();
   }
@@ -41,6 +41,11 @@ async function main(){
     await start();await awaitReady();assert.equal(await billingStatus(),401);
     await request('standby');assert.equal(await billingStatus(),409);
     await request('emergency-local');assert.equal(await billingStatus(),401);assert.equal((await ready()).recovery.reconciliationRequired,true);
+    const rebuildFence=await mysql.createConnection(db(inputs[1]));
+    try{
+      const [[locked]]=await rebuildFence.execute('SELECT GET_LOCK(?,0) AS acquired',['badizo-rebuild:'+inputs[1].database]);assert.equal(Number(locked.acquired),1);
+      await request('activate-restore');assert.equal((await json(path.join(directory,'operation.json'))).state,'failed');assert.equal((await ready()).recovery.activationId,original.activationId);
+    }finally{await rebuildFence.end();}
     // First candidate deliberately fails startup. The real old POS must return.
     simulateFailure=true;await request('activate-restore');assert.equal((await json(path.join(directory,'operation.json'))).state,'rolled-back');assert.equal((await ready()).recovery.activationId,original.activationId);
     simulateFailure=false;await request('activate-restore');assert.equal((await json(path.join(directory,'operation.json'))).state,'complete');
@@ -52,7 +57,7 @@ async function main(){
     supervisor=createRecoverySupervisor(cloudConfig,{runCommand:async command=>command.kind==='stop'?stop():start()});
     await start();await awaitReady();assert.equal(await billingStatus(),409);
     await request('emergency-cloud');assert.equal((await json(path.join(directory,'operation.json'))).state,'complete');assert.equal(await billingStatus(),401);
-    console.log(JSON.stringify({cloudStandbyCanBeActivatedByOwner:true,ownerControlApi:true,realPosRestart:true,realMysqlCandidateVerification:true,standbyBlocksWrites:true,emergencyLocalWorks:true,candidateWritesBlockedUntilHealthy:true,failedStartRestoresOldPos:true,successfulActivationPersistsAcrossRestart:true,oldDatabaseRetained:true,productionModified:false}));
+    console.log(JSON.stringify({rebuildFencePreventsActivation:true,cloudStandbyCanBeActivatedByOwner:true,ownerControlApi:true,realPosRestart:true,realMysqlCandidateVerification:true,standbyBlocksWrites:true,emergencyLocalWorks:true,candidateWritesBlockedUntilHealthy:true,failedStartRestoresOldPos:true,successfulActivationPersistsAcrossRestart:true,oldDatabaseRetained:true,productionModified:false}));
   }finally{await stop();}
 }
 main().catch(error=>{console.error('Isolated activation drill failed: '+error.message);process.exitCode=1;});

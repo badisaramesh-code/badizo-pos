@@ -4,6 +4,7 @@ const router = express.Router();
 const db = require('../config/db');
 const { captureCheckout, captureInvoiceLifecycle } = require('../services/checkoutSyncCapture');
 const { captureHistoricalBaseline } = require('../services/invoiceOriginIdentity');
+const checkoutIdentity = require('../services/checkoutRequestIdentity');
 const { authenticate, authorize } = require('../middleware/auth');
 const { writeAuditLog } = require('../services/auditService');
 const {
@@ -527,6 +528,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
   const connection = await db.getConnection();
   const checkoutTimer = createCheckoutTimer();
   let invoiceNo = '';
+  let intentHash = null;
 
   try {
     await connection.query('SET SESSION innodb_lock_wait_timeout = 5');
@@ -563,6 +565,10 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     } = req.body;
 
     const checkoutRequestId = String(checkout_request_id || '').trim();
+    if(checkoutIdentity.enabled(process.env)){
+      if(!checkoutRequestId)return res.status(400).json({error:'Checkout recovery requires a persistent request ID.'});
+      intentHash=checkoutIdentity.fingerprint(req.body,req.user);
+    }
     if (checkoutRequestId && !/^[A-Za-z0-9_-]{12,64}$/.test(checkoutRequestId)) {
       return res.status(400).json({ error: 'A valid checkout request ID is required.' });
     }
@@ -572,7 +578,12 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     }
 
     const savedCheckout = await findSavedCheckout(connection, req.body);
-    if (savedCheckout) return res.status(savedCheckout.status).json(savedCheckout.body);
+    if (savedCheckout) {
+      if (savedCheckout.status < 300) {
+        await checkoutIdentity.verify(connection, checkoutRequestId, intentHash, savedCheckout.body.invoice_no);
+      }
+      return res.status(savedCheckout.status).json(savedCheckout.body);
+    }
 
     await connection.beginTransaction();
     checkoutTimer.mark('begin-transaction');
@@ -780,6 +791,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     );
     checkoutTimer.mark('loyalty-award');
 
+    await checkoutIdentity.record(connection,checkoutRequestId,intentHash,invoiceNo);
     await captureCheckout(connection, invoiceNo);
     await connection.commit();
     checkoutTimer.mark('commit');
@@ -828,7 +840,16 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     checkoutTimer.mark('rollback');
     if (err?.code === 'ER_DUP_ENTRY') {
       const savedCheckout = await findSavedCheckout(connection, req.body);
-      if (savedCheckout) return res.status(savedCheckout.status).json(savedCheckout.body);
+      if (savedCheckout) {
+        if (savedCheckout.status < 300) {
+          try {
+            await checkoutIdentity.verify(connection, req.body?.checkout_request_id, intentHash, savedCheckout.body.invoice_no);
+          } catch (verification) {
+            return res.status(verification.status || 409).json({ error: verification.message });
+          }
+        }
+        return res.status(savedCheckout.status).json(savedCheckout.body);
+      }
     }
     logError('Checkout rollback', err, {
       invoiceNo,
@@ -838,13 +859,14 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     console.error('Checkout rollback:', err.message);
     const retryableDeadlock = err?.code === 'ER_LOCK_DEADLOCK' || Number(err?.errno) === 1213;
     const validationError = ['PRICE_CHANGED', 'INVALID_PAYMENT', 'INVALID_BILL_LINE'].includes(err.code);
-    res.status(err.code === 'PRICE_CHANGED' ? 409 : validationError ? 400 : retryableDeadlock ? 503 : 500).json({
+    res.status(err.code === 'PRICE_CHANGED' || err.status === 409 ? 409 : validationError ? 400 : retryableDeadlock ? 503 : 500).json({
       code: validationError ? err.code : undefined,
       error: retryableDeadlock ? 'Checkout was temporarily busy. Retrying safely.' : err.message,
       retryable: retryableDeadlock
     });
   } finally {
     connection.release();
+    req.completeRecoveryWrite?.();
   }
 });
 

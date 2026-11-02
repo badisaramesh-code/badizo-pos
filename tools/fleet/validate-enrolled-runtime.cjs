@@ -25,7 +25,7 @@ async function main(){
   }
   async function stop(index){const child=children[index];if(child&&child.exitCode===null&&child.signalCode===null){const closed=new Promise(resolve=>child.once('exit',resolve));child.kill('SIGTERM');await closed;}children[index]=null;}
   try{
-    const migrations=['outbox','inbox','worker','invoice-map','invoice-batches','stock-adjustment','supplier-payments','recovery-applications','enrollment'];
+    const migrations=['outbox','inbox','worker','invoice-map','invoice-batches','stock-adjustment','supplier-payments','recovery-applications','enrollment','checkout-requests'];
     for(const pool of pools)for(const name of migrations){const sql=(await fs.readFile(path.resolve(__dirname,'../../database/migrations/optional-sync-'+name+'.sql'),'utf8')).replace(/CREATE TABLE (?!IF NOT EXISTS)/g,'CREATE TABLE IF NOT EXISTS ');await pool.query(sql);}
     const {invoiceSnapshot}=require('../../backend/services/invoiceOriginIdentity');
     const {canonical}=require('../../backend/services/syncEventProtocol');
@@ -56,7 +56,12 @@ async function main(){
       const control={shopId:'HFM001',nodeRole:i?'cloud-standby':'local-server',directory:path.join(root,i+'-control'),bindingPath:path.join(root,i+'-binding.json'),enrollmentConfigPath:path.join(root,i+'-enrollment.json'),restoreConfigPath:path.join(root,'unused-restore.json'),restoreJobDirectory:path.join(root,'unused-jobs'),readyUrl:'http://127.0.0.1:'+(5003+i)+'/api/ready',healthTimeoutMs:15000};
       await atomic(path.join(root,i+'-control.json'),control);
       await atomic(path.join(control.directory,'heartbeat.json'),{shopId:'HFM001',at:new Date().toISOString()});
-      const supervisor=createRecoverySupervisor(control);
+      const supervisor=createRecoverySupervisor(control,{fetchReady:async()=>{
+        // Deliberately lengthen the drain window: peer status polling must
+        // remain available while mutations are correctly blocked.
+        if(i===1)await sleep(350);
+        const response=await fetch(control.readyUrl,{signal:AbortSignal.timeout(2000)});if(!response.ok)throw Error('POS not ready');return response.json();
+      }});
       supervisorTimers.push(setInterval(()=>{
         if(supervisorWork[i])return;
         supervisorWork[i]=(async()=>{await atomic(path.join(control.directory,'heartbeat.json'),{shopId:'HFM001',at:new Date().toISOString()});await supervisor.tick();})().catch(error=>supervisorErrors.push(error.message)).finally(()=>{supervisorWork[i]=null;});
@@ -130,13 +135,22 @@ async function main(){
     const detailedCase=await request(0,'recovery-cases/'+financialCase.id);assert.equal(detailedCase.comparison.sourceAfter.paid_amount,'10.00');
     const retriedCase=await request(0,'recovery-cases/'+financialCase.id+'/retry',{expectedRevision:0,note:'Isolated validation: purchase is deliberately missing; retain the payment.',confirmation:'RETRY WITHOUT DISCARDING RECORDS'});assert.equal(retriedCase.status,'needs-correction');assert.equal(retriedCase.history[0].outcome,'still-blocked');
     const [[blockedReceipt]]=await pools[0].execute('SELECT COUNT(*) AS n FROM sync_inbox WHERE event_id=?',[blockedPayment.eventId]);assert.equal(Number(blockedReceipt.n),0);
+    const failureAcceptance=await require('./validate-recovery-failures.cjs').runRecoveryFailureAcceptance({localUrl:'http://127.0.0.1:5003',cloudUrl:'http://127.0.0.1:5004',ownerToken:ownerHeaders.Authorization.slice(7),cloudSyncToken:tokens[1],baselineId,localPool:pools[0],cloudPool:pools[1],localInstallationId:ids[0],barcode,salePrice:12});
+    assert.equal(failureAcceptance.productionModified,false);
+    await handoff('use-cloud');await handoff('use-local');
+    const financialAcceptance=await require('./validate-financial-corrections.cjs').runFinancialCorrectionDrill({pools,request,identities:ids.map((id,index)=>({shopId:'HFM001',localInstallationId:id,peerInstallationId:ids[1-index]})),deliver:async(index,event)=>{
+      const response=await fetch('http://127.0.0.1:'+(5003+index)+'/api/sync/events',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tokens[index],'X-Badizo-Baseline':baselineId},body:JSON.stringify(event)});
+      return {status:response.status,body:await response.json()};
+    }});
+    assert.equal(financialAcceptance.duplicateSupplierPaymentMatched,true);assert.equal(financialAcceptance.twoSidedAuditDeltasConverged,true);
+    await handoff('use-cloud');await handoff('use-local');
     // A new restored binding keeps billing available but must not silently
     // reuse the previous installation's event mappings.
     await stop(0);await atomic(path.join(root,'0-binding.json'),{...bindings[0],activationId:crypto.randomUUID(),generation:1});
     const child=spawn(process.execPath,['server.js'],{cwd:process.cwd(),env:{...process.env,PORT:'5003',HOST:'127.0.0.1',BADIZO_LOOPBACK_ONLY:'true',BADIZO_DISABLE_3000_REDIRECT:'true',BADIZO_DISABLE_SCHEDULED_JOBS:'true',BADIZO_SMS_ENABLED:'false',BADIZO_WHATSAPP_ENABLED:'false',BADIZO_SHOP_ID:'HFM001',BADIZO_NODE_ROLE:'local-server',BADIZO_RUNTIME_BINDING:path.join(root,'0-binding.json'),BADIZO_SYNC_ENROLLMENT_CONFIG:path.join(root,'0-enrollment.json'),BADIZO_RECOVERY_REVIEW_ENABLED:'false',BADIZO_RECOVERY_APPLY_ENABLED:'false',BADIZO_RECOVERY_CONTROL_CONFIG:'',BADIZO_STAGED_RESTORE_ENABLED:'false'},stdio:'ignore'});children[0]=child;
     await until(async()=>{const response=await fetch('http://127.0.0.1:5003/api/ready');const value=await response.json();return value.ok&&value.sync?.reason==='restored-database-requires-enrollment';},'restored local startup',15000);
     await request(0,'products/save',{...product,sale_price:13});assert.equal((await request(0,'cloud-sync/settings')).service.ready,false);
-    console.log(JSON.stringify({twoRealPosProcesses:true,authenticatedHttpsSync:true,normalCloudHandoff:true,returnToLocalIncludesCloudChanges:true,crossServerReturn:true,crossServerCancellation:true,historicalBackupInvoiceReturns:true,lostActivationReplyNeverEnablesLocal:true,retryAfterUnknownOutcome:true,standbyReceivesUpdates:true,manualButtonRunsWorker:true,conflictsAppearInOwnerApi:true,ownerResolutionDrainsBothQueues:true,restartPreservesEnrollment:true,restoreEpochBlocksStaleMappings:true,restoredLocalBillingAvailable:true,productionModified:false}));
+    console.log(JSON.stringify({twoRealPosProcesses:true,authenticatedHttpsSync:true,normalCloudHandoff:true,returnToLocalIncludesCloudChanges:true,crossServerReturn:true,crossServerCancellation:true,historicalBackupInvoiceReturns:true,lostActivationReplyNeverEnablesLocal:true,retryAfterUnknownOutcome:true,standbyReceivesUpdates:true,manualButtonRunsWorker:true,conflictsAppearInOwnerApi:true,ownerResolutionDrainsBothQueues:true,restartPreservesEnrollment:true,restoreEpochBlocksStaleMappings:true,restoredLocalBillingAvailable:true,checkoutFailureAcceptance:failureAcceptance,financialAcceptance,productionModified:false}));
   }finally{supervisorTimers.forEach(clearInterval);await Promise.all(supervisorWork.filter(Boolean));await stop(0);await stop(1);if(proxy)await new Promise(resolve=>proxy.close(resolve));await Promise.all(pools.map(pool=>pool.end()));}
 }
 main().catch(error=>{console.error('Enrolled runtime drill failed: '+error.message);process.exitCode=1;});

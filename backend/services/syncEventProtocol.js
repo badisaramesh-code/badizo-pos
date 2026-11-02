@@ -23,7 +23,15 @@ function validateEvent(event, { shopId, peerInstallationId, localInstallationId 
 // Trusted peer identity is supplied by server configuration/authentication,
 // never accepted from a request as proof of identity. Handlers must use only
 // the supplied transaction connection for all business changes.
-function createSyncReceiver({ pool, identity, handlers, reviewStore = null }) {
+async function retainReceivedEvent(connection,event,identity){
+  const verified=validateEvent(event,identity);
+  const [archived]=await connection.execute('SELECT event_json,payload_hash FROM sync_outbox WHERE event_id=? FOR UPDATE',[event.eventId]);
+  if(archived.length){
+    const saved=typeof archived[0].event_json==='string'?JSON.parse(archived[0].event_json):archived[0].event_json;
+    if(archived.length!==1||archived[0].payload_hash!==verified.hash||canonical(saved)!==verified.serialized)throw Error('Retained event identity differs.');
+  }else await connection.execute('INSERT INTO sync_outbox (event_id,shop_id,origin_installation_id,event_json,payload_hash,acknowledged_at) VALUES (?,?,?,?,?,CURRENT_TIMESTAMP(6))',[event.eventId,event.shopId,event.originInstallationId,verified.serialized,verified.hash]);
+}
+function createSyncReceiver({ pool, identity, handlers, reviewStore = null, retainReceived = false }) {
   return async function receive(event) {
     const verified = validateEvent(event, identity);
     const handler = Object.hasOwn(handlers, event.type) ? handlers[event.type] : null;
@@ -43,6 +51,12 @@ function createSyncReceiver({ pool, identity, handlers, reviewStore = null }) {
         duplicate = true;
       }
       if (!duplicate) await handler(connection, structuredClone(event.payload), { eventId:event.eventId,shopId:event.shopId,originInstallationId:event.originInstallationId,localInstallationId:identity.localInstallationId });
+      if(retainReceived){
+        // Retain peer evidence atomically with its receipt and business work.
+        // Existing feeds select only their own origin, so this archive is
+        // never echoed back or treated as a new outgoing transaction.
+        await retainReceivedEvent(connection,event,identity);
+      }
       await connection.commit(); begun = false;
       return { eventId:event.eventId, committed:true, duplicate };
     } catch (error) {
@@ -57,4 +71,4 @@ function createSyncReceiver({ pool, identity, handlers, reviewStore = null }) {
     } finally { connection.release(); }
   };
 }
-module.exports = { canonical, validateEvent, createSyncReceiver };
+module.exports = { canonical, validateEvent, createSyncReceiver, retainReceivedEvent };

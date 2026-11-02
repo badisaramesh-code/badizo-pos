@@ -34,8 +34,7 @@ async function normalizeLifecycle(connection,payload,identity){
   if(!maps.length)return payload; // Locally originated or pre-enrollment bill.
   if(maps.length!==1)throw Error('Ambiguous invoice origin.');
   const map=maps[0];
-  if(map.origin_installation_id===identity.localInstallationId)return payload;
-  if(map.origin_installation_id!==identity.peerInstallationId)throw Error('Invoice belongs to an earlier installation; baseline reconciliation required.');
+  if(![identity.localInstallationId,identity.peerInstallationId].includes(map.origin_installation_id))throw Error('Invoice belongs to an earlier installation; baseline reconciliation required.');
   const original=JSON.parse(map.checkout_payload);
   const itemMaps=await rows(connection,'SELECT source_item_id,target_item_id FROM sync_invoice_item_map WHERE shop_id=? AND origin_installation_id=? AND source_invoice_no=?',[identity.shopId,map.origin_installation_id,map.source_invoice_no]);
   if(itemMaps.length!==original.items.length||payload.items.length!==original.items.length)throw Error('Invoice line identity is incomplete.');

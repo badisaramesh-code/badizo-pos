@@ -8,6 +8,8 @@ const handlers={
   'pos.product.changed':require('./productMasterSync').applyProductMaster,
   'pos.products.deleted':require('./productMasterSync').applyProductDeletion,
   'pos.recovery.product-resolved':require('./productConflictResolution').applyProductResolution,
+  'pos.recovery.supplier-payment-matched':require('./financialCorrectionExecution').applyMatchedSupplierPayment,
+  'pos.recovery.stock-deltas-reviewed':require('./financialCorrectionExecution').applyReviewedStockDeltas,
   'pos.stock.adjusted':require('./stockAdjustmentSync').applyStockAdjustment,
   'pos.purchase.changed':require('./purchaseSync').applyPurchase,
   'pos.supplier-payment.recorded':require('./supplierPaymentSync').applySupplierPayment
@@ -19,8 +21,8 @@ async function emergencyLocalPriority(){
   const state=require('./recoveryRuntimeBinding').read();
   return state?.phase==='active'&&state.billingMode==='active'&&state.preferLocalConflicts===true;
 }
-function createPosSyncReceiver({pool,identity,reviewStore=null,localPriority=emergencyLocalPriority}){
-  const receive=createSyncReceiver({pool,identity,handlers,reviewStore});
+function createPosSyncReceiver({pool,identity,reviewStore=null,localPriority=emergencyLocalPriority,retainReceived=false}){
+  const receive=createSyncReceiver({pool,identity,handlers,reviewStore,retainReceived});
   const execution=reviewStore?createRecoveryConflictExecution({pool,store:reviewStore,identity,canApply:localPriority}):null;
   return async event=>{
     try{return await receive(event);}catch(error){

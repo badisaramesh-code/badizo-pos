@@ -1,6 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
 const {atomic,json}=require('../services/recoveryControlFiles');
-const {createRecoverySupervisor}=require('../services/recoverySupervisor');
+const {createRecoverySupervisor:realSupervisor}=require('../services/recoverySupervisor');
+const createRecoverySupervisor=(config,options={})=>realSupervisor(config,{acquireDatabaseFence:async()=>async()=>{},...options});
 async function setup(t){
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'badizo-supervisor-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));
   const config={shopId:'HFM001',nodeRole:'local-server',directory,bindingPath:path.join(directory,'binding.json'),restoreConfigPath:path.join(directory,'restore.json'),restoreJobDirectory:directory,readyUrl:'http://127.0.0.1:5009/api/ready',healthTimeoutMs:260,stop:{kind:'stop'},start:{kind:'start'}};
@@ -43,4 +44,10 @@ test('restart after activation commit never rolls back a database that may conta
   await atomic(path.join(config.directory,'operation.json'),{id:pending.id,state:'committing',targetId:activated.activationId});
   await createRecoverySupervisor(config,{runCommand:async()=>{throw Error('Must not restart or roll back');}}).tick();
   assert.deepEqual(await json(config.bindingPath),activated);assert.equal((await json(path.join(config.directory,'operation.json'))).state,'complete');
+});
+test('reconstruction fence blocks restore activation before pausing the original server',async t=>{
+  const {config,original,request}=await setup(t);await request();
+  const supervisor=createRecoverySupervisor(config,{acquireDatabaseFence:async()=>{throw Error('Candidate is being rebuilt');},verify:async()=>{throw Error('Must not inspect an unfenced candidate');},runCommand:async()=>{throw Error('Must not stop billing');}});
+  await supervisor.tick();assert.deepEqual(await json(config.bindingPath),original);
+  assert.equal((await json(path.join(config.directory,'operation.json'))).state,'failed');
 });

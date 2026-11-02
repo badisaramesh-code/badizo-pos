@@ -8,6 +8,18 @@ The expanded real isolated checkout drill verified exact invoice name/mobile pre
 
 ## Current operational status
 
+### Emergency-only rollout scope — owner clarification, 2026-11-02
+
+Local remains primary; cloud is emergency standby. Intentional simultaneous local/cloud billing is not a supported rollout workflow. Normal owner handoff pauses the previous writer, exchanges pending changes and verifies before activation. Both emergency confirmations now explicitly require the other server's counters to have stopped. An offline local override cannot technically verify an unreachable cloud has stopped; it requires the owner's explicit operational confirmation.
+
+Recovery journals and merging remain necessary for unsent **pre-crash** local transactions plus later cloud transactions. Advanced financial/stock correction and detached reconstruction tools are exceptional owner/technician recovery work, not ordinary cashier operations. They must not be presented as an active-active feature.
+
+The latest development work adds retained incoming event evidence; guarded detached reconstruction; verified same-snapshot disabled enrollment preparation with original shop identity proof and preserved partial returns; explicit duplicate physical-payment matching; reviewed ordinary stock-audit differences on both nodes; full checkout-intent retry protection; and completion of write leases after aborted HTTP requests. The additive installer now includes `sync_checkout_requests`; it does not ALTER the existing invoice/product tables or run DDL on ordinary startup.
+
+Real isolated MySQL/HTTP validation passed lost checkout and receiver acknowledgements, changed/concurrent retry rejection, duplicate stock/customer protection, financial matching, two-sided stock convergence, slow write-drain handoff, detached replay/resume, verified-copy preparation and rebuild/activation mutual exclusion. Production was not changed. These results do not certify live Windows services, printers or backup schedules.
+
+Still unfinished: owner-button integration for the final verified source checkpoint and prepared-pair activation, arbitrary unlogged divergent history reconstruction (missing facts cannot be inferred), and exceptional financial/batch profiles outside the explicitly supported correction cases. The manual sync screen currently has no progress bar/counts and has stale queued-message/polling defects; its presentation needs a small focused follow-up. Do not describe these as complete or production-approved. The current extra recovery utilities prepare disabled candidates and retain original databases/evidence.
+
 ### Latest development checkpoint — 2026-11-02
 
 Invoice lifecycle capture now preserves the checkout's original installation and translates mapped invoice/item/payment/batch identities when a return or cancellation is performed on the other server. The originating receiver uses its retained, hash-verified checkout evidence to establish a self mapping if needed. An unrelated or missing origin is rejected. This closes the cloud-sale/local-return path without replaying the sale or applying stock twice.

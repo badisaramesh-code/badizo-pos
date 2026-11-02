@@ -27,4 +27,7 @@ test('recovery API requires owner confirmation and does not accept commands or f
   const body={kind:'standby',expectedGeneration:1,confirmation:'PAUSE BILLING'};
   assert.equal((await post('ADMIN',body)).status,403);assert.equal((await post('SERVER',{...body,actor:'forged'})).status,400);assert.equal((await post('SERVER',{...body,command:'delete'})).status,400);assert.equal((await post('SERVER',body)).status,202);
   assert.equal(calls.length,1);assert.equal(calls[0].actor,'actual-owner');
+  assert.equal((await post('SERVER',{kind:'emergency-local',expectedGeneration:1,confirmation:'START LOCAL AND RECONCILE LATER'})).status,400);
+  assert.equal((await post('SERVER',{kind:'emergency-local',expectedGeneration:1,confirmation:'CLOUD BILLING IS STOPPED - USE LOCAL'})).status,202);
+  assert.equal(calls[1].kind,'emergency-local');
 });

@@ -16,7 +16,7 @@ function createOutboxSender({pool,identity,send}){
       const [rows]=await connection.execute('SELECT GET_LOCK(?,0) AS acquired',[lock]);
       if(Number(rows[0].acquired)!==1)return {busy:true,acknowledged:0};
       locked=true;
-      const [pending]=await connection.execute('SELECT event_id,event_json,payload_hash FROM sync_outbox WHERE shop_id=? AND origin_installation_id=? AND acknowledged_at IS NULL ORDER BY (JSON_UNQUOTE(JSON_EXTRACT(event_json,\'$.type\'))=\'pos.recovery.product-resolved\') DESC,sequence_no LIMIT '+limit,[identity.shopId,identity.localInstallationId]);
+      const [pending]=await connection.execute('SELECT event_id,event_json,payload_hash FROM sync_outbox WHERE shop_id=? AND origin_installation_id=? AND acknowledged_at IS NULL ORDER BY (JSON_UNQUOTE(JSON_EXTRACT(event_json,\'$.type\')) IN (\'pos.recovery.product-resolved\',\'pos.recovery.supplier-payment-matched\',\'pos.recovery.stock-deltas-reviewed\')) DESC,sequence_no LIMIT '+limit,[identity.shopId,identity.localInstallationId]);
       let acknowledged=0;
       for(const row of pending){
         const event=typeof row.event_json==='string'?JSON.parse(row.event_json):row.event_json;
