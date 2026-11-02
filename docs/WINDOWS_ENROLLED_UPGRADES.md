@@ -12,6 +12,8 @@ node tools/fleet/build-windows-release.cjs FULL_40_CHARACTER_COMMIT C:\ReleaseOu
 
 The builder rejects a dirty checkout, copies tracked application and sync migration files, copies runtime dependencies and builds the frontend. The output contains a per-file SHA-256 manifest. It excludes credentials, environment files, database dumps and operational logs. Treat the release's provenance as trusted separately: checksums detect changes but are not a publisher signature. Do not distribute development `.env` files or a shop database with the package.
 
+Build from a dedicated checkout without frontend `.env`, `.env.local`, `.env.production`, or `.env.production.local`; the builder refuses these files before creating output. Ambient `REACT_APP_*`, `PUBLIC_URL`, and build-path overrides are cleared, and only the release's explicit recovery feature flags are supplied. This prevents private development settings from being embedded in public JavaScript. Shop-specific configuration belongs in the protected runtime setup.
+
 ## One-time shop onboarding
 
 During the planned shop visit, verify and preserve the actual Windows service/scheduled-task commands, shop environment file, MySQL 8.0 runtime, database binding, printer settings, existing manual-backup directory and daily Drive backup configuration. Configure the service to run `tools/fleet/run-windows-release.cjs` with a protected launcher JSON. That file names `root`, `shopId`, `environmentFile`, `bindingPath`, and `manualBackupDirectory`. All paths are absolute. The last property must point to the existing backup location so moving application releases does not relocate old backups. External configuration and DB-stored printer/backup settings are never bundled or overwritten.

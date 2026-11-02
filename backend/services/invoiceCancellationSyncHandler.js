@@ -11,6 +11,7 @@ async function applyCancellation(connection,payload,context){
     || !Array.isArray(payload.returns) || payload.returns.length
     || !Array.isArray(payload.returnItems) || payload.returnItems.length)throw Error('Unsupported cancellation event.');
   const invoiceNo=payload.invoice.invoice_no;
+  context=await require('./invoiceOriginIdentity').lifecycleContext(connection,payload,context);
   const [maps]=await connection.execute('SELECT target_invoice_no,checkout_payload FROM sync_invoice_map WHERE shop_id=? AND origin_installation_id=? AND source_invoice_no=? FOR UPDATE',[context.shopId,context.originInstallationId,invoiceNo]);
   if(maps.length!==1)throw Error('Cancellation is waiting for its originating checkout.');
   const original=JSON.parse(maps[0].checkout_payload);

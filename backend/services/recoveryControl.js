@@ -11,6 +11,7 @@ function createRecoveryControl({configPath,shopId}){
     try{
       const pending=await json(path.join(c.directory,'request.json'));
       if(pending.id!==operation?.id)operation={id:pending.id,kind:pending.kind,actor:pending.actor,state:'queued'};
+      else if(['complete','rolled-back','failed'].includes(operation.state))operation={...operation,state:'finalizing'};
     }catch(error){if(error.code!=='ENOENT')throw error;}
     try{heartbeat=await json(path.join(c.directory,'heartbeat.json'));}catch(error){if(error.code!=='ENOENT')throw error;}
     return {configured:true,nodeRole:c.nodeRole,handoffAvailable:!!c.enrollmentConfigPath&&c.nodeRole==='local-server',handoffId:binding.handoffId||null,supervisorOnline:heartbeat?.shopId===shopId&&Date.now()-Date.parse(heartbeat.at)<15000,generation:binding.generation,phase:binding.phase,billingMode:binding.billingMode,reconciliationRequired:!!binding.reconciliationRequired,operation};

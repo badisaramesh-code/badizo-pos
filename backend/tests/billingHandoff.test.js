@@ -23,3 +23,11 @@ test('lost cloud activation acknowledgement never enables local and retry drains
 test('emergency override during synchronization prevents normal activation',async()=>{
   const f=fixture();await assert.rejects(executeBillingHandoff({...f,target:'cloud',transfer:async()=>{f.states[0].handoffId='different';return {};}}),/remain paused/);
 });
+test('finishing sync leases drain before activation; a permanently busy hold stays paused',async()=>{
+  const f=fixture(),status=f.local.status;let reads=0;
+  f.local.status=async()=>({...await status(),activeWrites:reads++===0?1:0});
+  let waits=0;await executeBillingHandoff({...f,target:'cloud',wait:async()=>{waits++;}});assert.equal(waits,1);
+  const blocked=fixture();blocked.local.status=async()=>({...blocked.states[0],activeWrites:1});
+  await assert.rejects(executeBillingHandoff({...blocked,target:'cloud',maxBusyChecks:2,wait:async()=>{}}),/did not drain/);
+  assert.ok(blocked.states.every(state=>state.billingMode==='standby'));
+});

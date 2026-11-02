@@ -11,9 +11,14 @@ test('control queue rejects stale generations and duplicate requests without exp
   await atomic(path.join(directory,'heartbeat.json'),{shopId:'HFM001',at:new Date().toISOString()});
   const control=createRecoveryControl({configPath,shopId:'HFM001'});
   await assert.rejects(control.request({kind:'standby',expectedGeneration:0,actor:'owner'}));
-  await control.request({kind:'standby',expectedGeneration:1,actor:'owner'});
+  const queued=await control.request({kind:'standby',expectedGeneration:1,actor:'owner'});
   const status=await control.status();assert.equal(status.operation.state,'queued');assert.ok(!JSON.stringify(status).includes('private-'));
   await assert.rejects(control.request({kind:'standby',expectedGeneration:1,actor:'owner'}));
+  await atomic(path.join(directory,'operation.json'),{id:queued.id,state:'complete'});
+  assert.equal((await control.status()).operation.state,'finalizing');
+  await assert.rejects(control.request({kind:'standby',expectedGeneration:1,actor:'owner'}),/already pending/);
+  await fs.unlink(path.join(directory,'request.json'));
+  assert.equal((await control.status()).operation.state,'complete');
 });
 test('recovery API requires owner confirmation and does not accept commands or forged actors',async t=>{
   const calls=[];const app=express();app.use(express.json());app.use('/control',createRouter({request:async value=>{calls.push(value);return {state:'queued'};},status:async()=>({configured:true})}));

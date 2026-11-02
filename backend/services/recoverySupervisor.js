@@ -73,7 +73,7 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
       async function remoteMode(id,action){
         let state=await checkedStatus(cloudCall,false);
         const mode=action==='pause'?'standby':'active';
-        if(state.handoffId===id&&state.billingMode===mode&&state.phase==='active')return;
+        if(state.handoffId===id&&state.billingMode===mode&&state.phase==='active'&&state.operation?.state==='complete')return;
         await cloudCall('',{action,handoffId:id,expectedGeneration:state.generation});
         const end=Date.now()+(config.healthTimeoutMs||30000);
         while(Date.now()<end){state=await checkedStatus(cloudCall,false);if(state.handoffId===id&&state.billingMode===mode&&state.phase==='active'&&state.operation?.state==='complete')return;await sleep(250);}
@@ -94,12 +94,13 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
       const latest=await binding();
       await atomic(config.bindingPath,{...latest,handoffId:null});
       await fs.unlink(requestPath);
-    }catch{
+    }catch(error){
       // Never activate local as a rollback: cloud activation may have committed
       // despite a lost reply. Keep local paused unless it already was activated.
       const latest=await binding();
       if(latest.handoffId===request.id)await atomic(config.bindingPath,{...latest,phase:'active',handoffId:null});
-      await record({...op,state:'failed',message:'Switch not confirmed. Inspect both billing modes. Pending data was retained; no alternate server was automatically activated.'});
+      const reasons={'Both enrolled servers must remain paused for handoff.':'hold-changed','Handoff write leases did not drain.':'writes-busy','Synchronization is busy or blocked; billing remains paused.':'sync-blocked','Handoff endpoint unavailable.':'peer-endpoint-unavailable','Peer mode change timed out.':'peer-mode-timeout','Activation outcome requires inspection; do not enable the other server.':'activation-unconfirmed'};
+      await record({...op,state:'failed',failedStage:op.state,failureCode:reasons[error.message]||'verification-failed',message:'Switch not confirmed. Inspect both billing modes. Pending data was retained; no alternate server was automatically activated.'});
       await fs.unlink(requestPath);
     }
   }

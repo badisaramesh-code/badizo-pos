@@ -11,6 +11,7 @@ async function applyReturn(connection,payload,context){
     || !Array.isArray(payload.returns) || !Array.isArray(payload.returnItems)
     || !Array.isArray(payload.items))throw Error('Unsupported return event.');
   const invoiceNo=payload.invoice.invoice_no,returnNo=payload.change.returnNo;
+  context=await require('./invoiceOriginIdentity').lifecycleContext(connection,payload,context);
   const [maps]=await connection.execute('SELECT target_invoice_no,checkout_payload FROM sync_invoice_map WHERE shop_id=? AND origin_installation_id=? AND source_invoice_no=? FOR UPDATE',[context.shopId,context.originInstallationId,invoiceNo]);
   if(maps.length!==1)throw Error('Return is waiting for its originating checkout.');
   const original=JSON.parse(maps[0].checkout_payload);

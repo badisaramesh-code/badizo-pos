@@ -3,6 +3,7 @@ const { randomUUID } = require('node:crypto');
 const router = express.Router();
 const db = require('../config/db');
 const { captureCheckout, captureInvoiceLifecycle } = require('../services/checkoutSyncCapture');
+const { captureHistoricalBaseline } = require('../services/invoiceOriginIdentity');
 const { authenticate, authorize } = require('../middleware/auth');
 const { writeAuditLog } = require('../services/auditService');
 const {
@@ -978,6 +979,7 @@ router.post('/invoice/void', authenticate, authorize('SERVER', 'ADMIN'), async (
       return res.status(400).json({ error: 'Return has already been recorded. Use return report instead of void.' });
     }
 
+    const historicalBaseline = await captureHistoricalBaseline(connection,invoiceNo);
     const [items] = await connection.query(
       `SELECT id, barcode, quantity, is_free_bonus, free_offer_id
        FROM invoice_items
@@ -1038,7 +1040,7 @@ router.post('/invoice/void', authenticate, authorize('SERVER', 'ADMIN'), async (
       connection
     });
 
-    await captureInvoiceLifecycle(connection,invoiceNo,{kind:'void'});
+    await captureInvoiceLifecycle(connection,invoiceNo,{kind:'void'},process.env,historicalBaseline);
     await connection.commit();
     res.json({ success: true });
   } catch (err) {
@@ -1083,6 +1085,7 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
       return res.status(400).json({ error: `Invoice is ${invoice.invoice_status.toLowerCase()} and cannot be returned.` });
     }
 
+    const historicalBaseline = await captureHistoricalBaseline(connection,invoiceNo);
     const returnNo = formatReturnNo();
     let taxableTotal = 0;
     let gstTotal = 0;
@@ -1203,7 +1206,7 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
       connection
     });
 
-    await captureInvoiceLifecycle(connection,invoiceNo,{kind:'return',returnNo});
+    await captureInvoiceLifecycle(connection,invoiceNo,{kind:'return',returnNo},process.env,historicalBaseline);
     await connection.commit();
     res.json({
       success: true,

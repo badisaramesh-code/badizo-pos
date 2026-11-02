@@ -27,6 +27,18 @@ async function main(){
   try{
     const migrations=['outbox','inbox','worker','invoice-map','invoice-batches','stock-adjustment','supplier-payments','recovery-applications','enrollment'];
     for(const pool of pools)for(const name of migrations){const sql=(await fs.readFile(path.resolve(__dirname,'../../database/migrations/optional-sync-'+name+'.sql'),'utf8')).replace(/CREATE TABLE (?!IF NOT EXISTS)/g,'CREATE TABLE IF NOT EXISTS ');await pool.query(sql);}
+    const {invoiceSnapshot}=require('../../backend/services/invoiceOriginIdentity');
+    const {canonical}=require('../../backend/services/syncEventProtocol');
+    const [candidates]=await pools[0].execute("SELECT DISTINCT invoice_no FROM invoice_items WHERE quantity>=2 AND gst_percent=0 AND returned_qty=0 AND is_free_bonus=0 AND free_offer_id IS NULL ORDER BY invoice_no LIMIT 1000");
+    let historical;
+    for(const candidate of candidates){
+      const snapshots=await Promise.all(pools.map(pool=>invoiceSnapshot(pool,candidate.invoice_no)));
+      const s=snapshots[0];
+      if(s.invoice.invoice_status!=='PAID'||Number(s.invoice.exchange_total)!==0||s.invoice.exchange_items_json!==null||canonical(s)!==canonical(snapshots[1])||s.items.length!==1||Number(s.items[0].quantity)<2||s.loyaltyTransactions.length||s.batchAllocations.length||s.items.some(item=>Number(item.returned_qty)!==0||Number(item.is_free_bonus)!==0||item.free_offer_id!==null))continue;
+      const [mapped]=await pools[0].execute('SELECT target_invoice_no FROM sync_invoice_map WHERE target_invoice_no=?',[candidate.invoice_no]);if(mapped.length)continue;
+      historical=s;break;
+    }
+    assert.ok(historical,'common backup must contain an eligible untouched historical invoice');
     proxy=https.createServer({key:await fs.readFile(keyFile),cert:await fs.readFile(certFile)},(req,res)=>{
       let body='';req.on('data',chunk=>{if(body.length<4096)body+=chunk.toString();});
       const forward=http.request({host:'127.0.0.1',port:5004,path:req.url,method:req.method,headers:req.headers},upstream=>{
@@ -75,7 +87,10 @@ async function main(){
     async function handoff(kind,expected='complete'){
       const state=await request(0,'recovery-control');
       const started=await request(0,'recovery-control',{kind,expectedGeneration:state.generation,confirmation:kind==='use-cloud'?'SYNC AND USE CLOUD':'SYNC AND USE LOCAL'});
-      await until(async()=>{const current=await request(0,'recovery-control');return current.operation?.id===started.id&&current.operation.state===expected;},kind,25000);
+      let outcome;
+      await until(async()=>{const current=await request(0,'recovery-control');if(current.operation?.id!==started.id)return false;outcome=current.operation;return [expected,'failed','rolled-back'].includes(outcome.state);},kind,25000);
+      assert.equal(outcome.state,expected,kind+': '+(outcome.failedStage||'')+' / '+(outcome.failureCode||''));
+      console.log('Validated handoff: '+kind+' / '+expected);
     }
     await handoff('use-cloud');
     assert.equal((await request(0,'recovery-control')).billingMode,'standby');assert.equal((await request(1,'recovery-control')).billingMode,'active');
@@ -86,6 +101,25 @@ async function main(){
     assert.equal((await request(0,'recovery-control')).billingMode,'active');assert.equal((await request(1,'recovery-control')).billingMode,'standby');
     const [[returnedProduct]]=await pools[0].execute('SELECT sale_price FROM products WHERE barcode=?',[barcode]);assert.equal(Number(returnedProduct.sale_price),12);assert.deepEqual(supervisorErrors,[]);
     const [[recoveredBill]]=await pools[0].execute('SELECT customer_name,grand_total FROM invoices WHERE invoice_no=?',[emergencyBill.invoice_no]);assert.equal(recoveredBill.customer_name,'ISOLATED HANDOFF CUSTOMER');assert.equal(Number(recoveredBill.grand_total),12);
+    const [[returnedLine]]=await pools[0].execute('SELECT id FROM invoice_items WHERE invoice_no=?',[emergencyBill.invoice_no]);
+    await request(0,'billing/return',{invoice_no:emergencyBill.invoice_no,reason:'ISOLATED CROSS-SERVER RETURN',refund_mode:'Cash',items:[{invoice_item_id:returnedLine.id,quantity:1}]});
+    await handoff('use-cloud');
+    const [[cloudReturn]]=await pools[1].execute('SELECT invoice_status FROM invoices WHERE invoice_no=?',[emergencyBill.invoice_no]);assert.equal(cloudReturn.invoice_status,'RETURNED');
+    const [[cloudStock]]=await pools[1].execute('SELECT stock_qty FROM products WHERE barcode=?',[barcode]);assert.equal(Number(cloudStock.stock_qty),10);
+    await handoff('use-local');
+    const voidBill=await request(0,'billing/checkout',{checkout_request_id:crypto.randomUUID(),counter_no:1,customer_name:'ISOLATED VOID CUSTOMER',customer_phone:'',items:[{barcode,product_name:product.product_name,quantity:1,sale_price:12,gst_percent:0}],sub_total:12,gst_total:0,grand_total:12,payment_mode:'Cash',cash_received:12,change_returned:0,billing_tier:'RETAIL',tax_type:'LOCAL'});
+    await handoff('use-cloud');
+    await request(1,'billing/invoice/void',{invoice_no:voidBill.invoice_no,reason:'ISOLATED CROSS-SERVER CANCELLATION'});
+    await handoff('use-local');
+    const [[voided]]=await pools[0].execute('SELECT invoice_status FROM invoices WHERE invoice_no=?',[voidBill.invoice_no]);assert.equal(voided.invoice_status,'CANCELLED');
+    // Existing bills in the common backup have no checkout event. Adopt only
+    // complete identical snapshots, then exercise returns on both servers.
+    await request(0,'billing/return',{invoice_no:historical.invoice.invoice_no,reason:'ISOLATED HISTORICAL RETURN',refund_mode:'Cash',items:[{invoice_item_id:historical.items[0].id,quantity:1}]});
+    await handoff('use-cloud');
+    const [[historicalCloud]]=await pools[1].execute('SELECT invoice_status FROM invoices WHERE invoice_no=?',[historical.invoice.invoice_no]);assert.equal(historicalCloud.invoice_status,'PARTIALLY_RETURNED');
+    await request(1,'billing/return',{invoice_no:historical.invoice.invoice_no,reason:'ISOLATED REMAINING RETURN',refund_mode:'Cash',items:[{invoice_item_id:historical.items[0].id,quantity:Number(historical.items[0].quantity)-1}]});
+    await handoff('use-local');
+    const [[historicalLocal]]=await pools[0].execute('SELECT invoice_status FROM invoices WHERE invoice_no=?',[historical.invoice.invoice_no]);assert.equal(historicalLocal.invoice_status,'RETURNED');
     dropActivationReply=true;await handoff('use-cloud','failed');
     await until(async()=> (await request(1,'recovery-control')).billingMode==='active','cloud commits after lost response');
     assert.equal((await request(0,'recovery-control')).billingMode,'standby');assert.equal(dropActivationReply,false);
@@ -102,7 +136,7 @@ async function main(){
     const child=spawn(process.execPath,['server.js'],{cwd:process.cwd(),env:{...process.env,PORT:'5003',HOST:'127.0.0.1',BADIZO_LOOPBACK_ONLY:'true',BADIZO_DISABLE_3000_REDIRECT:'true',BADIZO_DISABLE_SCHEDULED_JOBS:'true',BADIZO_SMS_ENABLED:'false',BADIZO_WHATSAPP_ENABLED:'false',BADIZO_SHOP_ID:'HFM001',BADIZO_NODE_ROLE:'local-server',BADIZO_RUNTIME_BINDING:path.join(root,'0-binding.json'),BADIZO_SYNC_ENROLLMENT_CONFIG:path.join(root,'0-enrollment.json'),BADIZO_RECOVERY_REVIEW_ENABLED:'false',BADIZO_RECOVERY_APPLY_ENABLED:'false',BADIZO_RECOVERY_CONTROL_CONFIG:'',BADIZO_STAGED_RESTORE_ENABLED:'false'},stdio:'ignore'});children[0]=child;
     await until(async()=>{const response=await fetch('http://127.0.0.1:5003/api/ready');const value=await response.json();return value.ok&&value.sync?.reason==='restored-database-requires-enrollment';},'restored local startup',15000);
     await request(0,'products/save',{...product,sale_price:13});assert.equal((await request(0,'cloud-sync/settings')).service.ready,false);
-    console.log(JSON.stringify({twoRealPosProcesses:true,authenticatedHttpsSync:true,normalCloudHandoff:true,returnToLocalIncludesCloudChanges:true,lostActivationReplyNeverEnablesLocal:true,retryAfterUnknownOutcome:true,standbyReceivesUpdates:true,manualButtonRunsWorker:true,conflictsAppearInOwnerApi:true,ownerResolutionDrainsBothQueues:true,restartPreservesEnrollment:true,restoreEpochBlocksStaleMappings:true,restoredLocalBillingAvailable:true,productionModified:false}));
+    console.log(JSON.stringify({twoRealPosProcesses:true,authenticatedHttpsSync:true,normalCloudHandoff:true,returnToLocalIncludesCloudChanges:true,crossServerReturn:true,crossServerCancellation:true,historicalBackupInvoiceReturns:true,lostActivationReplyNeverEnablesLocal:true,retryAfterUnknownOutcome:true,standbyReceivesUpdates:true,manualButtonRunsWorker:true,conflictsAppearInOwnerApi:true,ownerResolutionDrainsBothQueues:true,restartPreservesEnrollment:true,restoreEpochBlocksStaleMappings:true,restoredLocalBillingAvailable:true,productionModified:false}));
   }finally{supervisorTimers.forEach(clearInterval);await Promise.all(supervisorWork.filter(Boolean));await stop(0);await stop(1);if(proxy)await new Promise(resolve=>proxy.close(resolve));await Promise.all(pools.map(pool=>pool.end()));}
 }
 main().catch(error=>{console.error('Enrolled runtime drill failed: '+error.message);process.exitCode=1;});
