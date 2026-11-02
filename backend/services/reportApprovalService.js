@@ -23,7 +23,7 @@ function createApprovalStore(now = Date.now) {
       clean();
       const report = scope(user, kind, query);
       const key = JSON.stringify(report);
-      const existing = [...requests.values()].find(row => row.owner === owner(user) && row.key === key && row.status !== 'REJECTED');
+      const existing = [...requests.values()].find(row => row.owner === owner(user) && row.key === key && ['PENDING', 'APPROVED'].includes(row.status));
       if (existing) return existing;
       if ([...requests.values()].filter(row => row.owner === owner(user)).length >= 20) throw new Error('Too many requests. Please wait for existing requests to expire.');
       const row = { id: randomUUID(), owner: owner(user), key, ...report, username: user.username, personName: user.person_name, systemNo: user.system_no, ip, status: 'PENDING', requestedAt: now(), expiresAt: now() + 10 * 60 * 1000 };
@@ -49,6 +49,13 @@ function createApprovalStore(now = Date.now) {
     permits(id, user, kind, query) {
       const row = this.get(id, user);
       return Boolean(row && row.status === 'APPROVED' && row.key === JSON.stringify(scope(user, kind, query)));
+    },
+    consume(id, user, kind, query) {
+      if (!this.permits(id, user, kind, query)) return null;
+      const row = requests.get(id);
+      row.status = 'USED';
+      row.usedAt = now();
+      return row;
     }
   };
 }

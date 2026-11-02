@@ -305,10 +305,6 @@ export default function ReportsView({ isActive = true, onClose }) {
   }, [activeReport, isActive]);
 
   useEffect(() => {
-    if (!isActive) setIsReportOpen(false);
-  }, [isActive]);
-
-  useEffect(() => {
     try {
       window.sessionStorage.setItem(HSN_SEARCH_SESSION_KEY, JSON.stringify({
         filters: hsnFilters,
@@ -322,13 +318,13 @@ export default function ReportsView({ isActive = true, onClose }) {
   }, [hsnCodeSearch, hsnFilters, hsnProductDetails, hsnProductSearch]);
 
   useEffect(() => {
-    if (!isReportOpen) return undefined;
+    if (!isActive || !isReportOpen) return undefined;
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') setIsReportOpen(false);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isReportOpen]);
+  }, [isActive, isReportOpen]);
 
   const filteredHsnRows = useMemo(() => {
     const productSearch = deferredHsnProductSearch.trim().toLowerCase();
@@ -2441,7 +2437,7 @@ export default function ReportsView({ isActive = true, onClose }) {
         </div>
       </section>
 
-      {isReportOpen && <div
+      {isActive && isReportOpen && <div
         className="reports-print-area report-view-modal-backdrop"
         role="dialog"
         aria-modal="true"

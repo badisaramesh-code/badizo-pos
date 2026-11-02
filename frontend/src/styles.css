@@ -5678,6 +5678,10 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   line-height: 1.2;
 }
 
+.counter-cash-ledger-view .cash-ledger-credit-balance {
+  color: #dc2626;
+}
+
 .cash-ledger-table thead th {
   position: sticky;
   z-index: 2;
@@ -6160,7 +6164,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .handover-details-input,
 .handover-details-cell {
-  font-weight: 800;
+  font-weight: 400;
 }
 
 .handover-table th,
@@ -6348,7 +6352,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 }
 
 .handover-print-sheet .handover-details-cell {
-  font-weight: 800;
+  font-weight: 400;
 }
 
 .handover-print-sheet th:nth-child(1),

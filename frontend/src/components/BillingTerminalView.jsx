@@ -31,6 +31,7 @@ import { findExactSaleProduct } from '../utils/productLookup';
 import { shouldRecoverCheckout } from '../utils/checkoutRecovery';
 import PrintableInvoice from './PrintableInvoice';
 import PrintableQuotation from './PrintableQuotation';
+import { saveSaleReportPdf } from '../utils/saleReportPdf';
 
 const BILLING_MODES = {
   RETAIL_LOCAL: {
@@ -464,15 +465,15 @@ export default function BillingTerminalView({ isActive = true }) {
   const [counterNo, setCounterNo] = useState(Number(initialDraft?.counterNo || currentUser?.counter_no || 1));
   const [counterCount, setCounterCount] = useState(6);
   const [shopSettings, setShopSettings] = useState({
-    shop_name: 'Hyper Fresh Mart LLP',
-    gst_number: '36AAJFH7790R1ZB',
-    address: 'Sathupally - Khammam(dt) - 507303',
-    phone: '08761 295000',
-    bank_name: 'HDFC BANK',
-    bank_account_name: 'Hyper Fresh Mart LLP',
-    bank_account_no: '59209440987345',
-    bank_ifsc: 'HDFC0004047',
-    bank_branch: 'Sathupally',
+    shop_name: '',
+    gst_number: '',
+    address: '',
+    phone: '',
+    bank_name: '',
+    bank_account_name: '',
+    bank_account_no: '',
+    bank_ifsc: '',
+    bank_branch: '',
     thermal_receipt_width_mm: 80,
     thermal_feed_margin_mm: 4,
     thermal_footer_line_1: '1. Goods Exchange Time 2 P.M - 4 P.M',
@@ -3141,6 +3142,25 @@ export default function BillingTerminalView({ isActive = true }) {
     event?.preventDefault?.();
     const report = await loadSaleReportForPos(event);
     if (report) await printSaleReportSlip(report);
+  }
+
+  async function handleDownloadSaleReportPdf(event) {
+    event?.preventDefault?.();
+    const report = await loadSaleReportForPos(event);
+    if (report) await downloadSaleReportPdf(report);
+  }
+
+  async function downloadSaleReportPdf(reportToPrint = saleReport) {
+    if (!reportToPrint) return;
+    try {
+      const result = await saveSaleReportPdf(reportToPrint, shopSettings);
+      setStatusMessage(result?.canceled ? 'Sale report PDF save cancelled.' :
+        (result?.filePath ? `Sale report PDF saved: ${result.filePath}` : 'Sale report PDF downloaded.'));
+    } catch (err) {
+      const message = err.message || 'Unable to save sale report PDF.';
+      setSaleReportError(message);
+      setErrorMessage(message);
+    }
   }
 
   async function printSaleReportSlip(reportToPrint = saleReport) {
@@ -6279,7 +6299,10 @@ export default function BillingTerminalView({ isActive = true }) {
                       {isSaleReportLoading ? 'Loading...' : 'View'}
                     </button>
                     <button className="primary-button" type="button" disabled={isSaleReportLoading} onClick={handlePrintSaleReport}>
-                      Print
+                      Thermal Print
+                    </button>
+                    <button className="primary-button" type="button" disabled={isSaleReportLoading} onClick={handleDownloadSaleReportPdf}>
+                      Download PDF
                     </button>
                   </div>
                 </div>

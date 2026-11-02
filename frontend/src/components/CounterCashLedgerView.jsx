@@ -22,6 +22,10 @@ function formatAmount(value) {
   return toNumber(text).toFixed(2);
 }
 
+function formatLedgerDate(value) {
+  return value ? formatDisplayDate(value).replace(/-/g, '/') : '';
+}
+
 function formatSheetAmount(value) {
   const amount = toNumber(value);
   return amount ? amount.toFixed(2) : '';
@@ -46,7 +50,7 @@ function parseDenominationDetails(value) {
 
 function exportWorkbook(filename, rows) {
   const workbook = XLSX.utils.book_new();
-  const worksheet = XLSX.utils.json_to_sheet(rows.length ? rows : [{ Message: 'No data available' }]);
+  const worksheet = XLSX.utils.json_to_sheet(rows, { header: ['Date', 'Details', 'Counter', 'Note Detail', 'DR Rs', 'CR Rs', 'Balance Rs', 'dr/cr'] });
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Cash Ledger');
   XLSX.writeFile(workbook, filename);
 }
@@ -212,15 +216,17 @@ export default function CounterCashLedgerView({ initialFrom = '', initialTo = ''
   function exportLedgerExcel() {
     const exportRows = [
       {
-        Date: '',
+        Date: formatLedgerDate(ledger.from || from),
         Details: 'Opening Balance',
         Counter: counterNo ? `Counter ${counterNo}` : 'All Counters',
         'DR Rs': '',
         'CR Rs': '',
-        'Cash Balance': toNumber(ledger.opening_balance)
+        'Note Detail': '',
+        'Balance Rs': toNumber(ledger.opening_balance),
+        'dr/cr': toNumber(ledger.opening_balance) >= 0 ? 'Dr' : 'Cr'
       },
       ...sheetRows.map((row) => ({
-        Date: row.date,
+        Date: formatLedgerDate(row.date),
         Details: row.details,
         'Note Detail': row.noteDetail,
         'DR Rs': toNumber(row.dr) || '',
@@ -263,10 +269,10 @@ export default function CounterCashLedgerView({ initialFrom = '', initialTo = ''
 
         <div className="panel-body cash-ledger-body">
           <div className="handover-total-strip cash-ledger-summary">
-            <div><span>Opening Balance</span><strong>{formatMoney(ledger.opening_balance)}</strong></div>
+            <div><span>Opening Balance</span><strong className={toNumber(ledger.opening_balance) < 0 ? 'cash-ledger-credit-balance' : undefined}>{formatMoney(ledger.opening_balance)}</strong></div>
             <div><span>Total DR</span><strong>{formatMoney(ledger.totals?.dr)}</strong></div>
             <div><span>Total CR</span><strong>{formatMoney(ledger.totals?.cr)}</strong></div>
-            <div><span>Cash Balance</span><strong>{formatMoney(ledger.closing_balance)}</strong></div>
+            <div><span>Cash Balance</span><strong className={toNumber(ledger.closing_balance) < 0 ? 'cash-ledger-credit-balance' : undefined}>{formatMoney(ledger.closing_balance)}</strong></div>
           </div>
 
           <div className="cash-ledger-scroll">
@@ -290,18 +296,18 @@ export default function CounterCashLedgerView({ initialFrom = '', initialTo = ''
                   <tr><td colSpan="7">No cash ledger rows for selected date range.</td></tr>
                 ) : sheetRows.map((row) => (
                   <tr key={row.key}>
-                    <td>{row.date ? formatDisplayDate(row.date) : ''}</td>
+                    <td>{formatLedgerDate(row.date)}</td>
                     <td>{row.details}</td>
                     <td>{row.noteDetail}</td>
                     <td>{formatSheetAmount(row.dr)}</td>
                     <td>{formatSheetAmount(row.cr)}</td>
-                    <td>{toNumber(row.balance).toFixed(2)}</td>
+                    <td className={row.balanceType === 'Cr' ? 'cash-ledger-credit-balance' : undefined}>{toNumber(row.balance).toFixed(2)}</td>
                     <td>{row.balanceType}</td>
                   </tr>
                 ))}
                 {Array.from({ length: Math.max(18 - sheetRows.length, 4) }, (_, index) => (
                   <tr key={`blank-${index}`} className="cash-ledger-blank-row">
-                    <td></td><td></td><td></td><td></td><td></td><td>{index === 0 && sheetRows.length ? toNumber(sheetRows[sheetRows.length - 1].balance).toFixed(2) : ''}</td><td></td>
+                    <td></td><td></td><td></td><td></td><td></td><td className={index === 0 && sheetRows[sheetRows.length - 1]?.balanceType === 'Cr' ? 'cash-ledger-credit-balance' : undefined}>{index === 0 && sheetRows.length ? toNumber(sheetRows[sheetRows.length - 1].balance).toFixed(2) : ''}</td><td></td>
                   </tr>
                 ))}
               </tbody>

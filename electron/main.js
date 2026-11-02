@@ -31,7 +31,7 @@ function logMessage(message) {
 function readJsonIfExists(filePath) {
   try {
     if (!fs.existsSync(filePath)) return null;
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return JSON.parse(fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, ''));
   } catch (_err) {
     return null;
   }
@@ -87,7 +87,7 @@ function getConfig() {
     startBackend: usesRemoteServer ? false : config.startBackend !== false,
     startFrontend: usesRemoteServer ? false : config.startFrontend !== false,
     serverHosts: [
-      readCachedServerHost(),
+      ...(config.discoveryEnabled !== false ? [readCachedServerHost()] : []),
       ...parseServerHosts(process.env.BADIZO_SERVER_HOSTS || config.serverHosts || config.serverHost || '')
     ].filter(Boolean),
     discoveryEnabled: config.discoveryEnabled !== false,
@@ -271,11 +271,7 @@ async function resolveRemoteServer(config) {
     ...config.serverHosts,
     appHost,
     apiHost,
-    'badizo-server.local',
-    'badizo-server',
-    'BADIZO-SERVER',
-    'server',
-    'SERVER'
+    ...(config.discoveryEnabled ? ['badizo-server.local', 'badizo-server', 'BADIZO-SERVER', 'server', 'SERVER'] : [])
   ].filter((host) => {
     if (!host) return false;
     return !clientOnlyMode || !isLoopbackHost(host);

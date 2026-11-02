@@ -56,6 +56,7 @@ const emptyForm = {
   default_batch_no: '',
   default_mfd_date: '',
   default_expiry_date: '',
+  previous_updated_at: '',
   created_at: '',
   updated_at: ''
 };
@@ -404,7 +405,7 @@ async function readProductImportFile(file) {
   return rows.length ? rowsToApiImportCsv(rows) : normalizedText;
 }
 
-export default function InventoryDashboardView({ isActive = false, navigationKey = 0, setActiveWorkspace } = {}) {
+export default function InventoryDashboardView({ isActive = false, navigationKey = 0, productFormNavigationKey = 0, setActiveWorkspace } = {}) {
   const [products, setProducts] = useState([]);
   const [form, setForm] = useState({ ...emptyForm, created_at: todayIso() });
   const [filter, setFilter] = useState('');
@@ -453,6 +454,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   const [adjustmentSuggestions, setAdjustmentSuggestions] = useState([]);
   const [isAdjustmentSaving, setIsAdjustmentSaving] = useState(false);
   const [activeProductSection, setActiveProductSection] = useState(PRODUCT_SECTIONS.LIST);
+  useEffect(() => {
+    if (productFormNavigationKey > 0) setActiveProductSection(PRODUCT_SECTIONS.FORM);
+  }, [productFormNavigationKey]);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const currentUser = getStoredUser();
@@ -861,7 +865,8 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       default_batch_no: product.default_batch_no || '',
       default_mfd_date: dateInputValue(product.default_mfd_date),
       default_expiry_date: dateInputValue(product.default_expiry_date),
-      created_at: product.created_at || product.updated_at || todayIso(),
+      previous_updated_at: product.previous_updated_at || '',
+      created_at: product.created_at || '',
       updated_at: product.updated_at || ''
     });
     setActiveProductSection(PRODUCT_SECTIONS.FORM);
@@ -1281,8 +1286,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       )}
       {activeProductSection === PRODUCT_SECTIONS.FORM && (
       <section className="panel product-form-panel">
-        <div className="panel-header">
+        <div className="panel-header product-form-shortcut-header">
           <h2 className="panel-title">Add / Edit Product</h2>
+          <button className="secondary-button" type="button" onClick={() => setActiveWorkspace?.('barcode')}>Barcode</button>
           <button className="close-action-button" type="button" onClick={() => setActiveProductSection(PRODUCT_SECTIONS.LIST)}>Back to Products</button>
         </div>
         <form className="panel-body form-stack product-edit-grid" onSubmit={handleSubmit}>
@@ -1290,8 +1296,8 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
           {statusMessage && <div className="change-box">{statusMessage}</div>}
           {!canManageProducts && <div className="alert-box">Login as Admin or Server to save/import products.</div>}
           <div className="product-date-strip">
-            <span>Product Created Date: <strong>{formatProductDate(form.created_at || form.updated_at)}</strong></span>
-            <span>Product Edit Date: <strong>{formatProductDate(form.updated_at || form.created_at)}</strong></span>
+            <span>Previous Edit / Created Date: <strong>{formatProductDate(form.previous_updated_at || form.created_at)}</strong></span>
+            <span>Last Edit Date: <strong>{formatProductDate(form.updated_at)}</strong></span>
           </div>
 
           <div className="segmented two product-code-mode-selector">

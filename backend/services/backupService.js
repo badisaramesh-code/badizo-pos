@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
+const { createGunzip } = require('zlib');
+const { pipeline } = require('stream');
 require('dotenv').config();
 const db = require('../config/db');
 const { logError, logInfo } = require('./logger');
@@ -87,6 +89,7 @@ async function createMysqlDefaultsFile() {
     `host="${escapeMysqlOptionValue(process.env.DB_HOST || 'localhost')}"`,
     `user="${escapeMysqlOptionValue(process.env.DB_USER || 'root')}"`,
     `password="${escapeMysqlOptionValue(process.env.DB_PASSWORD || '1234')}"`,
+    'port=' + (Number.parseInt(process.env.DB_PORT, 10) || 3306),
     'default-character-set=utf8mb4',
     ''
   ].join('\r\n');
@@ -119,7 +122,7 @@ async function listBackupsInDirectory(source) {
   const files = await fs.promises.readdir(source.dir);
   const backups = await Promise.all(
     files
-      .filter((file) => file.endsWith('.sql'))
+      .filter((file) => file.endsWith('.sql') || file.endsWith('.sql.gz'))
       .map(async (file) => {
         const filePath = path.join(source.dir, file);
         const stats = await fs.promises.stat(filePath);
@@ -182,7 +185,7 @@ function getBackupPath(fileNameOrKey) {
   if (!source) return null;
   const safeName = path.basename(fileName);
   if (safeName !== fileName) return null;
-  if (!safeName.endsWith('.sql')) return null;
+  if (!safeName.endsWith('.sql') && !safeName.endsWith('.sql.gz')) return null;
   return path.join(source.dir, safeName);
 }
 
@@ -207,7 +210,17 @@ async function restoreDatabaseBackup(fileName) {
     });
 
     let errorOutput = '';
-    input.pipe(restore.stdin);
+    let inputError = null;
+    const streams = filePath.endsWith('.sql.gz')
+      ? [input, createGunzip(), restore.stdin]
+      : [input, restore.stdin];
+    const inputFinished = new Promise((done) => {
+      pipeline(...streams, (err) => {
+        inputError = err;
+        if (err) restore.kill();
+        done();
+      });
+    });
     restore.stderr.on('data', (chunk) => {
       errorOutput += chunk.toString();
     });
@@ -218,7 +231,12 @@ async function restoreDatabaseBackup(fileName) {
     });
 
     restore.on('close', async (code) => {
+      await inputFinished;
       await defaults.cleanup();
+      if (inputError) {
+        reject(new Error(errorOutput.trim() || `Unable to read backup for restore. ${inputError.message}`));
+        return;
+      }
       if (code !== 0) {
         reject(new Error(errorOutput.trim() || `mysql restore failed with exit code ${code}`));
         return;
@@ -240,6 +258,7 @@ async function runDatabaseBackup() {
   const args = [
     `--defaults-extra-file=${defaults.defaultsFile}`,
     '--single-transaction',
+    '--no-tablespaces',
     '--quick',
     '--routines',
     '--triggers',

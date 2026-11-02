@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { fetchAccountingBooks, saveAccountingVoucher, saveCounterClosingCashAccountEntry, saveNamedLedgerEntry, searchInwardSuppliers } from '../api/client';
+import { editNamedLedgerDetails, fetchAccountingBooks, saveAccountingVoucher, saveCounterClosingCashAccountEntry, saveNamedLedgerEntry, searchInwardSuppliers } from '../api/client';
 import { todayIso } from '../utils/date';
 import { formatMoney } from '../utils/money';
+import { saveLedgerPdf } from '../utils/ledgerPdf';
 
 const COUNTER_CLOSING_VIEW_REQUEST_KEY = 'badizo_counter_closing_view_request';
 const ACCOUNTING_BOOKS_CACHE_KEY = 'badizo_accounting_books_cache_v1';
@@ -244,11 +245,15 @@ export default function BooksView({ setActiveWorkspace }) {
   const [activeBook, setActiveBook] = useState('dayBook');
   const [accountSearch, setAccountSearch] = useState('');
   const [selectedLedgerAccount, setSelectedLedgerAccount] = useState('');
+  const [isLedgerPdfSaving, setIsLedgerPdfSaving] = useState(false);
   const [accountSuggestions, setAccountSuggestions] = useState([]);
   const [isAccountSuggestionOpen, setIsAccountSuggestionOpen] = useState(false);
   const [voucherForm, setVoucherForm] = useState(blankVoucherForm());
   const [cashAccountEntryForm, setCashAccountEntryForm] = useState(blankCashAccountEntryForm());
   const [namedLedgerEntryForm, setNamedLedgerEntryForm] = useState(blankNamedLedgerEntryForm());
+  const [ledgerEdit, setLedgerEdit] = useState(null);
+  const [savingLedgerEdit, setSavingLedgerEdit] = useState(false);
+  useEffect(() => { setLedgerEdit(null); }, [selectedLedgerAccount, activeBook, fromDate, toDate]);
   const [errorMessage, setErrorMessage] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [isReportOpen, setIsReportOpen] = useState(false);
@@ -516,6 +521,23 @@ export default function BooksView({ setActiveWorkspace }) {
     }
   }
 
+  async function saveLedgerDetails() {
+    if (!ledgerEdit?.details.trim() || savingLedgerEdit) return;
+    setSavingLedgerEdit(true);
+    setErrorMessage('');
+    setStatusMessage('');
+    try {
+      const result = await editNamedLedgerDetails(ledgerEdit.id, { details: ledgerEdit.details.trim(), to: booksData?.to || toDate });
+      setLedgerEdit(null);
+      await loadBooks();
+      setStatusMessage(result.account_name === 'GENERAL' ? 'Details saved.' : 'Entry moved to ' + result.account_name + ' ledger.');
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to save ledger details.');
+    } finally {
+      setSavingLedgerEdit(false);
+    }
+  }
+
   async function submitNamedLedgerEntry(event) {
     event.preventDefault();
     setErrorMessage('');
@@ -603,6 +625,24 @@ export default function BooksView({ setActiveWorkspace }) {
     }));
   }
 
+  async function downloadSelectedLedgerPdf() {
+    if (!selectedLedgerAccount || isLedgerPdfSaving) return;
+    setIsLedgerPdfSaving(true);
+    setErrorMessage('');
+    try {
+      const result = await saveLedgerPdf({
+        account: selectedLedgerAccount, from: booksData?.from || fromDate, to: booksData?.to || toDate,
+        columns: namedLedgerColumns, rows: visibleRows.map(row => namedLedgerColumns.map(column => formatCell(row[column], column))),
+        totals: namedLedgerTotals
+      });
+      setStatusMessage(result?.canceled ? 'Ledger PDF save cancelled.' : result?.filePath ? `Ledger PDF saved: ${result.filePath}` : 'Ledger PDF downloaded.');
+    } catch (err) {
+      setErrorMessage(err.message || 'Unable to save ledger PDF.');
+    } finally {
+      setIsLedgerPdfSaving(false);
+    }
+  }
+
   function printSelectedBook() {
     setIsReportOpen(true);
     window.setTimeout(() => {
@@ -643,6 +683,7 @@ export default function BooksView({ setActiveWorkspace }) {
             <button className="secondary-button" type="button" onClick={() => { setFromDate(financialYearStartIso()); setToDate(todayIso()); }}>Financial Year</button>
             <button className="secondary-button" type="button" onClick={exportAllExcel}>Export All Excel</button>
             <button className="secondary-button" type="button" onClick={printSelectedBook}>Print / PDF</button>
+            {isNamedLedgerBook && <button className="secondary-button" type="button" disabled={!selectedLedgerAccount || isLedgerPdfSaving} onClick={downloadSelectedLedgerPdf}>{isLedgerPdfSaving ? 'Saving PDF...' : 'Save PDF'}</button>}
           </form>
           <div className="books-owner-focus">
             {ownerFocusCards.map((card) => (
@@ -708,6 +749,7 @@ export default function BooksView({ setActiveWorkspace }) {
             {isReportOpen && <button className="header-print-button" type="button" onClick={exportAllExcel}>Export All Excel</button>}
             {isReportOpen && <button className="header-print-button" type="button" onClick={exportSelectedExcel}>Export Excel</button>}
             {isReportOpen && <button className="header-print-button" type="button" onClick={printSelectedBook}>Print / PDF</button>}
+            {isReportOpen && isNamedLedgerBook && <button className="secondary-button" type="button" disabled={!selectedLedgerAccount || isLedgerPdfSaving} onClick={downloadSelectedLedgerPdf}>{isLedgerPdfSaving ? 'Saving PDF...' : 'Save PDF'}</button>}
             <button
               className={isReportOpen ? 'close-action-button' : 'secondary-button'}
               type="button"
@@ -731,6 +773,8 @@ export default function BooksView({ setActiveWorkspace }) {
               </div>
               {isNamedLedgerBook && (
                 <div className="named-ledger-view">
+                  {isReportOpen && errorMessage && <div className="alert-box" role="alert">{errorMessage}</div>}
+                  {isReportOpen && statusMessage && <div className="change-box" role="status">{statusMessage}</div>}
                   {selectedLedgerAccount && (
                     <form className="named-ledger-entry-row" onSubmit={submitNamedLedgerEntry}>
                       <label>
@@ -784,6 +828,8 @@ export default function BooksView({ setActiveWorkspace }) {
                           <div><span>Balance</span><strong className={namedLedgerTotals.balance < 0 ? 'negative' : 'positive'}>{formatMoney(Math.abs(namedLedgerTotals.balance))} {namedLedgerTotals.balance < 0 ? 'CR' : 'DR'}</strong></div>
                         </div>}
                       </div>
+                      {selectedLedgerAccount === 'GENERAL' && <p className="muted">Edit Details to correct text. Enter an existing ledger name to move the entry to that account.</p>}
+                      <datalist id="named-ledger-edit-accounts">{(activeReport.accountNames || []).filter(name => name !== 'GENERAL').map(name => <option key={name} value={name} />)}</datalist>
                       <div className="books-table-scroll named-ledger-table-scroll">
                         <table className="history-table books-accounting-table named-ledger-table">
                           <thead><tr>{namedLedgerColumns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
@@ -791,7 +837,14 @@ export default function BooksView({ setActiveWorkspace }) {
                             {visibleRows.length === 0 ? (
                               <tr><td colSpan={namedLedgerColumns.length}>{selectedLedgerAccount ? 'No entries for selected date range.' : 'Select a ledger account to view entries.'}</td></tr>
                             ) : visibleRows.map((row, index) => (
-                              <tr key={`${activeBook}-${index}`}>{namedLedgerColumns.map((column) => <td key={column}>{formatCell(row[column], column)}</td>)}</tr>
+                              <tr key={row.entryId || index}>{namedLedgerColumns.map((column) => <td key={column}>
+                                {column === 'Details' && row.Account === 'GENERAL' && row.entryId ? (
+                                  ledgerEdit?.id === row.entryId ? <div className="named-ledger-details-editor">
+                                    <input className="field" aria-label="Edit ledger details" list="named-ledger-edit-accounts" maxLength="255" value={ledgerEdit.details} disabled={savingLedgerEdit} autoFocus onChange={(event) => setLedgerEdit({ ...ledgerEdit, details: event.target.value })} />
+                                    <button type="button" disabled={savingLedgerEdit || !ledgerEdit.details.trim()} onClick={saveLedgerDetails}>{savingLedgerEdit ? 'Saving...' : 'Save'}</button>
+                                  </div> : <>{formatCell(row[column], column)} <button type="button" disabled={savingLedgerEdit} onClick={() => setLedgerEdit({ id: row.entryId, details: row.Details || '' })}>Edit</button></>
+                                ) : formatCell(row[column], column)}
+                              </td>)}</tr>
                             ))}
                           </tbody>
                         </table>

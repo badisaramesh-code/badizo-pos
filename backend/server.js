@@ -246,6 +246,7 @@ function checkDailyBackupCatchUp() {
 }
 
 function scheduleDailyBackupCatchUpCheck() {
+  if (String(process.env.BADIZO_DISABLE_SCHEDULED_CLOUD_BACKUP).toLowerCase() === 'true') return null;
   setTimeout(checkDailyBackupCatchUp, 60 * 1000).unref?.();
   const timer = setInterval(checkDailyBackupCatchUp, 5 * 60 * 1000);
   timer.unref?.();
