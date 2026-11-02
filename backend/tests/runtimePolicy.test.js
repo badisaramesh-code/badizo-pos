@@ -9,6 +9,7 @@ test('local binding and invoice prefixes keep their existing defaults', () => {
   assert.equal(bindHost('127.0.0.1', {}), '0.0.0.0');
   assert.equal(bindHost('192.168.1.10', {}), '192.168.1.10');
   assert.equal(invoicePrefix({}), 'BZ');
+  assert.equal(bindHost('127.0.0.1',{BADIZO_LOOPBACK_ONLY:'true'}),'127.0.0.1');
 });
 test('cloud binds privately and uses a separate invoice prefix', () => {
   const env = { BADIZO_NODE_ROLE: 'cloud-standby' };

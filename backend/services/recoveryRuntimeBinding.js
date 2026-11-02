@@ -35,7 +35,7 @@ function middleware(req,res,next) {
     || /^\/(auth\/(login|logout|logout-beacon)|recovery-control(?:\/|$))/.test(req.path)) return next();
   try {
     const current = read();
-    const recoveryWork = /^\/(recovery-review|staged-restore)(?:\/|$)/.test(req.path);
+    const recoveryWork = /^\/(recovery-review|staged-restore)(?:\/|$)/.test(req.path) || (!!process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/sync\/(events|feed\/ack)$/.test(req.path));
     if (!boot || current.activationId !== boot.activationId || current.phase !== 'active' || (current.billingMode !== 'active' && !recoveryWork)) return res.status(409).json({error:'Billing is paused for recovery. Use the owner recovery controls.'});
   } catch { return res.status(503).json({error:'Recovery state requires inspection. No new writes were accepted.'}); }
   activeWrites++;
@@ -44,4 +44,10 @@ function middleware(req,res,next) {
   res.once('finish',()=>{activeWrites--;});
   next();
 }
-module.exports={validate,read,load,status,middleware};
+async function withWriteLease(operation){
+  const current=read();
+  if(current&&(!boot||current.activationId!==boot.activationId||current.phase!=='active'))throw Error('Recovery is pausing database writes.');
+  activeWrites++;
+  try{return await operation();}finally{activeWrites--;}
+}
+module.exports={validate,read,load,status,middleware,withWriteLease};

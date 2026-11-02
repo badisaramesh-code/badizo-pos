@@ -58,6 +58,13 @@ function getCorsOptions() {
 }
 
 app.use(cors(getCorsOptions()));
+const syncRoutes=express.Router();
+const apiRoutes=express.Router();
+let enrolledRuntime=null,configurationPromise=null;
+app.use('/api', require('./services/recoveryRuntimeBinding').middleware);
+app.use('/api', cloudWriteGuard);
+// Dedicated peer authentication and 1 MiB parsing happen before the general POS parser.
+app.use('/api/sync', syncRoutes);
 app.use(express.json({ limit: process.env.BADIZO_JSON_LIMIT || '250mb' }));
 
 function recordHealthPing(req) {
@@ -84,13 +91,22 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, service: 'badizo-pos' });
 });
 
-app.use('/api', require('./services/recoveryRuntimeBinding').middleware);
-app.use('/api', cloudWriteGuard);
-mountRoutes(app);
+app.use(apiRoutes);
+if(!process.env.BADIZO_SYNC_ENROLLMENT_CONFIG)mountRoutes(apiRoutes);
+async function configureEnrollment(){
+  if(!process.env.BADIZO_SYNC_ENROLLMENT_CONFIG)return;
+  if(!configurationPromise)configurationPromise=(async()=>{
+    const pool=require('./config/db');await pool.ready;
+    enrolledRuntime=await require('./services/enrolledSyncRuntime').createEnrolledSyncRuntime({pool,configPath:process.env.BADIZO_SYNC_ENROLLMENT_CONFIG});
+    enrolledRuntime.mount(syncRoutes);
+    mountRoutes(apiRoutes,{cloudSyncRuntime:enrolledRuntime});
+  })();
+  return configurationPromise;
+}
 app.get('/api/ready', async (_req, res) => {
   try {
     await require('./config/db').query('SELECT 1');
-    res.json({ ok: true, recovery:require('./services/recoveryRuntimeBinding').status(), shopId: process.env.BADIZO_SHOP_ID || null, nodeRole: process.env.BADIZO_NODE_ROLE || 'local-server', releaseCommit: process.env.BADIZO_RELEASE_COMMIT || null });
+    res.json({ ok: true, sync:enrolledRuntime?await enrolledRuntime.status():null, recovery:require('./services/recoveryRuntimeBinding').status(), shopId: process.env.BADIZO_SHOP_ID || null, nodeRole: process.env.BADIZO_NODE_ROLE || 'local-server', releaseCommit: process.env.BADIZO_RELEASE_COMMIT || null });
   } catch (_error) { res.status(503).json({ ok: false }); }
 });
 
@@ -254,17 +270,20 @@ function scheduleDailyBackupCatchUpCheck() {
   return timer;
 }
 
-function startServer(port = PORT) {
+async function startServer(port = PORT) {
+  await configureEnrollment();
   return new Promise((resolve, reject) => {
     const listenPort = normalizePort(port, PORT);
     const server = app.listen(listenPort, HOST, () => {
       console.log(`BADIZO POS API running on http://${HOST}:${listenPort}`);
       logInfo('Backend started', { host: HOST, port: listenPort });
       startLegacyFrontendRedirect(listenPort);
-      if (!isCloudNode()) {
+      if (!isCloudNode() && process.env.BADIZO_DISABLE_SCHEDULED_JOBS !== 'true') {
         scheduleDailySaleAlerts();
         scheduleDailyBackupCatchUpCheck();
       }
+      enrolledRuntime?.start();
+      server.once('close',()=>enrolledRuntime?.stop());
       resolve(server);
     });
 

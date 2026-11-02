@@ -1,4 +1,4 @@
-function createSyncHttpTransport({url,token,timeoutMs=20000}) {
+function createSyncHttpTransport({url,token,timeoutMs=20000,baselineId=null}) {
   const target=new URL(url);
   if(target.protocol!=='https:' || target.username || target.password || target.hash || target.search)throw Error('Sync requires a clean HTTPS endpoint.');
   if(typeof token!=='string' || !/^[a-f0-9]{64,128}$/.test(token))throw Error('A dedicated sync credential is required.');
@@ -6,7 +6,7 @@ function createSyncHttpTransport({url,token,timeoutMs=20000}) {
   return async function send(event){
     const body=JSON.stringify(event);
     if(Buffer.byteLength(body)>1024*1024)throw Error('Sync event exceeds transport limit.');
-    const response=await fetch(target,{method:'POST',redirect:'error',signal:AbortSignal.timeout(timeoutMs),headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body});
+    const response=await fetch(target,{method:'POST',redirect:'error',signal:AbortSignal.timeout(timeoutMs),headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',...(baselineId?{'X-Badizo-Baseline':baselineId}:{})},body});
     if(!response.ok){await response.body?.cancel();throw Error('Sync receiver rejected this request.');}
     const reader=response.body.getReader();const chunks=[];let length=0;
     try{for(;;){const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>16384)throw Error('Sync acknowledgment exceeds limit.');chunks.push(Buffer.from(value));}}

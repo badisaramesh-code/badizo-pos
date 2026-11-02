@@ -1,13 +1,13 @@
 const crypto=require('node:crypto');
 const {validateEvent}=require('./syncEventProtocol');
-function createSyncPullClient({pool,identity,url,token,receive,mayApply=async()=>false,timeoutMs=20000}){
+function createSyncPullClient({pool,identity,url,token,receive,mayApply=async()=>false,timeoutMs=20000,baselineId=null}){
   const base=new URL(url);
   if(base.protocol!=='https:'||base.username||base.password||base.search||base.hash)throw Error('Pull requires a clean HTTPS endpoint.');
   if(typeof token!=='string'||!/^[a-f0-9]{64,128}$/.test(token)||typeof receive!=='function')throw Error('Authenticated pull configuration required.');
   if(!Number.isInteger(timeoutMs)||timeoutMs<100||timeoutMs>60000)throw Error('Invalid pull timeout.');
   const lock='badizo-pull-'+crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0,40);
   async function request(suffix,body){
-    const response=await fetch(base.href.replace(/\/$/,'')+suffix,{method:body?'POST':'GET',redirect:'error',signal:AbortSignal.timeout(timeoutMs),headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
+    const response=await fetch(base.href.replace(/\/$/,'')+suffix,{method:body?'POST':'GET',redirect:'error',signal:AbortSignal.timeout(timeoutMs),headers:{Authorization:'Bearer '+token,...(baselineId?{'X-Badizo-Baseline':baselineId}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
     if(!response.ok){await response.body?.cancel();throw Error('Cloud update request failed.');}
     const reader=response.body.getReader(),chunks=[];let length=0;
     try{for(;;){const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>(body?16384:2*1024*1024))throw Error('Cloud update response exceeds limit.');chunks.push(Buffer.from(value));}}

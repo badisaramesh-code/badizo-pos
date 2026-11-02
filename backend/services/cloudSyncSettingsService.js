@@ -62,7 +62,7 @@ function createCloudSyncSettingsService({
       manualPending: worker.manualPending === true,
       failureCount: Number(worker.failureCount || 0),
       message: !editable ? 'Manage the schedule on the local shop server.' : !ready
-        ? 'Schedule preferences can be saved. Automatic updates and Update Cloud Now are unavailable until the cloud sync connection is configured.'
+        ? worker.reason==='restored-database-requires-enrollment' ? 'Local billing can continue. This restored database needs a newly verified sync baseline before cloud updates can resume.' : 'Schedule preferences can be saved. Automatic updates and Update Cloud Now are unavailable until the cloud sync connection is configured.'
         : saved.config.enabled ? 'Automatic cloud sync is enabled.' : 'Automatic cloud sync is paused.' };
   }
   function save(input, user) {

@@ -35,14 +35,14 @@ function mountRoutes(app, { cloudSyncRuntime, recoveryExecutorFactory } = {}) {
     const jobs = require('../services/stagedRestoreJobs').createStagedRestoreJobs({directory:process.env.BADIZO_RESTORE_JOB_DIR,shopId:process.env.BADIZO_SHOP_ID,configPath:process.env.BADIZO_RESTORE_CONFIG,python:process.env.BADIZO_PYTHON || 'python'});
     app.use('/api/staged-restore',require('./stagedRestore').createRouter(jobs));
   }
-  if (process.env.BADIZO_RECOVERY_REVIEW_ENABLED === 'true') {
+  if (process.env.BADIZO_RECOVERY_REVIEW_ENABLED === 'true' || (cloudSyncRuntime?.reviewStore && (process.env.BADIZO_NODE_ROLE || 'local-server') === 'local-server')) {
     const shopId = process.env.BADIZO_SHOP_ID;
-    const store = require('../services/recoveryReviewStore').createRecoveryReviewStore({ directory:process.env.BADIZO_RECOVERY_REVIEW_DIR, shopId });
-    if (!recoveryExecutorFactory && process.env.BADIZO_RECOVERY_APPLY_ENABLED === 'true') {
+    const store = cloudSyncRuntime?.reviewStore || require('../services/recoveryReviewStore').createRecoveryReviewStore({ directory:process.env.BADIZO_RECOVERY_REVIEW_DIR, shopId });
+    if (!recoveryExecutorFactory && (process.env.BADIZO_RECOVERY_APPLY_ENABLED === 'true' || (cloudSyncRuntime && (process.env.BADIZO_NODE_ROLE || 'local-server') === 'local-server'))) {
       if ((process.env.BADIZO_NODE_ROLE || 'local-server') !== 'local-server') throw Error('Recovery decisions must be applied from the local server.');
-      const identity = {shopId,localInstallationId:process.env.BADIZO_INSTALLATION_ID,peerInstallationId:process.env.BADIZO_SYNC_PEER_INSTALLATION_ID};
+      const identity = cloudSyncRuntime?.identity || {shopId,localInstallationId:process.env.BADIZO_INSTALLATION_ID,peerInstallationId:process.env.BADIZO_SYNC_PEER_INSTALLATION_ID};
       if (!identity.localInstallationId || !identity.peerInstallationId || identity.localInstallationId === identity.peerInstallationId) throw Error('Recovery execution requires enrolled installation identities.');
-      recoveryExecutorFactory = reviewStore => require('../services/recoveryConflictExecution').createRecoveryConflictExecution({pool:require('../config/db'),store:reviewStore,identity,canApply:async()=>true});
+      recoveryExecutorFactory = reviewStore => require('../services/recoveryConflictExecution').createRecoveryConflictExecution({pool:require('../config/db'),store:reviewStore,identity,canApply:async()=>cloudSyncRuntime?(await cloudSyncRuntime.status()).ready===true:true});
     }
     app.use('/api/recovery-review', require('./recoveryReview').createRouter({ store, shopId, executor: recoveryExecutorFactory ? recoveryExecutorFactory(store) : null }));
   }

@@ -3,7 +3,7 @@ function isCloudNode(env = process.env) {
 }
 function bindHost(value, env = process.env) {
   const host = String(value || '').trim();
-  if (isCloudNode(env)) {
+  if (isCloudNode(env) || env.BADIZO_LOOPBACK_ONLY === 'true') {
     if (host && !['localhost', '127.0.0.1'].includes(host)) throw new Error('Cloud POS must bind to IPv4 loopback; use a private tunnel or secured proxy.');
     return '127.0.0.1';
   }
@@ -15,6 +15,7 @@ function cloudWriteGuard(req, res, next) {
     try { const state=require('./recoveryRuntimeBinding').status(); if(state?.phase==='active'&&state.billingMode==='active') return next(); } catch {}
   }
   if (process.env.BADIZO_RECOVERY_CONTROL_CONFIG && /^\/recovery-control(?:\/|$)/.test(req.path)) return next();
+  if (process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/sync\/(events|feed\/ack)$/.test(req.path)) return next();
   if (['/auth/login', '/auth/logout', '/auth/logout-beacon'].includes(req.path)) return next();
   return res.status(409).json({ error: 'Cloud billing is in standby. Activate it only after local billing and incoming sync are stopped.' });
 }
