@@ -10,16 +10,16 @@ import {
 import { formatDisplayDate, normalizeDateInput, todayIso } from '../utils/date';
 import { formatMoney, toNumber } from '../utils/money';
 
-const DEFAULT_DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
+const DEFAULT_DENOMINATIONS = [500, 200, 100, 50, 20, 10, 5, 2, 1];
 const HANDOVER_TRANSACTION_ROWS = 30;
 const REQUIRED_ENTRY_DETAILS = [
-  'UPI SALE', 'NUMBER', 'PURCHASE', 'RETURN', 'LESS', 'TRANSPORT',
-  'HAMALI', 'SADARA', 'SALARIES', 'HF STAFF', 'XXX'
+  'UPI SALE', 'NUMBER'
 ];
 const HANDOVER_PRINT_MANUAL_ROWS = 23;
 const HANDOVER_PRINT_DENOMINATION_ROWS = 8;
 const AUTO_ENTRY_DETAILS = new Set(['Counter Closing Cash', 'Today Sale']);
 const COUNTER_CLOSING_VIEW_REQUEST_KEY = 'badizo_counter_closing_view_request';
+const COUNTER_CLOSING_LAST_SELECTION_KEY = 'badizo_counter_closing_last_selection';
 const EMPTY_SNAPSHOT = {
   counter_sales: 0,
   all_counter_sales: 0,
@@ -105,6 +105,18 @@ function makeDefaultEntries() {
   return normalizeEntryCount([]);
 }
 
+function readLastCounterClosingSelection(fallbackCounterNo) {
+  try {
+    const stored = JSON.parse(window.sessionStorage.getItem(COUNTER_CLOSING_LAST_SELECTION_KEY) || 'null');
+    return {
+      date: normalizeDateInput(stored?.date || todayIso()),
+      counterNo: Math.max(Number.parseInt(stored?.counterNo, 10) || fallbackCounterNo, 1)
+    };
+  } catch (_err) {
+    return { date: todayIso(), counterNo: fallbackCounterNo };
+  }
+}
+
 function counterDisplayLabel(currentUser, counterNo) {
   if (currentUser?.role === 'COUNTER' && currentUser?.system_no) {
     return `S${currentUser.system_no}/Counter${counterNo}`;
@@ -172,11 +184,12 @@ export default function CounterClosingView({ onClose }) {
   const currentUser = getStoredUser();
   const isCounterUser = currentUser?.role === 'COUNTER';
   const userCounterNo = currentUser?.counter_no || 1;
+  const [initialSelection] = useState(() => readLastCounterClosingSelection(userCounterNo));
 
-  const [date, setDate] = useState(todayIso());
-  const [historyFrom, setHistoryFrom] = useState(todayIso());
-  const [historyTo, setHistoryTo] = useState(todayIso());
-  const [counterNo, setCounterNo] = useState(userCounterNo);
+  const [date, setDate] = useState(initialSelection.date);
+  const [historyFrom, setHistoryFrom] = useState(initialSelection.date);
+  const [historyTo, setHistoryTo] = useState(initialSelection.date);
+  const [counterNo, setCounterNo] = useState(isCounterUser ? userCounterNo : initialSelection.counterNo);
   const currentCounterLabel = counterDisplayLabel(currentUser, counterNo);
   const [counterCount, setCounterCount] = useState(6);
   const [shopName, setShopName] = useState('Hyper Fresh Mart LLP');
@@ -204,6 +217,21 @@ export default function CounterClosingView({ onClose }) {
   const historySectionRef = useRef(null);
 
   useEffect(() => {
+    function focusNotesDenomination(event) {
+      if (!event.ctrlKey || !event.altKey || event.shiftKey || event.metaKey || event.repeat) return;
+      if (!['Control', 'Alt'].includes(event.key) || event.getModifierState?.('AltGraph')) return;
+      const input = denominationInputRefs.current[0];
+      if (!input) return;
+      event.preventDefault();
+      input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      input.focus({ preventScroll: true });
+      input.select();
+    }
+    window.addEventListener('keydown', focusNotesDenomination);
+    return () => window.removeEventListener('keydown', focusNotesDenomination);
+  }, []);
+
+  useEffect(() => {
     loadSettings();
   }, []);
 
@@ -226,6 +254,10 @@ export default function CounterClosingView({ onClose }) {
   useEffect(() => {
     loadHandover();
     if (!isCounterUser) loadHistory();
+  }, [date, counterNo]);
+
+  useEffect(() => {
+    window.sessionStorage.setItem(COUNTER_CLOSING_LAST_SELECTION_KEY, JSON.stringify({ date, counterNo }));
   }, [date, counterNo]);
 
   const denominationRows = useMemo(() => {
@@ -328,7 +360,7 @@ export default function CounterClosingView({ onClose }) {
     try {
       const result = await fetchCounterHandover(saleDate, counterNo);
       const nextSnapshot = normalizeSnapshot(result.snapshot);
-      const nextDenominations = result.denominations || DEFAULT_DENOMINATIONS;
+      const nextDenominations = (result.denominations || DEFAULT_DENOMINATIONS).filter((value) => Number(value) !== 2000);
       const savedSheet = result.sheet;
       setSheetNo(savedSheet?.sheet_no || result.sheet_no || '');
       setSheetMeta(savedSheet ? { created_at: savedSheet.created_at || '', updated_at: savedSheet.updated_at || '' } : { created_at: '', updated_at: '' });
@@ -342,7 +374,7 @@ export default function CounterClosingView({ onClose }) {
         setIsExistingSheet(true);
         setDenominations({
           ...emptyDenominations(nextDenominations),
-          ...(savedSheet.denominations || []).reduce((acc, row) => ({ ...acc, [Number(row.denomination_value)]: String(toNumber(row.quantity)) }), {})
+          ...(savedSheet.denominations || []).filter((row) => nextDenominations.includes(Number(row.denomination_value))).reduce((acc, row) => ({ ...acc, [Number(row.denomination_value)]: String(toNumber(row.quantity)) }), {})
         });
         setHandedOverBy(savedSheet.handed_over_by || '');
         setTakenOverBy(savedSheet.taken_over_by || '');
@@ -1107,7 +1139,7 @@ export default function CounterClosingView({ onClose }) {
 
           <section className="panel">
             <div className="panel-header handover-denomination-header">
-              <h3 className="panel-title">Notes Denomination</h3>
+              <h3 className="panel-title">Notes Denomination <small>(Ctrl + Alt)</small></h3>
               <strong>Today Cash Notes Count Balance: {formatMoney(cashBalance)}</strong>
             </div>
             <div className="panel-body handover-denomination-grid">

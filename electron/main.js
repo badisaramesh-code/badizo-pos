@@ -18,6 +18,16 @@ const DEFAULT_DISCOVERY_TIMEOUT_MS = 9000;
 const SERVER_CACHE_FILE = 'badizo-server-cache.json';
 const servers = [];
 let mainWindow = null;
+let serverConnection = null;
+
+function publishServerConnection(config) {
+  serverConnection = { apiBaseUrl: `${new URL(config.apiHealthUrl).origin}/api` };
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('badizo:server-connection-changed', serverConnection);
+  }
+}
+
+ipcMain.handle('badizo:get-server-connection', () => serverConnection);
 
 function logMessage(message) {
   try {
@@ -68,9 +78,10 @@ function getConfig() {
 
   // Dedicated counter/admin installers must not inherit a stale server address
   // from a previous installation's userData config.
-  const config = packagedConfig?.forcePackagedConfig
+  const explicitConfig = process.env.BADIZO_CLIENT_CONFIG ? readJsonIfExists(process.env.BADIZO_CLIENT_CONFIG) : null;
+  const config = explicitConfig || (packagedConfig?.forcePackagedConfig
     ? packagedConfig
-    : (configPaths.map(readJsonIfExists).find(Boolean) || {});
+    : (configPaths.map(readJsonIfExists).find(Boolean) || {}));
   const configuredAppUrl = process.env.BADIZO_APP_URL || config.appUrl || DEFAULT_APP_URL;
   const configuredApiHealthUrl = process.env.BADIZO_API_HEALTH_URL || config.apiHealthUrl || DEFAULT_API_URL;
   const loginFromUrl = getLoginParamsFromUrl(configuredAppUrl);
@@ -91,6 +102,7 @@ function getConfig() {
       ...parseServerHosts(process.env.BADIZO_SERVER_HOSTS || config.serverHosts || config.serverHost || '')
     ].filter(Boolean),
     discoveryEnabled: config.discoveryEnabled !== false,
+    allowLoopbackServer: config.allowLoopbackServer === true,
     discoveryTimeoutMs: Number(config.discoveryTimeoutMs || DEFAULT_DISCOVERY_TIMEOUT_MS),
     loginMode: ['server', 'admin', 'counter', 'security', 'all'].includes(requestedLoginMode)
       ? requestedLoginMode
@@ -154,7 +166,12 @@ async function isReachable(url, timeoutMs = 2500) {
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { cache: 'no-store', signal: controller.signal });
-    return response.ok;
+    if (!response.ok) return false;
+    if (new URL(url).pathname.replace(/\/$/, '') === '/api/health') {
+      const health = await response.json();
+      return health?.ok === true && (!health.service || health.service === 'badizo-pos');
+    }
+    return true;
   } catch (_err) {
     return false;
   } finally {
@@ -274,11 +291,11 @@ async function resolveRemoteServer(config) {
     ...(config.discoveryEnabled ? ['badizo-server.local', 'badizo-server', 'BADIZO-SERVER', 'server', 'SERVER'] : [])
   ].filter((host) => {
     if (!host) return false;
-    return !clientOnlyMode || !isLoopbackHost(host);
+    return !clientOnlyMode || config.allowLoopbackServer || !isLoopbackHost(host);
   });
 
   const healthUrls = [
-    ...(!clientOnlyMode || !isLoopbackHost(apiHost) ? [config.apiHealthUrl] : []),
+    ...(!clientOnlyMode || config.allowLoopbackServer || !isLoopbackHost(apiHost) ? [config.apiHealthUrl] : []),
     ...[...new Set(hosts)].map((host) => buildUrl(host, healthPort, '/api/health'))
   ];
 
@@ -411,6 +428,9 @@ function createWindow(config) {
   let healthMonitor = null;
   let rediscoveryRunning = false;
   let consecutiveHealthFailures = 0;
+  let loadedApplication = false;
+  let lastNavigationSucceeded = true;
+  publishServerConnection(activeConfig);
   logMessage(`Creating window for ${appUrl}`);
   const iconPath = resolveResourcePath('assets', 'badizo.ico');
   const { workAreaSize } = screen.getPrimaryDisplay();
@@ -456,7 +476,10 @@ function createWindow(config) {
           activeConfig = await resolveRemoteServer(activeConfig);
           appUrl = withLoginParams(activeConfig.appUrl, activeConfig.loginMode, activeConfig.loginUser);
         }
-        await mainWindow.loadURL(appUrl);
+        publishServerConnection(activeConfig);
+        // Keep the current bill and login in memory while the API reconnects.
+        // Only retry navigation if the application itself never loaded.
+        if (!loadedApplication) await mainWindow.loadURL(appUrl);
         consecutiveHealthFailures = 0;
       } catch (error) {
         retryLoad(error.message || error);
@@ -505,10 +528,22 @@ function createWindow(config) {
 
   mainWindow.webContents.on('did-fail-load', (_event, _errorCode, errorDescription, _validatedUrl, isMainFrame) => {
     logMessage(`Window failed load: ${errorDescription}`);
-    if (isMainFrame !== false) retryLoad(errorDescription);
+    if (isMainFrame !== false) {
+      loadedApplication = false;
+      retryLoad(errorDescription);
+    }
+  });
+
+  mainWindow.webContents.on('did-navigate', (_event, _url, httpResponseCode) => {
+    lastNavigationSucceeded = !httpResponseCode || httpResponseCode < 400;
   });
 
   mainWindow.webContents.on('did-finish-load', () => {
+    loadedApplication = lastNavigationSucceeded;
+    if (!loadedApplication) {
+      retryLoad('Server returned an error page');
+      return;
+    }
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = null;
     logMessage('Window connected successfully');
@@ -754,14 +789,23 @@ exit 3
   return monitor;
 }
 
+ipcMain.handle('badizo:get-barcode-printers', async (event) => {
+  const printers = await event.sender.getPrintersAsync();
+  return { systemName: os.hostname(), printers: printers.map(({ name, displayName }) => ({ name, displayName })) };
+});
+
 ipcMain.handle('badizo:print-barcode-prn', async (_event, payload) => {
   const prn = String(payload?.prn || '');
   if (!prn) throw new Error('Barcode PRN data is empty.');
 
-  const shareName = String(payload?.shareName || 'TSC-244-2').trim();
-  if (!/^[A-Za-z0-9 _.-]{1,80}$/.test(shareName)) {
-    throw new Error('Barcode printer share name is invalid.');
+  const requestedName = String(payload?.shareName || '').trim();
+  const printers = await _event.sender.getPrintersAsync();
+  const selectedPrinter = printers.find((printer) => printer.name === requestedName);
+  if (!selectedPrinter) {
+    throw new Error(`Selected printer "${requestedName}" is not installed on ${os.hostname()}. Select the Windows printer used for the working test page.`);
   }
+  const shareName = selectedPrinter.name;
+  if (shareName.length > 200 || /[\x00-\x1f]/.test(shareName)) throw new Error('Barcode printer name is invalid.');
 
   const documentToken = `badizo-barcode-${Date.now()}-${process.pid}`;
   const tempPath = path.join(os.tmpdir(), `${documentToken}.prn`);
@@ -770,14 +814,16 @@ ipcMain.handle('badizo:print-barcode-prn', async (_event, payload) => {
   try {
     fs.writeFileSync(tempPath, prn, 'ascii');
     const escapedShareName = shareName.replace(/'/g, "''");
-    const rawScript = `\$source=@'\nusing System; using System.Runtime.InteropServices;\npublic class BadizoRaw { [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] public class DI{[MarshalAs(UnmanagedType.LPWStr)]public string n;[MarshalAs(UnmanagedType.LPWStr)]public string o;[MarshalAs(UnmanagedType.LPWStr)]public string t;} [DllImport(\"winspool.drv\",SetLastError=true,CharSet=CharSet.Unicode)]static extern bool OpenPrinter(string n,out IntPtr h,IntPtr d);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool ClosePrinter(IntPtr h);[DllImport(\"winspool.drv\",SetLastError=true,CharSet=CharSet.Unicode)]static extern int StartDocPrinter(IntPtr h,int l,[In]DI d);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool EndDocPrinter(IntPtr h);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool StartPagePrinter(IntPtr h);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool EndPagePrinter(IntPtr h);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool WritePrinter(IntPtr h,byte[] b,int c,out int w); public static int Send(string p,byte[]b,string n){IntPtr h;if(!OpenPrinter(p,out h,IntPtr.Zero))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());try{var d=new DI{n=n,t=\"RAW\"};int j=StartDocPrinter(h,1,d);if(j==0)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());try{if(!StartPagePrinter(h))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());int w;if(!WritePrinter(h,b,b.Length,out w)||w!=b.Length)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());}finally{EndPagePrinter(h);EndDocPrinter(h);}return j;}finally{ClosePrinter(h);}} }\n'@\nAdd-Type \$source\n\$printer=Get-Printer | Where-Object { \$_.Name -eq '${escapedShareName}' -or \$_.ShareName -eq '${escapedShareName}' -or \$_.Name -match 'TSC.*(TE?244|244)' -or \$_.ShareName -match 'TSC.*244' } | Select-Object -First 1\nif(-not \$printer){throw 'Barcode printer was not found in Windows.'}\n\$bytes=[IO.File]::ReadAllBytes('${tempPath.replace(/'/g, "''")}')\n[BadizoRaw]::Send(\$printer.Name, \$bytes, '${documentToken}')`;
+    const rawScript = `\$ErrorActionPreference='Stop'\n\$source=@'\nusing System; using System.Runtime.InteropServices;\npublic class BadizoRaw { [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] public class DI{[MarshalAs(UnmanagedType.LPWStr)]public string n;[MarshalAs(UnmanagedType.LPWStr)]public string o;[MarshalAs(UnmanagedType.LPWStr)]public string t;} [DllImport(\"winspool.drv\",SetLastError=true,CharSet=CharSet.Unicode)]static extern bool OpenPrinter(string n,out IntPtr h,IntPtr d);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool ClosePrinter(IntPtr h);[DllImport(\"winspool.drv\",SetLastError=true,CharSet=CharSet.Unicode)]static extern int StartDocPrinter(IntPtr h,int l,[In]DI d);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool EndDocPrinter(IntPtr h);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool StartPagePrinter(IntPtr h);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool EndPagePrinter(IntPtr h);[DllImport(\"winspool.drv\",SetLastError=true)]static extern bool WritePrinter(IntPtr h,byte[] b,int c,out int w); public static int Send(string p,byte[]b,string n){IntPtr h;if(!OpenPrinter(p,out h,IntPtr.Zero))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());try{var d=new DI{n=n,t=\"RAW\"};int j=StartDocPrinter(h,1,d);if(j==0)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());try{if(!StartPagePrinter(h))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());int w;if(!WritePrinter(h,b,b.Length,out w)||w!=b.Length)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());}finally{EndPagePrinter(h);EndDocPrinter(h);}return j;}finally{ClosePrinter(h);}} }\n'@\nAdd-Type \$source\n\$printerName='${escapedShareName}'\n\$bytes=[IO.File]::ReadAllBytes('${tempPath.replace(/'/g, "''")}')\n[BadizoRaw]::Send(\$printerName, \$bytes, '${documentToken}')`;
     const encodedScript = Buffer.from(rawScript, 'utf16le').toString('base64');
     const rawResult = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedScript], { windowsHide: true, timeout: 15000 });
     const rawJobId = Number.parseInt(String(rawResult.stdout || '').trim(), 10) || 0;
     if (!rawJobId) throw new Error('Windows did not create a RAW barcode print job.');
-    return { ok: true, printed: true, printerName: shareName, printer_share: printerShare, job_token: documentToken, raw_job_id: rawJobId, method: 'electron-windows-raw' };
+    logMessage(`Barcode RAW job accepted: printer=${shareName}, job=${rawJobId}, document=${documentToken}`);
+    return { ok: true, printed: true, printer_name: shareName, printerName: shareName, printer_share: printerShare, job_token: documentToken, raw_job_id: rawJobId, method: 'electron-windows-raw' };
   } catch (err) {
     queueMonitor?.kill();
+    logMessage(`Barcode RAW print failed: printer=${shareName}, error=${err.stderr || err.message}`);
     throw err;
   } finally {
     try { fs.unlinkSync(tempPath); } catch (_err) {}
@@ -787,7 +833,7 @@ ipcMain.handle('badizo:print-barcode-prn', async (_event, payload) => {
 ipcMain.handle('badizo:cancel-barcode-print', async (_event, payload) => {
   const shareName = String(payload?.shareName || '').trim();
   const documentToken = String(payload?.jobToken || '').trim();
-  if (!/^[A-Za-z0-9 _.-]{1,80}$/.test(shareName) || !/^badizo-barcode-\d+-\d+$/.test(documentToken)) throw new Error('Barcode print job details are invalid.');
+  if (!shareName || shareName.length > 200 || /[\x00-\x1f]/.test(shareName) || !/^badizo-barcode-\d+-\d+$/.test(documentToken)) throw new Error('Barcode print job details are invalid.');
   const escapedShareName = shareName.replace(/'/g, "''");
   const escapedDocumentToken = documentToken.replace(/'/g, "''");
   const script = `

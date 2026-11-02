@@ -20,6 +20,21 @@ const AUTH_KEYS = {
   token: 'badizo_token',
   user: 'badizo_user'
 };
+
+function updateServerConnection(connection) {
+  try {
+    const url = new URL(connection?.apiBaseUrl);
+    if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/api' || url.username || url.password) return;
+    api.defaults.baseURL = url.href.replace(/\/$/, '');
+  } catch (_err) { }
+}
+
+const desktopBridge = typeof window !== 'undefined' ? window.badizoDesktop : null;
+desktopBridge?.onServerConnectionChanged?.(updateServerConnection);
+const serverConnectionReady = desktopBridge?.getServerConnection
+  ? desktopBridge.getServerConnection().then(updateServerConnection).catch(() => {})
+  : Promise.resolve();
+
 let exitLogoutSent = false;
 
 function getAuthStorage() {
@@ -31,7 +46,9 @@ function clearLegacyAuthSession() {
   window.localStorage.removeItem(AUTH_KEYS.user);
 }
 
-api.interceptors.request.use((config) => {
+api.interceptors.request.use(async (config) => {
+  await serverConnectionReady;
+  if (String(config.url || '').startsWith('/')) config.baseURL = api.defaults.baseURL;
   const token = getAuthStorage().getItem(AUTH_KEYS.token);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -1098,6 +1115,16 @@ export async function fetchCounterCashLedger({ from, to, counterNo = '' } = {}) 
 
 export async function saveCounterCashLedgerEntry(payload) {
   const { data } = await api.post('/counter-cash-ledger', payload);
+  return data;
+}
+
+export async function updateCounterCashLedgerEntry(id, payload) {
+  const { data } = await api.put(`/counter-cash-ledger/${id}`, payload);
+  return data;
+}
+
+export async function deleteCounterCashLedgerEntry(id) {
+  const { data } = await api.delete(`/counter-cash-ledger/${id}`);
   return data;
 }
 

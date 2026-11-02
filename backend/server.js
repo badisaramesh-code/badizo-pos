@@ -81,7 +81,7 @@ function recordHealthPing(req) {
 
 app.get('/api/health', (req, res) => {
   recordHealthPing(req);
-  res.json({ ok: true });
+  res.json({ ok: true, service: 'badizo-pos' });
 });
 
 app.use('/api', cloudWriteGuard);

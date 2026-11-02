@@ -86,9 +86,9 @@ function loadBarcodeLabelFormat() {
   }
 }
 
-function loadBarcodePrinterSelections() {
+function loadBarcodePrinterSelections(storageKey = BARCODE_PRINTER_SELECTIONS_KEY) {
   try {
-    return JSON.parse(window.localStorage.getItem(BARCODE_PRINTER_SELECTIONS_KEY) || '{}');
+    return JSON.parse(window.localStorage.getItem(storageKey) || window.localStorage.getItem(BARCODE_PRINTER_SELECTIONS_KEY) || '{}');
   } catch (err) {
     return {};
   }
@@ -100,7 +100,7 @@ function displayNumber(value, decimals = 2) {
   return amount.toFixed(decimals);
 }
 
-export default function BarcodeStickersView({ isActive = false, onBackToProductForm } = {}) {
+export default function BarcodeStickersView({ isActive = false, onBackToProductForm, useServerPrinter = false, printerProfile = 'default' } = {}) {
   useEffect(() => {
     if (!isActive || !onBackToProductForm) return undefined;
     const handleProductShortcut = (event) => {
@@ -145,26 +145,44 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
   const [activePrintJob, setActivePrintJob] = useState(null);
   const [isCancellingPrint, setIsCancellingPrint] = useState(false);
   const [barcodePrinterTemplates, setBarcodePrinterTemplates] = useState({});
-  const [printerSelections, setPrinterSelections] = useState(loadBarcodePrinterSelections);
+  const printerStorageKey = `${BARCODE_PRINTER_SELECTIONS_KEY}:${printerProfile}`;
+  const [printerSelections, setPrinterSelections] = useState(() => loadBarcodePrinterSelections(printerStorageKey));
+  const [localPrinters, setLocalPrinters] = useState(null);
+  const [localSystemName, setLocalSystemName] = useState('');
   const selectedTemplate = TEMPLATE_OPTIONS.find((option) => option.name === templateName) || TEMPLATE_OPTIONS[0];
   const selectedPrinterConfig = barcodePrinterTemplates[templateName] || {};
-  const printerOptions = useMemo(() => [...new Set([
+  const printerOptions = useMemo(() => localPrinters !== null ? localPrinters.map((printer) => printer.name) : [...new Set([
     ...Object.values(barcodePrinterTemplates).map((config) => String(config?.printer || '').trim()),
     ...TEMPLATE_OPTIONS.map((option) => option.printer)
-  ].filter(Boolean))], [barcodePrinterTemplates]);
+  ].filter(Boolean))], [barcodePrinterTemplates, localPrinters]);
   const configuredPrinterName = selectedPrinterConfig.printer || selectedTemplate.printer;
-  const selectedPrinterName = printerOptions.includes(printerSelections[templateName])
-    ? printerSelections[templateName]
-    : configuredPrinterName;
+  const selectedPrinterName = printerSelections[templateName]
+    || (printerOptions.includes(configuredPrinterName) ? configuredPrinterName : '');
   const searchRef = useRef(null);
   const stickerCountRef = useRef(null);
   const selectedProductRef = useRef(null);
-  const systemName = window.location.hostname || '127.0.0.1';
+  const systemName = localSystemName || window.location.hostname || '127.0.0.1';
   const labelColumnCount = templateName === 'tsc-244-2-jewellery-100x15-tail.prn' ? 1 : 2;
 
   useEffect(() => {
     loadBarcodePrinterSettings();
   }, []);
+
+  useEffect(() => {
+    if (isActive) refreshLocalPrinters();
+  }, [isActive]);
+
+  async function refreshLocalPrinters() {
+    if (useServerPrinter || !window.badizoDesktop?.getBarcodePrinters) return;
+    try {
+      const result = await window.badizoDesktop.getBarcodePrinters();
+      setLocalPrinters(result.printers || []);
+      setLocalSystemName(result.systemName || '');
+    } catch (err) {
+      setLocalPrinters([]);
+      setErrorMessage(err.message || 'Unable to read Windows printers on this computer.');
+    }
+  }
 
   useEffect(() => {
     const query = searchQuery.trim();
@@ -255,7 +273,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
   function changePrinterName(printerName) {
     const nextSelections = { ...printerSelections, [templateName]: printerName };
     setPrinterSelections(nextSelections);
-    window.localStorage.setItem(BARCODE_PRINTER_SELECTIONS_KEY, JSON.stringify(nextSelections));
+    window.localStorage.setItem(printerStorageKey, JSON.stringify(nextSelections));
     setPrn('');
     setOutputInfo(null);
   }
@@ -475,8 +493,20 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
       setErrorMessage('Scan/search a product before printing sticker.');
       return;
     }
+    if (sendToPrinter && !selectedPrinterName) {
+      setErrorMessage('Select the Windows printer used for the working test page, then print.');
+      return;
+    }
     setIsPrinting(sendToPrinter);
     try {
+      // Check the local queue before generating a file, which also adds stock.
+      if (sendToPrinter && !useServerPrinter && window.badizoDesktop?.getBarcodePrinters) {
+        const local = await window.badizoDesktop.getBarcodePrinters();
+        if (!local.printers?.some((printer) => printer.name === selectedPrinterName)) {
+          setLocalPrinters(local.printers || []);
+          throw new Error('Selected printer is no longer installed. Refresh Printers and select the working Windows printer.');
+        }
+      }
       const result = await generateBarcodePrn({
         ...form,
         mrp: moneyTwoDecimals(form.mrp),
@@ -492,19 +522,21 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
       }
 
       try {
-        const localSharePath = (selectedPrinterConfig.shares || []).find((share) => /^\\\\localhost\\/i.test(String(share || '')));
-        const isLocalTsc38x25 = result.template_name === 'tsc-244-1-33x25-single.prn'
-          || /TSC\s*TE244/i.test(String(selectedPrinterName || result.printer_name || ''));
-        const localShareName = localSharePath
-          ? String(localSharePath).replace(/^\\\\localhost\\/i, '')
-          : isLocalTsc38x25 ? 'TSC TTP-244 Pro' : '';
-        const printResult = window.badizoDesktop?.printBarcodePrn && localShareName
-          ? await window.badizoDesktop.printBarcodePrn({ prn: result.prn, shareName: localShareName })
+        const localShareName = selectedPrinterName;
+        const printResult = !useServerPrinter && window.badizoDesktop?.printBarcodePrn
+          ? await window.badizoDesktop.printBarcodePrn({
+            prn: result.prn,
+            shareName: localShareName
+          })
           : await printBarcodePrn({
             output_name: result.output_name,
             template_name: result.template_name,
             printer_name: selectedPrinterName
           });
+        // Keep the successful queue across logout and future app sessions.
+        const nextSelections = { ...printerSelections, [templateName]: selectedPrinterName };
+        setPrinterSelections(nextSelections);
+        try { window.localStorage.setItem(printerStorageKey, JSON.stringify(nextSelections)); } catch (_err) { }
         setOutputInfo({ ...result, ...printResult });
         setActivePrintJob(printResult.job_token ? { jobToken: printResult.job_token, shareName: localShareName } : null);
         setStatusMessage(`Sticker sent to ${printResult.printer_name || selectedPrinterName}. Stock: ${result.old_stock_qty} + ${result.sticker_count} = ${result.new_stock_qty}. File: ${result.output_name}`);
@@ -514,11 +546,11 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
           stickerCountRef.current?.focus();
         }, 30);
       } catch (printErr) {
-        setErrorMessage(printErr.response?.data?.error || 'Sticker file was created, but Windows could not send it to the printer.');
+        setErrorMessage(printErr.response?.data?.error || printErr.message || 'Sticker file was created, but Windows could not send it to the printer.');
         setStatusMessage(`Sticker file is ready: ${result.output_path}. Check printer sharing, then print this PRN file.`);
       }
     } catch (err) {
-      setErrorMessage(err.response?.data?.error || 'Unable to generate PRN.');
+      setErrorMessage(err.response?.data?.error || err.message || 'Unable to generate PRN.');
     } finally {
       setIsPrinting(false);
     }
@@ -664,6 +696,8 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
               <label>
                 <span className="field-label">Printer Name</span>
                 <select className="select" value={selectedPrinterName} onChange={(event) => changePrinterName(event.target.value)}>
+                  <option value="">Select Windows printer</option>
+                  {selectedPrinterName && !printerOptions.includes(selectedPrinterName) && <option value={selectedPrinterName}>{selectedPrinterName} (saved printer)</option>}
                   {printerOptions.map((printerName) => <option key={printerName} value={printerName}>{printerName}</option>)}
                 </select>
               </label>
@@ -679,6 +713,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
               <label><span className="field-label">Sticker Size</span><input className="field" value={selectedTemplate.label} readOnly /></label>
               <label><span className="field-label">Column Count</span><input className="field" value={labelColumnCount} readOnly /></label>
               <div className="barcode-printer-actions">
+                {!useServerPrinter && window.badizoDesktop?.getBarcodePrinters && <button className="secondary-button" type="button" onClick={refreshLocalPrinters} disabled={isPrinting}>Refresh Printers</button>}
                 <button className="secondary-button" type="button" onClick={() => generatePrn()} disabled={isPrinting}>Create File</button>
                 <button className="secondary-button" type="button" onClick={() => prn && downloadTextFile(prn, outputInfo?.output_name || 'barcode-sticker.prn')} disabled={!prn}>Download</button>
               </div>
