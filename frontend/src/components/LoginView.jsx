@@ -17,6 +17,7 @@ const FALLBACK_LOGIN_OPTIONS = [
   { label: 'Security 2', username: 'security2' }
 ];
 const COUNTER_OPTIONS = [1, 2, 3, 4, 5, 6];
+const IS_CLOUD_BUILD = process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true';
 
 function loginModeFromUrl() {
   const params = new URLSearchParams(window.location.search || '');
@@ -31,6 +32,8 @@ function fixedLoginUserFromUrl() {
 }
 
 function filterLoginOptions(options, mode) {
+  if (IS_CLOUD_BUILD && mode === 'server') return options.filter(option => option.role === 'SERVER');
+  if (IS_CLOUD_BUILD && mode === 'admin') return options.filter(option => option.role === 'ADMIN');
   if (mode === 'counter') {
     return options.filter((option) => option.role === 'COUNTER' || /^counter[1-6]$/i.test(option.username));
   }
@@ -52,6 +55,7 @@ function isCounterLoginOption(option, username = '') {
 
 function mergeLoginOptions(options) {
   const merged = [...(Array.isArray(options) ? options : [])];
+  if (IS_CLOUD_BUILD) return merged;
   FALLBACK_LOGIN_OPTIONS.forEach((fallback) => {
     if (!merged.some((option) => option.username === fallback.username)) {
       merged.push(fallback);
@@ -68,7 +72,7 @@ export default function LoginView({ onLogin }) {
   const effectiveLoginMode = loginMode;
   const isSecurityLogin = effectiveLoginMode === 'security';
   const defaultLoginOptions = useMemo(
-    () => FALLBACK_LOGIN_OPTIONS,
+    () => IS_CLOUD_BUILD ? [] : FALLBACK_LOGIN_OPTIONS,
     []
   );
   const initialOptions = useMemo(() => {
@@ -107,7 +111,11 @@ export default function LoginView({ onLogin }) {
     async function loadLoginOptions() {
       try {
         const options = await fetchLoginOptions();
-        if (!isMounted || options.length === 0) return;
+        if (!isMounted) return;
+        if (options.length === 0) {
+          if (IS_CLOUD_BUILD) setErrorMessage('No active cloud accounts are available. Contact the server owner.');
+          return;
+        }
 
         const mergedOptions = mergeLoginOptions(options);
         const filteredOptions = filterLoginOptions(mergedOptions, effectiveLoginMode);
@@ -124,6 +132,7 @@ export default function LoginView({ onLogin }) {
       } catch (err) {
         if (isMounted) {
           setLoginOptions(initialOptions.length ? initialOptions : defaultLoginOptions);
+          if (IS_CLOUD_BUILD) setErrorMessage('Unable to load cloud login accounts. Check the private connection.');
         }
       }
     }
@@ -164,7 +173,7 @@ export default function LoginView({ onLogin }) {
           <img className="login-brand-image" src="/badizo-logo-transparent.png" alt="Badizo" />
         </div>
         <h1 className="brand-title" style={{ color: 'var(--brand-dark)', textAlign: 'center' }}>
-          {isSecurityLogin ? 'Gate Pass' : 'POS'}
+          {isSecurityLogin ? 'Gate Pass' : IS_CLOUD_BUILD ? 'Cloud POS' : 'POS'}
         </h1>
         <p className="muted" style={{ textAlign: 'center' }}>
           {isSecurityLogin ? 'Security login for inward and outward stock' : 'Login to continue billing'}
@@ -261,13 +270,13 @@ export default function LoginView({ onLogin }) {
           <input className="field" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>
 
-        <button className="primary-button" type="submit" disabled={isLoading}>
+        <button className="primary-button" type="submit" disabled={isLoading || (IS_CLOUD_BUILD && loginOptions.length === 0)}>
           {isLoading ? 'Logging in...' : 'Login'}
         </button>
 
         {!isSecurityLogin && !isFixedLogin && (
           <div className="change-box">
-            Default passwords: Server server123, Admin admin123, Counters counter1 to counter6, Security security123.
+            {IS_CLOUD_BUILD ? 'Use the unique cloud login provided during setup. Local default passwords are not accepted.' : 'Default passwords: Server server123, Admin admin123, Counters counter1 to counter6, Security security123.'}
           </div>
         )}
       </form>
