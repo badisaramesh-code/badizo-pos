@@ -1,4 +1,5 @@
 const express = require('express');
+const { beginPurchaseCapture, finishPurchaseCapture } = require('../services/purchaseSync');
 const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
@@ -1234,6 +1235,7 @@ router.post('/', async (req, res) => {
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
+    const purchaseCapture = await beginPurchaseCapture(connection, validLines.map(line => line.barcode), replaceInwardId > 0 ? 'replace' : Number(req.body?.source_draft_id || 0) > 0 ? 'draft-posting' : 'create', undefined, replaceInwardId || Number(req.body?.source_draft_id || 0) || null);
     let finalInwardNo = '';
     let finalFinancialYear = '';
     let finalSerialNo = 0;
@@ -1696,6 +1698,7 @@ router.post('/', async (req, res) => {
       }
     }
 
+    await finishPurchaseCapture(connection, purchaseCapture, finalInwardNo);
     await connection.commit();
     res.json({
       success: true,
@@ -1746,6 +1749,9 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Inward bill not found.' });
     }
 
+    const [captureLines] = process.env.BADIZO_SYNC_PURCHASE_CAPTURE === 'true'
+      ? await connection.query('SELECT barcode FROM inward_items WHERE inward_no=?', [entry.inward_no]) : [[]];
+    const purchaseCapture = await beginPurchaseCapture(connection, captureLines.map(line => line.barcode), 'delete', undefined, id);
     if (entry.posting_status === 'POSTED') {
       await reversePostedInward(connection, entry.inward_no);
     }
@@ -1759,6 +1765,7 @@ router.delete('/:id', async (req, res) => {
       details: { postingStatus: entry.posting_status },
       connection
     });
+    await finishPurchaseCapture(connection, purchaseCapture, entry.inward_no);
     await connection.commit();
     res.json({ success: true, inward_no: entry.inward_no });
   } catch (err) {

@@ -1,8 +1,9 @@
 const {canonical}=require('./syncEventProtocol');
 const {decimal,insert}=require('./checkoutSyncHandler');
+const {originalBatchShape,restoreInvoiceBatches}=require('./invoiceBatchSync');
 function money(value){return (value/100n)+'.'+String(value%100n).padStart(2,'0');}
 
-// Ordinary invoice profile only. Requires checkout origin mapping and all earlier
+// Ordinary/batch invoice profile. Requires checkout origin mapping and all earlier
 // returns. No source numeric ID is ever used as a receiver invoice item ID.
 async function applyReturn(connection,payload,context){
   if(!context?.shopId || !context.originInstallationId || payload?.change?.kind!=='return'
@@ -17,7 +18,7 @@ async function applyReturn(connection,payload,context){
     const before=original.items.find(row=>String(row.id)===String(item.id));
     if(!before)throw Error('Unknown returned line.');
     return {...item,returned_qty:before.returned_qty};
-  }),payments:payload.payments,batchAllocations:payload.batchAllocations,loyaltyTransactions:payload.loyaltyTransactions};
+  }),payments:payload.payments,batchAllocations:originalBatchShape(original,payload),loyaltyTransactions:payload.loyaltyTransactions};
   if(canonical(restored)!==canonical(original))throw Error('Return differs from the captured checkout.');
   const headers=payload.returns;
   if(new Set(headers.map(row=>row.return_no)).size!==headers.length || headers.some(row=>row.invoice_no!==invoiceNo))throw Error('Invalid return history.');
@@ -68,6 +69,7 @@ async function applyReturn(connection,payload,context){
     await connection.execute('UPDATE invoice_items SET returned_qty=returned_qty+? WHERE id=?',[returning.quantity,target.id]);
   }
   for(const [barcode,quantity] of quantities)await connection.execute('UPDATE products SET stock_qty=stock_qty+?,updated_at=CURRENT_TIMESTAMP WHERE barcode=?',[money(quantity),barcode]);
+  await restoreInvoiceBatches(connection,original,payload,context,new Map(currentLines.map(item=>[String(item.invoice_item_id),decimal(item.quantity)])));
   await connection.execute('UPDATE invoices SET invoice_status=? WHERE invoice_no=?',[payload.invoice.invoice_status,maps[0].target_invoice_no]);
 }
 module.exports={applyReturn};

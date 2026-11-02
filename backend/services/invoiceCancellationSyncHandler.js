@@ -1,7 +1,8 @@
 const {canonical}=require('./syncEventProtocol');
 const {decimal}=require('./checkoutSyncHandler');
+const {originalBatchShape,restoreInvoiceBatches}=require('./invoiceBatchSync');
 
-// Only cancels an ordinary invoice previously installed by applyCheckout.
+// Only cancels an invoice previously installed by applyCheckout.
 // An older backup invoice without a trusted origin mapping requires reconciliation.
 async function applyCancellation(connection,payload,context){
   if(!context?.shopId || !context.originInstallationId || payload?.change?.kind!=='void'
@@ -16,7 +17,7 @@ async function applyCancellation(connection,payload,context){
   const cancelledFields=['invoice_status','cancel_reason','cancelled_by','cancelled_at'];
   const restoredInvoice={...payload.invoice};
   for(const key of cancelledFields){if(Object.hasOwn(original.invoice,key))restoredInvoice[key]=original.invoice[key];else delete restoredInvoice[key];}
-  const restored={invoice:restoredInvoice,items:payload.items,payments:payload.payments,batchAllocations:payload.batchAllocations,loyaltyTransactions:payload.loyaltyTransactions};
+  const restored={invoice:restoredInvoice,items:payload.items,payments:payload.payments,batchAllocations:originalBatchShape(original,payload),loyaltyTransactions:payload.loyaltyTransactions};
   if(canonical(restored)!==canonical(original))throw Error('Cancellation differs from the captured checkout.');
   const [invoices]=await connection.execute('SELECT invoice_status,grand_total FROM invoices WHERE invoice_no=? FOR UPDATE',[maps[0].target_invoice_no]);
   if(invoices.length!==1 || invoices[0].invoice_status!=='PAID' || decimal(invoices[0].grand_total)!==decimal(original.invoice.grand_total))throw Error('Target invoice changed; reconciliation required.');
@@ -34,6 +35,7 @@ async function applyCancellation(connection,payload,context){
     const quantity=quantities.get(barcode);
     await connection.execute('UPDATE products SET stock_qty=stock_qty+?,updated_at=CURRENT_TIMESTAMP WHERE barcode=?',[(quantity/100n)+'.'+String(quantity%100n).padStart(2,'0'),barcode]);
   }
+  await restoreInvoiceBatches(connection,original,payload,context,new Map(original.items.map(item=>[String(item.id),decimal(item.quantity)])));
   await connection.execute("UPDATE invoices SET invoice_status='CANCELLED',cancel_reason=?,cancelled_by=?,cancelled_at=? WHERE invoice_no=?",[payload.invoice.cancel_reason,payload.invoice.cancelled_by,payload.invoice.cancelled_at,maps[0].target_invoice_no]);
 }
 module.exports={applyCancellation};
