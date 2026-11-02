@@ -3,6 +3,7 @@ import CloudSyncSettings from './CloudSyncSettings';
 import RecoveryReview from './RecoveryReview';
 import StagedRestore from './StagedRestore';
 import RecoveryControl from './RecoveryControl';
+import FinancialConflictReview from './FinancialConflictReview';
 import {
   approveSensitiveBillingMode,
   downloadBackup,
@@ -1151,6 +1152,7 @@ export default function SystemView() {
 
         <CloudSyncSettings />
         {process.env.REACT_APP_RECOVERY_REVIEW_ENABLED === 'true' && <RecoveryReview />}
+        {process.env.REACT_APP_RECOVERY_REVIEW_ENABLED === 'true' && <FinancialConflictReview />}
         {process.env.REACT_APP_STAGED_RESTORE_ENABLED === 'true' && <StagedRestore />}
         {process.env.REACT_APP_RECOVERY_CONTROL_ENABLED === 'true' && <RecoveryControl />}
 

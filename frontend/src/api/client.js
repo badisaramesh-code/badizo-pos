@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { createCheckoutJournal } from '../utils/checkoutJournal';
 
 function getDefaultApiBaseUrl() {
   if (process.env.REACT_APP_API_BASE_URL) return process.env.REACT_APP_API_BASE_URL;
@@ -669,7 +670,23 @@ export async function fetchQuotationDetails(quotationNo) {
   const { data } = await api.get(`/quotations/${encodeURIComponent(quotationNo)}`);
   return data;
 }
-export async function checkout(payload) {
+export const checkoutRecoveryEnabled = process.env.REACT_APP_CHECKOUT_RECOVERY_ENABLED === 'true';
+function checkoutJournal(counterNo) {
+  const user=getStoredUser();
+  return createCheckoutJournal(window.localStorage,`badizo_checkout_pending_v1:${user?.username || 'unknown'}:${counterNo}`);
+}
+const checkoutServer = () => new URL(api.defaults.baseURL, window.location.href).href.replace(/\/$/,'');
+export function pendingCheckout(counterNo) {
+  return checkoutRecoveryEnabled ? checkoutJournal(counterNo).read() : null;
+}
+export function clearConfirmedCheckout(counterNo,requestId) {
+  if(checkoutRecoveryEnabled)checkoutJournal(counterNo).clear(checkoutServer(),requestId);
+}
+export async function checkout(payload, savedState) {
+  if(checkoutRecoveryEnabled){
+    try { checkoutJournal(payload.counter_no).prepare({server:checkoutServer(),payload,savedState}); }
+    catch(error){error.checkoutJournalError=true;throw error;}
+  }
   try {
     const { data } = await api.post('/billing/checkout', payload, { timeout: 30000 });
     return data;

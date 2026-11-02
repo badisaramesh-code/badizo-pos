@@ -3,6 +3,8 @@ const {enqueue}=require('./syncOutbox');
 const {quantity,format}=require('./stockAdjustmentSync');
 const {insert}=require('./checkoutSyncHandler');
 const {canonical}=require('./syncEventProtocol');
+const {reconcilePurchasePayments}=require('./purchasePaymentReconciliation');
+const {reconcilePurchaseInventory}=require('./purchaseInventoryReconciliation');
 async function rows(connection,sql,args=[]){const [result]=await connection.query({sql,dateStrings:true,supportBigNumbers:true,bigNumberStrings:true},args);return JSON.parse(JSON.stringify(result));}
 async function inventory(connection,barcodes,lock=false){
   if(!barcodes.length)return {products:[],batches:[]};
@@ -122,25 +124,26 @@ async function updateRow(connection,table,row,id){
   await connection.execute('UPDATE `'+table+'` SET '+keys.map(key=>'`'+key+'`=?').join(',')+' WHERE id=?',[...keys.map(key=>row[key]),id]);
 }
 async function applyPurchaseReplacement(connection,payload){
-  const before=payload.before,after=payload.after;
+  const before=payload.before;let after=payload.after;
   if(!before?.entry||!payload.entry||before.entry.inward_no!==payload.inwardNo||payload.entry.inward_no!==payload.inwardNo
-    ||!Array.isArray(before.items)||!Array.isArray(payload.items)||!payload.items.length||!Array.isArray(before.payments)||before.payments.length
+    ||!Array.isArray(before.items)||!Array.isArray(payload.items)||!payload.items.length||!Array.isArray(before.payments)
     ||[...before.items,...payload.items].some(row=>Number(row.free_offer_enabled)!==0))throw Error('Purchase replacement requires reconciliation.');
   const entries=await rows(connection,'SELECT * FROM inward_entries WHERE inward_no=? FOR UPDATE',[payload.inwardNo]);
-  if(entries.length!==1||canonical(comparable(entries[0]))!==canonical(comparable(before.entry)))throw Error('Receiving purchase changed before replacement.');
+  const headerComparable=row=>Object.fromEntries(Object.entries(comparable(row)).filter(([key])=>!['paid_amount','due_amount','payment_status'].includes(key)));
+  if(entries.length!==1||canonical(headerComparable(entries[0]))!==canonical(headerComparable(before.entry)))throw Error('Receiving purchase changed before replacement.');
   const items=await rows(connection,'SELECT * FROM inward_items WHERE inward_no=? ORDER BY id FOR UPDATE',[payload.inwardNo]);
   if(canonical(items.map(comparable))!==canonical(before.items.map(comparable)))throw Error('Receiving purchase lines changed before replacement.');
-  const payments=await rows(connection,'SELECT id FROM supplier_payments WHERE inward_no=? FOR UPDATE',[payload.inwardNo]);
-  if(payments.length)throw Error('Receiving purchase payments require reconciliation.');
+  const payments=await rows(connection,'SELECT * FROM supplier_payments WHERE inward_no=? ORDER BY id FOR UPDATE',[payload.inwardNo]);
+  const replacementEntry=(before.payments.length||payments.length)
+    ?reconcilePurchasePayments({before:before.entry,after:payload.entry,sourcePayments:before.payments,target:entries[0],targetPayments:payments})
+    :payload.entry;
+  if(!before.payments.length&&!payments.length&&canonical(comparable(entries[0]))!==canonical(comparable(before.entry)))throw Error('Receiving purchase balance changed before replacement.');
   let total=0n;for(const item of payload.items){if(item.inward_no!==payload.inwardNo)throw Error('Invalid replacement line.');total+=quantity(item.total_amount);}
   if(!matchesRoundedSum(total,quantity(payload.entry.grand_total),payload.items.length)||Number(payload.entry.item_count)!==payload.items.length)throw Error('Replacement totals do not reconcile.');
-  // Replacements are not additive like a new purchase. Require the exact
-  // observed baseline, including stock; otherwise preserve both sides for review.
+  // Apply the source purchase delta without resetting receiving-side sales.
   const codes=[...new Set([...before.products,...after.products].map(row=>row.barcode))].sort();
   const current=await inventory(connection,codes,true);
-  const sorted=(values,key)=>values.map(comparable).sort((a,b)=>key(a).localeCompare(key(b)));
-  if(canonical(sorted(current.products,row=>row.barcode))!==canonical(sorted(before.products,row=>row.barcode))
-    ||canonical(sorted(current.batches,batchKey))!==canonical(sorted(before.batches,batchKey)))throw Error('Receiving inventory diverged; purchase replacement needs review.');
+  after=reconcilePurchaseInventory(before,after,current);
   if(new Set(before.batches.map(batchKey)).size!==before.batches.length||new Set(after.batches.map(batchKey)).size!==after.batches.length)throw Error('Ambiguous replacement batch identity.');
   if(before.products.some(row=>!after.products.some(next=>next.barcode===row.barcode)))throw Error('Replacement cannot delete a product master.');
   for(const product of after.products){
@@ -159,7 +162,7 @@ async function applyPurchaseReplacement(connection,payload){
     const target=current.batches.find(row=>batchKey(row)===batchKey(batch));
     if(target)await updateRow(connection,'product_batches',batch,target.id);else await insert(connection,'product_batches',batch);
   }
-  await updateRow(connection,'inward_entries',payload.entry,entries[0].id);
+  await updateRow(connection,'inward_entries',replacementEntry,entries[0].id);
   await connection.execute('DELETE FROM inward_items WHERE inward_no=?',[payload.inwardNo]);
   for(const item of payload.items)await insert(connection,'inward_items',item);
 }

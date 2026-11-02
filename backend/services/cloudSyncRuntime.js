@@ -25,6 +25,6 @@ function createCloudSyncRuntime({pool,identity,send,pull=null,canTransfer=async(
   }
   const worker=createCloudSyncWorker({pool,identity,flush,canTransfer,getSchedule:()=>settings.loadSchedule(),clock,batchSize});
   settings=createCloudSyncSettingsService({configDirectory,nodeRole:'local-server',getWorkerState:async()=>({...await worker.status(),direction:pull?'two-way':'upload'}),requestTransfer:worker.requestNow,clock:()=>new Date(clock())});
-  return {settings,worker,start:worker.start,stop:worker.stop};
+  return {settings,worker,flush,start:worker.start,stop:worker.stop};
 }
 module.exports={createCloudSyncRuntime};

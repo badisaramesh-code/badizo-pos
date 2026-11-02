@@ -35,13 +35,24 @@ function middleware(req,res,next) {
     || /^\/(auth\/(login|logout|logout-beacon)|recovery-control(?:\/|$))/.test(req.path)) return next();
   try {
     const current = read();
-    const recoveryWork = /^\/(recovery-review|staged-restore)(?:\/|$)/.test(req.path) || (!!process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/sync\/(events|feed\/ack)$/.test(req.path));
+    const recoveryWork = /^\/(recovery-review|recovery-cases|staged-restore)(?:\/|$)/.test(req.path) || (!!process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/sync\/(events|feed\/ack|handoff(?:\/flush)?)$/.test(req.path));
+    if(current.handoffId&&/^\/(recovery-review|recovery-cases|staged-restore)(?:\/|$)/.test(req.path))return res.status(409).json({error:'A coordinated billing switch is holding writes. Finish or cancel that operation first.'});
     if (!boot || current.activationId !== boot.activationId || current.phase !== 'active' || (current.billingMode !== 'active' && !recoveryWork)) return res.status(409).json({error:'Billing is paused for recovery. Use the owner recovery controls.'});
   } catch { return res.status(503).json({error:'Recovery state requires inspection. No new writes were accepted.'}); }
   activeWrites++;
+  let finished = false;
+  // Background imports outlive the HTTP 202 response. Reserve their lease
+  // while this already-admitted request is still active, even if a supervisor
+  // has meanwhile started draining it.
+  req.retainRecoveryWrite = () => {
+    if (finished) throw Error('Cannot start recovery work after the request finished.');
+    activeWrites++;
+    let released = false;
+    return () => { if (!released) { released = true; activeWrites--; } };
+  };
   // An aborted response is not proof its database work finished. Keep the
   // gate busy in that case; activation times out instead of killing work.
-  res.once('finish',()=>{activeWrites--;});
+  res.once('finish',()=>{finished = true; activeWrites--;});
   next();
 }
 async function withWriteLease(operation){
@@ -50,4 +61,9 @@ async function withWriteLease(operation){
   activeWrites++;
   try{return await operation();}finally{activeWrites--;}
 }
-module.exports={validate,read,load,status,middleware,withWriteLease};
+function retainRequestWrite(req) {
+  if (!process.env.BADIZO_RUNTIME_BINDING) return () => {};
+  if (typeof req.retainRecoveryWrite !== 'function') throw Error('Background write was not admitted by the recovery gate.');
+  return req.retainRecoveryWrite();
+}
+module.exports={validate,read,load,status,middleware,withWriteLease,retainRequestWrite};

@@ -2,6 +2,7 @@ const express = require('express');
 const { updatePriceListWithCapture } = require('../services/productSyncCapture');
 const { captureStockAdjustment } = require('../services/stockAdjustmentSync');
 const { beginProductCapture, beginProductDeletion, finishProductCapture } = require('../services/productMasterSync');
+const { retainRequestWrite } = require('../services/recoveryRuntimeBinding');
 const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
@@ -2444,6 +2445,7 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
     });
   }
 
+  const releaseImportWrite = retainRequestWrite(req);
   setImmediate(() => {
     processProductImportJob({ importId, totalInputRows, products, errors }).catch((err) => {
       console.error('Product import background job failed:', err.message);
@@ -2453,7 +2455,7 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
         totalRows: totalInputRows,
         user: req.user?.username || ''
       });
-    });
+    }).finally(releaseImportWrite);
   });
 
   return res.status(202).json({
@@ -2655,6 +2657,22 @@ router.delete('/import-history/:id', authenticate, authorize('SERVER', 'ADMIN'),
 
     let deletedProducts = 0;
     let restoredProducts = 0;
+    if (process.env.BADIZO_SYNC_PRODUCT_CAPTURE === 'true') {
+      // An import snapshot is not permission to erase later sales or edits.
+      // Lock and verify every affected row before rolling back any of them.
+      for (const line of lineRows) {
+        const imported = parseJsonValue(line.imported_product_json);
+        const [currentRows] = await connection.query({sql:'SELECT * FROM products WHERE barcode=? FOR UPDATE',dateStrings:true}, [line.barcode]);
+        if (!imported || currentRows.length !== 1 || JSON.stringify(productSnapshot(currentRows[0])) !== JSON.stringify(productSnapshot(imported))) {
+          throw new Error('Import rollback requires review: a product changed after this import. No products were rolled back.');
+        }
+        if (line.action_status === 'INSERTED') {
+          const [used] = await connection.query('SELECT id FROM invoice_items WHERE barcode=? LIMIT 1', [line.barcode]);
+          const [batches] = await connection.query('SELECT id FROM product_batches WHERE barcode=? LIMIT 1', [line.barcode]);
+          if (used.length || batches.length) throw new Error('An imported product now has sales or purchase batches. Use a correction instead of deleting its history.');
+        }
+      }
+    }
     for (const line of lineRows) {
       if (line.action_status === 'INSERTED') {
         const capture = await beginProductDeletion(connection, [line.barcode]);
@@ -2894,10 +2912,11 @@ router.post('/price-list/jobs', authenticate, authorize('SERVER', 'ADMIN'), asyn
       ]
     );
 
+    const releasePriceWrite = retainRequestWrite(req);
     setImmediate(() => {
       processPriceListUpdateJob(jobId).catch((err) => {
         console.error('Price list background job failed:', err.message);
-      });
+      }).finally(releasePriceWrite);
     });
 
     res.json({

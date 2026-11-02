@@ -17,7 +17,7 @@ async function main(){
     const password=crypto.randomBytes(24).toString('hex'),salt=crypto.randomBytes(16).toString('hex');
     await source.execute("INSERT INTO users(username,password_hash,role,counter_no,is_active) VALUES('batch_sync_validation',?,'SERVER',1,1) ON DUPLICATE KEY UPDATE password_hash=VALUES(password_hash),is_active=1",[salt+':'+crypto.pbkdf2Sync(password,salt,100000,64,'sha512').toString('hex')]);
     log=fs.openSync('/var/lib/badizo/validation-server.log','a',0o600);
-    child=spawn(process.execPath,['server.js'],{cwd:process.cwd(),env:{...process.env,BADIZO_DB_BOOTSTRAP:'false',BADIZO_SMS_ENABLED:'false',BADIZO_WHATSAPP_ENABLED:'false'},stdio:['ignore',log,log]});
+    child=spawn(process.execPath,['server.js'],{cwd:process.cwd(),env:{...process.env,BADIZO_DB_BOOTSTRAP:'false',BADIZO_DISABLE_SCHEDULED_JOBS:'true',BADIZO_SMS_ENABLED:'false',BADIZO_WHATSAPP_ENABLED:'false'},stdio:['ignore',log,log]});
     let ready=false;for(let i=0;i<40;i++){try{if((await fetch('http://127.0.0.1:5001/api/ready')).ok){ready=true;break;}}catch{}await new Promise(resolve=>setTimeout(resolve,250));}assert.ok(ready);
     const login=await fetch('http://127.0.0.1:5001/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'batch_sync_validation',password})});assert.equal(login.status,200);const {token}=await login.json();
     const headers={'Content-Type':'application/json',Authorization:'Bearer '+token};
@@ -84,6 +84,14 @@ async function main(){
     await purchase('POSTED',[{...purchaseLines[0],batch_no:'DRAFT-POST',qty:3}],null,{source_draft_id:draft.id});
     const [[draftCount]]=await target.execute('SELECT COUNT(*) AS n FROM inward_entries WHERE inward_no=?',[draft.inward_no]);assert.equal(Number(draftCount.n),0);
     const [[completeStock]]=await target.execute('SELECT stock_qty FROM products WHERE barcode=?',[barcode]);assert.equal(Number(completeStock.stock_qty),28);
+    const independentBarcode='SYNCINDEPENDENT'+crypto.randomBytes(8).toString('hex').toUpperCase();
+    const independentLine={barcode:independentBarcode,product_name:'INDEPENDENT STOCK TEST',price:10,qty:5,mrp:10,batch_no:'INDEPENDENT',expiry_date:'2028-12-31'};
+    const independentPurchase=await purchase('POSTED',[independentLine]);
+    await target.execute('UPDATE products SET stock_qty=stock_qty-2 WHERE barcode=?',[independentBarcode]);
+    await target.execute('UPDATE product_batches SET quantity_available=quantity_available-2 WHERE barcode=?',[independentBarcode]);
+    await purchase('POSTED',[{...independentLine,qty:7}],independentPurchase.id);
+    const [[independentStock]]=await target.execute('SELECT stock_qty FROM products WHERE barcode=?',[independentBarcode]);assert.equal(Number(independentStock.stock_qty),5);
+    const [[independentBatch]]=await target.execute('SELECT quantity_received,quantity_available FROM product_batches WHERE barcode=?',[independentBarcode]);assert.equal(Number(independentBatch.quantity_received),7);assert.equal(Number(independentBatch.quantity_available),5);
     const taxBarcode='SYNCTAX'+crypto.randomBytes(8).toString('hex').toUpperCase();
     const taxed=await purchase('POSTED',['TAX-A','TAX-B'].map(batch_no=>({barcode:taxBarcode,product_name:'ISOLATED GST ROUNDING TEST',price:0.1,qty:1,mrp:1,gst_percent:5,batch_no,expiry_date:'2028-12-31'})));
     const [[taxAmounts]]=await target.execute('SELECT SUM(total_amount) AS total FROM inward_items WHERE inward_no=?',[taxed.inward_no]);assert.equal(Number(taxAmounts.total),0.22);assert.equal(Number(Number(taxed.grand_total).toFixed(2)),0.21);
@@ -99,6 +107,14 @@ async function main(){
     assert.equal((await paymentReceiver(paymentEvent)).duplicate,false);assert.equal((await paymentReceiver(paymentEvent)).duplicate,true);
     await paymentReceiver({...paymentEvent,eventId:crypto.randomUUID()});
     const [[paid]]=await target.execute('SELECT paid_amount,due_amount FROM inward_entries WHERE inward_no=?',[taxed.inward_no]);assert.equal(Number(paid.paid_amount),0.1);assert.equal(Number(paid.due_amount),0.11);
+    // A payment recorded independently on the receiver must survive a source
+    // purchase edit; receiver numeric payment IDs deliberately differ.
+    await insert(target,'supplier_payments',{...paymentEvent.payload.payment,id:undefined,amount:'0.01',reference_no:'ISOLATED-ADDITIONAL-PAYMENT'});
+    await target.execute('UPDATE inward_entries SET paid_amount=0.11,due_amount=0.10 WHERE inward_no=?',[taxed.inward_no]);
+    await purchase('POSTED',['TAX-A','TAX-B'].map(batch_no=>({barcode:taxBarcode,product_name:'ISOLATED GST ROUNDING TEST',price:0.2,qty:1,mrp:1,gst_percent:5,batch_no,expiry_date:'2028-12-31'})),taxed.id,{paid_amount:0.1});
+    const [[editedPaid]]=await target.execute('SELECT grand_total,paid_amount,due_amount FROM inward_entries WHERE inward_no=?',[taxed.inward_no]);
+    assert.equal(Number(editedPaid.grand_total),0.42);assert.equal(Number(editedPaid.paid_amount),0.11);assert.equal(Number(editedPaid.due_amount),0.31);
+    const [[retainedPayments]]=await target.execute('SELECT COUNT(*) AS n FROM supplier_payments WHERE inward_no=?',[taxed.inward_no]);assert.equal(Number(retainedPayments.n),2);
     const [[savedProduct]]=await source.query({sql:'SELECT * FROM products WHERE barcode=?',dateStrings:true},[taxBarcode]);
     const productResponse=await fetch('http://127.0.0.1:5001/api/products/save',{method:'POST',headers,body:JSON.stringify({...savedProduct,original_barcode:taxBarcode,product_name:'ISOLATED PRODUCT SAVE TEST',hsn_code:'TEST',purchase_unit_type:'PCS',purchase_unit_size:1,mrp:1,purchase_price:0.1,sale_price:0.5,stock_qty:2,min_stock_alert:10})});
     assert.equal(productResponse.status,200);
@@ -129,6 +145,37 @@ async function main(){
     assert.equal((await deletionReceiver(deletionEvent)).duplicate,false);assert.equal((await deletionReceiver(deletionEvent)).duplicate,true);
     const [[gone]]=await target.execute('SELECT COUNT(*) AS n FROM products WHERE barcode IN (?,?)',deletionCodes);assert.equal(Number(gone.n),0);
     const [[offerGone]]=await target.execute('SELECT COUNT(*) AS n FROM batch_free_offers WHERE trigger_barcode=?',[deletionCodes[0]]);assert.equal(Number(offerGone.n),0);
+    const importBarcode='SYNCIMPORT'+crypto.randomBytes(8).toString('hex').toUpperCase();
+    let [[checkpoint]]=await source.execute('SELECT COALESCE(MAX(sequence_no),0) AS n FROM sync_outbox');
+    async function transferImports(){
+      const [events]=await source.execute('SELECT sequence_no,event_json FROM sync_outbox WHERE sequence_no>? ORDER BY sequence_no',[checkpoint.n]);
+      assert.ok(events.length);
+      for(const row of events){
+        const event=typeof row.event_json==='string'?JSON.parse(row.event_json):row.event_json;
+        const receiver=createSyncReceiver({pool:target,identity:{shopId:event.shopId,peerInstallationId:event.originInstallationId,localInstallationId:'validation-receiver'},handlers:{'pos.product.changed':applyProductMaster,'pos.products.deleted':applyProductDeletion}});
+        assert.equal((await receiver(event)).duplicate,false);assert.equal((await receiver(event)).duplicate,true);
+        checkpoint={n:row.sequence_no};
+      }
+    }
+    async function importCsv(csv){
+      const response=await fetch('http://127.0.0.1:5001/api/products/import',{method:'POST',headers,body:JSON.stringify({csv,fileName:'isolated-sync-import.csv'})});assert.equal(response.status,202);
+      const {importId}=await response.json();let job;
+      for(let attempt=0;attempt<100;attempt++){
+        [[job]]=await source.execute('SELECT status,inserted_count,updated_count,error_rows FROM product_import_jobs WHERE id=?',[importId]);
+        if(!['QUEUED','RUNNING'].includes(job.status))break;
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
+      assert.equal(Number(job.error_rows),0);assert.equal(Number(job.inserted_count)+Number(job.updated_count),1);await transferImports();return importId;
+    }
+    const initialImport=await importCsv('Product Code,Barcode,Product Name,MRP,Sales Rate,Stock,GST\n'+importBarcode+','+importBarcode+',ISOLATED IMPORT,20,10,10,0');
+    const updateImport=await importCsv('Product Code,Barcode,Product Name,Sales Rate\n'+importBarcode+','+importBarcode+',ISOLATED IMPORT UPDATED,12');
+    const [[imported]]=await target.execute('SELECT product_name,sale_price,stock_qty FROM products WHERE barcode=?',[importBarcode]);assert.equal(Number(imported.sale_price),12);assert.equal(Number(imported.stock_qty),10);
+    await source.execute('UPDATE products SET stock_qty=stock_qty-1 WHERE barcode=?',[importBarcode]);
+    const blockedRollback=await fetch('http://127.0.0.1:5001/api/products/import-history/'+updateImport,{method:'DELETE',headers});assert.equal(blockedRollback.ok,false);
+    const [[noRollbackEvent]]=await source.execute('SELECT COALESCE(MAX(sequence_no),0) AS n FROM sync_outbox');assert.equal(String(noRollbackEvent.n),String(checkpoint.n));
+    await source.execute('UPDATE products SET stock_qty=stock_qty+1 WHERE barcode=?',[importBarcode]);
+    for(const importId of [updateImport,initialImport]){const response=await fetch('http://127.0.0.1:5001/api/products/import-history/'+importId,{method:'DELETE',headers});assert.equal(response.status,200);await transferImports();}
+    const [[importGone]]=await target.execute('SELECT COUNT(*) AS n FROM products WHERE barcode=?',[importBarcode]);assert.equal(Number(importGone.n),0);
     console.log(JSON.stringify({groupedDeletionAndSharedOffer:true,changedStockBlocksDeletion:true,supplierPaymentApiAndRollback:true,reissuedPaymentIdentityNotAppliedTwice:true,productSaveApiPreservesReceiverStock:true,realDraftAndPostedPurchase:true,draftAndPostedReplacement:true,partialAndCompleteDraftPosting:true,newProductAndBatchesCreated:true,stockConversionAndFreeQuantity:true,existingBatchReplenished:true,realBatchCheckout:true,partialAndFullReturns:true,cancellation:true,purchaseDeletion:true,receiverSaleBlocksDeletion:true,purchaseRollbackVerified:true,partialBatchFailureRollsBackInvoiceAndStock:true,sourceGstRoundingPreserved:true,duplicateSafe:true,productionModified:false}));
   }finally{if(child&&child.exitCode===null&&child.signalCode===null){const stopped=new Promise(resolve=>child.once('exit',resolve));child.kill('SIGTERM');await stopped;}if(log!==undefined)fs.closeSync(log);await source.end();await target.end();}
 }

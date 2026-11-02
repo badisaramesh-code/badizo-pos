@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": 1,
+  "mysqlSeries": "8.0",
+  "migrations": [
+    {
+      "file": "optional-sync-enrollment.sql",
+      "sha256": "95ed6d03431cb6479c60188bcd5f36ddd8c7ddeacdb6e0d7d10c82135cf6239f"
+    },
+    {
+      "file": "optional-sync-inbox.sql",
+      "sha256": "7b485f57322bb73db1ab61d45c85cee2d5ca4d36a8f790f03b0a74d6defc2774"
+    },
+    {
+      "file": "optional-sync-invoice-batches.sql",
+      "sha256": "8d3015816f6c627ec4c7fdc3a60bda4751ad5e6ad25e42644edbbd4e8fa5641e"
+    },
+    {
+      "file": "optional-sync-invoice-map.sql",
+      "sha256": "55d761873a1611ba67dff4d4b95132020bb244ccb2164a4d9c1ea13811c2fb11"
+    },
+    {
+      "file": "optional-sync-outbox.sql",
+      "sha256": "4089b83056effeffddf1be24f356d43d6acf1e41d111972fe9eace618118a180"
+    },
+    {
+      "file": "optional-sync-recovery-applications.sql",
+      "sha256": "d8d2bdd016dbe6f7fa84043d484a8c1526fdb1598e0bc28a860fa27c999f3fb8"
+    },
+    {
+      "file": "optional-sync-stock-adjustment.sql",
+      "sha256": "5fca6ceff82551814e188f72525aa6b0812a4037ebf15ca81e465eaac58ed35b"
+    },
+    {
+      "file": "optional-sync-supplier-payments.sql",
+      "sha256": "010a63721520c5816c5cc942c5445bf4be1adea8f6301d46fe2030bb2bc9f7a0"
+    },
+    {
+      "file": "optional-sync-worker.sql",
+      "sha256": "c0fe22eafd602a6556b719963d0a4e3ecf57243ca5ed999c4c7fe3514be726b0"
+    }
+  ]
+}

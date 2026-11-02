@@ -1533,6 +1533,14 @@ router.post('/', async (req, res) => {
         ? grandTotal
         : Math.min(Math.max(requestedPaidAmount, 0), grandTotal);
     const dueAmount = isDraft ? 0 : Math.max(grandTotal - paidAmount, 0);
+    if (purchaseCapture?.before?.payments?.length) {
+      const previous = purchaseCapture.before.entry;
+      if (Math.round(paidAmount * 100) !== Math.round(Number(previous.paid_amount) * 100)
+        || String(supplier.name || '').trim() !== String(previous.supplier_name || '')
+        || String(supplier.gstin || '').trim().toUpperCase() !== String(previous.supplier_gstin || '')) {
+        throw new Error('This purchase has recorded supplier payments. Preserve the paid amount and supplier; record payment corrections separately.');
+      }
+    }
     const paymentStatus = isDraft
       ? 'DUE'
       : paidAmount > 0 && dueAmount > 0

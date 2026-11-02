@@ -23,11 +23,15 @@ async function applySupplierPayment(connection,payload,context){
   const [mapped]=await connection.execute('SELECT payload_hash FROM sync_supplier_payment_map WHERE shop_id=? AND origin_installation_id=? AND source_payment_id=? FOR UPDATE',key);
   if(mapped.length){if(mapped[0].payload_hash!==hash)throw Error('Supplier payment identity was reused.');return;}
   const [[entry]]=await connection.query('SELECT * FROM inward_entries WHERE inward_no=? FOR UPDATE',[payment.inward_no]);
-  if(!entry||entry.posting_status!=='POSTED'||decimal(entry.grand_total)!==total||entry.supplier_name!==payment.supplier_name||String(entry.supplier_gstin||'')!==String(payment.supplier_gstin||''))throw Error('Supplier payment purchase baseline differs; review required.');
-  if(decimal(entry.due_amount)!==due(total-decimal(entry.paid_amount)))throw Error('Receiving supplier balance is inconsistent; review required.');
+  if(!entry||entry.posting_status!=='POSTED'||entry.supplier_name!==payment.supplier_name||String(entry.supplier_gstin||'')!==String(payment.supplier_gstin||''))throw Error('Supplier payment purchase baseline differs; review required.');
+  // A separately recorded payment remains genuine when a purchase was edited
+  // on the other node. Preserve it against the receiving purchase's current
+  // total, provided it cannot overpay or conceal an inconsistent balance.
+  const receivingTotal=decimal(entry.grand_total);
+  if(decimal(entry.due_amount)!==due(receivingTotal-decimal(entry.paid_amount)))throw Error('Receiving supplier balance is inconsistent; review required.');
   const paid=decimal(entry.paid_amount)+amount;
-  if(paid>total+1n)throw Error('Combined supplier payments exceed purchase total; review required.');
-  const remaining=due(total-paid);
+  if(paid>receivingTotal+1n)throw Error('Combined supplier payments exceed purchase total; review required.');
+  const remaining=due(receivingTotal-paid);
   const targetId=await insert(connection,'supplier_payments',payment);
   await connection.execute('UPDATE inward_entries SET paid_amount=?,due_amount=?,payment_status=? WHERE inward_no=?',[money(paid),money(remaining),remaining<=1n?'PAID':'PARTIAL',payment.inward_no]);
   await connection.execute('INSERT INTO sync_supplier_payment_map (shop_id,origin_installation_id,source_payment_id,target_payment_id,payload_hash) VALUES (?,?,?,?,?)',[...key,targetId,hash]);

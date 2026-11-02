@@ -55,9 +55,11 @@ async function createEnrolledSyncRuntime({pool,configPath,env=process.env,withTr
     const state=runtimeBinding.read(env);
     return state?.activationId===config.activationId&&state.phase==='active'&&await enrolled();
   }
-  const receive=createPosSyncReceiver({pool,identity,reviewStore:config.nodeRole==='local-server'?reviewStore:null,localPriority:async()=>{
+  const financialCases=require('./financialConflictCases').createFinancialConflictCases({directory:path.join(config.reviewDirectory,'financial'),identity});
+  const receiveBase=createPosSyncReceiver({pool,identity,reviewStore:config.nodeRole==='local-server'?reviewStore:null,localPriority:async()=>{
     const state=runtimeBinding.read(env);return config.nodeRole==='local-server'&&state?.preferLocalConflicts===true&&await canTransfer();
   }});
+  const receive=async event=>{try{return await receiveBase(event);}catch(error){if(!error.code)await financialCases.record(event);throw error;}};
   const feed=createOutgoingFeed({pool,identity});
   async function status(){return {ready:await canTransfer(),shopId:config.shopId,installationId:config.installationId,peerInstallationId:config.peerInstallationId,baselineId:config.baselineId,contractVersion:config.contractVersion};}
   let workerRuntime=null;
@@ -81,11 +83,37 @@ async function createEnrolledSyncRuntime({pool,configPath,env=process.env,withTr
     router.use(peerAuthentication(config.incomingToken));
     router.use((req,res,next)=>req.headers['x-badizo-baseline']===config.baselineId?next():res.status(409).json({error:'Sync baseline mismatch.'}));
     router.get('/status',async(_req,res)=>{try{res.json(await status());}catch{res.status(503).json({error:'Enrollment unavailable.'});}});
+    if(env.BADIZO_RECOVERY_CONTROL_CONFIG){
+      const control=require('./recoveryControl').createRecoveryControl({configPath:env.BADIZO_RECOVERY_CONTROL_CONFIG,shopId:config.shopId});
+      router.get('/handoff',async(_req,res)=>{
+        try{
+          if(!await canTransfer())throw Error('Enrollment unavailable');
+          const [[row]]=await pool.execute('SELECT COUNT(*) AS n FROM sync_outbox WHERE shop_id=? AND origin_installation_id=? AND acknowledged_at IS NULL',[identity.shopId,identity.localInstallationId]);
+          res.json({...await control.status(),shopId:config.shopId,installationId:config.installationId,peerInstallationId:config.peerInstallationId,baselineId:config.baselineId,activeWrites:runtimeBinding.status()?.activeWrites??-1,pending:Number(row.n)});
+        }catch{res.status(409).json({error:'Handoff state unavailable.'});}
+      });
+      router.post('/handoff',require('express').json({limit:'4kb'}),async(req,res)=>{
+        try{
+          const value=req.body;
+          if(!await canTransfer()||config.nodeRole==='local-server'||!value||Object.keys(value).sort().join(',')!=='action,expectedGeneration,handoffId'||!['pause','activate'].includes(value.action))throw Error('Invalid handoff');
+          const current=runtimeBinding.read(env);
+          if(value.action==='activate'&&(current.handoffId!==value.handoffId||current.billingMode!=='standby'))throw Error('Pause identity differs');
+          res.status(202).json(await control.request({kind:value.action==='pause'?'handoff-standby':'handoff-active',handoffId:value.handoffId,expectedGeneration:value.expectedGeneration,actor:'enrolled-peer:'+config.peerInstallationId}));
+        }catch{res.status(409).json({error:'Handoff request rejected; inspect current status.'});}
+      });
+      router.post('/handoff/flush',require('express').json({limit:'4kb'}),async(req,res)=>{
+        try{
+          const current=runtimeBinding.read(env);
+          if(!workerRuntime||!req.body||Object.keys(req.body).join(',')!=='handoffId'||current.handoffId!==req.body.handoffId||current.billingMode!=='standby'||!await canTransfer())throw Error('Not paused');
+          res.json(await workerRuntime.flush({limit:10}));
+        }catch{res.status(409).json({error:'Handoff synchronization failed; resolve pending conflicts before activation.'});}
+      });
+    }
     router.use('/events',require('../routes/syncReceiver').createRouter({token:config.incomingToken,receive,mayReceive:canTransfer}));
     router.use('/feed',require('../routes/syncFeed').createRouter({token:config.incomingToken,feed,mayShare:canTransfer}));
   }
   env.BADIZO_INSTALLATION_ID=config.installationId;env.BADIZO_SYNC_PEER_INSTALLATION_ID=config.peerInstallationId;
   for(const flag of captureFlags)env[flag]='true';
-  return {settings,reviewStore,identity,mount,status,worker:workerRuntime?.worker,start:()=>workerRuntime?.start(),stop:()=>workerRuntime?.stop()};
+  return {settings,reviewStore,financialCases,retryFinancial:receive,identity,mount,status,worker:workerRuntime?.worker,start:()=>workerRuntime?.start(),stop:()=>workerRuntime?.stop()};
 }
 module.exports={createEnrolledSyncRuntime,validateConfiguration,requiredTables};

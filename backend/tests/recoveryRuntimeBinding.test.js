@@ -19,4 +19,12 @@ test('runtime gate drains writes, rejects a new database before restart, and cou
   let release;const work=runtime.withWriteLease(()=>new Promise(resolve=>{release=resolve;}));assert.equal(runtime.status().activeWrites,1);
   await atomic(file,{...binding,phase:'validating'});await assert.rejects(runtime.withWriteLease(async()=>{}),/pausing database writes/);
   release();await work;assert.equal(runtime.status().activeWrites,0);
+  await atomic(file,binding);
+  const importRequest={method:'POST',path:'/products/import'},response=new EventEmitter();
+  runtime.middleware(importRequest,response,()=>{});
+  await atomic(file,{...binding,phase:'validating'});
+  const finishImport=runtime.retainRequestWrite(importRequest);
+  response.emit('finish');assert.equal(runtime.status().activeWrites,1);
+  assert.throws(()=>runtime.retainRequestWrite(importRequest),/request finished/);
+  finishImport();finishImport();assert.equal(runtime.status().activeWrites,0);
 });

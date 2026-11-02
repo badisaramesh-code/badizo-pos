@@ -3,6 +3,7 @@ const {spawn}=require('node:child_process');
 const mysql=require('mysql2/promise');
 const {atomic,json}=require('./recoveryControlFiles');
 const {validate}=require('./recoveryRuntimeBinding');
+const {executeBillingHandoff}=require('./billingHandoff');
 const terminal=new Set(['complete','rolled-back','failed']);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function command(value){
@@ -42,6 +43,66 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
   }
   async function binding(){return validate(await json(config.bindingPath),config.shopId);}
   async function record(value){await atomic(operationPath,{...value,updatedAt:new Date().toISOString()});}
+  async function coordinated(request,existing){
+    const op=existing?.id===request.id?existing:{id:request.id,kind:request.kind,actor:request.actor,shopId:config.shopId,state:'preparing',startedAt:new Date().toISOString()};
+    if(terminal.has(op.state)){
+      const current=await binding();if(current.handoffId===request.id)await atomic(config.bindingPath,{...current,handoffId:null});
+      await fs.unlink(requestPath);return;
+    }
+    try{
+      if(config.nodeRole!=='local-server'||!path.isAbsolute(config.enrollmentConfigPath||''))throw Error('Local enrolled supervisor required.');
+      const enrollment=require('./enrolledSyncRuntime').validateConfiguration(await json(config.enrollmentConfigPath),{BADIZO_SHOP_ID:config.shopId,BADIZO_NODE_ROLE:config.nodeRole});
+      const current=await binding();
+      if(current.activationId!==enrollment.activationId||current.database.database!==enrollment.databaseName)throw Error('Recovery baseline must be rebuilt first.');
+      if(!existing&&current.generation!==request.expectedGeneration)throw Error('Runtime changed.');
+      await record(op);
+      function client(base,token){
+        return async(suffix='',body)=>{
+          const response=await fetch(base+suffix,{method:body===undefined?'GET':'POST',redirect:'error',signal:AbortSignal.timeout(20000),headers:{Authorization:'Bearer '+token,'X-Badizo-Baseline':enrollment.baselineId,'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});
+          if(!response.ok){await response.body?.cancel();throw Error('Handoff endpoint unavailable.');}
+          const text=await response.text();if(text.length>65536)throw Error('Invalid handoff response.');return JSON.parse(text);
+        };
+      }
+      const localCall=client(new URL('/api/sync/handoff',url).href,enrollment.incomingToken);
+      const cloudCall=client(enrollment.peer.baseUrl.replace(/\/$/,'')+'/handoff',enrollment.peer.token);
+      async function checkedStatus(call,local){
+        const state=await call();
+        if(state.shopId!==enrollment.shopId||state.baselineId!==enrollment.baselineId||state.installationId!==(local?enrollment.installationId:enrollment.peerInstallationId)||state.peerInstallationId!==(local?enrollment.peerInstallationId:enrollment.installationId)||!Number.isSafeInteger(state.pending)||state.pending<0||!Number.isSafeInteger(state.activeWrites)||state.activeWrites<0)throw Error('Handoff peer identity or counters differ.');
+        return state;
+      }
+      async function remoteMode(id,action){
+        let state=await checkedStatus(cloudCall,false);
+        const mode=action==='pause'?'standby':'active';
+        if(state.handoffId===id&&state.billingMode===mode&&state.phase==='active')return;
+        await cloudCall('',{action,handoffId:id,expectedGeneration:state.generation});
+        const end=Date.now()+(config.healthTimeoutMs||30000);
+        while(Date.now()<end){state=await checkedStatus(cloudCall,false);if(state.handoffId===id&&state.billingMode===mode&&state.phase==='active'&&state.operation?.state==='complete')return;await sleep(250);}
+        throw Error('Peer mode change timed out.');
+      }
+      const local={status:()=>checkedStatus(localCall,true),pause:async id=>{
+        const old=await binding();
+        if(old.handoffId===id&&old.billingMode==='standby'&&old.phase==='active')return;
+        await atomic(config.bindingPath,{...old,phase:'validating',billingMode:'standby',handoffId:id,generation:old.generation+1});
+        await waitReady(old.activationId,{drained:true});
+        await atomic(config.bindingPath,{...await binding(),phase:'active'});
+      },activate:async id=>{
+        const old=await binding();if(old.handoffId!==id||old.billingMode!=='standby')throw Error('Local handoff identity changed.');
+        await atomic(config.bindingPath,{...old,phase:'validating'});await waitReady(old.activationId,{drained:true});
+        await atomic(config.bindingPath,{...old,phase:'active',billingMode:'active',generation:old.generation+1,reconciliationRequired:false});
+      }};
+      await executeBillingHandoff({id:request.id,target:request.kind==='use-cloud'?'cloud':'local',local,cloud:{status:()=>checkedStatus(cloudCall,false),pause:id=>remoteMode(id,'pause'),activate:id=>remoteMode(id,'activate')},transfer:id=>localCall('/flush',{handoffId:id}),record:async state=>{op.state=state;await record(op);}});
+      const latest=await binding();
+      await atomic(config.bindingPath,{...latest,handoffId:null});
+      await fs.unlink(requestPath);
+    }catch{
+      // Never activate local as a rollback: cloud activation may have committed
+      // despite a lost reply. Keep local paused unless it already was activated.
+      const latest=await binding();
+      if(latest.handoffId===request.id)await atomic(config.bindingPath,{...latest,phase:'active',handoffId:null});
+      await record({...op,state:'failed',message:'Switch not confirmed. Inspect both billing modes. Pending data was retained; no alternate server was automatically activated.'});
+      await fs.unlink(requestPath);
+    }
+  }
   async function rollback(operation){
     const old=validate(await json(rollbackPath),config.shopId);
     const current=await binding();
@@ -61,8 +122,9 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
   async function tick(){
     await fs.mkdir(config.directory,{recursive:true,mode:0o700});
     let request;try{request=await json(requestPath);}catch(error){if(error.code==='ENOENT')return;throw error;}
-    if(request.shopId!==config.shopId||!['activate-restore','standby','emergency-local','emergency-cloud'].includes(request.kind)||!/^[a-f0-9-]{36}$/.test(request.id||''))throw Error('Invalid recovery request.');
+    if(request.shopId!==config.shopId||!['activate-restore','standby','emergency-local','emergency-cloud','use-cloud','use-local','handoff-standby','handoff-active'].includes(request.kind)||!/^[a-f0-9-]{36}$/.test(request.id||''))throw Error('Invalid recovery request.');
     let operation;try{operation=await json(operationPath);}catch(error){if(error.code!=='ENOENT')throw error;}
+    if(['use-cloud','use-local'].includes(request.kind))return coordinated(request,operation?.id===request.id?operation:null);
     if(operation?.id===request.id){
       if(!terminal.has(operation.state)){
         const current=await binding();
@@ -86,9 +148,13 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
         candidate=validate({...old,activationId:crypto.randomUUID(),generation:old.generation+1,phase:'validating',billingMode:'active',reconciliationRequired:true,database:{host:restore.host,user:restore.user,password:restore.password,database:restore.database}},config.shopId);
         await verify(candidate,job.result);
       }else{
+        if(request.kind.startsWith('handoff-')){
+          if(!['cloud-active','cloud-standby'].includes(config.nodeRole)||!/^[a-f0-9-]{36}$/.test(request.handoffId||''))throw Error('Invalid peer handoff.');
+          if(request.kind==='handoff-active'&&(old.handoffId!==request.handoffId||old.billingMode!=='standby'))throw Error('Handoff pause does not match.');
+        }
         if(request.kind==='emergency-cloud'&&!['cloud-active','cloud-standby'].includes(config.nodeRole))throw Error('Cloud activation is cloud only.');
         if(request.kind==='emergency-local'&&config.nodeRole!=='local-server')throw Error('Emergency local billing is local only.');
-        candidate={...old,generation:old.generation+1,phase:'active',billingMode:request.kind==='standby'?'standby':'active',reconciliationRequired:request.kind.startsWith('emergency-')?true:old.reconciliationRequired,preferLocalConflicts:request.kind==='emergency-local'?true:!!old.preferLocalConflicts};
+        candidate={...old,generation:old.generation+1,phase:'active',billingMode:['standby','handoff-standby'].includes(request.kind)?'standby':'active',handoffId:request.kind.startsWith('handoff-')?request.handoffId:null,reconciliationRequired:request.kind.startsWith('emergency-')?true:old.reconciliationRequired,preferLocalConflicts:request.kind==='emergency-local'?true:!!old.preferLocalConflicts};
       }
       await atomic(rollbackPath,old);
       operation.targetId=candidate.activationId;await record(operation);

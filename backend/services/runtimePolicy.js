@@ -15,7 +15,8 @@ function cloudWriteGuard(req, res, next) {
     try { const state=require('./recoveryRuntimeBinding').status(); if(state?.phase==='active'&&state.billingMode==='active') return next(); } catch {}
   }
   if (process.env.BADIZO_RECOVERY_CONTROL_CONFIG && /^\/recovery-control(?:\/|$)/.test(req.path)) return next();
-  if (process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/sync\/(events|feed\/ack)$/.test(req.path)) return next();
+  if (process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/sync\/(events|feed\/ack|handoff)$/.test(req.path)) return next();
+  if (process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/recovery-cases(?:\/|$)/.test(req.path)) return next();
   if (['/auth/login', '/auth/logout', '/auth/logout-beacon'].includes(req.path)) return next();
   return res.status(409).json({ error: 'Cloud billing is in standby. Activate it only after local billing and incoming sync are stopped.' });
 }

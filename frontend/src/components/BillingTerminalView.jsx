@@ -3,6 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import {
   approveSensitiveBillingMode,
   checkout,
+  checkoutRecoveryEnabled,
+  pendingCheckout,
+  clearConfirmedCheckout,
   createSalesReturn,
   createQuotation,
   deleteHeldBill,
@@ -108,7 +111,7 @@ function readActivePosDraft(user) {
       window.localStorage.removeItem(POS_DRAFT_KEY);
       return null;
     }
-    return { ...draft, cashReceived: '' };
+    return { ...draft, cashReceived: draft.checkoutRequestId ? draft.cashReceived : '' };
   } catch (err) {
     return null;
   }
@@ -457,7 +460,12 @@ function normalizeGatePassDetails(details = {}) {
 
 export default function BillingTerminalView({ isActive = true }) {
   const currentUser = getStoredUser();
-  const initialDraft = readActivePosDraft(currentUser);
+  let initialDraft = readActivePosDraft(currentUser);
+  let initialPendingError = '';
+  try {
+    const pending = pendingCheckout(Number(initialDraft?.counterNo || currentUser?.counter_no || 1));
+    if (pending) initialDraft = pending.savedState;
+  } catch (error) { initialPendingError = error.message; }
   const [invoiceNo, setInvoiceNo] = useState(initialDraft?.invoiceNo || 'Loading...');
   const [liveTime, setLiveTime] = useState(new Date());
   const [backendPingOk, setBackendPingOk] = useState(null);
@@ -521,7 +529,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [digitalContactDraft, setDigitalContactDraft] = useState({ name: '', phone: '' });
   const [digitalContactError, setDigitalContactError] = useState('');
   const [printMode, setPrintMode] = useState(initialDraft?.printMode || 'Thermal');
-  const [cashReceived, setCashReceived] = useState('');
+  const [cashReceived, setCashReceived] = useState(initialDraft?.checkoutRequestId ? initialDraft.cashReceived || '' : '');
   const [cashReceivedFlashToken, setCashReceivedFlashToken] = useState(0);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -592,7 +600,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const holdBillShortcutKeysRef = useRef({ ctrl: false, alt: false });
   const holdBillShortcutPressedRef = useRef(false);
   const checkoutInFlightRef = useRef(false);
-  const checkoutRequestIdRef = useRef('');
+  const checkoutRequestIdRef = useRef(initialDraft?.checkoutRequestId || '');
   const backendPingFailCountRef = useRef(0);
   const previousExchangeModeRef = useRef(exchangeMode);
   const priceCheckKeyTimesRef = useRef([]);
@@ -2836,6 +2844,11 @@ export default function BillingTerminalView({ isActive = true }) {
   }
 
   function resetBill(options = {}) {
+    if (checkoutRecoveryEnabled) {
+      try {
+        if (pendingCheckout(counterNo)) { setErrorMessage('The previous bill is unresolved. Retry its original checkout to check whether it was saved.'); return; }
+      } catch (error) { setErrorMessage(error.message); return; }
+    }
     const { closeActiveWindow = true } = options;
     hideHoverBillPreview();
     suppressDraftPersistenceRef.current = true;
@@ -5186,6 +5199,7 @@ export default function BillingTerminalView({ isActive = true }) {
     setIsCheckoutSubmitting(true);
 
     const completeSuccessfulCheckout = (savedInvoiceNo, freeItems = [], recovered = false) => {
+      clearConfirmedCheckout(counterNo, checkoutRequestIdRef.current);
       const freeInvoiceItems = freeItems.map((item) => ({
         ...item,
         product_name: String(item.product_name || '').toUpperCase(),
@@ -5341,14 +5355,22 @@ export default function BillingTerminalView({ isActive = true }) {
     }
 
     try {
-      const checkoutResult = await checkout(checkoutPayload);
+      const checkoutResult = await checkout(checkoutPayload, {
+        ...currentBillSavedState(), cashReceived: received.toFixed(2),
+        customerName: effectiveCustomerName, customerPhone: effectiveCustomerPhone,
+        paymentMode: activePaymentMode, paymentConfirmed: effectivePaymentConfirmed,
+        mixedPayment: effectiveMixedPayment, paymentReference: effectivePaymentReference,
+        checkoutRequestId
+      });
 
       completeSuccessfulCheckout(checkoutResult.invoice_no || invoiceNo, checkoutResult.free_items || []);
     } catch (err) {
       try {
+        if (err.checkoutJournalError) throw err;
         // Preview numbers can belong to a different concurrent sale. Recover
         // uncertain saves only by this checkout's unique request ID.
         if (shouldRecoverCheckout(err) && checkoutRequestId && await recoverCommittedCheckout()) return;
+        if (checkoutRecoveryEnabled) throw err;
       } catch (recoveryErr) {
         // Keep the original checkout error below; recovery is only for confirmed saved invoices.
       }
@@ -5687,7 +5709,7 @@ export default function BillingTerminalView({ isActive = true }) {
                 </div>
               </details>
             </div>
-            {errorMessage && <div className="alert-box">{errorMessage}</div>}
+            {(errorMessage || initialPendingError) && <div className="alert-box">{errorMessage || initialPendingError}</div>}
             </div>
           </div>
 

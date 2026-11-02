@@ -1,0 +1,27 @@
+// Durable orchestration belongs to the recovery supervisor, not an HTTP
+// request. Adapters must enforce the same operation ID and enrolled baseline.
+async function executeBillingHandoff({id,target,local,cloud,transfer,record,maxBatches=10000}){
+  if(!/^[a-f0-9-]{36}$/.test(id)||!['local','cloud'].includes(target))throw Error('Invalid handoff identity.');
+  const paused=state=>state.handoffId===id&&state.billingMode==='standby'&&state.phase==='active'&&state.activeWrites===0;
+  await record('pausing-local');await local.pause(id);
+  await record('pausing-cloud');await cloud.pause(id);
+  await record('synchronizing');
+  for(let batch=0;batch<maxBatches;batch++){
+    const a=await local.status(),b=await cloud.status();
+    if(!paused(a)||!paused(b))throw Error('Both enrolled servers must remain paused for handoff.');
+    if(a.pending===0&&b.pending===0){
+      await record('activating-'+target);
+      // The inactive node remains fenced. A lost activation reply must never
+      // cause the other node to be enabled as an automatic rollback.
+      await (target==='local'?local:cloud).activate(id);
+      const [finalLocal,finalCloud]=await Promise.all([local.status(),cloud.status()]);
+      const active=target==='local'?finalLocal:finalCloud,standby=target==='local'?finalCloud:finalLocal;
+      if(active.handoffId!==id||active.billingMode!=='active'||active.phase!=='active'||!paused(standby))throw Error('Activation outcome requires inspection; do not enable the other server.');
+      await record('complete');return {target,complete:true};
+    }
+    const result=await transfer(id);
+    if(result.busy||result.failed)throw Error('Synchronization is busy or blocked; billing remains paused.');
+  }
+  throw Error('Handoff backlog exceeds this run limit; retry from retained state.');
+}
+module.exports={executeBillingHandoff};
