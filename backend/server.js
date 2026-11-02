@@ -84,12 +84,13 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, service: 'badizo-pos' });
 });
 
+app.use('/api', require('./services/recoveryRuntimeBinding').middleware);
 app.use('/api', cloudWriteGuard);
 mountRoutes(app);
 app.get('/api/ready', async (_req, res) => {
   try {
     await require('./config/db').query('SELECT 1');
-    res.json({ ok: true, shopId: process.env.BADIZO_SHOP_ID || null, nodeRole: process.env.BADIZO_NODE_ROLE || 'local-server', releaseCommit: process.env.BADIZO_RELEASE_COMMIT || null });
+    res.json({ ok: true, recovery:require('./services/recoveryRuntimeBinding').status(), shopId: process.env.BADIZO_SHOP_ID || null, nodeRole: process.env.BADIZO_NODE_ROLE || 'local-server', releaseCommit: process.env.BADIZO_RELEASE_COMMIT || null });
   } catch (_error) { res.status(503).json({ ok: false }); }
 });
 

@@ -11,6 +11,10 @@ function bindHost(value, env = process.env) {
 }
 function cloudWriteGuard(req, res, next) {
   if (process.env.BADIZO_NODE_ROLE !== 'cloud-standby' || ['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  if (process.env.BADIZO_RUNTIME_BINDING) {
+    try { const state=require('./recoveryRuntimeBinding').status(); if(state?.phase==='active'&&state.billingMode==='active') return next(); } catch {}
+  }
+  if (process.env.BADIZO_RECOVERY_CONTROL_CONFIG && /^\/recovery-control(?:\/|$)/.test(req.path)) return next();
   if (['/auth/login', '/auth/logout', '/auth/logout-beacon'].includes(req.path)) return next();
   return res.status(409).json({ error: 'Cloud billing is in standby. Activate it only after local billing and incoming sync are stopped.' });
 }

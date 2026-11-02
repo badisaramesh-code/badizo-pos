@@ -15,7 +15,7 @@ function createRecoveryReport(review) {
   document.setFontSize(8);
   document.text(text(`Plan: ${review.plan.id}`),14,30);
   document.text(text(`History fingerprint: ${review.headHash}`),14,35);
-  document.text('REVIEW ONLY - These choices do not certify a database transfer or authorize local billing.',14,42);
+  document.text(review.applied ? 'APPLIED LOCALLY - Cloud delivery remains separate. This report does not authorize a billing switch.' : 'REVIEW ONLY - These choices do not certify a database transfer or authorize local billing.',14,42);
   document.text('Non-Latin characters are shown as Unicode escapes. Download JSON for original text.',14,47);
   const decisions=new Map(review.decisions.map(item=>[item.conflictId,item]));
   const rows=review.plan.entries.filter(item=>item.state==='conflict').map(item=>{

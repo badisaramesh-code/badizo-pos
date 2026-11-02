@@ -27,7 +27,11 @@ async function applyProductFields(connection,payload){
   });
   const [rows]=await connection.execute('SELECT product_name,sale_price FROM products WHERE barcode=? FOR UPDATE',[payload.barcode]);
   if(rows.length!==1)throw Error('Product identity is missing or ambiguous.');
-  for(const change of changes)if(normalize(change.field,rows[0][change.field])!==change.before)throw Error('Product changed since review; resolve the new conflict.');
+  for(const change of changes)if(normalize(change.field,rows[0][change.field])!==change.before){
+    const error=Error('Product changed since review; resolve the new conflict.');
+    error.recoveryFields=changes.map(item=>({kind:'product',recordId:payload.barcode,field:item.field,base:item.before,local:normalize(item.field,rows[0][item.field]),cloud:item.after}));
+    throw error;
+  }
   const assignments=changes.map(change=>'`'+change.field+'`=?').join(',');
   await connection.execute('UPDATE products SET '+assignments+' WHERE barcode=?',[...changes.map(change=>change.after),payload.barcode]);
 }

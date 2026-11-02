@@ -60,13 +60,20 @@ function createRecoveryReviewStore({ directory, shopId, clock = () => new Date()
     await publish(plan.id, 0, { revision: 0, previousHash: null, shopId, planId: plan.id, plan });
     return read(plan.id);
   }
-  async function select(id, { expectedRevision, side, actor, conflictIds }) {
+  async function exclusive(id, operation) {
+    const guard = await fs.open(path.join(location(id), 'execution.lock'), 'wx', 0o600);
+    try { return await operation(); } finally { await guard.close(); await fs.unlink(path.join(location(id), 'execution.lock')); }
+  }
+  async function select(id, { expectedRevision, side, actor, conflictIds }, validate = async () => {}) {
+    return exclusive(id, async () => {
+    await validate();
     const current = await read(id);
     if (!Number.isSafeInteger(expectedRevision) || current.revision !== expectedRevision) fail('Recovery review changed. Refresh before saving.');
     const selection = { expectedPlanId: id, side, actor, conflictIds, at: clock() };
     resolveProductConflicts(current.plan, selection);
     await publish(id, expectedRevision + 1, { revision: expectedRevision + 1, previousHash: current.headHash, shopId, planId: id, selection });
     return read(id);
+    });
   }
   async function list() {
     let names;
@@ -78,6 +85,6 @@ function createRecoveryReviewStore({ directory, shopId, clock = () => new Date()
     }
     return results;
   }
-  return { create, read, select, list };
+  return { create, read, select, list, exclusive };
 }
 module.exports = { createRecoveryReviewStore };

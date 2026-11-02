@@ -152,3 +152,13 @@ The supplier-payment API now captures `pos.supplier-payment.recorded` within its
 Validation: 84 backend tests passed. The extended real-API/MySQL purchase drill passed payment capture/application, receive rollback, duplicate and reissued payment identity checks, product save while receiver stock differed, and grouped deletion with a shared offer. A receiving stock change blocked deletion without removing either product. Tests used isolated databases only. Product import route wiring still needs a dedicated real import/rollback drill.
 
 Remaining development: promotion purchase/checkout/return lifecycle, execution of reviewed conflicts, full enrollment/runtime composition, switching/fencing and verified restore activation/rollback. These are not blocked by the shop visit, and this checkpoint is not production readiness. Live shop checks and rollout remain separate. Production synchronization flags stay disabled.
+
+## Recovery execution and activation implementation
+
+Owner product decisions now have a transactional apply endpoint and immutable execution ledger. Eligible receiver conflicts can create event-linked reviews. Resolution packets supersede covered older name/price edits, preserve event hashes and allow both queues to drain; emergency-local policy can resolve eligible conflicts in favor of local values. This does not bulk-overwrite stock or financial data.
+
+Recovery controls now queue pause, emergency local/cloud activation and verified local restore activation to an independent supervisor. Runtime binding gates writes, waits for HTTP business requests to finish, verifies the candidate database, restarts POS in validation mode, and rolls back a failed startup without dropping databases. A committed activation is never automatically reverted after new billing may have begun. Owner UI controls and PDF execution status are implemented.
+
+Real owner-API/MySQL drills passed blocked-queue recovery, both manual choices, automatic local preference, stale preview/retry behavior, actual POS restarts, cloud standby activation, failed candidate rollback and binding persistence. These features are opt-in and were not enabled in production. See `RECOVERY_EXECUTION_AND_ACTIVATION.md` for configuration, limitations, supervisor lock recovery and required shop rollout checks. Automatic coordinated handoff and arbitrary external database writer fencing remain separate integration work.
+
+Final validation for this checkpoint: 92 backend tests passed; the frontend built successfully with recovery review, staged restore and recovery control features enabled. The isolated owner-API/MySQL drills passed. Production remained active with 72,656 invoices.

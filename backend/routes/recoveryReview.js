@@ -1,8 +1,8 @@
 const express = require('express');
 const { authenticate, authorize } = require('../middleware/auth');
 
-// Reviews only: no restore, sync, activation or database-write endpoint.
-function createRouter({ store, shopId }) {
+// Execution is available only with an explicitly configured recovery executor.
+function createRouter({ store, shopId, executor = null }) {
   const router = express.Router();
   router.use(authenticate, authorize('SERVER'));
   router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
@@ -17,7 +17,8 @@ function createRouter({ store, shopId }) {
   async function load(id) {
     const review = await store.read(id);
     if (review.plan.shopId !== shopId) throw Error('Shop mismatch');
-    return review;
+    const execution = executor ? await executor.status(id) : null;
+    return { ...review, applied: !!execution, execution, canApply: !!executor };
   }
   function failure(res, error) {
     if (error.code === 'ENOENT') return res.status(404).json({ error: 'Recovery review not found.' });
@@ -38,8 +39,18 @@ function createRouter({ store, shopId }) {
     }
     try {
       await load(req.params.planId);
-      const result = await store.select(req.params.planId, { ...value, actor: req.user.username });
+      await store.select(req.params.planId, { ...value, actor: req.user.username }, () => executor ? executor.assertMutable(req.params.planId) : Promise.resolve());
+      const result = await load(req.params.planId);
       res.json(result);
+    } catch (error) { failure(res, error); }
+  });
+  router.post('/:planId/apply', async (req, res) => {
+    if (!executor) return res.status(409).json({ error: 'Conflict execution is not configured.' });
+    const body = req.body;
+    if (!body || Object.keys(body).some(key => !['expectedRevision','expectedHeadHash','confirmation'].includes(key)) || body.confirmation !== 'APPLY REVIEWED PRODUCT CHOICES') return res.status(400).json({ error: 'Confirm application of the saved product choices.' });
+    try {
+      await executor.apply(req.params.planId, { expectedRevision:body.expectedRevision, expectedHeadHash:body.expectedHeadHash, actor:req.user.username });
+      res.json(await load(req.params.planId));
     } catch (error) { failure(res, error); }
   });
   return router;

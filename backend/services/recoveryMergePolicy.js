@@ -13,7 +13,7 @@ function compareField({ base, local, cloud }) {
   return { state: 'conflict' };
 }
 function fingerprint(value) { return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
-function createPlan({ shopId, baselineId, localCheckpoint, cloudCheckpoint, fields }) {
+function createPlan({ shopId, baselineId, localCheckpoint, cloudCheckpoint, fields, sourceEvents = [] }) {
   for (const value of [shopId, baselineId, localCheckpoint, cloudCheckpoint]) {
     if (typeof value !== 'string' || !value.trim() || value.length > 200) throw Error('Verified identity and checkpoints are required.');
   }
@@ -33,6 +33,8 @@ function createPlan({ shopId, baselineId, localCheckpoint, cloudCheckpoint, fiel
       bulkEligible: comparison.state === 'conflict' && input.kind === 'product' && BULK_PRODUCT_FIELDS.has(input.field) };
   });
   const plan = { schemaVersion: 1, shopId, baselineId, localCheckpoint, cloudCheckpoint, entries };
+  if (!Array.isArray(sourceEvents) || sourceEvents.length > 100) throw Error('Invalid conflict source events.');
+  if (sourceEvents.length) plan.sourceEvents = JSON.parse(JSON.stringify(sourceEvents));
   return { ...plan, id: fingerprint(plan) };
 }
 function resolveProductConflicts(plan, { expectedPlanId, side, actor, conflictIds, at = new Date().toISOString() }) {

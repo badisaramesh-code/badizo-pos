@@ -58,7 +58,11 @@ async function applyProductMaster(connection,payload){
   const fields=Object.keys(before).filter(field=>!ignored.has(field));
   if(fields.some(field=>!allowed.has(field)||!/^[a-z_][a-z0-9_]*$/.test(field)) || (after&&Object.keys(after).filter(field=>!ignored.has(field)).sort().join(',')!==[...fields].sort().join(',')))throw Error('Product schemas differ.');
   const changed=fields.filter(field=>!after||canonical(before[field])!==canonical(after[field]));
-  for(const field of changed)if(canonical(target[field])!==canonical(before[field]))throw Error('Product field changed on receiver; review required.');
+  for(const field of changed)if(canonical(target[field])!==canonical(before[field])){
+    const error=Error('Product field changed on receiver; review required.');
+    if(after && changed.every(name=>['product_name','sale_price'].includes(name)))error.recoveryFields=changed.map(name=>({kind:'product',recordId:before.barcode,field:name,base:before[name],local:target[name],cloud:after[name]}));
+    throw error;
+  }
   if(!after||before.barcode!==after.barcode){
     const [batches]=await connection.execute('SELECT id FROM product_batches WHERE barcode=? LIMIT 1 FOR UPDATE',[before.barcode]);
     if(batches.length)throw Error('Product deletion/rename has batch dependencies; review required.');

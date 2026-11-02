@@ -23,7 +23,7 @@ function validateEvent(event, { shopId, peerInstallationId, localInstallationId 
 // Trusted peer identity is supplied by server configuration/authentication,
 // never accepted from a request as proof of identity. Handlers must use only
 // the supplied transaction connection for all business changes.
-function createSyncReceiver({ pool, identity, handlers }) {
+function createSyncReceiver({ pool, identity, handlers, reviewStore = null }) {
   return async function receive(event) {
     const verified = validateEvent(event, identity);
     const handler = Object.hasOwn(handlers, event.type) ? handlers[event.type] : null;
@@ -42,11 +42,17 @@ function createSyncReceiver({ pool, identity, handlers }) {
         if (rows.length !== 1 || rows[0].payload_hash !== verified.hash) throw Error('Event identity reused with different content.');
         duplicate = true;
       }
-      if (!duplicate) await handler(connection, structuredClone(event.payload), { eventId:event.eventId,shopId:event.shopId,originInstallationId:event.originInstallationId });
+      if (!duplicate) await handler(connection, structuredClone(event.payload), { eventId:event.eventId,shopId:event.shopId,originInstallationId:event.originInstallationId,localInstallationId:identity.localInstallationId });
       await connection.commit(); begun = false;
       return { eventId:event.eventId, committed:true, duplicate };
     } catch (error) {
       if (begun) await connection.rollback().catch(()=>{});
+      if (reviewStore && error.recoveryFields && ['pos.product.fields.changed','pos.product.changed'].includes(event.type)) {
+        const input={shopId:identity.shopId,baselineId:'sync:'+event.eventId,localCheckpoint:crypto.createHash('sha256').update(canonical(error.recoveryFields)).digest('hex'),cloudCheckpoint:verified.hash,fields:error.recoveryFields,sourceEvents:[event]};
+        const plan=require('./recoveryMergePolicy').createPlan(input);
+        try { await reviewStore.read(plan.id); } catch(missing) { if(missing.code!=='ENOENT')throw missing; await reviewStore.create(input); }
+        error.recoveryPlanId=plan.id;
+      }
       throw error;
     } finally { connection.release(); }
   };

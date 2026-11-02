@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { logError, logInfo } = require('../services/logger');
 const { isCloudNode } = require('../services/runtimePolicy');
 require('dotenv').config();
+require('../services/recoveryRuntimeBinding').load();
 
 const DB_CONNECTION_LIMIT = Number.parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 20;
 const DB_IDLE_TIMEOUT_MS = Number.parseInt(process.env.DB_IDLE_TIMEOUT_MS, 10) || 30000;
@@ -118,6 +119,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
 }
 
 pool.ready = (async () => {
+  if (process.env.BADIZO_RUNTIME_BINDING && process.env.BADIZO_DB_BOOTSTRAP === 'false') return;
   if (isCloudNode() && process.env.BADIZO_DB_BOOTSTRAP !== 'true') return;
   let connection;
 
