@@ -1,3 +1,4 @@
+const {captureSupplierPayment}=require('../services/supplierPaymentSync');
 const express = require('express');
 const { beginPurchaseCapture, finishPurchaseCapture } = require('../services/purchaseSync');
 const router = express.Router();
@@ -675,6 +676,7 @@ router.post('/supplier-payments', async (req, res) => {
       connection
     });
 
+    await captureSupplierPayment(connection, entry, paymentResult.insertId);
     await connection.commit();
     res.json({ success: true, id: paymentResult.insertId, inward_no: inwardNo, paid_amount: paidAmount, due_amount: dueAmount, payment_status: paymentStatus });
   } catch (err) {

@@ -4,6 +4,8 @@ const {applyCheckout,insert}=require('../../backend/services/checkoutSyncHandler
 const {applyReturn}=require('../../backend/services/invoiceReturnSyncHandler');
 const {applyCancellation}=require('../../backend/services/invoiceCancellationSyncHandler');
 const {applyPurchase}=require('../../backend/services/purchaseSync');
+const {applySupplierPayment}=require('../../backend/services/supplierPaymentSync');
+const {applyProductMaster,applyProductDeletion,beginProductDeletion,finishProductCapture}=require('../../backend/services/productMasterSync');
 async function main(){
   assert.equal(process.env.DB_NAME,'badizo_cloud_validation');
   const config=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));assert.match(config.database,/^badizo_recovery_[a-z0-9]+$/);
@@ -85,7 +87,49 @@ async function main(){
     const taxBarcode='SYNCTAX'+crypto.randomBytes(8).toString('hex').toUpperCase();
     const taxed=await purchase('POSTED',['TAX-A','TAX-B'].map(batch_no=>({barcode:taxBarcode,product_name:'ISOLATED GST ROUNDING TEST',price:0.1,qty:1,mrp:1,gst_percent:5,batch_no,expiry_date:'2028-12-31'})));
     const [[taxAmounts]]=await target.execute('SELECT SUM(total_amount) AS total FROM inward_items WHERE inward_no=?',[taxed.inward_no]);assert.equal(Number(taxAmounts.total),0.22);assert.equal(Number(Number(taxed.grand_total).toFixed(2)),0.21);
-    console.log(JSON.stringify({realDraftAndPostedPurchase:true,draftAndPostedReplacement:true,partialAndCompleteDraftPosting:true,newProductAndBatchesCreated:true,stockConversionAndFreeQuantity:true,existingBatchReplenished:true,realBatchCheckout:true,partialAndFullReturns:true,cancellation:true,purchaseDeletion:true,receiverSaleBlocksDeletion:true,purchaseRollbackVerified:true,partialBatchFailureRollsBackInvoiceAndStock:true,sourceGstRoundingPreserved:true,duplicateSafe:true,productionModified:false}));
+    const paymentResponse=await fetch('http://127.0.0.1:5001/api/inward/supplier-payments',{method:'POST',headers,body:JSON.stringify({inward_no:taxed.inward_no,amount:0.1,payment_mode:'Cash'})});
+    assert.equal(paymentResponse.status,200);const paymentSaved=await paymentResponse.json();
+    const [[paymentRow]]=await source.execute("SELECT event_json FROM sync_outbox WHERE JSON_UNQUOTE(JSON_EXTRACT(event_json,'$.type'))='pos.supplier-payment.recorded' AND JSON_UNQUOTE(JSON_EXTRACT(event_json,'$.payload.payment.id'))=? ORDER BY sequence_no DESC LIMIT 1",[String(paymentSaved.id)]);assert.ok(paymentRow);
+    const paymentEvent=typeof paymentRow.event_json==='string'?JSON.parse(paymentRow.event_json):paymentRow.event_json;
+    const paymentIdentity={shopId:paymentEvent.shopId,peerInstallationId:paymentEvent.originInstallationId,localInstallationId:'validation-receiver'};
+    const paymentReceiver=createSyncReceiver({pool:target,identity:paymentIdentity,handlers:{'pos.supplier-payment.recorded':applySupplierPayment}});
+    const failingPayment=createSyncReceiver({pool:target,identity:paymentIdentity,handlers:{'pos.supplier-payment.recorded':async(...args)=>{await applySupplierPayment(...args);throw Error('Injected payment failure');}}});
+    await assert.rejects(failingPayment(paymentEvent),/Injected payment failure/);
+    const [[noPayment]]=await target.execute('SELECT paid_amount FROM inward_entries WHERE inward_no=?',[taxed.inward_no]);assert.equal(Number(noPayment.paid_amount),0);
+    assert.equal((await paymentReceiver(paymentEvent)).duplicate,false);assert.equal((await paymentReceiver(paymentEvent)).duplicate,true);
+    await paymentReceiver({...paymentEvent,eventId:crypto.randomUUID()});
+    const [[paid]]=await target.execute('SELECT paid_amount,due_amount FROM inward_entries WHERE inward_no=?',[taxed.inward_no]);assert.equal(Number(paid.paid_amount),0.1);assert.equal(Number(paid.due_amount),0.11);
+    const [[savedProduct]]=await source.query({sql:'SELECT * FROM products WHERE barcode=?',dateStrings:true},[taxBarcode]);
+    const productResponse=await fetch('http://127.0.0.1:5001/api/products/save',{method:'POST',headers,body:JSON.stringify({...savedProduct,original_barcode:taxBarcode,product_name:'ISOLATED PRODUCT SAVE TEST',hsn_code:'TEST',purchase_unit_type:'PCS',purchase_unit_size:1,mrp:1,purchase_price:0.1,sale_price:0.5,stock_qty:2,min_stock_alert:10})});
+    assert.equal(productResponse.status,200);
+    const [productEvents]=await source.execute("SELECT event_json FROM sync_outbox WHERE JSON_UNQUOTE(JSON_EXTRACT(event_json,'$.type'))='pos.product.changed' AND JSON_UNQUOTE(JSON_EXTRACT(event_json,'$.payload.after.barcode'))=? ORDER BY sequence_no",[taxBarcode]);assert.ok(productEvents.length);
+    await target.execute('UPDATE products SET stock_qty=stock_qty-1 WHERE barcode=?',[taxBarcode]);
+    for(const row of productEvents){const event=typeof row.event_json==='string'?JSON.parse(row.event_json):row.event_json;const receive=createSyncReceiver({pool:target,identity:{shopId:event.shopId,peerInstallationId:event.originInstallationId,localInstallationId:'validation-receiver'},handlers:{'pos.product.changed':applyProductMaster}});await receive(event);assert.equal((await receive(event)).duplicate,true);}
+    const [[changedProduct]]=await target.execute('SELECT product_name,stock_qty,sale_price FROM products WHERE barcode=?',[taxBarcode]);assert.equal(changedProduct.product_name,'ISOLATED PRODUCT SAVE TEST');assert.equal(Number(changedProduct.stock_qty),1);assert.equal(Number(changedProduct.sale_price),0.5);
+    const deletionCodes=['SYNCDEL'+crypto.randomBytes(8).toString('hex').toUpperCase(),'SYNCDEL'+crypto.randomBytes(8).toString('hex').toUpperCase()];
+    for(const database of [source,target]){
+      for(const code of deletionCodes)await insert(database,'products',{...savedProduct,barcode:code,product_code:code,product_name:'ISOLATED DELETE TEST'});
+      await database.execute('INSERT INTO batch_free_offers (trigger_barcode,free_barcode,free_product_name,free_qty_total,free_qty_remaining) VALUES (?,?,?,?,?)',[deletionCodes[0],deletionCodes[1],'ISOLATED DELETE TEST',3,3]);
+    }
+    await source.beginTransaction();
+    try{
+      const capture=await beginProductDeletion(source,deletionCodes);
+      await source.execute('DELETE FROM batch_free_offers WHERE trigger_barcode=?',[deletionCodes[0]]);
+      await source.execute('DELETE FROM products WHERE barcode IN (?,?)',deletionCodes);
+      await finishProductCapture(source,capture);
+      await source.commit();
+    }catch(error){await source.rollback();throw error;}
+    const [[deletionRow]]=await source.execute("SELECT event_json FROM sync_outbox WHERE JSON_UNQUOTE(JSON_EXTRACT(event_json,'$.type'))='pos.products.deleted' ORDER BY sequence_no DESC LIMIT 1");
+    const deletionEvent=typeof deletionRow.event_json==='string'?JSON.parse(deletionRow.event_json):deletionRow.event_json;
+    const deletionReceiver=createSyncReceiver({pool:target,identity:{shopId:deletionEvent.shopId,peerInstallationId:deletionEvent.originInstallationId,localInstallationId:'validation-receiver'},handlers:{'pos.products.deleted':applyProductDeletion}});
+    await target.execute('UPDATE products SET stock_qty=stock_qty-1 WHERE barcode=?',[deletionCodes[1]]);
+    await assert.rejects(deletionReceiver(deletionEvent),/changed before deletion/);
+    const [[kept]]=await target.execute('SELECT COUNT(*) AS n FROM products WHERE barcode IN (?,?)',deletionCodes);assert.equal(Number(kept.n),2);
+    await target.execute('UPDATE products SET stock_qty=stock_qty+1 WHERE barcode=?',[deletionCodes[1]]);
+    assert.equal((await deletionReceiver(deletionEvent)).duplicate,false);assert.equal((await deletionReceiver(deletionEvent)).duplicate,true);
+    const [[gone]]=await target.execute('SELECT COUNT(*) AS n FROM products WHERE barcode IN (?,?)',deletionCodes);assert.equal(Number(gone.n),0);
+    const [[offerGone]]=await target.execute('SELECT COUNT(*) AS n FROM batch_free_offers WHERE trigger_barcode=?',[deletionCodes[0]]);assert.equal(Number(offerGone.n),0);
+    console.log(JSON.stringify({groupedDeletionAndSharedOffer:true,changedStockBlocksDeletion:true,supplierPaymentApiAndRollback:true,reissuedPaymentIdentityNotAppliedTwice:true,productSaveApiPreservesReceiverStock:true,realDraftAndPostedPurchase:true,draftAndPostedReplacement:true,partialAndCompleteDraftPosting:true,newProductAndBatchesCreated:true,stockConversionAndFreeQuantity:true,existingBatchReplenished:true,realBatchCheckout:true,partialAndFullReturns:true,cancellation:true,purchaseDeletion:true,receiverSaleBlocksDeletion:true,purchaseRollbackVerified:true,partialBatchFailureRollsBackInvoiceAndStock:true,sourceGstRoundingPreserved:true,duplicateSafe:true,productionModified:false}));
   }finally{if(child&&child.exitCode===null&&child.signalCode===null){const stopped=new Promise(resolve=>child.once('exit',resolve));child.kill('SIGTERM');await stopped;}if(log!==undefined)fs.closeSync(log);await source.end();await target.end();}
 }
 main().catch(error=>{console.error('Isolated purchase lifecycle drill failed: '+error.message);process.exitCode=1;});
