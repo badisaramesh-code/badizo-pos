@@ -8,7 +8,7 @@ Cloud activation after a crash requires an operator to fence the local billing s
 
 Return to Local is a controlled workflow, not a background hourly merge. Pause cloud writes, capture its final checkpoint, transfer to a staged local database, verify, then switch local billing and leave cloud in standby. Keep both old databases and a recovery record until reconciliation is accepted. If the failed local database contains transactions absent from the original cloud seed, reconcile those transactions before replacement. An ordinary restore would lose them. Distinct CL/BZ bill numbers alone do not prevent row-ID, stock or accounting conflicts.
 
-Do not enable automatic failover or two-way writing until fencing, crash recovery, checkpoints, repeatable retries and reconciliation have passed integration tests. The current cloud installation is not equipped with those controls yet.
+The development code includes authenticated incremental transfers, a durable worker, coordinated planned handoff and guarded emergency activation. These controls have been exercised on isolated databases; they have not been activated on the shop installation. There is no automatic failover or intended parallel billing. An unreachable server cannot be remotely proven stopped: the owner must stop its counters before emergency activation elsewhere.
 
 ## One planned shop visit
 
@@ -24,6 +24,8 @@ This command performs SHOW/SELECT only, reads schema names/engines but no bill/c
 
 Also record the actual POS install path, process/startup task, running release identity if available, verified backup destination, counter connectivity and printer models/ports. Confirm the source backup can be restored. Inspect logging retention, source disk capacity and replication privileges before designing seed/capture installation. A compatible version alone is insufficient.
 
-## Remaining implementation
+## Deployment boundary
 
-This inspection is preparation only. No incremental transfer adapter, controlled return-to-local executor, automatic provisioning or production management enrollment has been activated. Those must be validated on independent database copies before an existing shop is upgraded.
+The inspection is read-only preparation. Incremental transfer and controlled return-to-local executors exist in development; do not confuse their implementation with production enrollment. Shop-specific startup/service commands, runtime bindings, credentials, initial matching baseline, backup locations and reporter enrollment still need verified installation. No live shop synchronization or management enrollment has been activated by the development tests.
+
+For the current older-backup recovery boundaries, use RECOVERY_BASELINE_REBUILD.md. A detached replay report is not permission to activate two databases: missing event history or unverified convergence must remain blocked. For the Windows application package and its installation prerequisites, use WINDOWS_ENROLLED_UPGRADES.md. This procedure does not upgrade Windows or MySQL.

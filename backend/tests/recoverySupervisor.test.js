@@ -51,3 +51,27 @@ test('reconstruction fence blocks restore activation before pausing the original
   await supervisor.tick();assert.deepEqual(await json(config.bindingPath),original);
   assert.equal((await json(path.join(config.directory,'operation.json'))).state,'failed');
 });
+test('failed pre-install preparation can resume original local offline and finish cloud cancellation later',async t=>{
+  const {config,original}=await setup(t),operationId=crypto.randomUUID();
+  config.preparationConfigPath=path.join(config.directory,'preparation-config.json');config.baselinePlanPath=path.join(config.directory,'baseline-plan.json');
+  const prepDirectory=path.join(config.directory,'preparation');
+  await atomic(config.preparationConfigPath,{schemaVersion:1,shopId:'HFM001',directory:prepDirectory,incomingToken:'a'.repeat(64),baselineIncomingToken:'b'.repeat(64),slots:[{restoreConfigPath:path.join(config.directory,'slot.json')}],peer:{url:'https://cloud.invalid/api/recovery-preparation',token:'c'.repeat(64),baselineToken:'d'.repeat(64)}});
+  await atomic(path.join(prepDirectory,'current.json'),{operationId});
+  await atomic(path.join(prepDirectory,operationId,'preparation.json'),{operationId,sourceActivationId:original.activationId,mode:'verified-copy',state:'paused'});
+  await atomic(config.bindingPath,{...original,phase:'validating',billingMode:'standby',handoffId:operationId});
+  const configPath=path.join(config.directory,'supervisor.json');await atomic(configPath,config);
+  await atomic(path.join(config.directory,'heartbeat.json'),{shopId:'HFM001',at:new Date().toISOString()});
+  const control=require('../services/recoveryControl').createRecoveryControl({configPath,shopId:'HFM001'});
+  await atomic(path.join(config.directory,'operation.json'),{id:crypto.randomUUID(),kind:'prepare-baseline',state:'preparing'});
+  await assert.rejects(control.request({kind:'emergency-local',expectedGeneration:0,actor:'owner'}));
+  await atomic(path.join(config.directory,'operation.json'),{id:crypto.randomUUID(),kind:'prepare-baseline',state:'failed'});
+  const savedFetch=global.fetch;t.after(()=>{global.fetch=savedFetch;});
+  global.fetch=async()=>{throw Error('Internet offline');};
+  const supervisor=createRecoverySupervisor(config,{runCommand:async()=>{throw Error('Original local must not restart or switch databases');},fetchReady:async()=>({ok:true,shopId:'HFM001',recovery:{activationId:original.activationId,activeWrites:0}})});
+  await control.request({kind:'emergency-local',expectedGeneration:0,actor:'owner'});await supervisor.tick();
+  const active=await json(config.bindingPath);assert.equal(active.activationId,original.activationId);assert.deepEqual(active.database,original.database);assert.equal(active.billingMode,'active');assert.equal(active.handoffId,null);
+  const stateFile=path.join(prepDirectory,operationId,'preparation.json');assert.equal((await json(stateFile)).pendingPeerCancel,true);
+  global.fetch=async()=>new Response(JSON.stringify({cancelled:true,operationId,cloudStandby:true}),{status:200,headers:{'Content-Type':'application/json'}});
+  await control.request({kind:'finish-recovery-cancel',expectedGeneration:active.generation,actor:'owner'});await supervisor.tick();
+  assert.deepEqual(await json(config.bindingPath),active);assert.equal((await json(stateFile)).pendingPeerCancel,false);assert.equal((await json(path.join(config.directory,'operation.json'))).state,'complete');
+});

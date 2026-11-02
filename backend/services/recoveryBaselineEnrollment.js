@@ -140,4 +140,4 @@ async function prepareSameSnapshotEnrollment({pools,configuration,reportPath}){
     report.state='prepared-disabled';report.partialInvoiceBaselines=partials[0].length;report.completedAt=new Date().toISOString();report.readyForProtectedEnrollment=true;report.requiresFinalSourceCheckpoint=true;report.originalHistoriesMerged=false;await atomic(reportPath,report);return report;
   }finally{for(let i=connections.length-1;i>=0;i--){try{await connections[i].execute('SELECT RELEASE_LOCK(?)',['badizo-rebuild:'+sides[i].databaseName]);}catch{}connections[i].release();}}
 }
-module.exports={fingerprintBusiness,prepareSameSnapshotEnrollment,verifiedArtifact,normalizeSchema,eligiblePartial,sourceShopIdentity};
+module.exports={fingerprintBusiness,prepareSameSnapshotEnrollment,verifiedArtifact,normalizeSchema,eligiblePartial,sourceShopIdentity,archiveSync,partialBaselines,resetTables};

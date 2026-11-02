@@ -65,6 +65,13 @@ app.use('/api', require('./services/recoveryRuntimeBinding').middleware);
 app.use('/api', cloudWriteGuard);
 // Dedicated peer authentication and 1 MiB parsing happen before the general POS parser.
 app.use('/api/sync', syncRoutes);
+// Recovery transport has an independent operation token and tiny request body.
+// Authenticate it before the much larger general billing/import JSON parser.
+if(process.env.BADIZO_RECOVERY_CONTROL_CONFIG){
+  const control=require('./services/recoveryControl').createRecoveryControl({configPath:process.env.BADIZO_RECOVERY_CONTROL_CONFIG,shopId:process.env.BADIZO_SHOP_ID});
+  app.use('/api/recovery-baseline',require('./routes/recoveryBaseline').createRouter({configPath:process.env.BADIZO_RECOVERY_CONTROL_CONFIG,control,runtimeStatus:()=>enrolledRuntime?.status()}));
+  app.use('/api/recovery-preparation',require('./routes/recoveryPreparation').createRouter({configPath:process.env.BADIZO_RECOVERY_CONTROL_CONFIG,control}));
+}
 app.use(express.json({ limit: process.env.BADIZO_JSON_LIMIT || '250mb' }));
 
 function recordHealthPing(req) {

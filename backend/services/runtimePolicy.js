@@ -14,7 +14,7 @@ function cloudWriteGuard(req, res, next) {
   if (process.env.BADIZO_RUNTIME_BINDING) {
     try { const state=require('./recoveryRuntimeBinding').status(); if(state?.phase==='active'&&state.billingMode==='active') return next(); } catch {}
   }
-  if (process.env.BADIZO_RECOVERY_CONTROL_CONFIG && /^\/recovery-control(?:\/|$)/.test(req.path)) return next();
+  if (process.env.BADIZO_RECOVERY_CONTROL_CONFIG && /^\/(recovery-control|recovery-baseline|recovery-preparation)(?:\/|$)/.test(req.path)) return next();
   if (process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/sync\/(events|feed\/ack|handoff)$/.test(req.path)) return next();
   if (process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/recovery-cases(?:\/|$)/.test(req.path)) return next();
   if (['/auth/login', '/auth/logout', '/auth/logout-beacon'].includes(req.path)) return next();

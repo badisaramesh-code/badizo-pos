@@ -5,6 +5,7 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function main(){
   assert.equal(process.env.DB_NAME,'badizo_cloud_validation');
   const [localFile,cloudFile,keyFile,certFile]=process.argv.slice(2);
+  assert.ok(certFile&&process.env.NODE_EXTRA_CA_CERTS&&path.resolve(process.env.NODE_EXTRA_CA_CERTS)===path.resolve(certFile),'Launch this validation process with NODE_EXTRA_CA_CERTS set to its isolated TLS certificate; the supervisor also makes HTTPS requests.');
   const configs=await Promise.all([localFile,cloudFile].map(json));assert.notEqual(configs[0].database,configs[1].database);
   for(const config of configs){assert.match(config.database,/^badizo_recovery_[a-z0-9]+$/);assert.ok(['localhost','127.0.0.1'].includes(config.host));}
   const pools=configs.map(c=>mysql.createPool({host:c.host,user:c.user,password:c.password,database:c.database,multipleStatements:true,connectionLimit:4}));

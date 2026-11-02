@@ -35,3 +35,65 @@ test('failed new startup returns to the old binary without restoring or deleting
 test('recovery after committed activation never rolls back a possibly used new release',async t=>{
   const f=await fixture(t);await applyWindowsRelease(f);const file=path.join(f.root,'upgrade.json'),journal=await json(file);await atomic(file,{...journal,state:'committing'});f.adapters.stop=async()=>assert.fail('Must not stop the committed new release');assert.equal((await recoverWindowsRelease(f)).state,'complete');
 });
+
+test('interrupted candidate startup restores the original release only while billing is still fenced',async t=>{
+  const f=await fixture(t);
+  const journal={schemaVersion:1,shopId:f.shopId,state:'starting',binding:f.binding,
+    previous:{commit:'a'.repeat(40),directory:f.previous},target:{commit:'b'.repeat(40),directory:f.release}};
+  await atomic(path.join(f.root,'upgrade.json'),journal);
+  await atomic(path.join(f.root,'current-release.json'),journal.target);
+  await atomic(f.bindingPath,{...f.binding,phase:'validating'});
+  assert.equal((await recoverWindowsRelease(f)).state,'rolled-back');
+  assert.deepEqual(await json(f.bindingPath),f.binding);
+  assert.deepEqual(await json(path.join(f.root,'current-release.json')),journal.previous);
+  assert.deepEqual(f.calls,['stop','start','ready-a']);
+  await verifyRelease(f.release);
+});
+
+test('uncertain interrupted upgrade with billing reopened refuses rollback',async t=>{
+  const f=await fixture(t);
+  await atomic(path.join(f.root,'upgrade.json'),{schemaVersion:1,shopId:f.shopId,state:'starting',binding:f.binding,
+    previous:{commit:'a'.repeat(40),directory:f.previous},target:{commit:'b'.repeat(40),directory:f.release}});
+  await atomic(path.join(f.root,'current-release.json'),{commit:'b'.repeat(40),directory:f.release});
+  await assert.rejects(recoverWindowsRelease(f),/Billing may have resumed/);
+  assert.deepEqual(f.calls,[]);
+  assert.equal((await json(path.join(f.root,'current-release.json'))).commit,'b'.repeat(40));
+});
+
+test('invalid backup prevents schema installation and preserves the original binding and release',async t=>{
+  const f=await fixture(t),backup=f.adapters.backup;
+  f.adapters.backup=async()=>({...await backup(),sha256:'0'.repeat(64)});
+  await assert.rejects(applyWindowsRelease(f),/Backup evidence does not match/);
+  assert.ok(!f.calls.includes('schema'));
+  assert.deepEqual(await json(f.bindingPath),f.binding);
+  assert.equal((await json(path.join(f.root,'current-release.json'))).commit,'a'.repeat(40));
+  assert.equal((await json(path.join(f.root,'upgrade.json'))).state,'rolled-back');
+});
+
+test('recovery cannot reclaim an upgrade lock owned by a live process',async t=>{
+  const f=await fixture(t);
+  const lock=path.join(f.root,'upgrade.lock');await fs.writeFile(lock,String(process.pid));
+  await assert.rejects(recoverWindowsRelease(f),/Upgrade process still exists/);
+  assert.equal(await fs.readFile(lock,'utf8'),String(process.pid));
+  assert.deepEqual(f.calls,[]);
+});
+
+test('binding changes since database verification stop upgrade before backup or mutation',async t=>{
+  const f=await fixture(t);
+  const changed={...f.binding,activationId:crypto.randomUUID(),generation:2,database:{database:'restored_shop'}};
+  await atomic(f.bindingPath,changed);
+  await assert.rejects(applyWindowsRelease({...f,expectedBinding:f.binding}),/binding changed/);
+  assert.deepEqual(f.calls,[]);
+  assert.deepEqual(await json(f.bindingPath),changed);
+  assert.equal((await json(path.join(f.root,'current-release.json'))).commit,'a'.repeat(40));
+  await assert.rejects(fs.access(path.join(f.root,'upgrade.json')),error=>error.code==='ENOENT');
+});
+
+test('new upgrade refuses a standby database held by an unfinished recovery handoff',async t=>{
+  const f=await fixture(t),held={...f.binding,billingMode:'standby',handoffId:crypto.randomUUID()};
+  await atomic(f.bindingPath,held);
+  await assert.rejects(applyWindowsRelease({...f,expectedBinding:held}),/not ready for upgrade/);
+  assert.deepEqual(f.calls,[]);
+  assert.deepEqual(await json(f.bindingPath),held);
+  assert.equal((await json(path.join(f.root,'current-release.json'))).commit,'a'.repeat(40));
+});

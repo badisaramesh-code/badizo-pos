@@ -1,6 +1,12 @@
 const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
 const {atomic,json}=require('./recoveryControlFiles');
 const hash=data=>crypto.createHash('sha256').update(data).digest('hex');
+function assertBindingSnapshot(binding,expected){
+  if(!expected)return;
+  const fields=['shopId','activationId','generation','phase','billingMode','handoffId'];
+  const databaseFields=['host','port','user','password','database'];
+  if(fields.some(key=>binding[key]!==expected[key])||databaseFields.some(key=>binding.database?.[key]!==expected.database?.[key]))throw Error('Runtime binding changed after database verification. Retry upgrade planning.');
+}
 function safeFile(name){
   return typeof name==='string'&&name.length<240&&!name.includes('\\')&&!name.includes(':')&&!name.startsWith('/')&&name.split('/').every(part=>part&&part!=='.'&&part!=='..')
     &&(!/\.sql$/i.test(name)||/^database\/migrations\/optional-sync-[a-z-]+\.sql$/.test(name))
@@ -45,7 +51,7 @@ async function stageRelease(source,root){
 }
 // Adapters are supplied by a protected on-host installer configuration, never
 // by a web request or by release contents. No database is restored on rollback.
-async function applyWindowsRelease({root,bindingPath,shopId,release,adapters}){
+async function applyWindowsRelease({root,bindingPath,shopId,release,adapters,expectedBinding}){
   if(!path.isAbsolute(root)||!path.isAbsolute(bindingPath))throw Error('Absolute protected upgrade paths required.');
   const manifest=await verifyRelease(release),pointerPath=path.join(root,'current-release.json'),journalPath=path.join(root,'upgrade.json');
   if(release!==path.join(root,'releases',manifest.commit))throw Error('Only a staged release can be installed.');
@@ -54,7 +60,8 @@ async function applyWindowsRelease({root,bindingPath,shopId,release,adapters}){
   let journal,committed=false;
   try{
     const binding=await json(bindingPath);
-    if(binding.shopId!==shopId||binding.phase!=='active')throw Error('Shop binding is not ready for upgrade.');
+    assertBindingSnapshot(binding,expectedBinding);
+    if(binding.shopId!==shopId||binding.phase!=='active'||binding.handoffId)throw Error('Shop binding is not ready for upgrade.');
     let previousJournal;try{previousJournal=await json(journalPath);}catch(error){if(error.code!=='ENOENT')throw error;}
     if(previousJournal&&!['complete','rolled-back'].includes(previousJournal.state))throw Error('Interrupted upgrade requires recovery inspection; do not overwrite its journal.');
     const previous=await json(pointerPath);
@@ -90,7 +97,7 @@ async function applyWindowsRelease({root,bindingPath,shopId,release,adapters}){
     throw error;
   }finally{await lock.close();await fs.unlink(lockPath);}
 }
-async function recoverWindowsRelease({root,bindingPath,shopId,adapters}){
+async function recoverWindowsRelease({root,bindingPath,shopId,adapters,expectedBinding}){
   const lockPath=path.join(root,'upgrade.lock');
   try{
     const pid=Number(await fs.readFile(lockPath,'utf8'));if(!Number.isSafeInteger(pid)||pid<=0)throw Error('Invalid upgrade lock; inspect it manually.');
@@ -100,6 +107,7 @@ async function recoverWindowsRelease({root,bindingPath,shopId,adapters}){
   const lock=await fs.open(lockPath,'wx',0o600);await lock.writeFile(String(process.pid));await lock.sync();
   try{
     const journalPath=path.join(root,'upgrade.json'),journal=await json(journalPath),binding=await json(bindingPath),pointerPath=path.join(root,'current-release.json'),pointer=await json(pointerPath);
+    assertBindingSnapshot(binding,expectedBinding);
     if(journal.shopId!==shopId||binding.shopId!==shopId||journal.binding.activationId!==binding.activationId)throw Error('Upgrade recovery identity differs.');
     for(const item of [journal.previous,journal.target])if(item.directory!==path.join(root,'releases',item.commit)||!/^[a-f0-9]{40}$/.test(item.commit))throw Error('Invalid recovery release pointer.');
     if(['complete','rolled-back'].includes(journal.state))return {state:journal.state};

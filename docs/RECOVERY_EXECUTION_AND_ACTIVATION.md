@@ -10,7 +10,7 @@ These are opt-in installation features. Normal POS startup does not install the 
 - **Use cloud emergency billing** is cloud-only and requires the owner to confirm local counters have stopped. It does not remotely fence an unreachable local server or claim that daily backups contain unsent transactions.
 - **Use verified restore for local billing** switches to a separately restored and verified database. This is replacement, not merge. The previous database remains intact for later reconciliation.
 
-The local and cloud emergency actions are manual modes. A coordinated automatic cross-server handoff, network-partition fencing and proof that all business-event profiles have converged are not established by these controls. Never present an emergency activation as “fully synchronized.”
+The local and cloud emergency actions are manual modes. The separate coordinated **Use Cloud / Return to Local** workflow now pauses the previous writer, drains supported pending transfers and verifies peer activation before completing. A lost activation reply leaves the source paused until status is known. Emergency activation remains distinct: it cannot fence an unreachable server or prove that missing source transactions were transferred. Never present emergency activation as “fully synchronized,” and never permit intentional parallel billing.
 
 ## Conflict execution
 
@@ -18,7 +18,7 @@ Install `database/migrations/optional-sync-recovery-applications.sql` explicitly
 
 Use `createPosSyncReceiver` for an enrolled receiver. It includes the supported business handlers and the `pos.recovery.product-resolved` handler. Supply a protected review store locally. Eligible incoming conflicts create immutable reviews linked to their original events. Applying the review records the incoming event receipt in the same transaction as the chosen values and outgoing resolution. Resolution packets include covered older outgoing field edits; receivers retain their hashes as receipts, so those edits cannot undo the chosen result. The sender prioritizes these resolution packets to prevent an older conflicting edit from blocking them indefinitely. Both queues can then acknowledge their original events normally.
 
-Only name/price conflicts qualify. A product creation/deletion, stock change, purchase dependency or financial conflict is not silently converted to an owner bulk overwrite. Pending unsupported event profiles can still block transfer and need their domain-specific reconciliation. The review executor does not itself start a sync worker or provision peer credentials.
+Only name/price conflicts qualify for this bulk product-choice path. Separate audited stock and supplier-payment correction tools handle their supported cases; they do not discard genuine sales or treat arbitrary financial differences as a local/cloud overwrite. Product creation/deletion and unresolved purchase dependencies can still block transfer. The review executor does not itself provision peer credentials.
 
 ## Runtime binding and supervisor
 
@@ -52,4 +52,4 @@ Failed rollback leaves billing paused for inspection. After an abrupt supervisor
 
 The isolated MySQL/API drills exercised manual local/cloud conflict choices, automatic emergency local preference, stale-preview rejection, retry deduplication and both blocked queues draining after resolution. The activation drill used the actual POS process on a separate port, tested owner HTTP controls, cloud-standby activation, paused writes, real MySQL candidate verification, failed-start rollback and persistence across process restart. Original production databases and services were not switched.
 
-Shop rollout still requires the actual Windows service identity/start-stop behavior, process ownership, MySQL configuration, protected-file permissions, backup destination and physical printers/counters to be checked. Do not enable these controls against the shop database until those installation checks pass. This work does not certify the remaining promotion/import workflows or the entire product as production-ready.
+Shop rollout still requires the actual Windows service identity/start-stop behavior, process ownership, MySQL configuration, protected-file permissions, backup destination and physical printers/counters to be checked. Do not enable these controls against the shop database until those installation checks pass. Promotions and loyalty remain outside the requested supported recovery profile. Import coverage and older-backup recovery require their own acceptance evidence; these activation drills do not certify the entire product as production-ready.

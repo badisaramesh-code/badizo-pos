@@ -132,8 +132,55 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
   async function tick(){
     await fs.mkdir(config.directory,{recursive:true,mode:0o700});
     let request;try{request=await json(requestPath);}catch(error){if(error.code==='ENOENT')return;throw error;}
-    if(request.shopId!==config.shopId||!['activate-restore','standby','emergency-local','emergency-cloud','use-cloud','use-local','handoff-standby','handoff-active'].includes(request.kind)||!/^[a-f0-9-]{36}$/.test(request.id||''))throw Error('Invalid recovery request.');
+    if(request.shopId!==config.shopId||!['activate-restore','standby','emergency-local','emergency-cloud','use-cloud','use-local','handoff-standby','handoff-active','reconnect-baseline','copy-lost-local','baseline-stage','baseline-release','prepare-baseline','prepare-lost-local','prepare-export','finish-recovery-cancel'].includes(request.kind)||!/^[a-f0-9-]{36}$/.test(request.id||''))throw Error('Invalid recovery request.');
     let operation;try{operation=await json(operationPath);}catch(error){if(error.code!=='ENOENT')throw error;}
+    if(['prepare-baseline','prepare-lost-local','prepare-export','finish-recovery-cancel'].includes(request.kind)){
+      const op={id:request.id,kind:request.kind,handoffId:request.handoffId||null,mode:request.mode||null,actor:request.actor,shopId:config.shopId,state:'preparing',startedAt:operation?.id===request.id?operation.startedAt:new Date().toISOString()};
+      try{
+        if(operation?.id!==request.id&&(await binding()).generation!==request.expectedGeneration)throw Error('Runtime state changed.');
+        const adapters={runCommand,waitReady,acquireDatabaseFence},preparation=require('./recoveryPreparation').createRecoveryPreparation(config,adapters);
+        await record(op);
+        if(request.kind==='finish-recovery-cancel')await preparation.finishCancellation();
+        else if(request.kind==='prepare-export')await preparation.export(request.handoffId,request.mode);
+        else{
+          const notify=async state=>{op.state=state;await record(op);};
+          const acknowledgeLostLocal=request.kind==='prepare-lost-local';
+          await preparation.prepare({acknowledgeLostLocal,record:notify});
+          await require('./recoveryBaselineActivation').createBaselineActivation(config,adapters).reconnect({acknowledgeLostLocal,record:notify});
+        }
+        await record({...op,state:'complete',message:request.kind==='finish-recovery-cancel'?'Cancelled cloud recovery hold cleared. Cloud remains standby; use Sync Local and Cloud to exchange pending changes.':request.kind==='prepare-export'?'Cloud snapshot and candidate are verified. Cloud remains paused.':request.kind==='prepare-lost-local'?'Cloud copy recovery completed. Local billing and synchronization are ready; cloud is standby. Original local data was retained separately, not merged.':'Verified recovery completed. Local billing and synchronization are ready; cloud is standby.'});
+      }catch(error){
+        const known=['Source changed since the snapshot. Export a fresh paused copy or reconcile local changes first.','Insufficient disk space for recovery. Free space before retrying.'];
+        let installing=false;try{installing=(await json(path.join(config.directory,'baseline-node.json'))).state==='installing';}catch{}
+        await record({...op,state:installing?'retrying':'failed',message:known.includes(error.message)?error.message:'Recovery preparation or reconnection did not finish. Original databases and recovery files were retained. Check recovery status and retry; do not start billing on both servers.'});
+        if(installing)return;
+      }
+      await fs.unlink(requestPath);return;
+    }
+    if(['reconnect-baseline','copy-lost-local','baseline-stage','baseline-release'].includes(request.kind)){
+      const op={id:request.id,kind:request.kind,handoffId:request.handoffId||null,actor:request.actor,shopId:config.shopId,state:'preparing',startedAt:operation?.id===request.id?operation.startedAt:new Date().toISOString()};
+      try{
+        if(operation?.id!==request.id&&(await binding()).generation!==request.expectedGeneration)throw Error('Runtime state changed.');
+        const recovery=require('./recoveryBaselineActivation').createBaselineActivation(config,{runCommand,waitReady,acquireDatabaseFence});
+        const context=await require('./recoveryBaselineActivation').loadPlan(config);
+        if(request.kind.startsWith('baseline-')&&request.handoffId!==context.plan.operationId)throw Error('Recovery identity changed.');
+        await record(op);
+        if(request.kind==='baseline-stage')await recovery.stage(context.plan.operationId);
+        else if(request.kind==='baseline-release')await recovery.release(context.plan.operationId);
+        else await recovery.reconnect({acknowledgeLostLocal:request.kind==='copy-lost-local',record:async state=>{op.state=state;await record(op);}});
+        await record({...op,state:'complete',message:request.kind==='copy-lost-local'?'Cloud copy recovery completed. Local is active; cloud is standby. Unrecoverable local changes were not merged.':request.kind==='reconnect-baseline'?'Verified pair reconnected. Local is active and cloud is standby.':'Prepared recovery node step completed.'});
+      }catch(error){
+        const known=['Source changed since the snapshot. Export a fresh paused copy or reconcile local changes first.','Candidate business records changed.','Candidate changed while awaiting activation.','Cloud recovery did not confirm the requested state. Keep billing paused and retry.'];
+        let installing=false;
+        try{const journal=await json(path.join(config.directory,'baseline-node.json'));installing=journal.state==='installing';}catch{}
+        await record({...op,state:installing?'retrying':'failed',message:known.includes(error.message)?error.message:'Recovery is not confirmed. Both original databases were retained. Inspect the prepared recovery status and retry the same operation; do not start cloud billing.'});
+        // Configuration/binding may have changed while the application was
+        // stopped. Keep the request so the independent supervisor can recover
+        // even if the application HTTP endpoint cannot start yet.
+        if(installing)return;
+      }
+      await fs.unlink(requestPath);return;
+    }
     if(['use-cloud','use-local'].includes(request.kind))return coordinated(request,operation?.id===request.id?operation:null);
     if(operation?.id===request.id){
       if(!terminal.has(operation.state)){
@@ -148,6 +195,15 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
     try{
       const old=await binding();
       if(old.generation!==request.expectedGeneration)throw Error('Runtime state changed.');
+      if(request.kind==='emergency-local'&&old.handoffId&&config.preparationConfigPath){
+        // Explicit owner confirmation may resume the unchanged original local
+        // database after a FAILED preparation, even without internet. Never
+        // use this path to roll back an installed or possibly used candidate.
+        const preparation=require('./recoveryPreparation').createRecoveryPreparation(config,{runCommand,waitReady,acquireDatabaseFence});
+        const state=await preparation.status();
+        if(state.operationId!==old.handoffId||state.canResumeOriginal!==true)throw Error('Original local recovery cannot be resumed safely.');
+        await preparation.cancelLocalPreparation();
+      }
       let candidate;
       if(request.kind==='activate-restore'){
         if(config.nodeRole!=='local-server')throw Error('Restore activation is local only.');

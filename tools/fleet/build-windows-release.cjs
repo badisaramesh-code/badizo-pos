@@ -8,7 +8,7 @@ async function main(){
   if(!path.isAbsolute(output||''))throw Error('Absolute output directory required.');
   const buildEnvironment=await require('../../backend/services/releaseBuildEnvironment').releaseBuildEnvironment(path.join(root,'frontend'),path.join(output,'frontend/build'));
   await fs.mkdir(output);
-  const tracked=git(['ls-tree','-r','--name-only',commit,'--','backend','database/migrations','tools/fleet','scripts/windows/upgrade-enrolled-pos.bat','package.json']).trim().split('\n').filter(safeFile);
+  const tracked=git(['ls-tree','-r','--name-only',commit,'--','backend','database/migrations','tools/fleet','scripts/windows/upgrade-enrolled-pos.bat','package.json','docs/WINDOWS_ENROLLED_UPGRADES.md','docs/SHOP_VISIT_AND_RECOVERY.md','docs/SYNC_SCHEMA_INSTALLER.md','docs/RECOVERY_BASELINE_REBUILD.md','docs/RECOVERY_EXECUTION_AND_ACTIVATION.md','docs/RECOVERY_PREPARATION.md','docs/CLOUD_SYNC_CONFIGURATION.md']).trim().split('\n').filter(safeFile);
   for(const name of tracked){const target=path.join(output,...name.split('/'));await fs.mkdir(path.dirname(target),{recursive:true});await fs.writeFile(target,execFileSync('git',['show',commit+':'+name],{cwd:root,windowsHide:true,maxBuffer:32*1024*1024}),{flag:'wx'});}
   async function dependencies(folder,prefix){for(const entry of await fs.readdir(folder,{withFileTypes:true})){
     const name=prefix+'/'+entry.name;if(entry.isSymbolicLink())throw Error('Dependency links cannot be packaged.');

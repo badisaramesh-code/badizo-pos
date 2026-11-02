@@ -32,7 +32,7 @@ function status() {
 }
 function middleware(req,res,next) {
   if (!process.env.BADIZO_RUNTIME_BINDING || ['GET','HEAD','OPTIONS'].includes(req.method)
-    || /^\/(auth\/(login|logout|logout-beacon)|recovery-control(?:\/|$))/.test(req.path)) return next();
+    || /^\/(auth\/(login|logout|logout-beacon)|recovery-control(?:\/|$)|recovery-baseline(?:\/|$)|recovery-preparation(?:\/|$))/.test(req.path)) return next();
   try {
     const current = read();
     const recoveryWork = /^\/(recovery-review|recovery-cases|staged-restore)(?:\/|$)/.test(req.path) || (!!process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/sync\/(events|feed\/ack|handoff(?:\/flush)?)$/.test(req.path));
