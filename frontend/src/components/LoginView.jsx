@@ -65,24 +65,31 @@ export default function LoginView({ onLogin }) {
   const fixedLoginUser = fixedLoginUserFromUrl();
   const fixedSystemMatch = fixedLoginUser.match(/^counter([1-6])$/i);
   const assignedSystemNo = fixedSystemMatch?.[1] || '1';
-  const isSecurityLogin = loginMode === 'security';
+  const effectiveLoginMode = loginMode;
+  const isSecurityLogin = effectiveLoginMode === 'security';
+  const defaultLoginOptions = useMemo(
+    () => FALLBACK_LOGIN_OPTIONS,
+    []
+  );
   const initialOptions = useMemo(() => {
-    const modeOptions = filterLoginOptions(FALLBACK_LOGIN_OPTIONS, loginMode);
-    return fixedLoginUser ? modeOptions.filter((option) => option.username === fixedLoginUser) : modeOptions;
-  }, [loginMode, fixedLoginUser]);
+    const modeOptions = filterLoginOptions(defaultLoginOptions, effectiveLoginMode);
+    return fixedLoginUser
+      ? modeOptions.filter((option) => option.username === fixedLoginUser)
+      : modeOptions;
+  }, [defaultLoginOptions, effectiveLoginMode, fixedLoginUser]);
   const [username, setUsername] = useState(initialOptions[0]?.username || fixedLoginUser || 'admin1');
   const [systemNo] = useState(assignedSystemNo);
   const [selectedCounterNo, setSelectedCounterNo] = useState(assignedSystemNo);
   const [personName, setPersonName] = useState(
-    loginMode === 'counter' || fixedSystemMatch ? `counter${assignedSystemNo}` : ''
+    effectiveLoginMode === 'counter' || fixedSystemMatch ? `counter${assignedSystemNo}` : ''
   );
   const [password, setPassword] = useState('');
-  const [loginOptions, setLoginOptions] = useState(initialOptions.length ? initialOptions : FALLBACK_LOGIN_OPTIONS);
+  const [loginOptions, setLoginOptions] = useState(initialOptions.length ? initialOptions : defaultLoginOptions);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const selectedLogin = loginOptions.find((option) => option.username === username);
   const isFixedLogin = Boolean(fixedLoginUser);
-  const isCounterLogin = loginMode === 'counter' || isCounterLoginOption(selectedLogin, username);
+  const isCounterLogin = effectiveLoginMode === 'counter' || isCounterLoginOption(selectedLogin, username);
 
   useEffect(() => {
     if (!isCounterLogin) return;
@@ -103,11 +110,11 @@ export default function LoginView({ onLogin }) {
         if (!isMounted || options.length === 0) return;
 
         const mergedOptions = mergeLoginOptions(options);
-        const filteredOptions = filterLoginOptions(mergedOptions, loginMode);
+        const filteredOptions = filterLoginOptions(mergedOptions, effectiveLoginMode);
         const fixedOptions = fixedLoginUser
           ? filteredOptions.filter((option) => option.username === fixedLoginUser)
           : filteredOptions;
-        const visibleOptions = fixedOptions.length ? fixedOptions : (filteredOptions.length ? filteredOptions : mergedOptions);
+        const visibleOptions = fixedOptions.length ? fixedOptions : (filteredOptions.length ? filteredOptions : defaultLoginOptions);
         setLoginOptions(visibleOptions);
         setUsername((currentUsername) => (
           visibleOptions.some((option) => option.username === currentUsername)
@@ -116,7 +123,7 @@ export default function LoginView({ onLogin }) {
         ));
       } catch (err) {
         if (isMounted) {
-          setLoginOptions(initialOptions.length ? initialOptions : FALLBACK_LOGIN_OPTIONS);
+          setLoginOptions(initialOptions.length ? initialOptions : defaultLoginOptions);
         }
       }
     }
@@ -125,7 +132,7 @@ export default function LoginView({ onLogin }) {
     return () => {
       isMounted = false;
     };
-  }, [loginMode, fixedLoginUser, initialOptions]);
+  }, [defaultLoginOptions, effectiveLoginMode, fixedLoginUser, initialOptions]);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -156,7 +163,9 @@ export default function LoginView({ onLogin }) {
         <div className="login-logo-wrap">
           <img className="login-brand-image" src="/badizo-logo-transparent.png" alt="Badizo" />
         </div>
-        <h1 className="brand-title" style={{ color: 'var(--brand-dark)', textAlign: 'center' }}>{isSecurityLogin ? 'Gate Pass' : 'POS'}</h1>
+        <h1 className="brand-title" style={{ color: 'var(--brand-dark)', textAlign: 'center' }}>
+          {isSecurityLogin ? 'Gate Pass' : 'POS'}
+        </h1>
         <p className="muted" style={{ textAlign: 'center' }}>
           {isSecurityLogin ? 'Security login for inward and outward stock' : 'Login to continue billing'}
         </p>

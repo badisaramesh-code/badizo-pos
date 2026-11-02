@@ -15,8 +15,10 @@ const api = axios.create({
   timeout: 25000
 });
 
-const AUTH_TOKEN_KEY = 'badizo_token';
-const AUTH_USER_KEY = 'badizo_user';
+const AUTH_KEYS = {
+  token: 'badizo_token',
+  user: 'badizo_user'
+};
 let exitLogoutSent = false;
 
 function getAuthStorage() {
@@ -24,12 +26,12 @@ function getAuthStorage() {
 }
 
 function clearLegacyAuthSession() {
-  window.localStorage.removeItem(AUTH_TOKEN_KEY);
-  window.localStorage.removeItem(AUTH_USER_KEY);
+  window.localStorage.removeItem(AUTH_KEYS.token);
+  window.localStorage.removeItem(AUTH_KEYS.user);
 }
 
 api.interceptors.request.use((config) => {
-  const token = getAuthStorage().getItem(AUTH_TOKEN_KEY);
+  const token = getAuthStorage().getItem(AUTH_KEYS.token);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -63,19 +65,19 @@ api.interceptors.response.use(
 
 export function setAuthSession(token, user) {
   clearLegacyAuthSession();
-  getAuthStorage().setItem(AUTH_TOKEN_KEY, token);
-  getAuthStorage().setItem(AUTH_USER_KEY, JSON.stringify(user));
+  getAuthStorage().setItem(AUTH_KEYS.token, token);
+  getAuthStorage().setItem(AUTH_KEYS.user, JSON.stringify(user));
 }
 
 export function clearAuthSession() {
-  getAuthStorage().removeItem(AUTH_TOKEN_KEY);
-  getAuthStorage().removeItem(AUTH_USER_KEY);
+  getAuthStorage().removeItem(AUTH_KEYS.token);
+  getAuthStorage().removeItem(AUTH_KEYS.user);
   clearLegacyAuthSession();
 }
 
 export function getStoredUser() {
   clearLegacyAuthSession();
-  const rawUser = getAuthStorage().getItem(AUTH_USER_KEY);
+  const rawUser = getAuthStorage().getItem(AUTH_KEYS.user);
   if (!rawUser) return null;
 
   try {
@@ -99,7 +101,7 @@ export async function login(username, password, personName = '', options = {}) {
 }
 
 export async function logout() {
-  const token = getAuthStorage().getItem(AUTH_TOKEN_KEY);
+  const token = getAuthStorage().getItem(AUTH_KEYS.token);
   await api.post('/auth/logout', {}, {
     timeout: 1500,
     headers: token ? { Authorization: `Bearer ${token}` } : undefined
@@ -107,7 +109,7 @@ export async function logout() {
 }
 
 export function recordLogoutOnExit() {
-  const token = getAuthStorage().getItem(AUTH_TOKEN_KEY);
+  const token = getAuthStorage().getItem(AUTH_KEYS.token);
   if (!token || exitLogoutSent) return;
 
   exitLogoutSent = true;
@@ -161,7 +163,7 @@ export async function pingBackendHealth(timeoutMs = 2500, options = {}) {
     let user = {};
     if (includeUser) {
       try {
-        user = JSON.parse(getAuthStorage().getItem(AUTH_USER_KEY) || '{}') || {};
+        user = JSON.parse(getAuthStorage().getItem(AUTH_KEYS.user) || '{}') || {};
       } catch (_err) {
         user = {};
       }
@@ -453,7 +455,7 @@ export async function decideReportApproval(id, approved) {
 }
 async function approvedReportGet(kind, params) {
   if (getStoredUser()?.role !== 'COUNTER') return api.get('/reports/' + kind, { params });
-  const token = getAuthStorage().getItem(AUTH_TOKEN_KEY);
+  const token = getAuthStorage().getItem(AUTH_KEYS.token);
   const pending = { cancelled: false };
   pendingReportApprovals.add(pending);
   window.dispatchEvent(new CustomEvent('report-approval-wait', { detail: pendingReportApprovals.size }));
@@ -462,16 +464,16 @@ async function approvedReportGet(kind, params) {
     ({ data: request } = await api.post('/reports/approvals', { kind, params }));
     const deadline = Date.now() + 10 * 60 * 1000;
     while (request.status === 'PENDING') {
-      if (pending.cancelled || token !== getAuthStorage().getItem(AUTH_TOKEN_KEY)) throw new Error('Report request cancelled.');
+      if (pending.cancelled || token !== getAuthStorage().getItem(AUTH_KEYS.token)) throw new Error('Report request cancelled.');
       if (Date.now() >= deadline) throw new Error('Server approval timed out. Please request again.');
       await new Promise(resolve => setTimeout(resolve, 1500));
       request = (await api.get('/reports/approvals/' + request.id)).data;
     }
-    if (pending.cancelled || token !== getAuthStorage().getItem(AUTH_TOKEN_KEY)) throw new Error('Report request cancelled.');
+    if (pending.cancelled || token !== getAuthStorage().getItem(AUTH_KEYS.token)) throw new Error('Report request cancelled.');
     if (request.status !== 'APPROVED') throw new Error('Server rejected the report request.');
     return await api.get('/reports/' + kind, { params, headers: { 'X-Report-Approval': request.id } });
   } finally {
-    if (request?.status === 'PENDING' && token === getAuthStorage().getItem(AUTH_TOKEN_KEY)) {
+    if (request?.status === 'PENDING' && token === getAuthStorage().getItem(AUTH_KEYS.token)) {
       await api.delete('/reports/approvals/' + request.id).catch(() => {});
     }
     pendingReportApprovals.delete(pending);
@@ -1095,76 +1097,6 @@ export async function saveUser(user) {
 export async function fetchAuditLogs(limit = 100) {
   const { data } = await api.get('/audit', { params: { limit } });
   return Array.isArray(data) ? data : [];
-}
-
-export async function fetchHospitalityPublic() {
-  const { data } = await api.get('/hospitality/public');
-  return data;
-}
-
-export async function fetchHospitalitySummary() {
-  const { data } = await api.get('/hospitality/summary');
-  return data;
-}
-
-export async function fetchHospitalityProfile() {
-  const { data } = await api.get('/hospitality/profile');
-  return data.profile || {};
-}
-
-export async function saveHospitalityProfile(payload) {
-  const { data } = await api.post('/hospitality/profile', payload);
-  return data;
-}
-
-export async function fetchHospitalityContent(type = 'GALLERY') {
-  const { data } = await api.get('/hospitality/content', { params: { type } });
-  return Array.isArray(data.rows) ? data.rows : [];
-}
-
-export async function saveHospitalityContent(payload) {
-  const { data } = await api.post('/hospitality/content', payload);
-  return data;
-}
-
-export async function deleteHospitalityContent(id) {
-  const { data } = await api.delete(`/hospitality/content/${encodeURIComponent(id)}`);
-  return data;
-}
-
-export async function fetchHospitalityBookings({ from, to, type = 'ALL' } = {}) {
-  const { data } = await api.get('/hospitality/bookings', { params: { from, to, type } });
-  return Array.isArray(data.rows) ? data.rows : [];
-}
-
-export async function saveHospitalityBooking(payload) {
-  const { data } = await api.post('/hospitality/bookings', payload);
-  return data;
-}
-
-export async function saveHospitalityPublicBooking(payload) {
-  const { data } = await api.post('/hospitality/public/bookings', payload);
-  return data;
-}
-
-export async function fetchHospitalityTasks({ from, to } = {}) {
-  const { data } = await api.get('/hospitality/tasks', { params: { from, to } });
-  return Array.isArray(data.rows) ? data.rows : [];
-}
-
-export async function saveHospitalityTask(payload) {
-  const { data } = await api.post('/hospitality/tasks', payload);
-  return data;
-}
-
-export async function fetchHospitalityStockMovements({ from, to } = {}) {
-  const { data } = await api.get('/hospitality/stock-movements', { params: { from, to } });
-  return Array.isArray(data.rows) ? data.rows : [];
-}
-
-export async function saveHospitalityStockMovement(payload) {
-  const { data } = await api.post('/hospitality/stock-movements', payload);
-  return data;
 }
 
 export default api;
