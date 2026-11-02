@@ -13,7 +13,7 @@ test('owner review API enforces identity, rejects forged authors and retains saf
   t.after(()=>fs.rm(directory,{recursive:true,force:true}));
   const store=createRecoveryReviewStore({directory,shopId:'HFM001'});
   const {plan}=await store.create({shopId:'HFM001',baselineId:'seed',localCheckpoint:'l1',cloudCheckpoint:'c1',fields:[
-    {kind:'product',recordId:'p1',field:'selling_price',base:1,local:2,cloud:3}
+    {kind:'product',recordId:'p1',field:'sale_price',base:1,local:2,cloud:3}
   ]});
   const app=express(); app.use(express.json({limit:'1mb'}));
   app.use('/review',createRouter({store,shopId:'HFM001'}));
@@ -38,3 +38,4 @@ test('owner review API enforces identity, rejects forged authors and retains saf
   assert.equal((await request('SERVER','/review/not-a-plan')).status,400);
   assert.equal((await request('SERVER',url+'/activate',{})).status,404);
 });
+

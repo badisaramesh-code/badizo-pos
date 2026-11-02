@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { compareField, createPlan, resolveProductConflicts } = require('../services/recoveryMergePolicy');
-const field = { kind:'product',recordId:'stable-product-uuid',field:'selling_price',base:100,local:110,cloud:120 };
+const field = { kind:'product',recordId:'stable-product-uuid',field:'sale_price',base:100,local:110,cloud:120 };
 const input = {shopId:'HFM001',baselineId:'seed-1',localCheckpoint:'local-10',cloudCheckpoint:'cloud-20',fields:[field]};
 test('three-way comparison preserves changes made on either side and identifies true conflicts',()=>{
   assert.deepEqual(compareField({base:100,local:110,cloud:100}),{state:'local-only',value:110});
@@ -34,3 +34,4 @@ test('stale or altered previews, duplicate records and unknown conflicts fail cl
   assert.throws(()=>resolveProductConflicts(plan,decision));
   assert.throws(()=>createPlan({...input,fields:[field,field]}));
 });
+

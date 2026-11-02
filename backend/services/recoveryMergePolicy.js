@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 // Deliberately excludes stock, balances, tax and transaction values.
-const BULK_PRODUCT_FIELDS = new Set(['name', 'selling_price', 'category']);
+const BULK_PRODUCT_FIELDS = new Set(['product_name', 'sale_price']);
 function scalar(value) {
   return value === null || typeof value === 'string' || typeof value === 'boolean'
     || (typeof value === 'number' && Number.isFinite(value));

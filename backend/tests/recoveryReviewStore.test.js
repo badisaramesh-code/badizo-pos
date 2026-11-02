@@ -5,8 +5,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { createRecoveryReviewStore } = require('../services/recoveryReviewStore');
 const input = {shopId:'HFM001',baselineId:'seed',localCheckpoint:'l1',cloudCheckpoint:'c1',fields:[
-  {kind:'product',recordId:'p1',field:'selling_price',base:10,local:11,cloud:12},
-  {kind:'product',recordId:'p2',field:'name',base:'old',local:'local',cloud:'cloud'},
+  {kind:'product',recordId:'p1',field:'sale_price',base:10,local:11,cloud:12},
+  {kind:'product',recordId:'p2',field:'product_name',base:'old',local:'local',cloud:'cloud'},
   {kind:'financial',recordId:'payment1',field:'amount',base:10,local:11,cloud:12}
 ]};
 async function setup(t) {
@@ -45,3 +45,4 @@ test('cross-shop access, invalid paths and corrupted records are rejected',async
   await fs.writeFile(filename,JSON.stringify(record));
   await assert.rejects(store.read(plan.id),/Invalid recovery history/);
 });
+

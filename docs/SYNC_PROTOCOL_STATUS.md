@@ -37,3 +37,11 @@ This event records checkout evidence. It does not yet implement target-side invo
 The same opt-in capture now also runs before committing `/invoice/void` and `/return`. Events record the invoice state, related checkout records and return headers/lines, with the triggering return number explicitly identified. A cancellation must contain CANCELLED state, and a return must contain its referenced return record; incomplete captures fail the caller's transaction. Existing default installations do not query sync tables on these routes.
 
 The real `validate-invoice-lifecycle.cjs` drill passed against the isolated validation POS: actual checkout followed by a return, another checkout followed by cancellation, rejected repeat actions, exactly four source events and restored stock quantity. This is source capture, not target application. Purchases, master-data changes, account adjustments, payroll, other writes and cloud/local reconciliation still need integration. None of these capture flags are enabled on the shop or production cloud.
+
+## Receiving-side product fields
+
+The merge allowlist now uses the real POS schema fields `product_name` and `sale_price`; the earlier illustrative names `name` and `selling_price` are not accepted. Regenerate old validation review fixtures using the actual field names. No production reviews were deployed under the illustrative contract.
+
+`productSyncHandler.applyProductFields` locks a product by barcode, validates allowed fields and exact money format, checks every expected prior value, and applies the selected values using the receiver transaction. Missing products, unsupported fields, duplicate field assignments or stale values fail before update. Stock is not overwritten. The handler is not mounted/enabled for production; it must be connected to authenticated, authorized resolution events and authority controls before deployment.
+
+The real MySQL `validate-product-apply.cjs` drill passed in an isolated restored database: product price changed, duplicate event applied once, stale edit rejected with its receipt rolled back, stock unchanged and original price restored through a second event. This does not implement invoice/stock reconciliation, owner-decision delivery, master-data capture or general multi-table merging.
