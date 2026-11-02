@@ -1,5 +1,6 @@
 const express = require('express');
 const { updatePriceListWithCapture } = require('../services/productSyncCapture');
+const { captureStockAdjustment } = require('../services/stockAdjustmentSync');
 const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
@@ -1658,6 +1659,7 @@ router.post('/stock-adjustments', authenticate, authorize('SERVER', 'ADMIN'), as
       connection
     });
 
+    await captureStockAdjustment(connection, adjustmentResult.insertId);
     await connection.commit();
     res.json({
       success: true,
