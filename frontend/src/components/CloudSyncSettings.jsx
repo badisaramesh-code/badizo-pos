@@ -48,7 +48,7 @@ export default function CloudSyncSettings() {
     <div className="panel system-folder-panel">
       <div className="panel-header green"><h2 className="panel-title">Cloud Sync</h2></div>
       <form className="panel-body form-stack" onSubmit={save}>
-        <p>Update this shop’s cloud billing database with pending changes. Daily full backups to Google Drive continue separately.</p>
+        <p>{status?.service.direction === 'two-way' ? 'Bring pending cloud changes into this local server and send local changes to the cloud.' : 'Update this shop’s cloud billing database with pending changes.'} Daily full backups to Google Drive continue separately.</p>
         {loading && <p className="muted" role="status">Loading cloud sync settings…</p>}
         {status && <div className="change-box" role="status"><strong>{status.service.ready ? 'Cloud connection configured' : 'Cloud sync not configured'}</strong><span>{status.message}</span></div>}
         <label><span className="field-label">Sync frequency</span>
@@ -65,7 +65,7 @@ export default function CloudSyncSettings() {
         {getStoredUser()?.role !== 'SERVER' && <p className="muted">A Server user can change this schedule.</p>}
         <div className="settings-action-row">
           <button className="secondary-button" type="submit" disabled={!mayEdit || saving || loading}>{saving ? 'Saving…' : 'Save Cloud Sync Schedule'}</button>
-          <button className="secondary-button" type="button" onClick={updateNow} disabled={!mayEdit || !status?.service.ready || requesting || status?.manualPending || status?.service.state === 'running'}>{requesting ? 'Queuing…' : status?.manualPending ? 'Cloud update queued' : 'Update Cloud Now'}</button>
+          <button className="secondary-button" type="button" onClick={updateNow} disabled={!mayEdit || !status?.service.ready || requesting || status?.manualPending || status?.service.state === 'running'}>{requesting ? 'Queuing…' : status?.manualPending ? 'Sync queued' : status?.service.direction === 'two-way' ? 'Sync Local and Cloud' : 'Update Cloud Now'}</button>
         </div>
         {status?.service.ready && <p role="status">Transfer status: {status.service.state}.{status.service.state === 'retrying' ? ' Pending changes are retained. The transfer will retry automatically when enabled.' : ''}</p>}
         {error && <p role="alert">{error}</p>}

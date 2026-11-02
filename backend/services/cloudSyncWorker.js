@@ -55,8 +55,9 @@ function createCloudSyncWorker({pool,identity,getSchedule,flush,canTransfer=asyn
       try{
         const result=await flush({limit:batchSize});
         if(result.busy){await connection.execute("UPDATE sync_worker_state SET phase='waiting',retry_at_ms=? WHERE shop_id=? AND installation_id=?",[clock()+30000,...key]);return result;}
-        if(!Number.isInteger(result.acknowledged)||result.acknowledged<0||result.acknowledged>batchSize)throw Error('Invalid sender result.');
-        if(result.acknowledged===batchSize){
+        if(!Number.isInteger(result.acknowledged)||result.acknowledged<0||result.acknowledged>batchSize*2
+          || (Object.hasOwn(result,'hasMore')&&typeof result.hasMore!=='boolean'))throw Error('Invalid sender result.');
+        if(result.hasMore===true || (!Object.hasOwn(result,'hasMore')&&result.acknowledged===batchSize)){
           await connection.execute("UPDATE sync_worker_state SET phase='pending',retry_at_ms=?,failure_count=0 WHERE shop_id=? AND installation_id=?",[clock()+1000,...key]);
         }else{
           const finished=clock(),next=nextScheduledAt(config,new Date(finished));

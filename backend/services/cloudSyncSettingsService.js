@@ -56,7 +56,7 @@ function createCloudSyncSettingsService({
     const worker = await getWorkerState();
     const editable = nodeRole === 'local-server';
     const ready = editable && worker.ready === true;
-    return { ...saved, nodeRole, editable, service: { ready, state: ready ? (worker.state || 'paused') : 'not-configured' },
+    return { ...saved, nodeRole, editable, service: { ready, state: ready ? (worker.state || 'paused') : 'not-configured', direction:worker.direction==='two-way'?'two-way':'upload' },
       lastSuccessAt: worker.lastSuccessAt || null,
       nextRunAt: ready ? (Object.hasOwn(worker,'nextRunAt') ? worker.nextRunAt : nextScheduledAt(saved.config, clock())) : null,
       manualPending: worker.manualPending === true,
