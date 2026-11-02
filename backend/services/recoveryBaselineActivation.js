@@ -13,7 +13,9 @@ async function loadPlan(config){
   const plan=await json(config.baselinePlanPath),report=await json(plan.reportPath);
   if(config.preparationConfigPath){
     const preparation=require('./recoveryPreparation').createRecoveryPreparation(config);
-    if((await preparation.status(plan.operationId)).state==='cancelled')throw Error('This recovery operation was cancelled. Prepare a new verified snapshot.');
+    const latest=await preparation.status();
+    if(latest.operationId!==plan.operationId)throw Error('A newer recovery preparation owns this server.');
+    if(latest.state==='cancelled')throw Error('This recovery operation was cancelled. Prepare a new verified snapshot.');
   }
   const local=config.nodeRole==='local-server',index=local?0:1;
   if(plan.schemaVersion!==1||plan.shopId!==config.shopId||plan.side!==index||!['verified-copy','lost-local-copy'].includes(plan.mode)||!uuid(plan.operationId)||!path.isAbsolute(plan.reportPath||'')||!sha(plan.incomingToken)

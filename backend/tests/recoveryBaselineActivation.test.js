@@ -86,3 +86,12 @@ test('recovery peer authenticates before parsing and accepts only its prepared o
   assert.equal(calls.length,1);assert.equal(calls[0].handoffId,fixture.report.operationId);
   assert.equal(calls[0].kind,'baseline-stage');assert.equal(calls[0].actor,'prepared-recovery-peer');
 });
+test('a newer preparation invalidates an older prepared activation plan',async t=>{
+  const fixture=await setup(t),config=fixture.configs[1],directory=path.join(config.directory,'preparation'),newId=crypto.randomUUID();
+  config.preparationConfigPath=path.join(config.directory,'preparation-config.json');
+  await atomic(config.preparationConfigPath,{schemaVersion:1,shopId:'HFM001',directory,incomingToken:'a'.repeat(64),baselineIncomingToken:'b'.repeat(64),slots:[{restoreConfigPath:path.join(directory,'slot.json')}],dumpExecutable:path.join(directory,'mysqldump'),dumpDefaultsFile:path.join(directory,'defaults.cnf')});
+  await atomic(path.join(directory,'current.json'),{operationId:newId});
+  await atomic(path.join(directory,newId,'preparation.json'),{operationId:newId,mode:'verified-copy',state:'paused',sourceActivationId:(await json(config.bindingPath)).activationId});
+  await assert.rejects(fixture.cloud().stage(fixture.report.operationId),/newer recovery preparation/);
+  assert.equal(fixture.calls.length,0);
+});
