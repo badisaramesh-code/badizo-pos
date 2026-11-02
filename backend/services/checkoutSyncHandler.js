@@ -9,11 +9,12 @@ async function insert(connection,table,row){
   const keys=Object.keys(row).filter(key=>key!=='id');
   if(!keys.length || keys.some(key=>!allowed.has(key) || !/^[a-z_]+$/.test(key)))throw Error('Source and target invoice schemas differ.');
   const values=keys.map(key=>{const value=row[key];if(value!==null && !['string','number','boolean'].includes(typeof value))throw Error('Unexpected invoice field value.');return value;});
-  await connection.execute('INSERT INTO `'+table+'` ('+keys.map(key=>'`'+key+'`').join(',')+') VALUES ('+keys.map(()=>'?').join(',')+')',values);
+  const [result]=await connection.execute('INSERT INTO `'+table+'` ('+keys.map(key=>'`'+key+'`').join(',')+') VALUES ('+keys.map(()=>'?').join(',')+')',values);
+  return result.insertId;
 }
 // Strict first application profile: ordinary invoices without batch allocation,
 // exchanges, promotions or loyalty effects. Unsupported cases remain pending.
-async function applyCheckout(connection,payload){
+async function applyCheckout(connection,payload,context){
   if(!payload || Object.keys(payload).some(key=>!['invoice','items','payments','batchAllocations','loyaltyTransactions'].includes(key)))throw Error('Invalid checkout event.');
   const {invoice,items,payments,batchAllocations,loyaltyTransactions}=payload;
   if(!invoice || typeof invoice.invoice_no!=='string' || !invoice.invoice_no || invoice.invoice_no.length>50
@@ -36,6 +37,9 @@ async function applyCheckout(connection,payload){
   }
   const total=decimal(invoice.grand_total);
   if((gross+50n)/100n!==total || paid!==total)throw Error('Invoice totals do not reconcile.');
+  if(!context || !context.shopId || !context.originInstallationId)throw Error('Authenticated invoice origin required.');
+  const sourceIds=items.map(item=>String(item.id));
+  if(sourceIds.some(id=>! /^[1-9][0-9]{0,15}$/.test(id)) || new Set(sourceIds).size!==items.length)throw Error('Invalid source invoice line identities.');
   // Match products explicitly and lock in stable order. Never manufacture a
   // missing product or overwrite its name/price with an old receipt value.
   for(const barcode of [...quantities.keys()].sort()){
@@ -45,11 +49,15 @@ async function applyCheckout(connection,payload){
     if(batches.length)throw Error('Target batch inventory requires allocation reconciliation.');
   }
   await insert(connection,'invoices',invoice);
-  for(const item of items)await insert(connection,'invoice_items',item);
+  await connection.execute('INSERT INTO sync_invoice_map (shop_id,origin_installation_id,source_invoice_no,target_invoice_no,checkout_payload) VALUES (?,?,?,?,?)',[context.shopId,context.originInstallationId,invoice.invoice_no,invoice.invoice_no,JSON.stringify(payload)]);
+  for(const item of items){
+    const targetId=await insert(connection,'invoice_items',item);
+    await connection.execute('INSERT INTO sync_invoice_item_map (shop_id,origin_installation_id,source_invoice_no,source_item_id,target_item_id) VALUES (?,?,?,?,?)',[context.shopId,context.originInstallationId,invoice.invoice_no,String(item.id),targetId]);
+  }
   for(const payment of payments)await insert(connection,'invoice_payments',payment);
   for(const [barcode,quantity] of quantities){
     const value=(quantity/100n).toString()+'.'+(quantity%100n).toString().padStart(2,'0');
     await connection.execute('UPDATE products SET stock_qty=stock_qty-? WHERE barcode=?',[value,barcode]);
   }
 }
-module.exports={applyCheckout,decimal};
+module.exports={applyCheckout,decimal,insert};

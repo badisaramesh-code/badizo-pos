@@ -26,7 +26,8 @@ async function main() {
     const lookup=await fetch(`http://127.0.0.1:5001/api/products?search=${encodeURIComponent(product.barcode)}`,{headers});
     assert.equal(lookup.status,200);const found=await lookup.json();
     assert.ok(JSON.stringify(found).includes(product.barcode),'Barcode lookup failed');
-    const body={counter_no:1,customer_name:'CLOUD INSTALLATION TEST - VALIDATION DATABASE ONLY',customer_phone:'',items:[{...product,quantity:1,sale_price:Number(product.sale_price),gst_percent:Number(product.gst_percent)}],sub_total:Number(product.sale_price),gst_total:0,grand_total:Number(product.sale_price),payment_mode:'Cash',payment_status:'Paid',cash_received:Number(product.sale_price),change_returned:0,billing_tier:'RETAIL',tax_type:'LOCAL',checkout_request_id:crypto.randomUUID()};
+    const saleQuantity=process.env.BADIZO_VALIDATION_PARTIAL_RETURN==='true'?2:1;
+    const body={counter_no:1,customer_name:'CLOUD INSTALLATION TEST - VALIDATION DATABASE ONLY',customer_phone:'',items:[{...product,quantity:saleQuantity,sale_price:Number(product.sale_price),gst_percent:Number(product.gst_percent)}],sub_total:Number(product.sale_price)*saleQuantity,gst_total:0,grand_total:Number(product.sale_price)*saleQuantity,payment_mode:'Cash',payment_status:'Paid',cash_received:Number(product.sale_price)*saleQuantity,change_returned:0,billing_tier:'RETAIL',tax_type:'LOCAL',checkout_request_id:crypto.randomUUID()};
     const checkout=await fetch('http://127.0.0.1:5001/api/billing/checkout',{method:'POST',headers,body:JSON.stringify(body)});const result=await checkout.json();
     if(checkout.status!==200) throw new Error(`Validation checkout failed: ${JSON.stringify(result)}`);
     assert.match(result.invoice_no,/^CL\//);
@@ -40,15 +41,15 @@ async function main() {
     const [[line]]=await db.query('SELECT id FROM invoice_items WHERE invoice_no=? AND is_free_bonus=0 LIMIT 1',[result.invoice_no]);
     const returned=await fetch('http://127.0.0.1:5001/api/billing/return',{method:'POST',headers,body:JSON.stringify({invoice_no:result.invoice_no,reason:'ISOLATED LIFECYCLE VALIDATION',refund_mode:'Cash',items:[{invoice_item_id:line.id,quantity:1}]})});
     assert.equal(returned.status,200);const returnResult=await returned.json();
-    const repeatedReturn=await fetch('http://127.0.0.1:5001/api/billing/return',{method:'POST',headers,body:JSON.stringify({invoice_no:result.invoice_no,reason:'ISOLATED LIFECYCLE VALIDATION',items:[{invoice_item_id:line.id,quantity:1}]})});assert.equal(repeatedReturn.status,400);
+    const repeatedReturn=await fetch('http://127.0.0.1:5001/api/billing/return',{method:'POST',headers,body:JSON.stringify({invoice_no:result.invoice_no,reason:'ISOLATED LIFECYCLE VALIDATION',items:[{invoice_item_id:line.id,quantity:1}]})});assert.equal(repeatedReturn.status,saleQuantity===2?200:400);
     const second=await fetch('http://127.0.0.1:5001/api/billing/checkout',{method:'POST',headers,body:JSON.stringify({...body,checkout_request_id:crypto.randomUUID()})});assert.equal(second.status,200);const secondBill=await second.json();
     const cancelBody=JSON.stringify({invoice_no:secondBill.invoice_no,reason:'ISOLATED LIFECYCLE VALIDATION'});
     assert.equal((await fetch('http://127.0.0.1:5001/api/billing/invoice/void',{method:'POST',headers,body:cancelBody})).status,200);
     assert.equal((await fetch('http://127.0.0.1:5001/api/billing/invoice/void',{method:'POST',headers,body:cancelBody})).status,400);
     const [changes]=await db.query("SELECT event_json FROM sync_outbox WHERE JSON_UNQUOTE(JSON_EXTRACT(event_json,'$.payload.invoice.invoice_no')) IN (?,?)",[result.invoice_no,secondBill.invoice_no]);
     const parsed=changes.map(row=>typeof row.event_json==='string'?JSON.parse(row.event_json):row.event_json);
-    assert.equal(parsed.length,4);
-    const returnEvent=parsed.find(e=>e.type==='pos.invoice.returned');assert.equal(returnEvent.payload.change.returnNo,returnResult.return_no);assert.equal(returnEvent.payload.returnItems.length,1);assert.equal(returnEvent.payload.invoice.invoice_status,'RETURNED');
+    assert.equal(parsed.length,saleQuantity===2?5:4);
+    const returnEvent=parsed.find(e=>e.type==='pos.invoice.returned');assert.equal(returnEvent.payload.change.returnNo,returnResult.return_no);assert.equal(returnEvent.payload.returnItems.length,1);assert.equal(returnEvent.payload.invoice.invoice_status,saleQuantity===2?'PARTIALLY_RETURNED':'RETURNED');
     assert.equal(parsed.find(e=>e.type==='pos.invoice.cancelled').payload.invoice.invoice_status,'CANCELLED');
     const [[finalStock]]=await db.query('SELECT stock_qty FROM products WHERE barcode=?',[product.barcode]);assert.equal(Number(finalStock.stock_qty),Number(product.stock_qty));
     console.log(JSON.stringify({actualCheckout:true,actualReturnCaptured:true,actualCancellationCaptured:true,repeatedActionsDoNotDuplicateEvents:true,stockRestored:true,database:'validation-only'}));
@@ -58,5 +59,3 @@ async function main() {
   }
 }
 main().catch(error=>{console.error(error.message);process.exitCode=1;});
-
-

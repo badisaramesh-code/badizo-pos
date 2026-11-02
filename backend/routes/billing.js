@@ -1,4 +1,5 @@
 const express = require('express');
+const { randomUUID } = require('node:crypto');
 const router = express.Router();
 const db = require('../config/db');
 const { captureCheckout, captureInvoiceLifecycle } = require('../services/checkoutSyncCapture');
@@ -30,7 +31,9 @@ function formatReturnNo() {
     String(now.getMinutes()).padStart(2, '0'),
     String(now.getSeconds()).padStart(2, '0')
   ].join('');
-  return `SR-${stamp}`;
+  // Multiple counters (and disconnected installations) can return in the same
+  // second. Keep the readable timestamp and add an independent identity.
+  return `SR-${stamp}-${randomUUID().replace(/-/g, '')}`;
 }
 
 function nextIsoDate(dateText) {

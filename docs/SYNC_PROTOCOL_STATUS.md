@@ -1,5 +1,9 @@
 # Incremental transfer implementation boundary
 
+## Current operational status
+
+Development only; no production sync or automatic switching is enabled. Real isolated MySQL drills now cover checkout capture and ordinary checkout/cancellation/full and partial return application, identity mapping, duplicate delivery, dependency retry, altered-event rejection and stock restoration. Historical sections below record earlier milestones; their outstanding items may have since been partially implemented. The remaining deployment blockers are complete domain coverage (including batch, loyalty, promotion, purchase and master-data writes), snapshot baselines, authenticated enrollment, authority controls, scheduler integration, owner-button execution, restore activation/rollback and end-to-end deployment validation. These are development tasks, not all dependent on a shop visit.
+
 `syncEventProtocol` defines a bounded, versioned event envelope, deterministic content hash, explicit shop/origin validation and an injectable receiver. A received event's inbox receipt and all handler business writes share one transaction. Duplicate events with identical content are acknowledged without running the handler again; reusing an identity with different content is rejected. Unsupported event types are rejected before database access. If a handler fails, its receipt and writes roll back together.
 
 The optional inbox SQL migration is not installed or run at startup. The receiver is not mounted as an HTTP endpoint. There are no live business handlers. The tests use a transactional adapter to check sequencing and rollback contracts; they do not prove MySQL locking, replication or crash durability.
@@ -53,3 +57,13 @@ The real MySQL `validate-product-apply.cjs` drill passed in an isolated restored
 This initial profile deliberately rejects batch allocations (including positive batch inventory on the target), exchanges, free-item/active product promotions, loyalty effects and non-PAID invoices. Capture/application flags are not enabled in production. Cross-installation numeric ID mappings for later returns, lifecycle replay, dependent-event ordering, snapshot baselines and complete business reconciliation are still required before operational use.
 
 A real captured bill from the isolated POS was successfully applied into a separate restored database on 2026-11-02. Invoice creation and stock deduction succeeded, duplicate delivery was acknowledged without reapplication, and a separate event colliding with the same invoice rolled back its receipt. The ordinary-bill test passed again after adding target batch checks. This is a narrow application profile, not a full shop synchronization rollout.
+
+## Ordinary invoice lifecycle application and identity mapping
+
+Checkout application now requires `optional-sync-invoice-map.sql`, installed explicitly alongside the inbox migration. It stores the originating checkout payload and maps source invoice-line IDs to receiver IDs in the same transaction as the invoice and receipt. Existing previously imported validation bills without mappings are not silently adopted; they require a new clean baseline or explicit reconciliation.
+
+`invoiceCancellationSyncHandler` verifies the originating checkout, unchanged invoice lines, paid target state and no return history before restoring stock and recording cancellation. `invoiceReturnSyncHandler` maps source line IDs to target IDs, requires prior returns to arrive first, verifies sold/returned quantities and refund/tax totals, records return headers/lines and updates stock and invoice state. Unsupported tax rounding remains pending for reconciliation. Both handlers use only the receiver transaction; neither invokes printing, notifications or outgoing capture. They remain unmounted in production.
+
+Real isolated POS-to-MySQL drills passed on 2026-11-02 for cancellation, full return and two consecutive partial returns. Tests verified early lifecycle delivery rejects without a receipt, replay succeeds after prerequisites, altered payloads roll back, duplicate delivery has no repeated stock effect, reissued actions under a new event ID are rejected, and returns reference mapped receiver item IDs. Production invoice count remained 72,656 before the drills.
+
+The partial-return drill exposed a pre-existing return-number collision: two returns in the same second generated the same `SR-<timestamp>`. Return numbers now preserve that readable prefix and append a UUID (50 characters total, within the existing VARCHAR(60)). The real same-second return test passed after this fix in the isolated backend. It has not been deployed to the shop or production cloud.
