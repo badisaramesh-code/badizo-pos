@@ -736,6 +736,11 @@ export async function runBackup() {
   return data;
 }
 
+export async function requestCloudSyncNow() {
+  const { data } = await api.post('/cloud-sync/run', {});
+  return data;
+}
+
 export async function fetchCloudSyncSettings() {
   const { data } = await api.get('/cloud-sync/settings');
   return data;

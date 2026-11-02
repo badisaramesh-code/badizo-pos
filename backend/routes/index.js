@@ -26,7 +26,7 @@ const routes = [
   ['/api/users', require('./users')]
 ];
 
-function mountRoutes(app) {
+function mountRoutes(app, { cloudSyncRuntime } = {}) {
   if (process.env.BADIZO_STAGED_RESTORE_ENABLED === 'true') {
     const jobs = require('../services/stagedRestoreJobs').createStagedRestoreJobs({directory:process.env.BADIZO_RESTORE_JOB_DIR,shopId:process.env.BADIZO_SHOP_ID,configPath:process.env.BADIZO_RESTORE_CONFIG,python:process.env.BADIZO_PYTHON || 'python'});
     app.use('/api/staged-restore',require('./stagedRestore').createRouter(jobs));
@@ -37,7 +37,10 @@ function mountRoutes(app) {
     app.use('/api/recovery-review', require('./recoveryReview').createRouter({ store, shopId }));
   }
   routes.forEach(([path, router]) => {
-    app.use(path, protectAsyncRoutes(router));
+    const mountedRouter = path === '/api/cloud-sync' && cloudSyncRuntime
+      ? require('./cloudSync').createRouter(cloudSyncRuntime.settings)
+      : router;
+    app.use(path, protectAsyncRoutes(mountedRouter));
   });
   app.use(apiErrorHandler);
 }

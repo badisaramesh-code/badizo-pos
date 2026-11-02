@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { fetchCloudSyncSettings, saveCloudSyncSettings, getStoredUser } from '../api/client';
+import { fetchCloudSyncSettings, saveCloudSyncSettings, requestCloudSyncNow, getStoredUser } from '../api/client';
 
 const defaults = { enabled: false, frequency: 'daily', dailyTime: '20:30', timezone: 'Asia/Kolkata' };
 export default function CloudSyncSettings() {
@@ -7,6 +7,7 @@ export default function CloudSyncSettings() {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState('');
   const mayEdit = getStoredUser()?.role === 'SERVER' && status?.editable === true;
@@ -18,6 +19,21 @@ export default function CloudSyncSettings() {
       .finally(() => { if (mounted) setLoading(false); });
     return () => { mounted = false; };
   }, []);
+  useEffect(() => {
+    if (!status?.service.ready) return undefined;
+    let mounted = true;
+    const timer = setInterval(() => {
+      fetchCloudSyncSettings().then(value => { if(mounted) setStatus(value); })
+        .catch(() => { if(mounted) setError('Unable to refresh sync status. Billing can continue; check the connection.'); });
+    }, 5000);
+    return () => { mounted=false; clearInterval(timer); };
+  }, [status?.service.ready]);
+  async function updateNow() {
+    setRequesting(true); setError(''); setSaved('');
+    try { setStatus(await requestCloudSyncNow()); setSaved('Cloud update queued. You can continue billing while it runs.'); }
+    catch(failure) { setError(failure.response?.data?.error || 'Unable to queue cloud update.'); }
+    finally { setRequesting(false); }
+  }
   function change(key, value) { setConfiguration(current => ({ ...current, [key]: value })); setSaved(''); }
   async function save(event) {
     event.preventDefault(); setSaving(true); setError(''); setSaved('');
@@ -49,8 +65,9 @@ export default function CloudSyncSettings() {
         {getStoredUser()?.role !== 'SERVER' && <p className="muted">A Server user can change this schedule.</p>}
         <div className="settings-action-row">
           <button className="secondary-button" type="submit" disabled={!mayEdit || saving || loading}>{saving ? 'Saving…' : 'Save Cloud Sync Schedule'}</button>
-          <button className="secondary-button" type="button" disabled title="Available after the cloud sync service is connected">Update Cloud Now — not connected</button>
+          <button className="secondary-button" type="button" onClick={updateNow} disabled={!mayEdit || !status?.service.ready || requesting || status?.manualPending || status?.service.state === 'running'}>{requesting ? 'Queuing…' : status?.manualPending ? 'Cloud update queued' : 'Update Cloud Now'}</button>
         </div>
+        {status?.service.ready && <p role="status">Transfer status: {status.service.state}.{status.service.state === 'retrying' ? ' Pending changes are retained. The transfer will retry automatically when enabled.' : ''}</p>}
         {error && <p role="alert">{error}</p>}
         {saved && <p role="status">{saved}</p>}
       </form>

@@ -89,3 +89,23 @@ test('a corrupt schedule does not silently become an active default', async t =>
   await fs.writeFile(path.join(directory, 'schedule.json'), '{broken-json');
   await assert.rejects(service.state(), error => error.status === 500);
 });
+
+test('manual cloud update is owner-only, rejects supplied connection data and records authenticated actor',async t=>{
+  let actor=null,ready=true;
+  const {service}=await isolated(t,{getWorkerState:async()=>({ready,state:'idle'}),requestTransfer:async user=>{actor=user.username;}});
+  const app=express();app.use(express.json());app.use('/api/cloud-sync',createRouter(service));
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const request=(role,body={})=>fetch(`http://127.0.0.1:${server.address().port}/api/cloud-sync/run`,{method:'POST',headers:{'Content-Type':'application/json',...(role?{Authorization:`Bearer ${jwt.sign({role,username:'real-owner'},JWT_SECRET)}`}:{})},body:JSON.stringify(body)});
+  assert.equal((await request(null)).status,401);
+  for(const role of ['ADMIN','COUNTER'])assert.equal((await request(role)).status,403);
+  assert.equal((await request('SERVER',{username:'forged-owner'})).status,400);assert.equal(actor,null);
+  assert.equal((await request('SERVER')).status,202);assert.equal(actor,'real-owner');
+  ready=false;assert.equal((await request('SERVER')).status,409);
+});
+
+test('default installations and cloud nodes cannot request transfers',async t=>{
+  const {service}=await isolated(t);await assert.rejects(service.requestNow({username:'owner'}),error=>error.status===409);
+  const cloud=await isolated(t,{nodeRole:'cloud-standby',getWorkerState:async()=>({ready:true}),requestTransfer:async()=>{throw Error('Unexpected transfer');}});
+  await assert.rejects(cloud.service.requestNow({username:'owner'}),error=>error.status===403);
+});
