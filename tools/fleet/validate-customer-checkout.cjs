@@ -44,13 +44,32 @@ async function main(){
       const [[receipt]]=await target.execute('SELECT COUNT(*) AS n FROM sync_inbox WHERE event_id=?',[event.eventId]);assert.equal(Number(receipt.n),0);
       const [[rejectedBill]]=await target.execute('SELECT COUNT(*) AS n FROM invoices WHERE invoice_no=?',[invoice.invoice_no]);assert.equal(Number(rejectedBill.n),0);
       assert.equal((await receive(event)).duplicate,false);assert.equal((await receive(event)).duplicate,true);
+      const [[savedBill]]=await target.execute('SELECT customer_name,customer_phone FROM invoices WHERE invoice_no=?',[invoice.invoice_no]);
+      assert.equal(savedBill.customer_name,body.customer_name);assert.equal(savedBill.customer_phone,body.customer_phone);
       expectedPoints+=enabled?total:0;expectedSpent+=total;
       const [[customer]]=await target.execute('SELECT * FROM customers WHERE phone=?',[phone]);
       assert.equal(Number(customer.loyalty_points),expectedPoints);assert.equal(Number(customer.total_spent),expectedSpent);assert.equal(Number(customer.visit_count),enabled?4:3);assert.equal(customer.customer_name,'Receiver contact name');
       const [earnings]=await target.execute('SELECT customer_id,points_delta FROM loyalty_transactions WHERE invoice_no=?',[invoice.invoice_no]);assert.equal(earnings.length,enabled?1:0);
       if(enabled){assert.equal(String(earnings[0].customer_id),String(targetBefore.id));assert.equal(Number(earnings[0].points_delta),total);}
     }
-    console.log(JSON.stringify({realRoundedCheckout:true,roundDownAndUp:true,customerVisitWithoutLoyalty:true,earnedPointsMappedToReceiverCustomer:true,existingBalancesAddedNotOverwritten:true,customerAndInvoiceRollbackTogether:true,duplicateSafe:true,notificationsDisabled:true,productionModified:false}));
+    // Contact details are invoice evidence even without a directory entry or
+    // loyalty enrollment. Verify new-contact and name-only bills explicitly.
+    await source.execute("UPDATE app_settings SET setting_value='0' WHERE setting_key='loyalty_enabled'");
+    await source.execute('UPDATE products SET sale_price=10 WHERE barcode=?',[product.barcode]);
+    const newPhone='000'+String(crypto.randomInt(1000000,9999999));
+    for(const contact of [{name:'NEW CUSTOMER TEST',phone:newPhone},{name:'NAME ONLY CUSTOMER TEST',phone:''}]){
+      const body={counter_no:1,customer_name:contact.name,customer_phone:contact.phone,items:[{barcode:product.barcode,product_name:product.product_name,quantity:1,sale_price:10,gst_percent:0,hsn_code:''}],sub_total:10,gst_total:0,grand_total:10,payment_mode:'Cash',payment_status:'Paid',cash_received:10,change_returned:0,billing_tier:'RETAIL',tax_type:'LOCAL',checkout_request_id:crypto.randomUUID()};
+      const response=await fetch('http://127.0.0.1:5001/api/billing/checkout',{method:'POST',headers,body:JSON.stringify(body)});assert.equal(response.status,200);const bill=await response.json();
+      const [[row]]=await source.execute("SELECT event_json FROM sync_outbox WHERE JSON_UNQUOTE(JSON_EXTRACT(event_json,'$.payload.invoice.invoice_no'))=?",[bill.invoice_no]);
+      const event=typeof row.event_json==='string'?JSON.parse(row.event_json):row.event_json;
+      assert.equal(event.payload.loyaltyTransactions.length,0);
+      const receive=createSyncReceiver({pool:target,identity:{shopId:event.shopId,peerInstallationId:event.originInstallationId,localInstallationId:'validation-receiver'},handlers:{'pos.checkout.recorded':applyCheckout}});
+      assert.equal((await receive(event)).duplicate,false);assert.equal((await receive(event)).duplicate,true);
+      const [[savedBill]]=await target.execute('SELECT customer_name,customer_phone FROM invoices WHERE invoice_no=?',[bill.invoice_no]);
+      assert.equal(savedBill.customer_name,contact.name);assert.equal(savedBill.customer_phone,contact.phone);
+      if(contact.phone){const [[customer]]=await target.execute('SELECT customer_name,visit_count,loyalty_points FROM customers WHERE phone=?',[contact.phone]);assert.equal(customer.customer_name,contact.name);assert.equal(Number(customer.visit_count),1);assert.equal(Number(customer.loyalty_points),0);}
+    }
+    console.log(JSON.stringify({realRoundedCheckout:true,roundDownAndUp:true,billNameAndMobilePreserved:true,newCustomerWithoutLoyalty:true,nameOnlyBillPreserved:true,customerVisitWithoutLoyalty:true,earnedPointsMappedToReceiverCustomer:true,existingBalancesAddedNotOverwritten:true,customerAndInvoiceRollbackTogether:true,duplicateSafe:true,notificationsDisabled:true,productionModified:false}));
   }finally{
     if(child&&child.exitCode===null&&child.signalCode===null){const stopped=new Promise(resolve=>child.once('exit',resolve));child.kill('SIGTERM');await stopped;}
     if(log!==undefined)fs.closeSync(log);

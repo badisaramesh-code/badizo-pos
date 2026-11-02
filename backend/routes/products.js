@@ -1,4 +1,5 @@
 const express = require('express');
+const { updatePriceListWithCapture } = require('../services/productSyncCapture');
 const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
@@ -913,7 +914,7 @@ async function processPriceListUpdateJob(jobId) {
             await connection.beginTransaction();
             const ids = batchRows.map((row) => row.id);
             const update = priceListUpdateSqlForIds(job.property_name, normalized.value, ids);
-            const [updateResult] = await connection.query(update.sql, update.values);
+            const [updateResult] = await updatePriceListWithCapture(connection, update, ids, job.property_name);
             const [afterRows] = await connection.query(
               `SELECT *
                FROM products
@@ -975,7 +976,7 @@ async function processPriceListUpdateJob(jobId) {
           await connection.beginTransaction();
           const ids = batchRows.map((row) => row.id);
           const update = priceListUpdateSqlForIds(job.property_name, normalized.value, ids);
-          const [updateResult] = await connection.query(update.sql, update.values);
+          const [updateResult] = await updatePriceListWithCapture(connection, update, ids, job.property_name);
           const [afterRows] = await connection.query(
             `SELECT *
              FROM products
@@ -2981,7 +2982,7 @@ router.post('/price-list/update', authenticate, authorize('SERVER', 'ADMIN'), as
       try {
         await connection.beginTransaction();
         const update = priceListUpdateSqlForIds(property, normalized.value, batchRows.map((row) => row.id));
-        const [batchResult] = await connection.query(update.sql, update.values);
+        const [batchResult] = await updatePriceListWithCapture(connection, update, batchRows.map((row) => row.id), property);
         await connection.commit();
         updatedCount += Number(batchResult?.affectedRows || 0);
       } catch (err) {
