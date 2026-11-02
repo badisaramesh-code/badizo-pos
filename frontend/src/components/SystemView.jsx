@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import CloudSyncSettings from './CloudSyncSettings';
 import {
   approveSensitiveBillingMode,
   downloadBackup,
@@ -1145,7 +1146,9 @@ export default function SystemView() {
         </div>
         )}
 
-        <div className="panel system-folder-panel backup-folder-panel">
+        <CloudSyncSettings />
+
+        <div className="panel system-folder-panel backup-folder-panel" style={process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' ? { display: 'none' } : undefined}>
           <div className="panel-header green">
             <h2 className="panel-title">Database Backup</h2>
             <div className="panel-header-actions">

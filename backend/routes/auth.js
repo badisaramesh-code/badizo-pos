@@ -6,6 +6,7 @@ const { JWT_SECRET, authenticate, authorize } = require('../middleware/auth');
 const { sendSms, smsEnabled } = require('../services/smsService');
 const { sendWhatsApp, whatsappEnabled } = require('../services/whatsappService');
 const { logError, logInfo } = require('../services/logger');
+const { isCloudNode } = require('../services/runtimePolicy');
 
 const router = express.Router();
 
@@ -41,7 +42,7 @@ function passwordMatches(user, password) {
     });
   }
 
-  return verifyLegacyDefaultPassword(user?.username, password);
+  return !isCloudNode() && verifyLegacyDefaultPassword(user?.username, password);
 }
 
 function publicUser(row) {

@@ -16,6 +16,7 @@ import ProductImportHistoryView from './components/ProductImportHistoryView';
 import ReportsView from './components/ReportsView';
 import StaffPayrollView from './components/StaffPayrollView';
 import SystemView from './components/SystemView';
+import CloudStatusBanner from './components/CloudStatusBanner';
 import { clearAuthSession, fetchBackupHealth, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
 import { APP_TABS, canAccessTab } from './config/navigation';
 import './styles.css';
@@ -115,6 +116,7 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return undefined;
     let cancelled = false;
+    if (process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true') return undefined;
     const checkBackupHealth = async () => {
       try {
         const health = await fetchBackupHealth();
@@ -275,6 +277,7 @@ export default function App() {
         </nav>
       </header>
 
+      <CloudStatusBanner />
       <main className="workspace">
         {allowedTabs.map((tab) => (
           mountedWorkspaces.has(tab.key) ? (

@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 function getDefaultApiBaseUrl() {
+  if (process.env.REACT_APP_API_BASE_URL) return process.env.REACT_APP_API_BASE_URL;
   if (typeof window === 'undefined') {
     return ['http://', 'localhost', ':5000/api'].join('');
   }
@@ -715,6 +716,21 @@ export async function fetchBackups() {
 
 export async function runBackup() {
   const { data } = await api.post('/backup/run');
+  return data;
+}
+
+export async function fetchCloudSyncSettings() {
+  const { data } = await api.get('/cloud-sync/settings');
+  return data;
+}
+
+export async function fetchCloudRuntimeStatus() {
+  const { data } = await api.get('/ready', { timeout: 5000 });
+  return data;
+}
+
+export async function saveCloudSyncSettings(config) {
+  const { data } = await api.post('/cloud-sync/settings', config);
   return data;
 }
 

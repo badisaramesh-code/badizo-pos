@@ -7,6 +7,7 @@ const path = require('path');
 const { mountRoutes } = require('./routes');
 const { scheduleDailySaleAlerts } = require('./services/saleAlertService');
 const { logError, logInfo } = require('./services/logger');
+const { isCloudNode, bindHost, cloudWriteGuard } = require('./services/runtimePolicy');
 
 const app = express();
 const heartbeatLogPath = path.join(__dirname, 'logs', 'heartbeat.log');
@@ -83,7 +84,14 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
+app.use('/api', cloudWriteGuard);
 mountRoutes(app);
+app.get('/api/ready', async (_req, res) => {
+  try {
+    await require('./config/db').query('SELECT 1');
+    res.json({ ok: true, shopId: process.env.BADIZO_SHOP_ID || null, nodeRole: process.env.BADIZO_NODE_ROLE || 'local-server', releaseCommit: process.env.BADIZO_RELEASE_COMMIT || null });
+  } catch (_error) { res.status(503).json({ ok: false }); }
+});
 
 const frontendBuildPath = path.resolve(__dirname, '..', 'frontend', 'build');
 const frontendIndexPath = path.join(frontendBuildPath, 'index.html');
@@ -117,11 +125,7 @@ function normalizePort(value, fallback = 5000) {
 }
 
 function normalizeHost(value) {
-  const host = String(value || '').trim();
-  if (!host || ['localhost', '127.0.0.1', '::1'].includes(host.toLowerCase())) {
-    return '0.0.0.0';
-  }
-  return host;
+  return bindHost(value);
 }
 
 function tuneHttpServer(server) {
@@ -255,8 +259,10 @@ function startServer(port = PORT) {
       console.log(`BADIZO POS API running on http://${HOST}:${listenPort}`);
       logInfo('Backend started', { host: HOST, port: listenPort });
       startLegacyFrontendRedirect(listenPort);
-      scheduleDailySaleAlerts();
-      scheduleDailyBackupCatchUpCheck();
+      if (!isCloudNode()) {
+        scheduleDailySaleAlerts();
+        scheduleDailyBackupCatchUpCheck();
+      }
       resolve(server);
     });
 
@@ -266,7 +272,10 @@ function startServer(port = PORT) {
 }
 
 if (require.main === module) {
-  startServer().catch((err) => {
+  Promise.resolve(isCloudNode() ? require('./config/db').ready : undefined).then(() => {
+    if (isCloudNode() && String(process.env.JWT_SECRET || '').length < 32) throw new Error('Cloud POS requires a unique JWT secret of at least 32 characters.');
+    return startServer();
+  }).catch((err) => {
     console.error(err);
     logError('Backend startup failed', err);
     process.exit(1);

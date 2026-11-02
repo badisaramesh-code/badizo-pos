@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { normalizeCounterNo } = require('../utils/formatters');
 const { getFinancialYear } = require('./financialYearService');
+const { invoicePrefix } = require('./runtimePolicy');
 
 async function getCounterCount(connection = db) {
   const [rows] = await connection.query(
@@ -11,7 +12,7 @@ async function getCounterCount(connection = db) {
 }
 
 function formatInvoiceNo(financialYear, counterNo, sequenceNo) {
-  return `BZ/${financialYear}/C${String(counterNo).padStart(2, '0')}/${String(sequenceNo).padStart(6, '0')}`;
+  return `${invoicePrefix()}/${financialYear}/C${String(counterNo).padStart(2, '0')}/${String(sequenceNo).padStart(6, '0')}`;
 }
 
 async function getExistingMaxSequence(connection, financialYear) {
@@ -25,7 +26,7 @@ async function getExistingMaxSequence(connection, financialYear) {
     `SELECT MAX(CAST(SUBSTRING_INDEX(invoice_no, '/', -1) AS UNSIGNED)) AS sequence_no
      FROM invoices
      WHERE invoice_no LIKE ?`,
-    [`BZ/${financialYear}/C%/%`]
+    [`${invoicePrefix()}/${financialYear}/C%/%`]
   );
   const sequenceNext = Number(sequenceRows[0]?.next_number || 1);
   const invoiceNext = Number(invoiceRows[0]?.sequence_no || 0) + 1;

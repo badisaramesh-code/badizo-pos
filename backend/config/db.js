@@ -1,6 +1,7 @@
 const mysql = require('mysql2/promise');
 const crypto = require('crypto');
 const { logError, logInfo } = require('../services/logger');
+const { isCloudNode } = require('../services/runtimePolicy');
 require('dotenv').config();
 
 const DB_CONNECTION_LIMIT = Number.parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 20;
@@ -115,7 +116,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   return `${salt}:${hash}`;
 }
 
-(async () => {
+pool.ready = (async () => {
+  if (isCloudNode() && process.env.BADIZO_DB_BOOTSTRAP !== 'true') return;
   let connection;
 
   try {
@@ -159,7 +161,6 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         wholesale_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         qty_3_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         qty_6_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-        qty_12_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         qty_12_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         discount_type ENUM('PERCENT', 'VALUE') NOT NULL DEFAULT 'PERCENT',
         discount_value DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -1562,7 +1563,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
       WHERE purchase_price = 0 AND wholesale_price > 0
     `);
 
-    const defaultUsers = [
+    const defaultUsers = isCloudNode() ? [] : [
       ['server', 'server123', 'SERVER', null],
       ['admin', 'admin123', 'ADMIN', null],
       ['admin1', 'admin123', 'ADMIN', null],
@@ -1591,7 +1592,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
         [role, counterNo, username]
       );
     }
-    await connection.query(
+    if (!isCloudNode()) await connection.query(
       `UPDATE users
        SET is_active = 0
        WHERE username IN ('counter7', 'counter8', 'counter9', 'counter10')`
@@ -1602,6 +1603,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   } catch (err) {
     console.error('Database initialization failed:', err.message);
     logError('Database initialization failed', err);
+    if (isCloudNode()) throw err;
   } finally {
     if (connection) connection.release();
   }

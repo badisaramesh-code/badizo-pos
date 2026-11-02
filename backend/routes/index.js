@@ -4,6 +4,7 @@ const routes = [
   ['/api/accounting-vouchers', require('./accountingVouchers')],
   ['/api/backup', require('./backup')],
   ['/api/backup-health', require('./backupHealth')],
+  ['/api/cloud-sync', require('./cloudSync')],
   ['/api/barcode', require('./barcode')],
   ['/api/books', require('./books')],
   ['/api/products', require('./products')],
