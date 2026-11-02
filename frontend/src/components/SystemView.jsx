@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import CloudSyncSettings from './CloudSyncSettings';
+import RecoveryReview from './RecoveryReview';
+import StagedRestore from './StagedRestore';
 import {
   approveSensitiveBillingMode,
   downloadBackup,
@@ -1147,6 +1149,8 @@ export default function SystemView() {
         )}
 
         <CloudSyncSettings />
+        {process.env.REACT_APP_RECOVERY_REVIEW_ENABLED === 'true' && <RecoveryReview />}
+        {process.env.REACT_APP_STAGED_RESTORE_ENABLED === 'true' && <StagedRestore />}
 
         <div className="panel system-folder-panel backup-folder-panel" style={process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' ? { display: 'none' } : undefined}>
           <div className="panel-header green">

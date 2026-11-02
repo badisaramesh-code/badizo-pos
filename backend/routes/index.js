@@ -27,6 +27,15 @@ const routes = [
 ];
 
 function mountRoutes(app) {
+  if (process.env.BADIZO_STAGED_RESTORE_ENABLED === 'true') {
+    const jobs = require('../services/stagedRestoreJobs').createStagedRestoreJobs({directory:process.env.BADIZO_RESTORE_JOB_DIR,shopId:process.env.BADIZO_SHOP_ID,configPath:process.env.BADIZO_RESTORE_CONFIG,python:process.env.BADIZO_PYTHON || 'python'});
+    app.use('/api/staged-restore',require('./stagedRestore').createRouter(jobs));
+  }
+  if (process.env.BADIZO_RECOVERY_REVIEW_ENABLED === 'true') {
+    const shopId = process.env.BADIZO_SHOP_ID;
+    const store = require('../services/recoveryReviewStore').createRecoveryReviewStore({ directory:process.env.BADIZO_RECOVERY_REVIEW_DIR, shopId });
+    app.use('/api/recovery-review', require('./recoveryReview').createRouter({ store, shopId }));
+  }
   routes.forEach(([path, router]) => {
     app.use(path, protectAsyncRoutes(router));
   });
