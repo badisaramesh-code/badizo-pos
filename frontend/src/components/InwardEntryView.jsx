@@ -142,9 +142,9 @@ function dueAgeLabel(value) {
   return `${days} day${days === 1 ? '' : 's'} left`;
 }
 
-async function renderPdfPages(file) {
+export async function renderPdfPages(file) {
   const data = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const pdf = await pdfjsLib.getDocument({ data, isEvalSupported: false }).promise;
   const pages = [];
   const textParts = [];
   const pageCount = Math.min(pdf.numPages, 8);

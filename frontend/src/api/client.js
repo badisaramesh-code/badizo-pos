@@ -20,6 +20,21 @@ const AUTH_KEYS = {
   token: 'badizo_token',
   user: 'badizo_user'
 };
+
+function updateServerConnection(connection) {
+  try {
+    const url = new URL(connection?.apiBaseUrl);
+    if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/api' || url.username || url.password) return;
+    api.defaults.baseURL = url.href.replace(/\/$/, '');
+  } catch (_err) { }
+}
+
+const desktopBridge = typeof window !== 'undefined' ? window.badizoDesktop : null;
+desktopBridge?.onServerConnectionChanged?.(updateServerConnection);
+const serverConnectionReady = desktopBridge?.getServerConnection
+  ? desktopBridge.getServerConnection().then(updateServerConnection).catch(() => {})
+  : Promise.resolve();
+
 let exitLogoutSent = false;
 
 function getAuthStorage() {
@@ -31,7 +46,9 @@ function clearLegacyAuthSession() {
   window.localStorage.removeItem(AUTH_KEYS.user);
 }
 
-api.interceptors.request.use((config) => {
+api.interceptors.request.use(async (config) => {
+  await serverConnectionReady;
+  if (String(config.url || '').startsWith('/')) config.baseURL = api.defaults.baseURL;
   const token = getAuthStorage().getItem(AUTH_KEYS.token);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -662,7 +679,7 @@ export async function checkout(payload) {
     // A rolled-back database deadlock is also safe to retry once with that ID.
     const timedOut = error?.code === 'ECONNABORTED' || /timeout/i.test(String(error?.message || ''));
     const retryableDeadlock = error?.response?.status === 503 && error?.response?.data?.retryable === true;
-    if (!timedOut && !retryableDeadlock) throw error;
+    if (!payload?.checkout_request_id || (!timedOut && !retryableDeadlock)) throw error;
     const { data } = await api.post('/billing/checkout', payload, { timeout: 10000 });
     return data;
   }
@@ -759,7 +776,8 @@ export async function fetchInvoiceDetails(invoiceNo, options = {}) {
       invoice_no: invoiceNo,
       checkout_request_id: options.checkoutRequestId || ''
     },
-    timeout: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 25000
+    timeout: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 25000,
+    __badizoNoRetry: options.noRetry === true
   });
   return data;
 }
@@ -1100,6 +1118,16 @@ export async function saveCounterCashLedgerEntry(payload) {
   return data;
 }
 
+export async function updateCounterCashLedgerEntry(id, payload) {
+  const { data } = await api.put(`/counter-cash-ledger/${id}`, payload);
+  return data;
+}
+
+export async function deleteCounterCashLedgerEntry(id) {
+  const { data } = await api.delete(`/counter-cash-ledger/${id}`);
+  return data;
+}
+
 export async function fetchUsers() {
   const { data } = await api.get('/users');
   return Array.isArray(data) ? data : [];
@@ -1116,3 +1144,18 @@ export async function fetchAuditLogs(limit = 100) {
 }
 
 export default api;
+
+export async function editNamedLedgerDetails(id, payload) {
+  const { data } = await api.patch('/books/named-ledgers/' + id + '/details', payload);
+  return data;
+}
+
+export async function updateNamedLedgerEntry(id, payload) {
+  const { data } = await api.put('/books/named-ledgers/manual/' + id, payload);
+  return data;
+}
+
+export async function deleteNamedLedgerEntry(id) {
+  const { data } = await api.delete('/books/named-ledgers/manual/' + id);
+  return data;
+}

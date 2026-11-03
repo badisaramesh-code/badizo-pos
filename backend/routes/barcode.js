@@ -379,6 +379,7 @@ router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) =>
   }
 });
 
+// Browsers use the configured server printer; desktop clients can print locally.
 router.post('/print', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   try {
     const templateName = cleanTemplateName(req.body?.template_name);

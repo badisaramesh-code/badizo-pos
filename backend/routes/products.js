@@ -133,6 +133,7 @@ function toProduct(row) {
     default_batch_no: row.default_batch_no || '',
     default_mfd_date: row.default_mfd_date,
     default_expiry_date: row.default_expiry_date,
+    previous_updated_at: row.previous_updated_at || null,
     created_at: row.created_at,
     updated_at: row.updated_at
   };
@@ -3197,7 +3198,9 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       productName: normalizeProductName(product_name),
       aliasNames: normalizeAliasNames(alias_names),
       salePrice: Number(sale_price) || 0,
-      wholesalePrice: Number(wholesale_price) || 0,
+      wholesalePrice: String(wholesale_price ?? '').trim() === ''
+        ? Number(sale_price) || 0
+        : Number(wholesale_price) || 0,
       qty3Price: Number(qty_3_price) || 0,
       qty6Price: Number(qty_6_price) || 0,
       qty12Price: Number(qty_12_price) || 0,

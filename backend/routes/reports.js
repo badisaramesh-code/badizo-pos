@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
+const { writeAuditLog } = require('../services/auditService');
 const { authenticate, authorize } = require('../middleware/auth');
 const { csvLine, normalizeDate, todayIso } = require('../utils/formatters');
 const { getFinancialYear, getFinancialYearBounds, getFinancialYearOptions } = require('../services/financialYearService');
@@ -65,14 +66,31 @@ router.post('/approvals/:id', authorize('SERVER'), (req, res) => {
   if (!row) return res.status(409).json({ error: 'Request expired or already handled.' });
   res.json(row);
 });
-function requireReportApproval(req, res, next) {
+async function requireReportApproval(req, res, next) {
   if (req.user.role !== 'COUNTER') return next();
   try {
-    if (!approvals.permits(req.headers['x-report-approval'], req.user, req.path.slice(1), req.query)) {
-      return res.status(403).json({ code: 'REPORT_APPROVAL_REQUIRED', error: 'Server approval is required to view or print this report.' });
+    const kind = req.path.slice(1);
+    let approvalId = req.headers['x-report-approval'];
+    // Already-open counter clients predate the approval API. Queue their direct
+    // report request too, and allow a retry only after SERVER approves its scope.
+    if (!approvalId) {
+      approvalId = approvals.request(req.user, kind, req.query, req.socket.remoteAddress).id;
     }
+    const permission = approvals.consume(approvalId, req.user, kind, req.query);
+    if (!permission) {
+      return res.status(403).json({
+        code: 'REPORT_APPROVAL_REQUIRED',
+        requestId: approvalId,
+        error: 'Request sent to SERVER. Ask the server person to press OK, then click View or Print again. If no alert appears, refresh the SERVER screen once.'
+      });
+    }
+    const approvedScope = approvals.scope(req.user, kind, req.query);
     req.query.counter = '';
-    req.query.counter_no = req.user.counter_no;
+    req.query.counter_no = approvedScope.reportCounterNo;
+    await writeAuditLog({ user: req.user, action: 'SALE_REPORT_ACCESSED', entityType: 'REPORT', entityId: approvalId,
+      details: { kind, system_no: req.user.system_no, counter_no: req.user.counter_no,
+        from: permission.from, to: permission.to, report_counter_no: permission.reportCounterNo,
+        report_type: permission.reportType, approved_by: permission.approvedBy, ip: req.socket.remoteAddress } });
     next();
   } catch (err) { res.status(403).json({ error: err.message }); }
 }

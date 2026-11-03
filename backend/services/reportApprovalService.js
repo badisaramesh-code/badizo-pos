@@ -11,7 +11,11 @@ function createApprovalStore(now = Date.now) {
     if (!user.session_id || !(Number(user.counter_no) > 0)) throw new Error('Please log in to your counter again.');
     const from = normalizeDate(kind === 'counter-sale-slip' ? query.date : query.from || query.date, todayIso());
     const to = kind === 'counter-sale-slip' ? from : normalizeDate(query.to || from, from);
-    return { kind, from, to, counterNo: Number(user.counter_no), reportType: kind === 'pos-sale-report' && String(query.report_type || '').toUpperCase() === 'GST' ? 'GST' : 'ALL' };
+    const counterMatch = String(query.counter || '').trim().match(/(?:^|\/)Counter\s*(\d+)$/i);
+    const requestedCounter = Number.parseInt(counterMatch?.[1], 10) || Number.parseInt(query.counter_no, 10) || 0;
+    const reportCounterNo = kind === 'counter-sale-slip' ? Number(user.counter_no)
+      : (requestedCounter >= 1 && requestedCounter <= 6 ? requestedCounter : 0);
+    return { kind, from, to, reportCounterNo, counterNo: Number(user.counter_no), reportType: kind === 'pos-sale-report' && String(query.report_type || '').toUpperCase() === 'GST' ? 'GST' : 'ALL' };
   }
   return {
     scope,
@@ -19,7 +23,7 @@ function createApprovalStore(now = Date.now) {
       clean();
       const report = scope(user, kind, query);
       const key = JSON.stringify(report);
-      const existing = [...requests.values()].find(row => row.owner === owner(user) && row.key === key && row.status !== 'REJECTED');
+      const existing = [...requests.values()].find(row => row.owner === owner(user) && row.key === key && ['PENDING', 'APPROVED'].includes(row.status));
       if (existing) return existing;
       if ([...requests.values()].filter(row => row.owner === owner(user)).length >= 20) throw new Error('Too many requests. Please wait for existing requests to expire.');
       const row = { id: randomUUID(), owner: owner(user), key, ...report, username: user.username, personName: user.person_name, systemNo: user.system_no, ip, status: 'PENDING', requestedAt: now(), expiresAt: now() + 10 * 60 * 1000 };
@@ -45,6 +49,13 @@ function createApprovalStore(now = Date.now) {
     permits(id, user, kind, query) {
       const row = this.get(id, user);
       return Boolean(row && row.status === 'APPROVED' && row.key === JSON.stringify(scope(user, kind, query)));
+    },
+    consume(id, user, kind, query) {
+      if (!this.permits(id, user, kind, query)) return null;
+      const row = requests.get(id);
+      row.status = 'USED';
+      row.usedAt = now();
+      return row;
     }
   };
 }

@@ -46,7 +46,12 @@ function Test-BadizoUrl {
   param([string]$Url, [int]$TimeoutSec = 3)
   try {
     $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec $TimeoutSec
-    return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 400)
+    if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 400) { return $false }
+    if (([uri]$Url).AbsolutePath -eq '/api/health') {
+      $health = $response.Content | ConvertFrom-Json
+      return ($health.ok -eq $true -and (!$health.service -or $health.service -eq 'badizo-pos'))
+    }
+    return $true
   } catch {
     return $false
   }
@@ -167,7 +172,7 @@ function Write-AppConfig {
     discoveryEnabled = $true
     discoveryTimeoutMs = 12000
     backendPort = 5000
-    frontendPort = 3000
+    frontendPort = 5000
     startBackend = $false
     startFrontend = $false
     loginMode = $LoginMode

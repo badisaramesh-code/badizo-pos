@@ -18,14 +18,17 @@ test('approval required, server only, bound to login and report dates/type', () 
   assert.equal(store.permits(row.id, user, 'counter-sale-slip', {date: params.from}), false);
   assert.equal(store.get(row.id, {...user, id: 4}), null);
 });
-test('duplicate requests reuse approval, counter scope comes from login, expiry fails closed', () => {
+test('duplicate requests reuse approval, report scope stays distinct from requesting counter, expiry fails closed', () => {
   let now = 1000;
   const store = createApprovalStore(() => now);
   const row = store.request(user, 'pos-sale-report', {...params, counter_no: 6}, '');
   assert.equal(row.counterNo, 2);
-  assert.equal(store.request(user, 'pos-sale-report', params, '').id, row.id);
+  assert.equal(row.reportCounterNo, 6);
+  assert.notEqual(store.request(user, 'pos-sale-report', params, '').id, row.id);
+  assert.equal(store.request(user, 'pos-sale-report', {...params, counter: 'S3/Counter6'}, '').id, row.id);
+  assert.equal(store.request(user, 'pos-sale-report', {...params, counter_no: 6}, '').id, row.id);
   store.decide(row.id, true, server);
-  assert.equal(store.request(user, 'pos-sale-report', params, '').id, row.id);
+  assert.equal(store.request(user, 'pos-sale-report', {...params, counter_no: 6}, '').id, row.id);
   now += 300001;
   assert.equal(store.permits(row.id, user, 'pos-sale-report', params), false);
   assert.equal(createApprovalStore().permits(row.id, user, 'pos-sale-report', params), false);
@@ -44,4 +47,17 @@ test('rejection, cancellation and pending expiry do not grant access', () => {
   store.request(user, 'pos-sale-report', params, '');
   now += 600001;
   assert.deepEqual(store.pending(), []);
+});
+
+test('each report fetch consumes approval and the next request needs fresh SERVER OK', () => {
+  const store = createApprovalStore();
+  const row = store.request(user, 'pos-sale-report', params, '');
+  assert.equal(store.consume(row.id, user, 'pos-sale-report', params), null);
+  store.decide(row.id, true, server);
+  assert.equal(store.consume(row.id, user, 'pos-sale-report', {...params, to: '2026-09-13'}), null);
+  assert.ok(store.consume(row.id, user, 'pos-sale-report', params));
+  assert.equal(store.consume(row.id, user, 'pos-sale-report', params), null);
+  const next = store.request(user, 'pos-sale-report', params, '');
+  assert.notEqual(next.id, row.id);
+  assert.equal(next.status, 'PENDING');
 });

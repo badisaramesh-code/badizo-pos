@@ -39,6 +39,7 @@ CREATE TABLE products (
     min_stock_alert DECIMAL(10,2) NOT NULL DEFAULT 10.00,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    previous_updated_at TIMESTAMP NULL DEFAULT NULL,
     INDEX idx_barcode (barcode),
     INDEX idx_product_group (product_group),
     INDEX idx_product_name (product_name)

@@ -305,10 +305,6 @@ export default function ReportsView({ isActive = true, onClose }) {
   }, [activeReport, isActive]);
 
   useEffect(() => {
-    if (!isActive) setIsReportOpen(false);
-  }, [isActive]);
-
-  useEffect(() => {
     try {
       window.sessionStorage.setItem(HSN_SEARCH_SESSION_KEY, JSON.stringify({
         filters: hsnFilters,
@@ -322,13 +318,13 @@ export default function ReportsView({ isActive = true, onClose }) {
   }, [hsnCodeSearch, hsnFilters, hsnProductDetails, hsnProductSearch]);
 
   useEffect(() => {
-    if (!isReportOpen) return undefined;
+    if (!isActive || !isReportOpen) return undefined;
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') setIsReportOpen(false);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isReportOpen]);
+  }, [isActive, isReportOpen]);
 
   const filteredHsnRows = useMemo(() => {
     const productSearch = deferredHsnProductSearch.trim().toLowerCase();
@@ -431,7 +427,7 @@ export default function ReportsView({ isActive = true, onClose }) {
   }, [activeReport, hsnProductSearch]);
 
   useEffect(() => {
-    if (activeReport !== 'productSales') {
+    if (activeReport !== 'productSales' || !isProductSalesSuggestionOpen) {
       setProductSalesSuggestions([]);
       setIsProductSalesSuggestionOpen(false);
       return undefined;
@@ -464,7 +460,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [activeReport, productSalesSearch]);
+  }, [activeReport, productSalesSearch, isProductSalesSuggestionOpen]);
 
   async function selectHsnProduct(product) {
     const searchText = product.barcode || product.product_code || product.product_name || '';
@@ -511,6 +507,8 @@ export default function ReportsView({ isActive = true, onClose }) {
   }
 
   async function loadProductSales(searchText = productSalesSearch) {
+    setIsProductSalesSuggestionOpen(false);
+    setProductSalesSuggestions([]);
     const search = String(searchText || '').trim();
     if (!search) {
       setProductSalesError('Enter product code, barcode, or product name.');
@@ -1727,11 +1725,19 @@ export default function ReportsView({ isActive = true, onClose }) {
             <ReportHeader title="Product Sales" onExcel={exportProductSalesExcel} onPdf={exportPdf} onClose={() => setIsReportOpen(false)} />
             <div className="panel-body form-stack">
               <form className="report-filter-row hsn-product-detail-form" onSubmit={handleProductSalesSubmit}>
-                <label className="hsn-product-detail-search supplier-lookup-field">
+                <label className="hsn-product-detail-search supplier-lookup-field" onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget)) setIsProductSalesSuggestionOpen(false);
+                }}>
                   <span className="field-label">Product Code / Name</span>
                   <input
                     className="field"
                     value={productSalesSearch}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        setIsProductSalesSuggestionOpen(false);
+                      }
+                    }}
                     onChange={(event) => {
                       setProductSalesSearch(event.target.value);
                       setIsProductSalesSuggestionOpen(event.target.value.trim().length >= 3);
@@ -2441,7 +2447,7 @@ export default function ReportsView({ isActive = true, onClose }) {
         </div>
       </section>
 
-      {isReportOpen && <div
+      {isActive && isReportOpen && <div
         className="reports-print-area report-view-modal-backdrop"
         role="dialog"
         aria-modal="true"

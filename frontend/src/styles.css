@@ -3855,7 +3855,6 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .inward-print-summary {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  border-bottom: 1px solid #111;
 }
 
 .inward-print-summary span {
@@ -5552,6 +5551,15 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   line-height: 1.1;
 }
 
+.named-ledger-table tbody .named-ledger-credit-row td {
+  font-weight: 700;
+}
+
+.named-ledger-entry-actions { display: grid; gap: 4px; }
+.named-ledger-row-actions { display: flex; gap: 6px; white-space: nowrap; }
+.named-ledger-table th:last-child,
+.named-ledger-table td:last-child { position: sticky; right: 0; background: #f0fff3; }
+
 .named-ledger-entry-row {
   grid-column: auto;
   grid-template-columns: 150px 180px minmax(180px, 1fr) minmax(180px, 1fr) 140px 140px 190px;
@@ -5677,6 +5685,10 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   border: 1px solid #111111;
   color: #000000;
   line-height: 1.2;
+}
+
+.counter-cash-ledger-view .cash-ledger-credit-balance {
+  color: #dc2626;
 }
 
 .cash-ledger-table thead th {
@@ -6161,7 +6173,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .handover-details-input,
 .handover-details-cell {
-  font-weight: 800;
+  font-weight: 400;
 }
 
 .handover-table th,
@@ -6349,7 +6361,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 }
 
 .handover-print-sheet .handover-details-cell {
-  font-weight: 800;
+  font-weight: 400;
 }
 
 .handover-print-sheet th:nth-child(1),
@@ -7846,7 +7858,8 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   border-spacing: 0;
   empty-cells: show;
   table-layout: fixed;
-  font-size: 7.2px;
+  font-size: 8px;
+  line-height: 1.15;
   border-left: 1px solid #111;
   border-right: 1px solid #111;
   border-bottom: 1px solid #111;
@@ -7858,7 +7871,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
   padding: 0.5px 2px;
   border: 1px solid #111;
   border-top: 0;
-  vertical-align: top;
+  vertical-align: middle;
   overflow: hidden;
 }
 

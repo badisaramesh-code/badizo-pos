@@ -1,8 +1,12 @@
+const { lockLedgerSource, syncNamedLedgerDetails } = require('../utils/syncNamedLedgerDetails');
 const express = require('express');
+const { fetchNamedLedgers } = require('../utils/namedLedgers');
+const { writeAuditLog } = require('../services/auditService');
 const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { normalizeDate, parseMoney } = require('../utils/formatters');
+const { buildCounterLabels, applyCounterLabel } = require('../utils/bookCounterLabels');
 
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
@@ -300,44 +304,7 @@ router.get('/accounting', async (req, res) => {
       [from, to]
     );
 
-    const [namedLedgerEntries] = await db.query(
-      `SELECT cle.id,
-              DATE_FORMAT(cle.entry_date, '%Y-%m-%d') AS entry_date,
-              cle.counter_no,
-              COALESCE((SELECT REPLACE(i.billing_counter, 'Counter', 'C') FROM invoices i WHERE DATE(i.created_at) = cle.entry_date AND i.billing_counter REGEXP CONCAT('Counter', cle.counter_no, '$') ORDER BY i.created_at DESC LIMIT 1), CONCAT('C', cle.counter_no)) AS counter_label,
-              cle.source_id,
-              chs.sheet_no,
-              CASE
-                WHEN cle.source_type = 'NAMED_LEDGER_MANUAL' THEN UPPER(TRIM(cle.account_name))
-                WHEN account_counts.entry_count >= 2
-                  THEN UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END))
-                ELSE 'GENERAL'
-              END AS account_name,
-              UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END)) AS source_account_name,
-              cle.details,
-              cle.remarks,
-              cle.direction,
-              cle.amount,
-              cle.created_by,
-              DATE_FORMAT(cle.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
-       FROM counter_cash_ledger_entries cle
-       LEFT JOIN counter_handover_sheets chs ON chs.id = cle.source_id
-       LEFT JOIN (
-         SELECT UPPER(TRIM(CASE WHEN account_name LIKE 'Expense - %' THEN SUBSTRING(account_name, 11) ELSE account_name END)) AS normalized_name,
-                COUNT(*) AS entry_count
-         FROM counter_cash_ledger_entries
-         WHERE source_type = 'COUNTER_HANDOVER'
-           AND payment_mode NOT IN ('CLOSING_BASE', 'SALES', 'CASH_NOTES')
-           AND entry_date <= ?
-         GROUP BY UPPER(TRIM(CASE WHEN account_name LIKE 'Expense - %' THEN SUBSTRING(account_name, 11) ELSE account_name END))
-       ) account_counts ON account_counts.normalized_name = UPPER(TRIM(CASE WHEN cle.account_name LIKE 'Expense - %' THEN SUBSTRING(cle.account_name, 11) ELSE cle.account_name END))
-       WHERE ((cle.source_type = 'COUNTER_HANDOVER'
-               AND cle.payment_mode NOT IN ('CLOSING_BASE', 'SALES', 'CASH_NOTES'))
-              OR cle.source_type = 'NAMED_LEDGER_MANUAL')
-         AND cle.entry_date <= ?
-       ORDER BY account_name ASC, cle.entry_date ASC, cle.created_at ASC, cle.id ASC`,
-      [to, to]
-    );
+    const namedLedgerEntries = await fetchNamedLedgers(db, to);
 
     const [cashAccountManualEntries] = await db.query(
       `SELECT id, entry_date, counter_no, details, direction, amount, created_by, created_at
@@ -349,7 +316,7 @@ router.get('/accounting', async (req, res) => {
     );
 
     const [handoverSheets] = await db.query(
-      `SELECT id, closing_date, counter_no, COALESCE((SELECT REPLACE(i.billing_counter, 'Counter', 'C') FROM invoices i WHERE DATE(i.created_at) = counter_handover_sheets.closing_date AND i.billing_counter REGEXP CONCAT('Counter', counter_handover_sheets.counter_no, '$') ORDER BY i.created_at DESC LIMIT 1), CONCAT('C', counter_handover_sheets.counter_no)) AS counter_label,
+      `SELECT id, closing_date, counter_no, CONCAT('C', counter_no) AS counter_label,
                sheet_no, opening_cash, counter_sales, all_counter_sales,
                cash_sales, upi_sales, card_sales, dr_total, cr_total, notes_total, cash_balance,
                variance_amount, handed_over_by, taken_over_by,
@@ -360,6 +327,20 @@ router.get('/accounting', async (req, res) => {
         ORDER BY closing_date ASC, counter_no ASC`,
       [from, to]
     );
+    // Resolve counter labels once, instead of scanning invoices for every ledger row.
+    const [counterLabelRows] = await db.query(
+      `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS invoice_date,
+              billing_counter, MAX(created_at) AS latest_at
+       FROM invoices
+       WHERE created_at < DATE_ADD(?, INTERVAL 1 DAY)
+         AND billing_counter REGEXP 'Counter[0-9]+$'
+       GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d'), billing_counter`,
+      [to]
+    );
+    const counterLabels = buildCounterLabels(counterLabelRows);
+    namedLedgerEntries.forEach((row) => applyCounterLabel(counterLabels, row, row.entry_date));
+    handoverSheets.forEach((row) => applyCounterLabel(counterLabels, row, row.closing_date));
+
     const handoverDenominationsBySheet = {};
     if (handoverSheets.length) {
       const [handoverDenominations] = await db.query(
@@ -772,13 +753,15 @@ router.get('/accounting', async (req, res) => {
         + (row.direction === 'DR' ? amount : -amount);
       if (row.entry_date < from) return;
       namedLedgerRows.push({
+        entryId: row.id,
+        isManual: row.source_type === NAMED_LEDGER_MANUAL_SOURCE,
         Date: row.entry_date,
         Account: account,
         Counter: row.counter_label || ('C' + row.counter_no),
         Sheet: row.sheet_no || '',
-        Details: account === 'GENERAL'
+        Details: row.named_ledger_details ?? (account === 'GENERAL'
           ? [row.source_account_name, row.details].filter(Boolean).join(' - ')
-          : (row.details || ''),
+          : (row.details || '')),
         Remarks: row.remarks || '',
         'DR Rs': row.direction === 'DR' ? amount : 0,
         'CR Rs': row.direction === 'CR' ? amount : 0,
@@ -1046,6 +1029,46 @@ router.get('/accounting', async (req, res) => {
   }
 });
 
+router.patch('/named-ledgers/:id/details', async (req, res) => {
+  const id = Number(req.params.id);
+  const details = typeof req.body?.details === 'string' ? req.body.details.trim() : '';
+  const to = String(req.body?.to || '');
+  if (!Number.isSafeInteger(id) || id <= 0 || !details || details.length > 255 || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ error: 'Valid entry, report date and details (1–255 characters) are required.' });
+  }
+  if (Object.keys(req.body).some(key => !['details', 'to'].includes(key))) {
+    return res.status(400).json({ error: 'Only Details can be edited.' });
+  }
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const sourceEntry = await lockLedgerSource(connection, id);
+    const rows = await fetchNamedLedgers(connection, to);
+    const entry = rows.find(row => Number(row.id) === id);
+    if (!sourceEntry || !entry || entry.account_name !== 'GENERAL') {
+      await connection.rollback();
+      return res.status(409).json({ error: 'Only current GENERAL ledger entries can be edited. Reload the book.' });
+    }
+    const account = rows.find(row => row.account_name.toUpperCase() === details.toUpperCase())?.account_name || 'GENERAL';
+    await syncNamedLedgerDetails(connection, sourceEntry, details);
+    await connection.query(
+      'UPDATE counter_cash_ledger_entries SET named_ledger_details = ?, named_ledger_account = ? WHERE id = ?',
+      [details, account, id]
+    );
+    await writeAuditLog({ user: req.user, action: 'NAMED_LEDGER_DETAILS_EDITED', entityType: 'COUNTER_CASH_LEDGER', entityId: String(id),
+      details: { previousDetails: entry.named_ledger_details ?? entry.details, details, previousAccount: 'GENERAL', account }, connection });
+    await connection.commit();
+    res.json({ success: true, account_name: account });
+  } catch (err) {
+    if (connection) await connection.rollback();
+    console.error('Named ledger details edit failed:', err.message);
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Unable to save ledger details.' });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
 router.post('/named-ledgers/manual', async (req, res) => {
   try {
     const entryDate = normalizeDate(req.body?.entry_date || req.body?.date);
@@ -1073,6 +1096,44 @@ router.post('/named-ledgers/manual', async (req, res) => {
     res.status(500).json({ error: 'Unable to save named ledger entry.' });
   }
 });
+router.put('/named-ledgers/manual/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const { entry_date, direction } = req.body || {};
+  const details = String(req.body?.details || '').trim();
+  const remarks = String(req.body?.remarks || '').trim();
+  const amount = Number(req.body?.amount);
+  const date = new Date(`${entry_date}T00:00:00Z`);
+  if (!Number.isSafeInteger(id) || id <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(entry_date || '') ||
+      !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== entry_date ||
+      !details || details.length > 255 || remarks.length > 255 || !['DR', 'CR'].includes(direction) || !Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'Valid date, details, DR/CR and positive amount are required.' });
+  }
+  try {
+    const [result] = await db.query(
+      `UPDATE counter_cash_ledger_entries SET entry_date = ?, details = ?, named_ledger_details = ?, remarks = ?, direction = ?, amount = ? WHERE id = ? AND source_type = ?`,
+      [entry_date, details, details, remarks, direction, parseMoney(amount), id, NAMED_LEDGER_MANUAL_SOURCE]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Manual ledger entry not found. Reload the book.' });
+    res.json({ success: true, entry_date });
+  } catch (err) {
+    console.error('Named ledger manual edit failed:', err.message);
+    res.status(500).json({ error: 'Unable to update ledger entry.' });
+  }
+});
+
+router.delete('/named-ledgers/manual/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: 'Valid entry is required.' });
+  try {
+    const [result] = await db.query('DELETE FROM counter_cash_ledger_entries WHERE id = ? AND source_type = ?', [id, NAMED_LEDGER_MANUAL_SOURCE]);
+    if (!result.affectedRows) return res.status(404).json({ error: 'Manual ledger entry not found. Reload the book.' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Named ledger manual delete failed:', err.message);
+    res.status(500).json({ error: 'Unable to delete ledger entry.' });
+  }
+});
+
 router.post('/counter-closing-cash-account/manual', async (req, res) => {
   try {
     const entryDate = normalizeDate(req.body?.entry_date || req.body?.date);

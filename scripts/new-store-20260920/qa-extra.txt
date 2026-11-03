@@ -1,0 +1,45 @@
+
+ // Validate delivered XLSX through the actual frontend conversion and import API.
+ const XLSX=require(path.join(root,'frontend/node_modules/xlsx'));
+ const workbook=XLSX.readFile(path.join(root,'outputs/01a0bd5d-f9db-73f3-b557-bdfd4dbfdc38/NEW_SKU_UPLOAD.xlsx'));
+ assert.equal(workbook.SheetNames[0],'Upload');
+ const blankRows=XLSX.utils.sheet_to_json(workbook.Sheets.Upload,{header:1,defval:''});
+ assert.ok(blankRows.slice(1).every(r=>r.every(v=>v==='')),'template contains no importable samples');
+ const source=fs.readFileSync(path.join(root,'frontend/src/components/InventoryDashboardView.jsx'),'utf8');
+ const helpers=source.slice(source.indexOf('const PRODUCT_API_IMPORT_HEADERS'),source.indexOf('function formatProductDate'))+'\n'+source.slice(source.indexOf('function normalizeHeaderName'),source.indexOf('function downloadProductExcelTemplate'));
+ const convert=require('vm').runInNewContext(helpers+'; rowsToApiImportCsv');
+ const headers=blankRows[0];
+ const row=values=>headers.map(h=>values[h]??'');
+ const rows=[headers,row({'Product Code':'000123','Barcode':'0000001234567','Description':'QA EXCEL SKU','HSN Code':'001234','Unit':'Nos','Product Qty / Measure':'1 Pc','Purchase Unit':'Loose','Stock Per Purchase Unit':1,'MRP':100,'Purchase Rate':50,'Sales Rate':90,'Wholesale Price':80,'Sales GST %':0,'Sales SGST %':0,'Sales CGST %':0,'Sales IGST %':0,'Inward Quantity':7,'Low Stock Alert':2}),row({'Product Code':'000124','Barcode':'0000001234568','Description':'QA LABEL SKU','Unit':'Nos','MRP':100,'Purchase Rate':50,'Sales Rate':90,'Inward Quantity':0})];
+ const imported=await request('/api/products/import',{csv:convert(rows),fileName:'NEW_SKU_UPLOAD.xlsx'},token,202);
+ let job;
+ for(let i=0;i<60;i++){const [[v]]=await db.query('SELECT * FROM product_import_jobs WHERE id=?',[imported.importId]);job=v;if(['COMPLETED','FAILED','COMPLETED_WITH_ERRORS'].includes(v.status))break;await sleep(200)}
+ assert.equal(job.status,'COMPLETED',JSON.stringify(job));
+ const [[sku]]=await db.query("SELECT * FROM products WHERE barcode='0000001234567'");
+ assert.equal(sku.product_code,'000123');assert.equal(sku.hsn_code,'001234');assert.equal(Number(sku.stock_qty),7);assert.equal(Number(sku.sale_price),90);
+ results.push({check:'Delivered XLSX: blank upload sheet, leading-zero codes, real converter + asynchronous import + prices/stock',status:'PASS'});
+ await request('/api/barcode/prn',{barcode:'0000001234568',product_name:'QA LABEL SKU',mrp:100,sale_price:90,qty:'1',unit:'Nos',stickerCount:1,template_name:fs.readdirSync(path.join(appRoot,'barcode/templates'))[0]},token);
+ const [[labelSku]]=await db.query("SELECT stock_qty FROM products WHERE barcode='0000001234568'");assert.equal(Number(labelSku.stock_qty),1);
+ results.push({check:'Excel zero opening stock + PRN adds exactly one label unit',status:'PASS'});
+ const [[backupTime]]=await db.query("SELECT setting_value FROM app_settings WHERE setting_key='backup_daily_time'");assert.equal(backupTime.setting_value,'09:00');
+ const fixture=path.join(release,'qa/backup-fixture-'+Date.now());fs.mkdirSync(path.join(fixture,'backend'),{recursive:true});fs.mkdirSync(path.join(fixture,'runtime'));
+ fs.symlinkSync(path.join(backend,'node_modules'),path.join(fixture,'backend/node_modules'),'junction');
+ fs.copyFileSync(path.join(release,'package/payload/runtime/node.exe'),path.join(fixture,'runtime/node.exe'));
+ fs.copyFileSync(path.join(__dirname,'backup-dump.cjs'),path.join(fixture,'backup-dump.cjs'));
+ for(const rel of ['barcode/templates','barcode/output','thermal'])if(fs.existsSync(path.join(appRoot,rel)))fs.cpSync(path.join(appRoot,rel),path.join(fixture,rel),{recursive:true});
+ const fixtureEnv=['DB_HOST','DB_PORT','DB_USER','DB_PASSWORD','DB_NAME','MYSQLDUMP_PATH'].map(k=>k+'='+JSON.stringify(process.env[k])).join('\n');
+ fs.writeFileSync(path.join(fixture,'backend/.env'),fixtureEnv);
+ const cp=require('child_process'),ps='C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
+ function backupRun(force){return cp.spawnSync(ps,['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(__dirname,'backup-local.ps1'),'-InstallRoot',fixture,...(force?['-Force']:[])],{encoding:'utf8',windowsHide:true,timeout:90000})}
+ let br=backupRun(true);assert.equal(br.status,0,br.stdout+br.stderr);
+ const backupMarker=JSON.parse(fs.readFileSync(path.join(fixture,'backups/last-local-backup.json'),'utf8').replace(/^\uFEFF/,''));
+ assert.ok(fs.statSync(backupMarker.archive).size>1000);
+ const zipList=cp.spawnSync(ps,['-NoProfile','-Command', "Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[IO.Compression.ZipFile]::OpenRead('"+backupMarker.archive.replace(/'/g,"''")+"'); try {$z.Entries.FullName | ConvertTo-Json} finally {$z.Dispose()}"],{encoding:'utf8',windowsHide:true});
+ assert.equal(zipList.status,0);assert.ok(zipList.stdout.includes('database.sql'));assert.ok(zipList.stdout.includes('.prn'));assert.ok(zipList.stdout.includes('thermal'));
+ const count=fs.readdirSync(path.join(fixture,'backups')).filter(f=>f.endsWith('.zip')).length;br=backupRun(false);assert.equal(br.status,0,br.stderr);assert.equal(fs.readdirSync(path.join(fixture,'backups')).filter(f=>f.endsWith('.zip')).length,count);
+ results.push({check:'09:00 setting; full local ZIP contains SQL + barcode PRN + thermal; same-day scheduled duplicate skipped',status:'PASS'});
+ fs.writeFileSync(path.join(fixture,'backend/.env'),fixtureEnv.replace(/^MYSQLDUMP_PATH=.*$/m,'MYSQLDUMP_PATH=Z:/missing/mysqldump.exe'));
+ br=backupRun(true);assert.notEqual(br.status,0);assert.equal(JSON.parse(fs.readFileSync(path.join(fixture,'backups/last-local-backup.json'),'utf8').replace(/^\uFEFF/,'')).archive,backupMarker.archive);
+ assert.ok(fs.existsSync(path.join(fixture,'backups/backup-errors.log')));
+ fs.writeFileSync(path.join(fixture,'backend/.env'),fixtureEnv);
+ results.push({check:'Backup failure returns nonzero, records error and preserves last successful archive marker',status:'PASS'});

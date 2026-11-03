@@ -10,12 +10,16 @@ import {
 import { formatDisplayDate, normalizeDateInput, todayIso } from '../utils/date';
 import { formatMoney, toNumber } from '../utils/money';
 
-const DEFAULT_DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
+const DEFAULT_DENOMINATIONS = [500, 200, 100, 50, 20, 10, 5, 2, 1];
 const HANDOVER_TRANSACTION_ROWS = 30;
+const REQUIRED_ENTRY_DETAILS = [
+  'UPI SALE', 'NUMBER'
+];
 const HANDOVER_PRINT_MANUAL_ROWS = 23;
 const HANDOVER_PRINT_DENOMINATION_ROWS = 8;
 const AUTO_ENTRY_DETAILS = new Set(['Counter Closing Cash', 'Today Sale']);
 const COUNTER_CLOSING_VIEW_REQUEST_KEY = 'badizo_counter_closing_view_request';
+const COUNTER_CLOSING_LAST_SELECTION_KEY = 'badizo_counter_closing_last_selection';
 const EMPTY_SNAPSHOT = {
   counter_sales: 0,
   all_counter_sales: 0,
@@ -51,13 +55,20 @@ function isEntryFilled(entry) {
 
 function normalizeEntryCount(rows) {
   const sourceRows = Array.isArray(rows) ? rows : [];
-  const normalized = sourceRows.slice(0, HANDOVER_TRANSACTION_ROWS).map((entry) => ({
+  const remaining = sourceRows.map((entry) => ({
     ...blankEntry(entry.direction === 'DR' ? 'DR' : 'CR'),
     ...entry,
     details: entry.details || '',
     remarks: entry.remarks || '',
     amount: entry.amount === undefined || entry.amount === null ? '' : String(entry.amount)
   }));
+  const normalized = REQUIRED_ENTRY_DETAILS.map((details) => {
+    const index = remaining.findIndex((entry) => String(entry.details).trim().toUpperCase() === details);
+    return index >= 0
+      ? { ...remaining.splice(index, 1)[0], details }
+      : { ...blankEntry(), details };
+  });
+  normalized.push(...remaining.filter(isEntryFilled));
 
   while (normalized.length < HANDOVER_TRANSACTION_ROWS) {
     normalized.push(blankEntry());
@@ -92,6 +103,18 @@ function exportWorkbook(filename, sheets) {
 
 function makeDefaultEntries() {
   return normalizeEntryCount([]);
+}
+
+function readLastCounterClosingSelection(fallbackCounterNo) {
+  try {
+    const stored = JSON.parse(window.sessionStorage.getItem(COUNTER_CLOSING_LAST_SELECTION_KEY) || 'null');
+    return {
+      date: normalizeDateInput(stored?.date || todayIso()),
+      counterNo: Math.max(Number.parseInt(stored?.counterNo, 10) || fallbackCounterNo, 1)
+    };
+  } catch (_err) {
+    return { date: todayIso(), counterNo: fallbackCounterNo };
+  }
 }
 
 function counterDisplayLabel(currentUser, counterNo) {
@@ -161,11 +184,12 @@ export default function CounterClosingView({ onClose }) {
   const currentUser = getStoredUser();
   const isCounterUser = currentUser?.role === 'COUNTER';
   const userCounterNo = currentUser?.counter_no || 1;
+  const [initialSelection] = useState(() => readLastCounterClosingSelection(userCounterNo));
 
-  const [date, setDate] = useState(todayIso());
-  const [historyFrom, setHistoryFrom] = useState(todayIso());
-  const [historyTo, setHistoryTo] = useState(todayIso());
-  const [counterNo, setCounterNo] = useState(userCounterNo);
+  const [date, setDate] = useState(initialSelection.date);
+  const [historyFrom, setHistoryFrom] = useState(initialSelection.date);
+  const [historyTo, setHistoryTo] = useState(initialSelection.date);
+  const [counterNo, setCounterNo] = useState(isCounterUser ? userCounterNo : initialSelection.counterNo);
   const currentCounterLabel = counterDisplayLabel(currentUser, counterNo);
   const [counterCount, setCounterCount] = useState(6);
   const [shopName, setShopName] = useState('Hyper Fresh Mart LLP');
@@ -193,6 +217,21 @@ export default function CounterClosingView({ onClose }) {
   const historySectionRef = useRef(null);
 
   useEffect(() => {
+    function focusNotesDenomination(event) {
+      if (!event.ctrlKey || !event.altKey || event.shiftKey || event.metaKey || event.repeat) return;
+      if (!['Control', 'Alt'].includes(event.key) || event.getModifierState?.('AltGraph')) return;
+      const input = denominationInputRefs.current[0];
+      if (!input) return;
+      event.preventDefault();
+      input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      input.focus({ preventScroll: true });
+      input.select();
+    }
+    window.addEventListener('keydown', focusNotesDenomination);
+    return () => window.removeEventListener('keydown', focusNotesDenomination);
+  }, []);
+
+  useEffect(() => {
     loadSettings();
   }, []);
 
@@ -217,6 +256,10 @@ export default function CounterClosingView({ onClose }) {
     if (!isCounterUser) loadHistory();
   }, [date, counterNo]);
 
+  useEffect(() => {
+    window.sessionStorage.setItem(COUNTER_CLOSING_LAST_SELECTION_KEY, JSON.stringify({ date, counterNo }));
+  }, [date, counterNo]);
+
   const denominationRows = useMemo(() => {
     return denominationList.map((value) => {
       const qty = Math.max(Number(denominations[value]) || 0, 0);
@@ -233,7 +276,7 @@ export default function CounterClosingView({ onClose }) {
   ), [entries]);
 
   const displayEntryRows = useMemo(() => (
-    normalizeEntryCount(entries).map((entry, index) => ({ entry, index }))
+    entries.map((entry, index) => ({ entry, index }))
   ), [entries]);
 
   const entryTotals = useMemo(() => {
@@ -317,7 +360,7 @@ export default function CounterClosingView({ onClose }) {
     try {
       const result = await fetchCounterHandover(saleDate, counterNo);
       const nextSnapshot = normalizeSnapshot(result.snapshot);
-      const nextDenominations = result.denominations || DEFAULT_DENOMINATIONS;
+      const nextDenominations = (result.denominations || DEFAULT_DENOMINATIONS).filter((value) => Number(value) !== 2000);
       const savedSheet = result.sheet;
       setSheetNo(savedSheet?.sheet_no || result.sheet_no || '');
       setSheetMeta(savedSheet ? { created_at: savedSheet.created_at || '', updated_at: savedSheet.updated_at || '' } : { created_at: '', updated_at: '' });
@@ -331,7 +374,7 @@ export default function CounterClosingView({ onClose }) {
         setIsExistingSheet(true);
         setDenominations({
           ...emptyDenominations(nextDenominations),
-          ...(savedSheet.denominations || []).reduce((acc, row) => ({ ...acc, [Number(row.denomination_value)]: String(toNumber(row.quantity)) }), {})
+          ...(savedSheet.denominations || []).filter((row) => nextDenominations.includes(Number(row.denomination_value))).reduce((acc, row) => ({ ...acc, [Number(row.denomination_value)]: String(toNumber(row.quantity)) }), {})
         });
         setHandedOverBy(savedSheet.handed_over_by || '');
         setTakenOverBy(savedSheet.taken_over_by || '');
@@ -392,6 +435,7 @@ export default function CounterClosingView({ onClose }) {
   }
 
   function updateEntry(index, field, value) {
+    if (field === 'details' && index < REQUIRED_ENTRY_DETAILS.length) return;
     setActiveEntryIndex(index);
     if (isExistingSheet) setIsExistingSheet(false);
     setEntries((current) => current.map((entry, rowIndex) => (
@@ -425,7 +469,7 @@ export default function CounterClosingView({ onClose }) {
     if (event.key !== 'Enter') return;
     event.preventDefault();
     formatEntryAmount(index);
-    focusEntryDetails(Math.min(index + 1, HANDOVER_TRANSACTION_ROWS - 1));
+    focusEntryDetails(Math.min(index + 1, entries.length - 1));
   }
 
   function moveBetweenDenominations(event, index) {
@@ -445,7 +489,7 @@ export default function CounterClosingView({ onClose }) {
 
   function clearEntry(index) {
     setEntries((current) => current.map((entry, rowIndex) => (
-      rowIndex === index ? blankEntry() : entry
+      rowIndex === index ? { ...blankEntry(), details: REQUIRED_ENTRY_DETAILS[index] || '' } : entry
     )));
     setActiveEntryIndex(index);
     setIsExistingSheet(false);
@@ -455,9 +499,9 @@ export default function CounterClosingView({ onClose }) {
   function startCashEntry(direction, details) {
     const nextDetails = details || (direction === 'DR' ? 'Cash Outgoing' : 'Cash Incoming');
     const emptyIndex = entries.findIndex((entry) => !isEntryFilled(entry));
-    const targetIndex = emptyIndex >= 0 ? emptyIndex : Math.min(activeEntryIndex + 1, HANDOVER_TRANSACTION_ROWS - 1);
+    const targetIndex = emptyIndex >= 0 ? emptyIndex : entries.length;
 
-    setEntries((current) => current.map((entry, rowIndex) => (
+    setEntries((current) => (targetIndex === current.length ? [...current, blankEntry()] : current).map((entry, rowIndex) => (
       rowIndex === targetIndex
         ? { ...entry, details: entry.details || nextDetails, direction, amount: entry.amount || '' }
         : entry
@@ -656,7 +700,7 @@ export default function CounterClosingView({ onClose }) {
     th:nth-child(3), td:nth-child(3) { width: 15mm; }
     th:nth-child(4), th:nth-child(5), td:nth-child(4), td:nth-child(5) { width: 10mm; text-align: right; }
     tfoot th { font-weight: 700; }
-    .handover-details-cell { font-weight: 800; }
+    .handover-details-cell { font-weight: 400; }
     .handover-negative-difference {
       color: #d00000 !important;
       font-weight: 900 !important;
@@ -746,7 +790,7 @@ export default function CounterClosingView({ onClose }) {
       .handover-print-meta > *:last-child, .handover-print-sale-row > *:last-child { border-right: 0; }
       .handover-print-sheet table { width: 100%; border-collapse: collapse; }
       .handover-print-sheet th, .handover-print-sheet td { height: 15px; padding: 1px 3px; border: 1px solid #111; vertical-align: middle; line-height: 1.1; }
-      .handover-print-sheet .handover-details-cell { font-weight: 800; }
+      .handover-print-sheet .handover-details-cell { font-weight: 400; }
       .handover-print-sheet .handover-negative-difference { color: #d00000; font-weight: 900; }
       .handover-print-sheet th:nth-child(1), .handover-print-sheet td:nth-child(1) { width: 11mm; text-align: center; }
       .handover-print-sheet th:nth-child(4), .handover-print-sheet th:nth-child(5), .handover-print-sheet td:nth-child(4), .handover-print-sheet td:nth-child(5) { width: 25mm; text-align: right; }
@@ -1020,6 +1064,7 @@ export default function CounterClosingView({ onClose }) {
                           ref={(element) => { entryDetailRefs.current[index] = element; }}
                           className="field handover-details-input"
                           value={entry.details}
+                          readOnly={index < REQUIRED_ENTRY_DETAILS.length}
                           onFocus={() => setActiveEntryIndex(index)}
                           onChange={(event) => updateEntry(index, 'details', event.target.value)}
                           onKeyDown={(event) => {
@@ -1094,7 +1139,7 @@ export default function CounterClosingView({ onClose }) {
 
           <section className="panel">
             <div className="panel-header handover-denomination-header">
-              <h3 className="panel-title">Notes Denomination</h3>
+              <h3 className="panel-title">Notes Denomination <small>(Ctrl + Alt)</small></h3>
               <strong>Today Cash Notes Count Balance: {formatMoney(cashBalance)}</strong>
             </div>
             <div className="panel-body handover-denomination-grid">

@@ -28,8 +28,10 @@ import {
 } from '../api/client';
 import { amountInWords, formatMoney, toNumber } from '../utils/money';
 import { findExactSaleProduct } from '../utils/productLookup';
+import { shouldRecoverCheckout } from '../utils/checkoutRecovery';
 import PrintableInvoice from './PrintableInvoice';
 import PrintableQuotation from './PrintableQuotation';
+import { saveSaleReportPdf } from '../utils/saleReportPdf';
 
 const BILLING_MODES = {
   RETAIL_LOCAL: {
@@ -463,15 +465,15 @@ export default function BillingTerminalView({ isActive = true }) {
   const [counterNo, setCounterNo] = useState(Number(initialDraft?.counterNo || currentUser?.counter_no || 1));
   const [counterCount, setCounterCount] = useState(6);
   const [shopSettings, setShopSettings] = useState({
-    shop_name: 'Hyper Fresh Mart LLP',
-    gst_number: '36AAJFH7790R1ZB',
-    address: 'Sathupally - Khammam(dt) - 507303',
-    phone: '08761 295000',
-    bank_name: 'HDFC BANK',
-    bank_account_name: 'Hyper Fresh Mart LLP',
-    bank_account_no: '59209440987345',
-    bank_ifsc: 'HDFC0004047',
-    bank_branch: 'Sathupally',
+    shop_name: '',
+    gst_number: '',
+    address: '',
+    phone: '',
+    bank_name: '',
+    bank_account_name: '',
+    bank_account_no: '',
+    bank_ifsc: '',
+    bank_branch: '',
     thermal_receipt_width_mm: 80,
     thermal_feed_margin_mm: 4,
     thermal_footer_line_1: '1. Goods Exchange Time 2 P.M - 4 P.M',
@@ -3101,7 +3103,7 @@ export default function BillingTerminalView({ isActive = true }) {
       from,
       to,
       reportType: String(formData?.get('sale_report_type') || saleReportType).toUpperCase(),
-      counterNo: currentUser?.role === 'COUNTER' ? counterNo : String(formData?.get('sale_report_scope') || saleReportScope) === 'CURRENT'
+      counterNo: String(formData?.get('sale_report_scope') || saleReportScope) === 'CURRENT'
         ? counterNo
         : (String(formData?.get('sale_report_scope') || saleReportScope) === 'ALL' ? '' : String(formData?.get('sale_report_scope') || saleReportScope))
     };
@@ -3140,6 +3142,25 @@ export default function BillingTerminalView({ isActive = true }) {
     event?.preventDefault?.();
     const report = await loadSaleReportForPos(event);
     if (report) await printSaleReportSlip(report);
+  }
+
+  async function handleDownloadSaleReportPdf(event) {
+    event?.preventDefault?.();
+    const report = await loadSaleReportForPos(event);
+    if (report) await downloadSaleReportPdf(report);
+  }
+
+  async function downloadSaleReportPdf(reportToPrint = saleReport) {
+    if (!reportToPrint) return;
+    try {
+      const result = await saveSaleReportPdf(reportToPrint, shopSettings);
+      setStatusMessage(result?.canceled ? 'Sale report PDF save cancelled.' :
+        (result?.filePath ? `Sale report PDF saved: ${result.filePath}` : 'Sale report PDF downloaded.'));
+    } catch (err) {
+      const message = err.message || 'Unable to save sale report PDF.';
+      setSaleReportError(message);
+      setErrorMessage(message);
+    }
   }
 
   async function printSaleReportSlip(reportToPrint = saleReport) {
@@ -5128,6 +5149,12 @@ export default function BillingTerminalView({ isActive = true }) {
       return;
     }
 
+    if (activePaymentMode === 'Mixed' && (Object.values({ cash: effectiveMixedPayment.cash, upi: effectiveMixedPayment.upi, card: effectiveMixedPayment.card }).some(amount => toNumber(amount) < 0)
+      || moneyToPaise(toNumber(effectiveMixedPayment.upi) + toNumber(effectiveMixedPayment.card)) > payablePaiseForCheckout)) {
+      setErrorMessage('UPI and Card total cannot exceed the bill amount. Enter valid non-negative payment amounts.');
+      return;
+    }
+
     if (activePaymentMode === 'Mixed' && receivedPaise < payablePaiseForCheckout) {
       setErrorMessage('Mixed payment total must be equal to or greater than the bill total.');
       window.setTimeout(() => mixedCashRef.current?.focus(), 50);
@@ -5293,7 +5320,8 @@ export default function BillingTerminalView({ isActive = true }) {
     async function recoverCommittedCheckout() {
       const details = await fetchInvoiceDetails('', {
         checkoutRequestId,
-        timeoutMs: 8000
+        timeoutMs: 8000,
+        noRetry: true
       });
       const savedInvoice = details?.invoice || {};
       const savedTotalPaise = moneyToPaise(savedInvoice.grand_total);
@@ -5301,7 +5329,7 @@ export default function BillingTerminalView({ isActive = true }) {
       const sameCounter = counterLabelMatches(savedCounter, counterNo);
       const sameTotal = Math.abs(savedTotalPaise - payablePaiseForCheckout) <= 1;
 
-      if (savedInvoice.invoice_no && sameCounter && sameTotal && savedInvoice.invoice_status !== 'VOID') {
+      if (savedInvoice.invoice_no && sameCounter && sameTotal && savedInvoice.invoice_status === 'PAID') {
         const recoveredFreeItems = Array.isArray(details?.items)
           ? details.items.filter((item) => Number(item.is_free_bonus) === 1)
           : [];
@@ -5318,22 +5346,9 @@ export default function BillingTerminalView({ isActive = true }) {
       completeSuccessfulCheckout(checkoutResult.invoice_no || invoiceNo, checkoutResult.free_items || []);
     } catch (err) {
       try {
-        if (checkoutRequestId && await recoverCommittedCheckout()) return;
-        const details = await fetchInvoiceDetails(invoiceNo);
-        const savedInvoice = details?.invoice || {};
-        const savedTotalPaise = moneyToPaise(savedInvoice.grand_total);
-        const savedCounter = String(savedInvoice.billing_counter || '').trim().toLowerCase();
-        const sameInvoice = String(savedInvoice.invoice_no || '') === String(invoiceNo);
-        const sameCounter = counterLabelMatches(savedCounter, counterNo);
-        const sameTotal = Math.abs(savedTotalPaise - payablePaiseForCheckout) <= 1;
-
-        if (sameInvoice && sameCounter && sameTotal && savedInvoice.invoice_status !== 'VOID') {
-          const recoveredFreeItems = Array.isArray(details?.items)
-            ? details.items.filter((item) => Number(item.is_free_bonus) === 1)
-            : [];
-          completeSuccessfulCheckout(savedInvoice.invoice_no, recoveredFreeItems, true);
-          return;
-        }
+        // Preview numbers can belong to a different concurrent sale. Recover
+        // uncertain saves only by this checkout's unique request ID.
+        if (shouldRecoverCheckout(err) && checkoutRequestId && await recoverCommittedCheckout()) return;
       } catch (recoveryErr) {
         // Keep the original checkout error below; recovery is only for confirmed saved invoices.
       }
@@ -6268,7 +6283,7 @@ export default function BillingTerminalView({ isActive = true }) {
                   </label>
                   <label>
                     <span className="field-label">Counter</span>
-                    <select className="select" name="sale_report_scope" disabled={currentUser?.role === 'COUNTER'} value={saleReportScope} onChange={(event) => setSaleReportScope(event.target.value)}>
+                    <select className="select" name="sale_report_scope" value={saleReportScope} onChange={(event) => setSaleReportScope(event.target.value)}>
                       <option value="ALL">All Counters</option>
                       <option value="CURRENT">Current Counter</option>
                       <option value="1">Counter 1</option>
@@ -6284,7 +6299,10 @@ export default function BillingTerminalView({ isActive = true }) {
                       {isSaleReportLoading ? 'Loading...' : 'View'}
                     </button>
                     <button className="primary-button" type="button" disabled={isSaleReportLoading} onClick={handlePrintSaleReport}>
-                      Print
+                      Thermal Print
+                    </button>
+                    <button className="primary-button" type="button" disabled={isSaleReportLoading} onClick={handleDownloadSaleReportPdf}>
+                      Download PDF
                     </button>
                   </div>
                 </div>
