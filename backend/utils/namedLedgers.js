@@ -1,5 +1,6 @@
 // Shared classification for the report and details-only edits.
 const NAMED_LEDGER_QUERY = `SELECT cle.id,
+              cle.source_type,
               DATE_FORMAT(cle.entry_date, '%Y-%m-%d') AS entry_date,
               cle.counter_no,
               CONCAT('C', cle.counter_no) AS counter_label,

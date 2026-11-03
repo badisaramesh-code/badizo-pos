@@ -10,7 +10,9 @@ jest.mock('../api/client', () => ({
   fetchFinancialYears: jest.fn(),
   fetchDailySalesReport: jest.fn(),
   fetchMonthlySalesReport: jest.fn(),
-  fetchStockReport: jest.fn()
+  fetchStockReport: jest.fn(),
+  searchProducts: jest.fn(),
+  fetchProductSalesReport: jest.fn()
 }));
 jest.mock('xlsx', () => ({}));
 
@@ -21,6 +23,8 @@ beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
   api.fetchGstHsnReport.mockResolvedValue({ rows: [{ hsn_code: '0000', product_name: 'Saved HSN product', quantity: 3, gross: 225 }] });
   api.fetchSettings.mockResolvedValue({});
+  api.searchProducts.mockResolvedValue([{ barcode: '123', product_name: 'SOAP BOX' }]);
+  api.fetchProductSalesReport.mockResolvedValue({ rows: [], totals: {} });
   api.fetchFinancialYears.mockResolvedValue({ years: [] });
   api.fetchDailySalesReport.mockResolvedValue({ rows: [], totals: {} });
   api.fetchMonthlySalesReport.mockResolvedValue({ rows: [{ sale_month: '2026-08', bill_count: 3, total: 120 }] });
@@ -44,6 +48,22 @@ async function showReports(isActive) {
 async function click(element) {
   await act(async () => Simulate.click(element));
 }
+
+test('product sales submit dismisses suggestions and ignores a pending lookup response', async () => {
+  let resolveLookup;
+  api.searchProducts.mockImplementation(() => new Promise((resolve) => { resolveLookup = resolve; }));
+  await showReports(true);
+  await click([...container.querySelectorAll('.report-select-card')].find((button) => button.querySelector('strong').textContent === 'Product Sales'));
+  await click(container.querySelector('.report-selector-actions .primary-button'));
+  const input = container.querySelector('input[placeholder="Scan/type barcode, code, or product name"]');
+  await act(async () => Simulate.change(input, { target: { value: 'SOAP' } }));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+  expect(resolveLookup).toBeDefined();
+  await act(async () => Simulate.submit(input.closest('form')));
+  await act(async () => resolveLookup([{ barcode: '123', product_name: 'SOAP BOX' }]));
+  expect(container.querySelector('.supplier-suggestions')).toBeNull();
+  expect(api.fetchProductSalesReport).toHaveBeenCalledWith(expect.objectContaining({ search: 'SOAP' }));
+});
 
 test.each([
   ['GST HSN Summary', 'Saved HSN product'],
