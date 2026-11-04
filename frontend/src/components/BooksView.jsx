@@ -453,7 +453,7 @@ export default function BooksView({ setActiveWorkspace }) {
     setVoucherForm((current) => ({ ...current, [field]: value }));
   }
 
-  function updateNamedLedgerEntry(field, value) {
+  function updateNamedLedgerEntryForm(field, value) {
     setNamedLedgerEntryForm((current) => ({ ...current, [field]: value }));
   }
 
@@ -820,23 +820,23 @@ export default function BooksView({ setActiveWorkspace }) {
                       </label>
                       <label>
                         <span className="field-label">Date</span>
-                        <input className="field" type="date" value={namedLedgerEntryForm.entry_date} onChange={(event) => updateNamedLedgerEntry('entry_date', event.target.value)} required />
+                        <input className="field" type="date" value={namedLedgerEntryForm.entry_date} onChange={(event) => updateNamedLedgerEntryForm('entry_date', event.target.value)} required />
                       </label>
                       <label className="named-ledger-details-field">
                         <span className="field-label">Details</span>
-                        <input className="field" value={namedLedgerEntryForm.details} onChange={(event) => updateNamedLedgerEntry('details', event.target.value)} maxLength="255" required />
+                        <input className="field" value={namedLedgerEntryForm.details} onChange={(event) => updateNamedLedgerEntryForm('details', event.target.value)} maxLength="255" required />
                       </label>
                       <label className="named-ledger-remarks-field">
                         <span className="field-label">Remarks</span>
-                        <input className="field" value={namedLedgerEntryForm.remarks} onChange={(event) => updateNamedLedgerEntry('remarks', event.target.value)} maxLength="255" />
+                        <input className="field" value={namedLedgerEntryForm.remarks} onChange={(event) => updateNamedLedgerEntryForm('remarks', event.target.value)} maxLength="255" />
                       </label>
                       <label>
                         <span className="field-label">DR</span>
-                        <input className="field" type="number" min="0" step="0.01" value={namedLedgerEntryForm.dr_amount} onChange={(event) => updateNamedLedgerEntry('dr_amount', event.target.value)} placeholder="Debit" />
+                        <input className="field" type="number" min="0" step="0.01" value={namedLedgerEntryForm.dr_amount} onChange={(event) => updateNamedLedgerEntryForm('dr_amount', event.target.value)} placeholder="Debit" />
                       </label>
                       <label>
                         <span className="field-label">CR</span>
-                        <input className="field" type="number" min="0" step="0.01" value={namedLedgerEntryForm.cr_amount} onChange={(event) => updateNamedLedgerEntry('cr_amount', event.target.value)} placeholder="Credit" />
+                        <input className="field" type="number" min="0" step="0.01" value={namedLedgerEntryForm.cr_amount} onChange={(event) => updateNamedLedgerEntryForm('cr_amount', event.target.value)} placeholder="Credit" />
                       </label>
                       <div className="named-ledger-entry-actions">
                         <button className="primary-button compact-primary" type="submit" disabled={manualEntryBusy}>{manualEntryBusy ? 'Saving...' : manualEditId ? 'Save Changes' : 'Add Entry'}</button>

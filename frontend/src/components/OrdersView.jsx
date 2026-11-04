@@ -1,15 +1,18 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchSpecialOrderDetails,
   fetchSpecialOrderReceivables,
   fetchSpecialOrders,
   fetchUpcomingSpecialOrders,
   fetchCustomers,
+  fetchSettings,
+  lookupExactProduct,
   recordSpecialOrderPayment,
   saveSpecialOrder,
   updateSpecialOrderStatus
 } from '../api/client';
 import { formatMoney, toNumber } from '../utils/money';
+import { buildOrderEstimateHtml } from '../utils/orderEstimate';
 
 const SECTIONS = {
   UPCOMING: 'upcoming',
@@ -56,6 +59,10 @@ const blankPayment = {
   notes: ''
 };
 
+// Symbols keep lookup identity stable across row edits without entering API payloads.
+const ITEM_LOOKUP_ID = Symbol('orderItemLookup');
+const createOrderItem = (values = {}) => ({ ...blankItem, ...values, [ITEM_LOOKUP_ID]: Symbol() });
+
 function todayIso() {
   const date = new Date();
   date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
@@ -94,7 +101,8 @@ export default function OrdersView() {
   const [orders, setOrders] = useState([]);
   const [receivables, setReceivables] = useState({ rows: [], summary: { total_receivable: 0, overdue_count: 0, order_count: 0 } });
   const [orderForm, setOrderForm] = useState(blankOrder);
-  const [items, setItems] = useState([{ ...blankItem }]);
+  const [items, setItems] = useState(() => [createOrderItem()]);
+  const barcodeLookups = useRef(new Map());
   const [paymentForm, setPaymentForm] = useState(blankPayment);
   const [orderFilter, setOrderFilter] = useState({ search: '', status: 'OPEN' });
   const [receivableSearch, setReceivableSearch] = useState('');
@@ -106,6 +114,47 @@ export default function OrdersView() {
   const [isCustomerSuggestionLoading, setIsCustomerSuggestionLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  useEffect(() => () => cancelBarcodeLookups(), []);
+
+  function cancelBarcodeLookups() {
+    barcodeLookups.current.forEach(request => window.clearTimeout(request.timer));
+    barcodeLookups.current.clear();
+  }
+
+  function updateBarcode(item, index, value, immediate = false) {
+    const barcode = value.trim().toUpperCase();
+    const id = item[ITEM_LOOKUP_ID];
+    const previous = barcodeLookups.current.get(id);
+    if (previous) window.clearTimeout(previous.timer);
+    barcodeLookups.current.delete(id);
+    updateItem(index, 'barcode', value.toUpperCase());
+    if (!barcode) return;
+    const request = {};
+    barcodeLookups.current.set(id, request);
+    request.timer = window.setTimeout(async () => {
+      try {
+        const product = await lookupExactProduct(barcode);
+        if (barcodeLookups.current.get(id) !== request) return;
+        if (!product) {
+          setErrorMessage(`Product not found for barcode ${barcode}. Enter item and rate manually.`);
+          return;
+        }
+        setErrorMessage('');
+        setItems(current => current.map(row => row[ITEM_LOOKUP_ID] === id && row.barcode.trim() === barcode
+          ? { ...row, item_name: product.product_name || '', unit: product.unit_type || 'Nos',
+            estimated_rate: String(product.sale_price || product.mrp || 0) }
+          : row));
+      } catch (err) {
+        if (barcodeLookups.current.get(id) === request) {
+          setErrorMessage(err.response?.data?.error || 'Unable to load product price. Re-enter the barcode to retry.');
+        }
+      } finally {
+        if (barcodeLookups.current.get(id) === request) barcodeLookups.current.delete(id);
+      }
+    }, immediate ? 0 : 300);
+  }
 
   useEffect(() => {
     loadUpcoming();
@@ -152,9 +201,9 @@ export default function OrdersView() {
       const lineTotal = toNumber(item.quantity) * toNumber(item.estimated_rate);
       return sum + lineTotal;
     }, 0);
-    const paid = orderForm.order_no ? 0 : toNumber(orderForm.advance_amount);
+    const paid = orderForm.order_no ? toNumber(selectedDetails?.order?.paid_amount) : toNumber(orderForm.advance_amount);
     return { total, balance: Math.max(total - paid, 0) };
-  }, [items, orderForm.advance_amount, orderForm.order_no]);
+  }, [items, orderForm.advance_amount, orderForm.order_no, selectedDetails]);
 
   async function loadUpcoming() {
     try {
@@ -214,16 +263,18 @@ export default function OrdersView() {
   }
 
   function addItem() {
-    setItems((current) => [...current, { ...blankItem }]);
+    setItems((current) => [...current, createOrderItem()]);
   }
 
   function removeItem(index) {
-    setItems((current) => (current.length === 1 ? current : current.filter((_, itemIndex) => itemIndex !== index)));
+    cancelBarcodeLookups();
+    setItems((current) => (current.length === 1 ? [createOrderItem()] : current.filter((_, itemIndex) => itemIndex !== index)));
   }
 
   function resetForm() {
+    cancelBarcodeLookups();
     setOrderForm(blankOrder);
-    setItems([{ ...blankItem }]);
+    setItems([createOrderItem()]);
     setSelectedDetails(null);
   }
 
@@ -234,12 +285,14 @@ export default function OrdersView() {
     setIsSaving(true);
     try {
       const result = await saveSpecialOrder({ ...orderForm, items });
+      const savedDetails = { order: { ...orderForm, created_at: selectedDetails?.order?.created_at || new Date().toISOString(), ...result }, items: items.filter(item => item.item_name.trim()) };
+      setSelectedDetails(savedDetails);
+      setOrderForm(current => ({ ...current, order_no: result.order_no }));
       setStatusMessage(`Special order ${result.order_no} saved. Balance due ${formatMoney(result.balance_due)}.`);
-      resetForm();
       await loadUpcoming();
       await loadOrders();
       await loadReceivables();
-      setActiveSection(SECTIONS.UPCOMING);
+      if (window.badizoDesktop?.saveA4PdfHtml) await exportOrderEstimate(savedDetails);
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save special order.');
     } finally {
@@ -247,10 +300,39 @@ export default function OrdersView() {
     }
   }
 
+  async function exportOrderEstimate(details = selectedDetails, print = false) {
+    if (!details?.order?.order_no || isExporting) return;
+    const printWindow = print || !window.badizoDesktop?.saveA4PdfHtml ? window.open('', '_blank') : null;
+    setIsExporting(true);
+    setErrorMessage('');
+    try {
+      const shop = await fetchSettings();
+      const html = buildOrderEstimateHtml(details, shop);
+      if (print || !window.badizoDesktop?.saveA4PdfHtml) {
+        if (!printWindow) throw new Error('Allow pop-ups to print or save the order as PDF.');
+        printWindow.document.write(html);
+        printWindow.document.close();
+        const showPrint = () => { printWindow.focus(); printWindow.print(); };
+        if (printWindow.document.readyState === 'complete') showPrint();
+        else printWindow.addEventListener('load', showPrint, { once: true });
+        setStatusMessage('Order estimate opened for printing. Choose Save as PDF to share on WhatsApp.');
+      } else {
+        const result = await window.badizoDesktop.saveA4PdfHtml({ html, filename: `BADIZO-${details.order.order_no}-ORDER-ESTIMATE` });
+        if (result?.canceled) setStatusMessage('Order saved. PDF save cancelled; use Save PDF to retry.');
+        else if (!result?.ok) throw new Error(result?.error || 'Unable to save PDF.');
+        else setStatusMessage(`Order ${details.order.order_no} saved. Estimate PDF saved${result.filePath ? `: ${result.filePath}` : ''}. Ready to print or share on WhatsApp.`);
+      }
+    } catch (err) {
+      printWindow?.close();
+      setErrorMessage(`Order remains saved. ${err.message || 'Unable to export estimate PDF.'}`);
+    } finally { setIsExporting(false); }
+  }
+
   async function openOrder(orderNo) {
     setErrorMessage('');
     try {
       const details = await fetchSpecialOrderDetails(orderNo);
+      cancelBarcodeLookups();
       setSelectedDetails(details);
       setOrderForm({
         ...blankOrder,
@@ -259,7 +341,7 @@ export default function OrdersView() {
         due_date: details.order.due_date ? String(details.order.due_date).slice(0, 10) : '',
         advance_amount: ''
       });
-      setItems(details.items.map((item) => ({
+      setItems(details.items.map((item) => createOrderItem({
         item_name: item.item_name || '',
         barcode: item.barcode || '',
         quantity: String(item.quantity ?? ''),
@@ -478,7 +560,14 @@ export default function OrdersView() {
                   {items.map((item, index) => (
                     <tr key={`special-item-${index}`}>
                       <td><input className="field" value={item.item_name} onChange={(event) => updateItem(index, 'item_name', event.target.value)} /></td>
-                      <td><input className="field" value={item.barcode} onChange={(event) => updateItem(index, 'barcode', event.target.value.toUpperCase())} /></td>
+                      <td><input className="field" aria-label={`Item ${index + 1} barcode`} value={item.barcode}
+                        onChange={(event) => updateBarcode(item, index, event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            updateBarcode(item, index, event.currentTarget.value, true);
+                          }
+                        }} /></td>
                       <td><input className="field compact-number-field" type="number" min="0" step="0.01" value={item.quantity} onChange={(event) => updateItem(index, 'quantity', event.target.value)} /></td>
                       <td><input className="field compact-number-field" value={item.unit} onChange={(event) => updateItem(index, 'unit', event.target.value)} /></td>
                       <td><input className="field compact-number-field" type="number" min="0" step="0.01" value={item.estimated_rate} onChange={(event) => updateItem(index, 'estimated_rate', event.target.value)} /></td>
@@ -507,8 +596,11 @@ export default function OrdersView() {
             </div>
 
             <div className="summary-band">
-              <span>Total: <strong>{formatMoney(orderForm.order_no && selectedDetails ? selectedDetails.order.total_amount : totals.total)}</strong></span>
-              <span>Balance: <strong>{formatMoney(orderForm.order_no && selectedDetails ? selectedDetails.order.balance_due : totals.balance)}</strong></span>
+              <span>Total: <strong>{formatMoney(totals.total)}</strong></span>
+              <span>Balance: <strong>{formatMoney(totals.balance)}</strong></span>
+              <button className="secondary-button" type="button" disabled={!selectedDetails?.order?.order_no || isSaving || isExporting} onClick={() => exportOrderEstimate()}>Save PDF</button>
+              <button className="secondary-button" type="button" disabled={!selectedDetails?.order?.order_no || isSaving || isExporting} onClick={() => exportOrderEstimate(selectedDetails, true)}>Print Estimate</button>
+              {!selectedDetails?.order?.order_no && <span className="muted">Save order first to enable PDF and print.</span>}
               <button className="secondary-button" type="button" onClick={addItem}>Add Item</button>
               <button className="primary-button compact-primary" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Order'}</button>
             </div>
