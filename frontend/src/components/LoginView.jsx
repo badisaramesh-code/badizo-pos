@@ -66,7 +66,7 @@ function mergeLoginOptions(options) {
 
 export default function LoginView({ onLogin }) {
   const loginMode = loginModeFromUrl();
-  const fixedLoginUser = fixedLoginUserFromUrl();
+  const fixedLoginUser = IS_CLOUD_BUILD ? '' : fixedLoginUserFromUrl();
   const fixedSystemMatch = fixedLoginUser.match(/^counter([1-6])$/i);
   const assignedSystemNo = fixedSystemMatch?.[1] || '1';
   const effectiveLoginMode = loginMode;
@@ -85,7 +85,7 @@ export default function LoginView({ onLogin }) {
   const [systemNo] = useState(assignedSystemNo);
   const [selectedCounterNo, setSelectedCounterNo] = useState(assignedSystemNo);
   const [personName, setPersonName] = useState(
-    effectiveLoginMode === 'counter' || fixedSystemMatch ? `counter${assignedSystemNo}` : ''
+    !IS_CLOUD_BUILD && (effectiveLoginMode === 'counter' || fixedSystemMatch) ? `counter${assignedSystemNo}` : ''
   );
   const [password, setPassword] = useState('');
   const [loginOptions, setLoginOptions] = useState(initialOptions.length ? initialOptions : defaultLoginOptions);
@@ -96,7 +96,7 @@ export default function LoginView({ onLogin }) {
   const isCounterLogin = effectiveLoginMode === 'counter' || isCounterLoginOption(selectedLogin, username);
 
   useEffect(() => {
-    if (!isCounterLogin) return;
+    if (IS_CLOUD_BUILD || !isCounterLogin) return;
     setPersonName((currentName) => {
       const cleanName = String(currentName || '').trim().toLowerCase();
       return !cleanName || /^counter[1-6]$/.test(cleanName)
@@ -127,7 +127,7 @@ export default function LoginView({ onLogin }) {
         setUsername((currentUsername) => (
           visibleOptions.some((option) => option.username === currentUsername)
             ? currentUsername
-            : visibleOptions[0].username
+            : (visibleOptions[0]?.username || '')
         ));
       } catch (err) {
         if (isMounted) {
@@ -153,10 +153,10 @@ export default function LoginView({ onLogin }) {
       // The installed counter app identifies the physical system account used
       // for authentication. The selected counter is only the billing counter
       // for this session, so every system can open any configured counter.
-      const loginUsername = isCounterLogin ? (fixedLoginUser || `counter${systemNo}`) : username;
+      const loginUsername = !IS_CLOUD_BUILD && isCounterLogin ? (fixedLoginUser || `counter${systemNo}`) : username;
       const user = await login(loginUsername, password, effectivePersonName, isCounterLogin ? {
-        systemNo,
-        counterNo: selectedCounterNo
+        systemNo: IS_CLOUD_BUILD ? selectedLogin.counter_no : systemNo,
+        counterNo: IS_CLOUD_BUILD ? selectedLogin.counter_no : selectedCounterNo
       } : {});
       onLogin(user);
     } catch (err) {
@@ -210,7 +210,7 @@ export default function LoginView({ onLogin }) {
           </>
         ) : (
           <>
-            {isCounterLogin ? (
+            {isCounterLogin && !IS_CLOUD_BUILD ? (
               <>
                 <div className="fixed-login-role">
                   <span className="field-label">Login</span>
