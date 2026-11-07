@@ -26,6 +26,10 @@ jobs:
           GENERATE_SOURCEMAP: 'false'
           REACT_APP_API_BASE_URL: /api
           REACT_APP_BADIZO_CLOUD_BUILD: 'true'
+          REACT_APP_RECOVERY_CONTROL_ENABLED: 'true'
+          REACT_APP_RECOVERY_REVIEW_ENABLED: 'true'
+          REACT_APP_STAGED_RESTORE_ENABLED: 'true'
+          REACT_APP_CHECKOUT_RECOVERY_ENABLED: 'true'
       - name: Verify cloud update and rollback rules
         working-directory: tools/cloud
         run: python3 -m unittest -v test_update
