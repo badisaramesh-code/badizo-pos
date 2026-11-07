@@ -16,6 +16,7 @@ export default function CloudSyncSettings() {
   const revision = useRef(0);
   const progress = cloudSyncProgress(status, requesting, refreshError);
   const mayEdit = getStoredUser()?.role === 'SERVER' && status?.editable === true;
+  const adminTime = getStoredUser()?.role === 'ADMIN' && status?.editable === true && configuration.frequency === 'daily';
   useEffect(() => {
     let mounted = true;
     let timer;
@@ -51,7 +52,7 @@ export default function CloudSyncSettings() {
     event.preventDefault(); setSaving(true); setError(''); setSaved('');
     mutation.current = true; revision.current += 1;
     try {
-      const value = await saveCloudSyncSettings(configuration);
+      const value = await saveCloudSyncSettings(adminTime ? {dailyTime:configuration.dailyTime} : configuration);
       setStatus(value); setConfiguration(value.config); setRefreshError('');
       setSaved(value.service.ready ? 'Cloud sync schedule saved.' : 'Schedule preference saved. Cloud sync is not active yet.');
     } catch (failure) { setError(failure.response?.data?.error || 'Unable to save cloud sync schedule.'); }
@@ -70,14 +71,14 @@ export default function CloudSyncSettings() {
           </select>
         </label>
         {configuration.frequency === 'daily' ? <label><span className="field-label">Daily sync time — IST</span>
-          <input className="field" type="time" required value={configuration.dailyTime} disabled={!mayEdit || saving} onChange={event => change('dailyTime', event.target.value)} />
+          <input className="field" type="time" required value={configuration.dailyTime} disabled={!(mayEdit || adminTime) || saving} onChange={event => change('dailyTime', event.target.value)} />
         </label> : <p className="muted">Hourly sync runs at the start of each hour in IST once connected and enabled.</p>}
         <label><input type="checkbox" checked={configuration.enabled} disabled={!mayEdit || saving || !status?.service.ready} onChange={event => change('enabled', event.target.checked)} /> Enable automatic cloud sync</label>
         {!status?.service.ready && <p className="muted">Automatic sync can be enabled after the cloud sync connection is configured.</p>}
         {status && <p className="muted">Last successful sync: {status.lastSuccessAt ? new Date(status.lastSuccessAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Not reported'}. Next run: {status.nextRunAt ? new Date(status.nextRunAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Not scheduled'}.</p>}
-        {getStoredUser()?.role !== 'SERVER' && <p className="muted">A Server user can change this schedule.</p>}
+        {getStoredUser()?.role !== 'SERVER' && <p className="muted">Admins can change the daily sync time on the local server.</p>}
         <div className="settings-action-row">
-          <button className="secondary-button" type="submit" disabled={!mayEdit || saving || requesting || loading}>{saving ? 'Saving…' : 'Save Cloud Sync Schedule'}</button>
+          <button className="secondary-button" type="submit" disabled={!(mayEdit || adminTime) || saving || requesting || loading}>{saving ? 'Saving…' : 'Save Cloud Sync Schedule'}</button>
           <button className="secondary-button" type="button" onClick={updateNow} disabled={!mayEdit || !status?.service.ready || requesting || saving || status?.manualPending || status?.service.state === 'running'}>{requesting ? 'Queuing…' : ['running', 'pending'].includes(status?.service.state) ? 'Syncing…' : status?.manualPending ? 'Sync queued' : status?.service.direction === 'two-way' ? 'Sync Local and Cloud' : 'Update Cloud Now'}</button>
         </div>
         {!loading && <div aria-live="polite" aria-atomic="true">

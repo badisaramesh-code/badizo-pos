@@ -15,6 +15,11 @@ test('normal handoff drains both directions before activating exactly one node',
 test('failed transfer leaves both nodes paused and does not discard pending data',async()=>{
   const f=fixture();await assert.rejects(executeBillingHandoff({...f,target:'cloud',transfer:async()=>{throw Error('network lost');}}),/network lost/);assert.ok(f.states.every(s=>s.billingMode==='standby'&&s.pending===1));
 });
+test('stop received during the final transfer prevents activation of either counter',async()=>{
+  const f=fixture();let stopped=false;
+  await assert.rejects(executeBillingHandoff({...f,target:'cloud',transfer:async()=>{stopped=true;return f.transfer();},checkpoint:async()=>{if(stopped)throw Error('Owner stopped switch');}}),/Owner stopped/);
+  assert.ok(f.states.every(state=>state.billingMode==='standby'));assert.ok(!f.history.includes('activate1'));
+});
 test('lost cloud activation acknowledgement never enables local and retry drains safely',async()=>{
   const f=fixture(),activate=f.cloud.activate;f.cloud.activate=async id=>{await activate(id);throw Error('reply lost');};
   await assert.rejects(executeBillingHandoff({...f,target:'cloud'}),/reply lost/);assert.equal(f.states[0].billingMode,'standby');assert.equal(f.states[1].billingMode,'active');

@@ -58,10 +58,19 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
       const current=await binding();if(current.handoffId===request.id)await atomic(config.bindingPath,{...current,handoffId:null});
       await fs.unlink(requestPath);return;
     }
+    let inspectModes=null;
+    async function checkpoint(){
+      let stop;
+      try{stop=await json(path.join(config.directory,'switch-stop-'+request.id+'.json'));}
+      catch(error){if(error.code==='ENOENT')return;throw error;}
+      if(stop.id!==request.id||stop.shopId!==config.shopId)throw Error('Invalid stop record.');
+      throw Object.assign(Error('The owner requested stopping this switch.'),{code:'OWNER_STOPPED'});
+    }
     try{
       if(config.nodeRole!=='local-server'||!path.isAbsolute(config.enrollmentConfigPath||''))throw Error('Local enrolled supervisor required.');
       const enrollment=require('./enrolledSyncRuntime').validateConfiguration(await json(config.enrollmentConfigPath),{BADIZO_SHOP_ID:config.shopId,BADIZO_NODE_ROLE:config.nodeRole});
       const current=await binding();
+      if(await require('./captureGap').hasCaptureGap(config.bindingPath,current))throw Error('Local billing continued with sync paused. Verify a new baseline before switching.');
       if(current.activationId!==enrollment.activationId||current.database.database!==enrollment.databaseName)throw Error('Recovery baseline must be rebuilt first.');
       if(!existing&&current.generation!==request.expectedGeneration)throw Error('Runtime changed.');
       await record(op);
@@ -83,6 +92,8 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
         let state=await checkedStatus(cloudCall,false);
         const mode=action==='pause'?'standby':'active';
         if(state.handoffId===id&&state.billingMode===mode&&state.phase==='active'&&state.operation?.state==='complete')return;
+        if(action==='pause'&&state.generation!==op.cloudGeneration)throw Error('Cloud authority changed after the switch started.');
+        await checkpoint();
         await cloudCall('',{action,handoffId:id,expectedGeneration:state.generation});
         const end=Date.now()+(config.healthTimeoutMs||30000);
         while(Date.now()<end){state=await checkedStatus(cloudCall,false);if(state.handoffId===id&&state.billingMode===mode&&state.phase==='active'&&state.operation?.state==='complete')return;await sleep(250);}
@@ -90,16 +101,38 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
       }
       const local={status:()=>checkedStatus(localCall,true),pause:async id=>{
         const old=await binding();
+        if(await require('./captureGap').hasCaptureGap(config.bindingPath,old))throw Error('A verified recovery baseline is required before pausing local billing.');
         if(old.handoffId===id&&old.billingMode==='standby'&&old.phase==='active')return;
+        if(old.generation!==request.expectedGeneration)throw Error('Local authority changed after the switch started.');
         await atomic(config.bindingPath,{...old,phase:'validating',billingMode:'standby',handoffId:id,generation:old.generation+1});
         await waitReady(old.activationId,{drained:true});
         await atomic(config.bindingPath,{...await binding(),phase:'active'});
       },activate:async id=>{
         const old=await binding();if(old.handoffId!==id||old.billingMode!=='standby')throw Error('Local handoff identity changed.');
         await atomic(config.bindingPath,{...old,phase:'validating'});await waitReady(old.activationId,{drained:true});
+        await checkpoint();
         await atomic(config.bindingPath,{...old,phase:'active',billingMode:'active',generation:old.generation+1,reconciliationRequired:false});
       }};
-      await executeBillingHandoff({id:request.id,target:request.kind==='use-cloud'?'cloud':'local',local,cloud:{status:()=>checkedStatus(cloudCall,false),pause:id=>remoteMode(id,'pause'),activate:id=>remoteMode(id,'activate')},transfer:id=>localCall('/flush',{handoffId:id}),record:async state=>{op.state=state;await record(op);}});
+      const observe=()=>Promise.allSettled([local.status(),checkedStatus(cloudCall,false)]);
+      inspectModes=async()=>{
+        const modes=(await observe()).map(result=>result.status==='fulfilled'&&result.value.phase==='active'&&['active','standby'].includes(result.value.billingMode)?result.value.billingMode:'unknown');
+        return {local:modes[0],cloud:modes[1]};
+      };
+      const target=request.kind==='use-cloud'?'cloud':'local';
+      if(existing?.state==='activating-'+target){
+        // The activation command may already have committed. Inspect only.
+        const nodes=await observe(),active=nodes[target==='local'?0:1].value,standby=nodes[target==='local'?1:0].value;
+        if(active?.handoffId!==request.id||active.phase!=='active'||active.billingMode!=='active'||standby?.handoffId!==request.id||standby.phase!=='active'||standby.billingMode!=='standby'||standby.activeWrites!==0)throw Error('Activation outcome requires inspection; do not enable the other server.');
+        await record({...op,state:'complete'});
+      } else {
+        await checkpoint();
+        if(existing)throw Error('Interrupted handoff requires a fresh owner decision.');
+        const [beforeLocal,beforeCloud]=await Promise.all([local.status(),checkedStatus(cloudCall,false)]);
+        if(beforeLocal.generation!==request.expectedGeneration||beforeLocal.phase!=='active'||beforeCloud.phase!=='active'||!Number.isSafeInteger(beforeCloud.generation))throw Error('Handoff preflight requires both enrolled servers.');
+        op.cloudGeneration=beforeCloud.generation;
+        await record(op);
+        await executeBillingHandoff({id:request.id,target,local,cloud:{status:()=>checkedStatus(cloudCall,false),pause:id=>remoteMode(id,'pause'),activate:id=>remoteMode(id,'activate')},checkpoint,transfer:id=>localCall('/flush',{handoffId:id}),record:async state=>{op.state=state;await record(op);}});
+      }
       const latest=await binding();
       await atomic(config.bindingPath,{...latest,handoffId:null});
       await fs.unlink(requestPath);
@@ -109,7 +142,9 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
       const latest=await binding();
       if(latest.handoffId===request.id)await atomic(config.bindingPath,{...latest,phase:'active',handoffId:null});
       const reasons={'Both enrolled servers must remain paused for handoff.':'hold-changed','Handoff write leases did not drain.':'writes-busy','Synchronization is busy or blocked; billing remains paused.':'sync-blocked','Handoff endpoint unavailable.':'peer-endpoint-unavailable','Peer mode change timed out.':'peer-mode-timeout','Activation outcome requires inspection; do not enable the other server.':'activation-unconfirmed'};
-      await record({...op,state:'failed',failedStage:op.state,failureCode:reasons[error.message]||'verification-failed',message:'Switch not confirmed. Inspect both billing modes. Pending data was retained; no alternate server was automatically activated.'});
+      const observedModes=inspectModes?await inspectModes():{local:'unknown',cloud:'unknown'};
+      const failureCode=error.code==='OWNER_STOPPED'?'owner-stopped':op.state.startsWith('activating-')?'activation-unconfirmed':reasons[error.message]||'verification-failed';
+      await record({...op,state:'failed',failedStage:op.state,failureCode,observedModes,message:'Check both billing modes. Before emergency billing, stop the other server. Pending changes were retained.'});
       await fs.unlink(requestPath);
     }
   }

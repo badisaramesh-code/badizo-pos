@@ -31,3 +31,11 @@ test('recovery API requires owner confirmation and does not accept commands or f
   assert.equal((await post('SERVER',{kind:'emergency-local',expectedGeneration:1,confirmation:'CLOUD BILLING IS STOPPED - USE LOCAL'})).status,202);
   assert.equal(calls[1].kind,'emergency-local');
 });
+test('only authenticated server owner can stop the named interrupted switch',async t=>{
+  const calls=[],app=express();app.use(express.json());app.use('/control',createRouter({recoverSwitch:async value=>{calls.push(value);return {stopRequested:true};}}));
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const operationId=crypto.randomUUID(),body={operationId,confirmation:'STOP INTERRUPTED SWITCH'};
+  const post=(role,payload)=>fetch('http://127.0.0.1:'+server.address().port+'/control/recover-switch',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+jwt.sign({role,username:'actual-owner'},JWT_SECRET)},body:JSON.stringify(payload)});
+  assert.equal((await post('ADMIN',body)).status,403);assert.equal((await post('SERVER',{...body,actor:'forged'})).status,400);assert.equal((await post('SERVER',body)).status,202);
+  assert.deepEqual(calls,[{operationId,actor:'actual-owner'}]);
+});

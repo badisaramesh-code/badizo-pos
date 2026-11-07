@@ -68,7 +68,12 @@ function createCloudSyncSettingsService({
   function save(input, user) {
     const operation = writeQueue.catch(() => {}).then(async () => {
       if (nodeRole !== 'local-server') throw invalid('Cloud sync schedules can only be changed on the local shop server.', 403);
-      const config = validateConfig(input);
+      let proposed = input;
+      if (user?.role === 'ADMIN') {
+        if (!input || Object.keys(input).length !== 1 || !Object.hasOwn(input, 'dailyTime')) throw invalid('Admins can change the daily sync time.', 403);
+        proposed = { ...(await load()).config, dailyTime: input.dailyTime };
+      }
+      const config = validateConfig(proposed);
       const worker = await getWorkerState();
       if (config.enabled && worker.ready !== true) throw invalid('The cloud sync connection is not configured. Save the schedule with automatic sync paused.', 409);
       const payload = { config, updatedAt: clock().toISOString(), updatedBy: String(user?.username || 'server').slice(0, 100) };
@@ -92,6 +97,6 @@ function createCloudSyncSettingsService({
     await requestTransfer(user);
     return state();
   }
-  return { state, save, requestNow, loadSchedule: async () => (await load()).config };
+  return { state, save, requestNow, loadScheduleRecord: load, loadSchedule: async () => (await load()).config };
 }
 module.exports = { DEFAULT_CONFIG, validateConfig, nextScheduledAt, createCloudSyncSettingsService };

@@ -9,7 +9,7 @@ function createRouter(service = createCloudSyncSettingsService()) {
     try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.state()); }
     catch (error) { res.status(error.status || 500).json({ error: error.message || 'Unable to read cloud sync settings.' }); }
   });
-  router.post('/settings', authorize('SERVER'), async (req, res) => {
+  router.post('/settings', authorize('SERVER', 'ADMIN'), async (req, res) => {
     try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.save(req.body, req.user)); }
     catch (error) { res.status(error.status || 500).json({ error: error.message || 'Unable to save cloud sync settings.' }); }
   });

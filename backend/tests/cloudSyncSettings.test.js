@@ -65,7 +65,7 @@ test('schedule calculation uses IST even across UTC days and year boundaries', (
   assert.equal(nextScheduledAt(DEFAULT_CONFIG, '2026-11-02T14:00:00Z'), null);
 });
 
-test('authenticated server alone can save; admins can view and counters cannot access settings', async t => {
+test('server can save schedules, admin can update daily time only, counters cannot access settings', async t => {
   const { service } = await isolated(t);
   const app = express(); app.use(express.json()); app.use('/api/cloud-sync', createRouter(service));
   const server = app.listen(0, '127.0.0.1');
@@ -80,6 +80,10 @@ test('authenticated server alone can save; admins can view and counters cannot a
   assert.equal((await request('COUNTER')).status, 403);
   assert.equal((await request('ADMIN')).status, 200);
   assert.equal((await request('ADMIN', 'POST')).status, 403);
+  const changed = await request('ADMIN', 'POST', {dailyTime:'19:15'});
+  assert.equal(changed.status, 200);
+  assert.deepEqual((await changed.json()).config, {...DEFAULT_CONFIG,dailyTime:'19:15'});
+  assert.equal((await request('COUNTER','POST',{dailyTime:'19:00'})).status,403);
   assert.equal((await request('SERVER', 'POST')).status, 200);
   assert.equal((await request('SERVER', 'POST', { ...DEFAULT_CONFIG, enabled: true })).status, 409);
 });

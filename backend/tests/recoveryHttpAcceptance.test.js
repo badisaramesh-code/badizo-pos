@@ -1,6 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),http=require('node:http'),express=require('express');
 const {atomic}=require('../services/recoveryControlFiles');
 const {installRecoveryRouteCompletion}=require('../services/recoveryRouteCompletion');
+const {protectAsyncRoutes}=require('../middleware/asyncRoutes');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function fixture(t){
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'badizo-http-acceptance-'));
@@ -39,10 +40,15 @@ test('real HTTP write drain blocks new billing while an admitted operation finis
 test('an aborted response retains the write lease until handler completion, then permits recovery',async t=>{
   const f=await fixture(t);let release,admitted,completed=0;
   const entered=new Promise(resolve=>{admitted=resolve;}),finish=new Promise(resolve=>{release=resolve;});
-  f.app.post('/api/billing/checkout',async(req,res)=>{
+  const routeContainer=express.Router();
+  routeContainer.post('/api/billing/checkout',async(req,res)=>{
     admitted();await finish;completed++;res.json({saved:true});
   });
-  assert.equal(installRecoveryRouteCompletion(f.app),1);assert.equal(installRecoveryRouteCompletion(f.app),0);
+  f.app.use(routeContainer);
+  assert.equal(installRecoveryRouteCompletion(routeContainer),1);assert.equal(installRecoveryRouteCompletion(routeContainer),0);
+  // Match production registration: completion observes async handlers first,
+  // then general Express rejection protection wraps the registered routes.
+  protectAsyncRoutes(routeContainer._router || routeContainer);
   const outgoing=http.request(f.url+'/api/billing/checkout',{method:'POST'});outgoing.on('error',()=>{});outgoing.end();await entered;
   outgoing.destroy();await sleep(20);
   assert.equal(f.runtime.status().activeWrites,1,'A closed socket is not proof that the transaction finished.');

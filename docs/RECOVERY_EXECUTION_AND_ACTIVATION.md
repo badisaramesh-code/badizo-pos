@@ -46,7 +46,7 @@ It stops POS using the configured service command, installs the candidate bindin
 
 The durable operation journal distinguishes pre-activation failure from a committed activation. Once a new database has been opened for billing, automatic rollback is prohibited because it may contain new sales. A restart after the commit records completion rather than silently reverting those sales.
 
-Failed rollback leaves billing paused for inspection. After an abrupt supervisor crash, inspect the journal and ensure the previous supervisor process is dead before clearing its exclusive `supervisor.lock` and restarting it. Do not clear locks or replace the active binding blindly. Background database writers must be paused by the enrollment/runtime integration during activation; the HTTP gate alone is not a lock for arbitrary external SQL clients.
+Failed rollback leaves billing paused for inspection. On restart, the supervisor can reclaim its lock when the operating system confirms the recorded process has exited. A live or unverifiable owner keeps the lock. Do not clear locks or replace the active binding blindly. Background database writers must be paused by the enrollment/runtime integration during activation; the HTTP gate alone is not a lock for arbitrary external SQL clients.
 
 ## Validation and deployment boundary
 

@@ -12,6 +12,10 @@ mock('../config/db', { getConnection: async () => {
     async commit() { state.committed = true; },
     async rollback() { if (state.rollbackError) throw Object.assign(new Error('rollback failed'), { code: 'ECONNRESET' }); state.rolledBack = true; },
     release() { state.released = true; },
+    async execute(sql) {
+      if (sql.includes('FROM sync_checkout_requests')) return [state.identityRows || []];
+      throw new Error('Unexpected identity query');
+    },
     async query(sql, params) {
       state.queries.push({ sql, params });
       if (sql.includes('FROM invoices') && sql.includes('checkout_request_id')) return [state.existing ? [state.existing] : []];
@@ -49,6 +53,26 @@ test('billing HTTP reliability with an isolated database double', async t => {
   const payload = { checkout_request_id: 'test-checkout-12345', counter_no: 1, items: [{ barcode: 'PRODUCT1', quantity: 1, sale_price: 100, gst_percent: 0 }], grand_total: 100, sub_total: 100, payment_mode: 'Cash', cash_received: 150, change_returned: 999 };
   const post = body => fetch(base + '/billing/checkout', { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(2000) });
   function reset(extra = {}) { state = { queries: [], ...extra }; }
+  await t.test('guarded saved checkout verifies full intent while preserving main duplicate checks', async () => {
+    const previous = process.env.BADIZO_CHECKOUT_REQUEST_GUARD;
+    process.env.BADIZO_CHECKOUT_REQUEST_GUARD = 'true';
+    try {
+      const existing = { invoice_no: 'BZ/26-27/C01/000001', grand_total: 100, invoice_status: 'PAID' };
+      const identity = require('../services/checkoutRequestIdentity');
+      const intent_hash = identity.fingerprint(payload, { role: 'COUNTER', username: 'counter1', counter_no: 1 });
+      reset({ existing, identityRows: [{ intent_hash, invoice_no: existing.invoice_no }] });
+      const response = await post(payload);
+      assert.equal(response.status, 200); assert.equal((await response.json()).duplicate_prevented, true);
+      assert.equal(state.begun, undefined); assert.equal(state.invoiceParams, undefined);
+      reset({ existing, identityRows: [{ intent_hash: 'different', invoice_no: existing.invoice_no }] });
+      const mismatch = await post(payload);
+      assert.equal(mismatch.status, 409); assert.match((await mismatch.json()).error, /identity differs/);
+      assert.equal(state.committed, undefined); assert.equal(state.invoiceParams, undefined);
+    } finally {
+      if (previous === undefined) delete process.env.BADIZO_CHECKOUT_REQUEST_GUARD;
+      else process.env.BADIZO_CHECKOUT_REQUEST_GUARD = previous;
+    }
+  });
   await t.test('cash sale commits the calculated change, not client-supplied change', async () => {
     reset(); const response = await post(payload);
     assert.equal(response.status, 200); assert.equal(state.committed, true); assert.equal(state.released, true);

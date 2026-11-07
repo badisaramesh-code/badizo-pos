@@ -15,7 +15,8 @@ function createCloudSyncWorker({pool,identity,getSchedule,flush,canTransfer=asyn
   async function status(){
     if(await canTransfer()!==true)return {ready:false,state:'not-configured',lastSuccessAt:null,nextRunAt:null};
     const row=await read(pool);
-    const config=validateConfig(await getSchedule());
+    const schedule=await getSchedule();
+    const config=validateConfig(schedule.config ?? schedule);
     const paused=!config.enabled&&!row?.manual_requested&&!active;
     const iso=value=>value==null?null:new Date(Number(value)).toISOString();
     return {ready:true,state:active?'running':paused?'paused':row?.phase||'idle',lastSuccessAt:iso(row?.last_success_ms),nextRunAt:paused?null:iso(row?.retry_at_ms??row?.next_scheduled_ms),manualPending:Boolean(row?.manual_requested),failureCount:Number(row?.failure_count||0)};
@@ -36,12 +37,18 @@ function createCloudSyncWorker({pool,identity,getSchedule,flush,canTransfer=asyn
       const [[result]]=await connection.execute('SELECT GET_LOCK(?,0) AS acquired',[lock]);
       if(Number(result.acquired)!==1)return {busy:true};
       locked=true;await ensure(connection);
-      const config=validateConfig(await getSchedule()),now=clock();
+      const schedule=await getSchedule();
+      const config=validateConfig(schedule.config ?? schedule),now=clock();
       if(!Number.isSafeInteger(now)||now<0)throw Error('Invalid worker clock.');
       let row=await read(connection);
       const scheduleKey=JSON.stringify(config);
       if(row.schedule_key!==scheduleKey){
-        const next=nextScheduledAt(config,new Date(now));
+        // The PC can shut down between saving the schedule and this first tick.
+        const savedAt = Date.parse(schedule.updatedAt);
+        const reference = Number.isFinite(savedAt)
+          ? Math.min(now, Math.max(savedAt, Number(row.last_success_ms || 0)))
+          : now;
+        const next=nextScheduledAt(config,new Date(reference));
         await connection.execute('UPDATE sync_worker_state SET schedule_key=?,next_scheduled_ms=? WHERE shop_id=? AND installation_id=?',[scheduleKey,next?Date.parse(next):null,...key]);
         row={...row,schedule_key:scheduleKey,next_scheduled_ms:next?Date.parse(next):null};
       }

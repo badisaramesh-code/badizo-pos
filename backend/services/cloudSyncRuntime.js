@@ -23,7 +23,7 @@ function createCloudSyncRuntime({pool,identity,send,pull=null,canTransfer=async(
     return {busy:false,acknowledged:incoming.acknowledged+outgoing.acknowledged,hasMore:incoming.hasMore||outgoing.acknowledged===options.limit};
     });
   }
-  const worker=createCloudSyncWorker({pool,identity,flush,canTransfer,getSchedule:()=>settings.loadSchedule(),clock,batchSize});
+  const worker=createCloudSyncWorker({pool,identity,flush,canTransfer,getSchedule:()=>settings.loadScheduleRecord(),clock,batchSize});
   settings=createCloudSyncSettingsService({configDirectory,nodeRole:'local-server',getWorkerState:async()=>({...await worker.status(),direction:pull?'two-way':'upload'}),requestTransfer:worker.requestNow,clock:()=>new Date(clock())});
   return {settings,worker,flush,start:worker.start,stop:worker.stop};
 }

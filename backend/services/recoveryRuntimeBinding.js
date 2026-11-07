@@ -30,6 +30,16 @@ function status() {
   if (!current) return null;
   return { activationId: boot?.activationId || null, generation:current.generation, phase:current.phase, billingMode:current.billingMode, activeWrites, reconciliationRequired:!!current.reconciliationRequired };
 }
+function counterBillingState(env = process.env) {
+  const cloud = ['cloud-active','cloud-standby'].includes(env.BADIZO_NODE_ROLE);
+  if (!env.BADIZO_RUNTIME_BINDING && !cloud) return null;
+  const server = cloud ? 'Cloud' : 'Local';
+  try {
+    const current = read(env);
+    if (current && (!boot || current.activationId !== boot.activationId || current.phase !== 'active')) return {server, mode:'paused'};
+    return {server, mode:current ? current.billingMode : env.BADIZO_NODE_ROLE === 'cloud-active' ? 'active' : 'standby'};
+  } catch { return {server, mode:'paused'}; }
+}
 function middleware(req,res,next) {
   if (!process.env.BADIZO_RUNTIME_BINDING || ['GET','HEAD','OPTIONS'].includes(req.method)
     || /^\/(auth\/(login|logout|logout-beacon)|recovery-control(?:\/|$)|recovery-baseline(?:\/|$)|recovery-preparation(?:\/|$))/.test(req.path)) return next();
@@ -70,4 +80,4 @@ function retainRequestWrite(req) {
   if (typeof req.retainRecoveryWrite !== 'function') throw Error('Background write was not admitted by the recovery gate.');
   return req.retainRecoveryWrite();
 }
-module.exports={validate,read,load,status,middleware,withWriteLease,retainRequestWrite};
+module.exports={counterBillingState,validate,read,load,status,middleware,withWriteLease,retainRequestWrite};

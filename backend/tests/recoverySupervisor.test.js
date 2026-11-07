@@ -12,6 +12,59 @@ async function setup(t){
   async function request(kind='activate-restore'){await atomic(path.join(directory,'request.json'),{id:crypto.randomUUID(),shopId:config.shopId,kind,jobId,expectedGeneration:(await json(config.bindingPath)).generation,actor:'owner'});}
   return {config,original,request};
 }
+async function interrupted(t,target,stage,peerAvailable){
+  const {config,original,request}=await setup(t);
+  config.enrollmentConfigPath=path.join(config.directory,'enrollment.json');
+  const enrollment={schemaVersion:1,contractVersion:1,shopId:config.shopId,installationId:'local-qa',peerInstallationId:'cloud-qa',nodeRole:'local-server',databaseName:original.database.database,baselineId:'1'.repeat(64),activationId:original.activationId,settingsDirectory:config.directory,reviewDirectory:config.directory,incomingToken:'2'.repeat(64),peer:{baseUrl:'https://cloud.invalid/api/sync',token:'3'.repeat(64)}};
+  await atomic(config.enrollmentConfigPath,enrollment);
+  await request('use-'+target);
+  const pending=await json(path.join(config.directory,'request.json'));
+  await atomic(path.join(config.directory,'operation.json'),{...pending,state:stage});
+  await atomic(config.bindingPath,{...original,billingMode:target==='local'&&stage==='activating-local'?'active':'standby',handoffId:pending.id});
+  const configPath=path.join(config.directory,'supervisor.json');await atomic(configPath,config);
+  const control=require('../services/recoveryControl').createRecoveryControl({configPath,shopId:config.shopId});
+  await atomic(path.join(config.directory,'heartbeat.json'),{shopId:config.shopId,at:new Date().toISOString()});
+  const mutations=[];
+  t.mock.method(global,'fetch',async(url,opts)=>{
+    if(opts.method!=='GET'){mutations.push(url);throw Error('Unexpected handoff command');}
+    const local=new URL(url).hostname==='127.0.0.1';
+    if(!local&&!peerAvailable)throw Error('offline');
+    const mode=local?(await json(config.bindingPath)).billingMode:(target==='cloud'?'active':'standby');
+    return new Response(JSON.stringify({shopId:config.shopId,installationId:local?'local-qa':'cloud-qa',peerInstallationId:local?'cloud-qa':'local-qa',baselineId:enrollment.baselineId,pending:0,activeWrites:0,phase:'active',billingMode:mode,handoffId:pending.id}));
+  });
+  return {config,pending,control,mutations};
+}
+for(const target of ['cloud','local']){
+  test('restart resolves lost '+target+' activation acknowledgment by inspecting both nodes',async t=>{
+    const {config,mutations}=await interrupted(t,target,'activating-'+target,true);
+    await createRecoverySupervisor(config).tick();
+    assert.equal((await json(path.join(config.directory,'operation.json'))).state,'complete');
+    assert.deepEqual(mutations,[]);
+  });
+}
+test('unreachable peer after attempted activation never activates the alternate',async t=>{
+  const {config,mutations}=await interrupted(t,'cloud','activating-cloud',false);
+  await createRecoverySupervisor(config).tick();
+  const op=await json(path.join(config.directory,'operation.json'));
+  assert.equal(op.failureCode,'activation-unconfirmed');assert.deepEqual(op.observedModes,{local:'standby',cloud:'unknown'});assert.deepEqual(mutations,[]);
+});
+test('restart before activation cannot re-pause a cloud counter that may have resumed emergency sales',async t=>{
+  const {config,mutations}=await interrupted(t,'cloud','synchronizing',true);
+  await createRecoverySupervisor(config).tick();
+  const op=await json(path.join(config.directory,'operation.json'));
+  assert.equal(op.state,'failed');assert.equal(op.observedModes.cloud,'active');assert.deepEqual(mutations,[]);
+});
+test('owner stop survives restart and releases ordinary switch for a separate emergency decision',async t=>{
+  const {config,pending,control,mutations}=await interrupted(t,'cloud','synchronizing',false);
+  await assert.rejects(control.recoverSwitch({operationId:crypto.randomUUID(),actor:'owner'}));
+  await control.recoverSwitch({operationId:pending.id,actor:'owner'});
+  assert.equal((await control.status()).operation.stopRequested,true);
+  await createRecoverySupervisor(config).tick();
+  const status=await control.status();
+  assert.equal(status.operation.failureCode,'owner-stopped');assert.equal(status.billingMode,'standby');assert.equal(status.handoffId,null);
+  await control.request({kind:'emergency-local',expectedGeneration:status.generation,actor:'owner'});
+  assert.deepEqual(mutations,[]);
+});
 test('activation stays blocked until matching process is healthy and retains previous credentials privately',async t=>{
   const {config,original,request}=await setup(t);let running=original.activationId;const calls=[];
   const supervisor=createRecoverySupervisor(config,{verify:async()=>{},runCommand:async command=>{calls.push(command.kind);if(command.kind==='start'){const state=await json(config.bindingPath);assert.equal(state.phase,'validating');running=state.activationId;}},fetchReady:async()=>({ok:true,shopId:'HFM001',recovery:{activationId:running,activeWrites:0}})});
@@ -74,4 +127,20 @@ test('failed pre-install preparation can resume original local offline and finis
   global.fetch=async()=>new Response(JSON.stringify({cancelled:true,operationId,cloudStandby:true}),{status:200,headers:{'Content-Type':'application/json'}});
   await control.request({kind:'finish-recovery-cancel',expectedGeneration:active.generation,actor:'owner'});await supervisor.tick();
   assert.deepEqual(await json(config.bindingPath),active);assert.equal((await json(stateFile)).pendingPeerCancel,false);assert.equal((await json(path.join(config.directory,'operation.json'))).state,'complete');
+});
+
+test('capture gap refuses owner handoff and supervisor queue before pausing local billing',async t=>{
+  const {config,original,request}=await setup(t);
+  config.enrollmentConfigPath=path.join(config.directory,'enrollment.json');
+  await atomic(config.enrollmentConfigPath,{schemaVersion:1,contractVersion:1,shopId:config.shopId,installationId:'local-qa',peerInstallationId:'cloud-qa',nodeRole:'local-server',databaseName:original.database.database,baselineId:'1'.repeat(64),activationId:original.activationId,settingsDirectory:config.directory,reviewDirectory:config.directory,incomingToken:'2'.repeat(64),peer:{baseUrl:'https://cloud.invalid/api/sync',token:'3'.repeat(64)}});
+  await require('../services/captureGap').recordCaptureGap(config.bindingPath,original);
+  const configPath=path.join(config.directory,'supervisor.json');await atomic(configPath,config);
+  const control=require('../services/recoveryControl').createRecoveryControl({configPath,shopId:config.shopId});
+  await atomic(path.join(config.directory,'heartbeat.json'),{shopId:config.shopId,at:new Date().toISOString()});
+  assert.equal((await control.status()).handoffAvailable,false);
+  await assert.rejects(control.request({kind:'use-cloud',expectedGeneration:original.generation,actor:'owner'}));
+  await request('use-cloud');
+  await createRecoverySupervisor(config).tick();
+  assert.deepEqual(await json(config.bindingPath),original);
+  assert.equal((await json(path.join(config.directory,'operation.json'))).state,'failed');
 });

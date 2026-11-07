@@ -36,7 +36,7 @@ function mountRoutes(app, { cloudSyncRuntime, recoveryExecutorFactory } = {}) {
     const jobs = require('../services/stagedRestoreJobs').createStagedRestoreJobs({directory:process.env.BADIZO_RESTORE_JOB_DIR,shopId:process.env.BADIZO_SHOP_ID,configPath:process.env.BADIZO_RESTORE_CONFIG,python:process.env.BADIZO_PYTHON || 'python'});
     app.use('/api/staged-restore',require('./stagedRestore').createRouter(jobs));
   }
-  if (process.env.BADIZO_RECOVERY_REVIEW_ENABLED === 'true' || (cloudSyncRuntime?.reviewStore && (process.env.BADIZO_NODE_ROLE || 'local-server') === 'local-server')) {
+  if (!cloudSyncRuntime?.captureGap && (process.env.BADIZO_RECOVERY_REVIEW_ENABLED === 'true' || (cloudSyncRuntime?.reviewStore && (process.env.BADIZO_NODE_ROLE || 'local-server') === 'local-server'))) {
     const shopId = process.env.BADIZO_SHOP_ID;
     const store = cloudSyncRuntime?.reviewStore || require('../services/recoveryReviewStore').createRecoveryReviewStore({ directory:process.env.BADIZO_RECOVERY_REVIEW_DIR, shopId });
     if (!recoveryExecutorFactory && (process.env.BADIZO_RECOVERY_APPLY_ENABLED === 'true' || (cloudSyncRuntime && (process.env.BADIZO_NODE_ROLE || 'local-server') === 'local-server'))) {
@@ -51,9 +51,12 @@ function mountRoutes(app, { cloudSyncRuntime, recoveryExecutorFactory } = {}) {
     const mountedRouter = path === '/api/cloud-sync' && cloudSyncRuntime
       ? require('./cloudSync').createRouter(cloudSyncRuntime.settings)
       : router;
-    app.use(path, protectAsyncRoutes(mountedRouter));
+    app.use(path, mountedRouter);
   });
   if(process.env.BADIZO_RUNTIME_BINDING)require('../services/recoveryRouteCompletion').installRecoveryRouteCompletion(app);
+  // Recovery must observe original async handlers before error protection wraps
+  // them; otherwise a disconnected request can retain its write lease forever.
+  protectAsyncRoutes(app._router || app);
   app.use(apiErrorHandler);
 }
 

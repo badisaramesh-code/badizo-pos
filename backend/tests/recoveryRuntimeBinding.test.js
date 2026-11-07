@@ -11,10 +11,11 @@ test('runtime gate drains writes, rejects a new database before restart, and cou
     const result=new EventEmitter();result.status=code=>{result.code=code;return result;};result.json=value=>{result.body=value;return result;};
     runtime.middleware({method:'POST',path:route},result,()=>{result.allowed=true;});return result;
   }
+  assert.deepEqual(runtime.counterBillingState(),{server:'Local',mode:'active'});
   const sale=request();assert.equal(sale.allowed,true);assert.equal(runtime.status().activeWrites,1);
   await atomic(file,{...binding,phase:'validating'});assert.equal(request().code,409);sale.emit('finish');assert.equal(runtime.status().activeWrites,0);
-  await atomic(file,{...binding,billingMode:'standby'});assert.equal(request().code,409);const review=request('/recovery-review/abc/apply');assert.equal(review.allowed,true);assert.equal(runtime.status().activeWrites,1);review.emit('finish');
-  await atomic(file,{...binding,activationId:crypto.randomUUID()});assert.equal(request().code,409);
+  await atomic(file,{...binding,billingMode:'standby'});assert.deepEqual(runtime.counterBillingState(),{server:'Local',mode:'standby'});assert.equal(request().code,409);const review=request('/recovery-review/abc/apply');assert.equal(review.allowed,true);assert.equal(runtime.status().activeWrites,1);review.emit('finish');
+  await atomic(file,{...binding,activationId:crypto.randomUUID()});assert.equal(runtime.counterBillingState().mode,'paused');assert.equal(request().code,409);
   await atomic(file,binding);
   let release;const work=runtime.withWriteLease(()=>new Promise(resolve=>{release=resolve;}));assert.equal(runtime.status().activeWrites,1);
   await atomic(file,{...binding,phase:'validating'});await assert.rejects(runtime.withWriteLease(async()=>{}),/pausing database writes/);

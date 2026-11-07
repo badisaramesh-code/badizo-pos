@@ -9,6 +9,10 @@ const {createOutgoingFeed}=require('./syncOutgoingFeed');
 const {peerAuthentication}=require('../routes/syncReceiver');
 const runtimeBinding=require('./recoveryRuntimeBinding');
 const captureFlags=['BADIZO_SYNC_PRODUCT_CAPTURE','BADIZO_SYNC_STOCK_CAPTURE','BADIZO_SYNC_PURCHASE_CAPTURE','BADIZO_SYNC_CHECKOUT_CAPTURE'];
+function disableCapture(env) {
+  for (const flag of captureFlags) env[flag] = 'false';
+  env.BADIZO_CHECKOUT_REQUEST_GUARD = 'false';
+}
 const requiredTables=['sync_enrollment','sync_inbox','sync_outbox','sync_worker_state','sync_invoice_map','sync_invoice_item_map','sync_invoice_batch_map','sync_stock_adjustment_map','sync_supplier_payment_map','sync_recovery_applications','sync_checkout_requests'];
 function validateConfiguration(value,env){
   const keys=['schemaVersion','shopId','installationId','peerInstallationId','nodeRole','databaseName','baselineId','activationId','contractVersion','settingsDirectory','reviewDirectory','incomingToken','peer'];
@@ -28,8 +32,7 @@ function validateConfiguration(value,env){
 async function createEnrolledSyncRuntime({pool,configPath,env=process.env,withTransfer=runtimeBinding.withWriteLease}){
   if(!path.isAbsolute(configPath||''))throw Error('Protected enrollment configuration path required.');
   const config=validateConfiguration(JSON.parse(await fs.readFile(configPath,'utf8')),env);
-  for(const flag of captureFlags)env[flag]='false';
-  env.BADIZO_CHECKOUT_REQUEST_GUARD='false';
+  disableCapture(env);
   const binding=runtimeBinding.read(env);
   if(!binding)throw Error('Enrolled sync requires a verified runtime database binding.');
   const identity={shopId:config.shopId,localInstallationId:config.installationId,peerInstallationId:config.peerInstallationId};
@@ -39,7 +42,7 @@ async function createEnrolledSyncRuntime({pool,configPath,env=process.env,withTr
     // identities silently. Keep local billing available, but require a newly
     // verified baseline before incremental sync is resumed.
     const settings=createCloudSyncSettingsService({configDirectory:config.settingsDirectory,nodeRole:config.nodeRole,getWorkerState:async()=>({ready:false,reason:'restored-database-requires-enrollment'})});
-    return {settings,reviewStore,identity,mount:router=>router.use((_req,res)=>res.status(409).json({error:'Sync requires a newly verified recovery baseline.'})),start:()=>{},stop:()=>{},status:async()=>({ready:false,reason:'restored-database-requires-enrollment'})};
+    return {requiresEnrollment:true,settings,reviewStore,identity,mount:router=>router.use((_req,res)=>res.status(409).json({error:'Sync requires a newly verified recovery baseline.'})),start:()=>{},stop:()=>{},status:async()=>({ready:false,reason:'restored-database-requires-enrollment'})};
   }
   if(binding.database.database!==config.databaseName)throw Error('Sync enrollment belongs to a different database.');
   const [[database]]=await pool.query('SELECT DATABASE() AS name,VERSION() AS version');
@@ -47,6 +50,7 @@ async function createEnrolledSyncRuntime({pool,configPath,env=process.env,withTr
   const [tables]=await pool.query('SELECT TABLE_NAME AS name,ENGINE AS engine FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('+requiredTables.map(()=>'?').join(',')+')',requiredTables);
   if(requiredTables.some(name=>!tables.some(row=>row.name===name&&row.engine==='InnoDB')))throw Error('Sync migrations have not been installed and verified.');
   async function enrolled(){
+    if(await require('./captureGap').hasCaptureGap(env.BADIZO_RUNTIME_BINDING,binding))return false;
     const [rows]=await pool.execute('SELECT * FROM sync_enrollment WHERE singleton=1');
     const row=rows[0];
     return rows.length===1&&row.shop_id===config.shopId&&row.installation_id===config.installationId&&row.peer_installation_id===config.peerInstallationId&&row.baseline_id===config.baselineId&&row.activation_id===config.activationId&&Number(row.contract_version)===config.contractVersion&&Number(row.enabled)===1;
@@ -125,4 +129,4 @@ async function createEnrolledSyncRuntime({pool,configPath,env=process.env,withTr
   env.BADIZO_CHECKOUT_REQUEST_GUARD='true';
   return {settings,reviewStore,financialCases,financialCorrections,retryFinancial:receive,identity,mount,status,worker:workerRuntime?.worker,start:()=>workerRuntime?.start(),stop:()=>workerRuntime?.stop()};
 }
-module.exports={createEnrolledSyncRuntime,validateConfiguration,requiredTables};
+module.exports={createEnrolledSyncRuntime,validateConfiguration,requiredTables,disableCapture};

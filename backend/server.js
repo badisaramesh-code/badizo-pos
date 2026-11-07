@@ -60,7 +60,7 @@ function getCorsOptions() {
 app.use(cors(getCorsOptions()));
 const syncRoutes=express.Router();
 const apiRoutes=express.Router();
-let enrolledRuntime=null,configurationPromise=null;
+let enrolledRuntime=null,configurationPromise=null,syncDatabasePool=null;
 app.use('/api', require('./services/recoveryRuntimeBinding').middleware);
 app.use('/api', cloudWriteGuard);
 // Dedicated peer authentication and 1 MiB parsing happen before the general POS parser.
@@ -95,7 +95,7 @@ function recordHealthPing(req) {
 
 app.get('/api/health', (req, res) => {
   recordHealthPing(req);
-  res.json({ ok: true, service: 'badizo-pos' });
+  res.set('Cache-Control','no-store').json({ ok: true, service: 'badizo-pos', billing:require('./services/recoveryRuntimeBinding').counterBillingState() });
 });
 
 app.use(apiRoutes);
@@ -104,7 +104,18 @@ async function configureEnrollment(){
   if(!process.env.BADIZO_SYNC_ENROLLMENT_CONFIG)return;
   if(!configurationPromise)configurationPromise=(async()=>{
     const pool=require('./config/db');await pool.ready;
-    enrolledRuntime=await require('./services/enrolledSyncRuntime').createEnrolledSyncRuntime({pool,configPath:process.env.BADIZO_SYNC_ENROLLMENT_CONFIG});
+    enrolledRuntime=await require('./services/protectedEnrollment').protectedEnrollment({
+      pool,
+      onFailure:error=>logError('Local billing started with cloud sync paused. Rebuild the recovery baseline.',error),
+      create:async()=>{
+        syncDatabasePool=require('./services/syncDatabasePool').createSyncDatabasePool();
+        try {
+          return await require('./services/enrolledSyncRuntime').createEnrolledSyncRuntime({pool:syncDatabasePool,configPath:process.env.BADIZO_SYNC_ENROLLMENT_CONFIG});
+        } catch (error) {
+          await syncDatabasePool.end(); syncDatabasePool=null; throw error;
+        }
+      }
+    });
     enrolledRuntime.mount(syncRoutes);
     mountRoutes(apiRoutes,{cloudSyncRuntime:enrolledRuntime});
   })();
@@ -290,7 +301,11 @@ async function startServer(port = PORT) {
         scheduleDailyBackupCatchUpCheck();
       }
       enrolledRuntime?.start();
-      server.once('close',()=>enrolledRuntime?.stop());
+      server.once('close',()=>{
+        enrolledRuntime?.stop();
+        const closingPool=syncDatabasePool; syncDatabasePool=null;
+        closingPool?.end().catch(error=>logError('Sync database pool shutdown failed',error));
+      });
       resolve(server);
     });
 
