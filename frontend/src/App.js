@@ -15,6 +15,7 @@ import PriceListView from './components/PriceListView';
 import ProductImportHistoryView from './components/ProductImportHistoryView';
 import ReportsView from './components/ReportsView';
 import StaffPayrollView from './components/StaffPayrollView';
+import PosUpdateButton from './components/PosUpdateButton';
 import SystemView from './components/SystemView';
 import CloudStatusBanner from './components/CloudStatusBanner';
 import { clearAuthSession, fetchBackupHealth, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
@@ -265,6 +266,7 @@ export default function App() {
               {tab.label}
             </button>
           ))}
+          {['ADMIN','SERVER'].includes(currentUser.role) && <PosUpdateButton />}
           {currentUser.role === 'COUNTER' && (
             <button
               className="tab-button"

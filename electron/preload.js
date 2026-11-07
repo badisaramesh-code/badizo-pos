@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('badizoDesktop', {
+  reopenUpdatedPos() {
+    return ipcRenderer.invoke('badizo:reopen-updated-pos');
+  },
   getServerConnection() {
     return ipcRenderer.invoke('badizo:get-server-connection');
   },

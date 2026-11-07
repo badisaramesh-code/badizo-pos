@@ -1,3 +1,4 @@
+import ShopMaintenance from './ShopMaintenance';
 import WorkstationPrinters from './WorkstationPrinters';
 import React, { useEffect, useMemo, useState } from 'react';
 import CloudSyncSettings from './CloudSyncSettings';
@@ -593,6 +594,7 @@ export default function SystemView() {
 
   return (
     <div className="form-stack system-view">
+      <ShopMaintenance />
       <section className="panel">
         <div className="panel-header green"><h2 className="panel-title">Network Architecture - Badizo POS System</h2></div>
         <div className="panel-body system-grid">

@@ -20,8 +20,10 @@ const SERVER_CACHE_FILE = 'badizo-server-cache.json';
 const servers = [];
 let mainWindow = null;
 let serverConnection = null;
+let posOrigin;
 
 function publishServerConnection(config) {
+  posOrigin = new URL(config.appUrl).origin;
   serverConnection = { apiBaseUrl: `${new URL(config.apiHealthUrl).origin}/api` };
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('badizo:server-connection-changed', serverConnection);
@@ -29,6 +31,13 @@ function publishServerConnection(config) {
 }
 
 ipcMain.handle('badizo:get-server-connection', () => serverConnection);
+ipcMain.handle('badizo:reopen-updated-pos', event => {
+  if (!app.isPackaged || event.sender !== mainWindow?.webContents ||
+      event.senderFrame !== event.sender.mainFrame || new URL(event.senderFrame.url).origin !== posOrigin) return false;
+  app.relaunch();
+  app.quit();
+  return true;
+});
 
 function logMessage(message) {
   try {
