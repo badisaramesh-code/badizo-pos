@@ -7,6 +7,22 @@ function unavailable(){const error=Error('Cloud sync is not configured or curren
 function createCloudSyncWorker({pool,identity,getSchedule,flush,canTransfer=async()=>false,clock=()=>Date.now(),batchSize=10}){
   if(!/^[A-Z][A-Z0-9_-]{2,31}$/.test(identity?.shopId||'') || !/^[A-Za-z0-9_-]{3,64}$/.test(identity?.localInstallationId||'')
     || typeof getSchedule!=='function' || typeof flush!=='function' || !Number.isInteger(batchSize) || batchSize<1 || batchSize>100)throw Error('Invalid sync worker configuration.');
+  // Optional per-installation status file for the owner dashboard. A run can span several batches.
+  const statusFile = process.env.BADIZO_SYNC_STATUS_PATH;
+  async function report(phase, time) {
+    if (!statusFile || !require('node:path').isAbsolute(statusFile)) return;
+    const fs = require('node:fs/promises');
+    try {
+      const previous = await fs.readFile(statusFile,'utf8').then(JSON.parse).catch(()=>({}));
+      const started = previous.started && ['running','failed'].includes(previous.status) ? previous.started : time;
+      const snapshot = {status:phase, started, lastSuccessAt:previous.lastSuccessAt||null, durationMs:previous.durationMs??null};
+      if (phase==='success') { snapshot.lastSuccessAt=new Date(time).toISOString(); snapshot.durationMs=Math.max(0,time-started); }
+      if (phase==='running' && previous.status==='running') return;
+      await fs.mkdir(require('node:path').dirname(statusFile),{recursive:true});
+      const tmp=statusFile+'.'+process.pid+'.tmp';
+      await fs.writeFile(tmp,JSON.stringify(snapshot));await fs.rename(tmp,statusFile);
+    } catch { /* Monitoring never stops sync. */ }
+  }
   const key=[identity.shopId,identity.localInstallationId];
   const lock='badizo-worker-'+crypto.createHash('sha256').update(JSON.stringify(key)).digest('hex').slice(0,40);
   let active=false,timer=null;
@@ -59,6 +75,7 @@ function createCloudSyncWorker({pool,identity,getSchedule,flush,canTransfer=asyn
       if(!row.manual_requested && row.retry_at_ms==null && (row.next_scheduled_ms==null || Number(row.next_scheduled_ms)>now))return {waiting:true};
       if(await canTransfer()!==true)return {skipped:true};
       await connection.execute("UPDATE sync_worker_state SET phase='running' WHERE shop_id=? AND installation_id=?",key);
+      await report('running',now);
       try{
         const result=await flush({limit:batchSize});
         if(result.busy){await connection.execute("UPDATE sync_worker_state SET phase='waiting',retry_at_ms=? WHERE shop_id=? AND installation_id=?",[clock()+30000,...key]);return result;}
@@ -69,6 +86,7 @@ function createCloudSyncWorker({pool,identity,getSchedule,flush,canTransfer=asyn
         }else{
           const finished=clock(),next=nextScheduledAt(config,new Date(finished));
           await connection.execute("UPDATE sync_worker_state SET phase='idle',retry_at_ms=NULL,failure_count=0,manual_requested=(request_generation<>?),last_success_ms=?,next_scheduled_ms=? WHERE shop_id=? AND installation_id=?",[String(row.request_generation),finished,next?Date.parse(next):null,...key]);
+          await report('success',finished);
         }
         return result;
       }catch(error){
@@ -76,6 +94,7 @@ function createCloudSyncWorker({pool,identity,getSchedule,flush,canTransfer=asyn
         const delay=Math.min(30*60000,30000*2**Math.min(attempts-1,6));
         await connection.execute("UPDATE sync_worker_state SET phase='retrying',failure_count=?,retry_at_ms=? WHERE shop_id=? AND installation_id=?",[attempts,clock()+delay,...key]);
         // Never persist or expose transport credentials, SQL or remote body text.
+        await report('failed',clock());
         return {failed:true,retryAfterMs:delay};
       }
     }finally{
