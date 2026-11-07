@@ -2,7 +2,7 @@
 
 The local POS System screen has a separate Cloud Sync panel. A Server user can save Daily or Hourly frequency and change the daily time without editing application code. Admin users can view it; Counter and Security users have no access. Daily defaults to **20:30 Asia/Kolkata (8:30 PM IST)**. Hourly means the start of each hour in IST. Switching frequency retains the saved daily time.
 
-This change implements schedule preferences and validation, not database transfers. Until the incremental transfer worker and shop-to-cloud connection are configured, the panel says **Cloud sync not configured**, automatic sync cannot be enabled, no next run is advertised, and Update Cloud Now is disabled. Saving a preference is never represented as a successful sync. Neither Windows backup tasks nor Google Drive uploads are changed.
+The panel is connected to the durable incremental worker for verified, enrolled installations. Until that worker and shop-to-cloud connection are configured, the panel says **Cloud sync not configured**, automatic sync cannot be enabled, no next run is advertised, and Update Cloud Now is disabled. Saving a preference is never represented as a successful sync. Neither Windows backup tasks nor Google Drive uploads are changed.
 
 ## Per-installation storage
 
@@ -14,12 +14,13 @@ API routes:
 
 - `GET /api/cloud-sync/settings`: SERVER or ADMIN.
 - `POST /api/cloud-sync/settings`: SERVER only, complete payload `{enabled:false,frequency:"daily",dailyTime:"20:30",timezone:"Asia/Kolkata"}`.
+- `POST /api/cloud-sync/run`: SERVER only; accepts a manual request, not a completed transfer.
 
-## Connection to the future worker
+## Worker and progress display
 
-The transfer worker must consume this persisted configuration, reload it after saves or on each scheduling check, and supply `getWorkerState` only after secure connectivity, shop identity and single billing authority are verified. It must refuse incoming local changes while cloud billing is active, prevent overlapping manual/scheduled jobs, preserve transfer checkpoints, retry failed runs, and report an actual successful sync timestamp. A schedule preference alone never grants permission to accept billing writes or overwrite cloud data.
+The composed worker reads the saved schedule, verifies its enrolled peer and transfers supported events with durable acknowledgements. It prevents overlapping worker runs, retains failed events for retry and reports an actual successful sync timestamp. Normal coordinated handoff pauses billing and transfers before activating the selected writer. A schedule preference alone never grants permission to accept billing writes or overwrite cloud data.
 
-`nextScheduledAt` is a tested schedule calculator for the worker; there is no background timer or transfer in this delivery. Missed-run catch-up and checkpoint retention belong to the worker, not this UI. Once the worker is connected, frequency/time changes must be read from these settings without a code change or server restart.
+`nextScheduledAt` is the worker's schedule calculator. Frequency/time changes are read without a code change or server restart. The progress bar moves while queued, waiting or transferring; it deliberately does not invent a percentage or item count. A full bar means the last worker run was confirmed complete, not that no new sales have happened since then. The timestamp remains visible. Retries and unavailable status do not show completion. Polling continues through temporary connection/setup failures and clears refresh errors after a successful response, without replacing unsaved schedule edits.
 
 Existing daily full SQL backups to Google Drive remain independent. Start Hyper Fresh Mart with Daily at 20:30 IST. Hyper Fresh Mart 2.0 requires its own configuration and credentials later. The development laptop is not the production sync source.
 

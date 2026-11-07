@@ -1,4 +1,6 @@
+const {captureSupplierPayment}=require('../services/supplierPaymentSync');
 const express = require('express');
+const { beginPurchaseCapture, finishPurchaseCapture } = require('../services/purchaseSync');
 const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
@@ -674,6 +676,7 @@ router.post('/supplier-payments', async (req, res) => {
       connection
     });
 
+    await captureSupplierPayment(connection, entry, paymentResult.insertId);
     await connection.commit();
     res.json({ success: true, id: paymentResult.insertId, inward_no: inwardNo, paid_amount: paidAmount, due_amount: dueAmount, payment_status: paymentStatus });
   } catch (err) {
@@ -1234,6 +1237,7 @@ router.post('/', async (req, res) => {
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
+    const purchaseCapture = await beginPurchaseCapture(connection, validLines.map(line => line.barcode), replaceInwardId > 0 ? 'replace' : Number(req.body?.source_draft_id || 0) > 0 ? 'draft-posting' : 'create', undefined, replaceInwardId || Number(req.body?.source_draft_id || 0) || null);
     let finalInwardNo = '';
     let finalFinancialYear = '';
     let finalSerialNo = 0;
@@ -1529,6 +1533,14 @@ router.post('/', async (req, res) => {
         ? grandTotal
         : Math.min(Math.max(requestedPaidAmount, 0), grandTotal);
     const dueAmount = isDraft ? 0 : Math.max(grandTotal - paidAmount, 0);
+    if (purchaseCapture?.before?.payments?.length) {
+      const previous = purchaseCapture.before.entry;
+      if (Math.round(paidAmount * 100) !== Math.round(Number(previous.paid_amount) * 100)
+        || String(supplier.name || '').trim() !== String(previous.supplier_name || '')
+        || String(supplier.gstin || '').trim().toUpperCase() !== String(previous.supplier_gstin || '')) {
+        throw new Error('This purchase has recorded supplier payments. Preserve the paid amount and supplier; record payment corrections separately.');
+      }
+    }
     const paymentStatus = isDraft
       ? 'DUE'
       : paidAmount > 0 && dueAmount > 0
@@ -1696,6 +1708,7 @@ router.post('/', async (req, res) => {
       }
     }
 
+    await finishPurchaseCapture(connection, purchaseCapture, finalInwardNo);
     await connection.commit();
     res.json({
       success: true,
@@ -1746,6 +1759,9 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Inward bill not found.' });
     }
 
+    const [captureLines] = process.env.BADIZO_SYNC_PURCHASE_CAPTURE === 'true'
+      ? await connection.query('SELECT barcode FROM inward_items WHERE inward_no=?', [entry.inward_no]) : [[]];
+    const purchaseCapture = await beginPurchaseCapture(connection, captureLines.map(line => line.barcode), 'delete', undefined, id);
     if (entry.posting_status === 'POSTED') {
       await reversePostedInward(connection, entry.inward_no);
     }
@@ -1759,6 +1775,7 @@ router.delete('/:id', async (req, res) => {
       details: { postingStatus: entry.posting_status },
       connection
     });
+    await finishPurchaseCapture(connection, purchaseCapture, entry.inward_no);
     await connection.commit();
     res.json({ success: true, inward_no: entry.inward_no });
   } catch (err) {

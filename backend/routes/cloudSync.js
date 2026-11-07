@@ -9,9 +9,15 @@ function createRouter(service = createCloudSyncSettingsService()) {
     try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.state()); }
     catch (error) { res.status(error.status || 500).json({ error: error.message || 'Unable to read cloud sync settings.' }); }
   });
-  router.post('/settings', authorize('SERVER'), async (req, res) => {
+  router.post('/settings', authorize('SERVER', 'ADMIN'), async (req, res) => {
     try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.save(req.body, req.user)); }
     catch (error) { res.status(error.status || 500).json({ error: error.message || 'Unable to save cloud sync settings.' }); }
+  });
+  router.post('/run', authorize('SERVER'), async (req, res) => {
+    res.setHeader('Cache-Control','no-store');
+    if(req.body && Object.keys(req.body).length)return res.status(400).json({error:'This action does not accept connection settings or credentials.'});
+    try { res.status(202).json(await service.requestNow(req.user)); }
+    catch(error) { res.status(error.status || 500).json({error:error.status ? error.message : 'Unable to queue cloud update.'}); }
   });
   return router;
 }

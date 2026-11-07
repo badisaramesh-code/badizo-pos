@@ -41,6 +41,7 @@ jobs:
                 install -D -m 644 "$item" "$stage/$item" ;;
             esac
           done
+          install -D -m 644 tools/fleet/restore-staged.py "$stage/backend/scripts/restore-staged.py"
           npm ci --ignore-scripts --omit=dev --prefix "$stage/backend"
           cp -r frontend/build "$stage/frontend/"
           echo "$GITHUB_SHA" > "$stage/cloud-release"

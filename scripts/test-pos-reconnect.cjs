@@ -88,6 +88,8 @@ test('API redirects to rediscovered server, retains auth and never retries a sal
   const context={URL,Promise,window,process:{env:{}},axios:{create:config=>{api.defaults={...config};return api;}},setTimeout:callback=>callback()};
   let source=fs.readFileSync(path.join(__dirname,'../frontend/src/api/client.js'),'utf8');
   source=source.replace("import axios from 'axios';",'').replace('export default api;','').replace(/export /g,'');
+  const journal = fs.readFileSync(path.join(__dirname,'../frontend/src/utils/checkoutJournal.js'),'utf8').replace(/export /g,'');
+  source = source.replace("import { createCheckoutJournal } from '../utils/checkoutJournal';", () => journal);
   vm.runInNewContext(source,context);
   await handlers.request({url:'/sales',headers:{}});
   connectionListener({apiBaseUrl:'http://192.168.1.15:5000/api'});

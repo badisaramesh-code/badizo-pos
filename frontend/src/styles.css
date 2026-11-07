@@ -9562,3 +9562,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .tab-button.pos-update { display: inline-flex; align-items: center; gap: .4em; border: 1px solid #216a49; background: #e7f5ec; color: #174e35; }
 .pos-update-icon { font-size: 1.3em; line-height: 1; }
+
+.billing-guard-container { position: relative; }
+.billing-guard-overlay { position: absolute; inset: 0; z-index: 10; background: rgba(20,34,33,.35); padding: 2rem 1rem; }
+.billing-guard-notice { position: sticky; top: 1rem; max-width: 32rem; margin: 0 auto; padding: 1.25rem; background: white; color: #18302c; border: 2px solid #536d63; border-radius: .5rem; }

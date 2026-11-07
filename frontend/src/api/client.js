@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { createCheckoutJournal } from '../utils/checkoutJournal';
 
 function getDefaultApiBaseUrl() {
   if (process.env.REACT_APP_API_BASE_URL) return process.env.REACT_APP_API_BASE_URL;
@@ -197,6 +198,7 @@ export async function pingBackendHealth(timeoutMs = 2500, options = {}) {
       cache: 'no-store',
       signal: controller.signal
     });
+    if (response.ok && options.onBillingState) options.onBillingState((await response.json()).billing || null);
     return response.ok;
   } catch (err) {
     return false;
@@ -674,7 +676,34 @@ export async function fetchQuotationDetails(quotationNo) {
   const { data } = await api.get(`/quotations/${encodeURIComponent(quotationNo)}`);
   return data;
 }
-export async function checkout(payload) {
+export const checkoutRecoveryEnabled = process.env.REACT_APP_CHECKOUT_RECOVERY_ENABLED === 'true';
+function checkoutJournal(counterNo) {
+  const user=getStoredUser();
+  return createCheckoutJournal(window.localStorage,`badizo_checkout_pending_v1:${user?.username || 'unknown'}:${counterNo}`);
+}
+const checkoutServer = () => new URL(api.defaults.baseURL, window.location.href).href.replace(/\/$/,'');
+export function pendingCheckout(counterNo) {
+  return checkoutRecoveryEnabled ? checkoutJournal(counterNo).read() : null;
+}
+export function clearConfirmedCheckout(counterNo,requestId) {
+  if(checkoutRecoveryEnabled)checkoutJournal(counterNo).clear(checkoutServer(),requestId);
+}
+export async function checkout(payload, savedState) {
+  const releaseRejectedBill = error => {
+    const status = error?.response?.status;
+    const code = error?.response?.data?.code;
+    // These responses are emitted only after validation rolled back. Network
+    // errors and already-saved conflicts leave the bill unresolved.
+    if (checkoutRecoveryEnabled && [400, 409].includes(status) &&
+        ['PRICE_CHANGED', 'INVALID_PAYMENT', 'INVALID_BILL_LINE'].includes(code)) {
+      try { clearConfirmedCheckout(payload.counter_no, payload.checkout_request_id); }
+      catch (journalError) { journalError.checkoutJournalError = true; throw journalError; }
+    }
+  };
+  if(checkoutRecoveryEnabled){
+    try { checkoutJournal(payload.counter_no).prepare({server:checkoutServer(),payload,savedState}); }
+    catch(error){error.checkoutJournalError=true;throw error;}
+  }
   try {
     const { data } = await api.post('/billing/checkout', payload, { timeout: 30000 });
     return data;
@@ -684,9 +713,17 @@ export async function checkout(payload) {
     // A rolled-back database deadlock is also safe to retry once with that ID.
     const timedOut = error?.code === 'ECONNABORTED' || /timeout/i.test(String(error?.message || ''));
     const retryableDeadlock = error?.response?.status === 503 && error?.response?.data?.retryable === true;
-    if (!payload?.checkout_request_id || (!timedOut && !retryableDeadlock)) throw error;
-    const { data } = await api.post('/billing/checkout', payload, { timeout: 10000 });
-    return data;
+    if (!payload?.checkout_request_id || (!timedOut && !retryableDeadlock)) {
+      releaseRejectedBill(error);
+      throw error;
+    }
+    try {
+      const { data } = await api.post('/billing/checkout', payload, { timeout: 10000 });
+      return data;
+    } catch (retryError) {
+      releaseRejectedBill(retryError);
+      throw retryError;
+    }
   }
 }
 
@@ -738,6 +775,11 @@ export async function fetchBackups() {
 
 export async function runBackup() {
   const { data } = await api.post('/backup/run');
+  return data;
+}
+
+export async function requestCloudSyncNow() {
+  const { data } = await api.post('/cloud-sync/run', {});
   return data;
 }
 

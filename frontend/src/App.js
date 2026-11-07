@@ -41,6 +41,8 @@ export default function App() {
   const [workspaceNavigationKey, setWorkspaceNavigationKey] = useState(0);
   const [productFormNavigationKey, setProductFormNavigationKey] = useState(0);
   const [mountedWorkspaces, setMountedWorkspaces] = useState(() => new Set(['billing']));
+  const [billingState, setBillingState] = useState(process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' ? {server:'Cloud',mode:'unknown'} : null);
+  const billingPaused = billingState && billingState.mode !== 'active';
   const [currentUser, setCurrentUser] = useState(getStoredUser);
   const [backupAlert, setBackupAlert] = useState(null);
 
@@ -83,7 +85,8 @@ export default function App() {
       if (document.visibilityState === 'hidden' || pingInFlight) return;
       pingInFlight = true;
       try {
-        await pingBackendHealth(2000);
+        const ok = await pingBackendHealth(2000, { onBillingState: setBillingState });
+        if (!ok) setBillingState(previous => previous && { ...previous, mode: 'unknown' });
       } finally {
         pingInFlight = false;
       }
@@ -211,7 +214,7 @@ export default function App() {
 
   const views = {
     dashboard: <DashboardView setActiveWorkspace={setActiveWorkspace} />,
-    billing: <BillingTerminalView isActive={activeWorkspace === 'billing'} />,
+    billing: <BillingTerminalView isActive={activeWorkspace === 'billing' && !billingPaused} />,
     closing: <CounterClosingView onClose={() => setActiveWorkspace('billing')} />,
     cashLedger: <CounterCashLedgerView />,
     gatePass: <GatePassView />,
@@ -304,7 +307,9 @@ export default function App() {
         </nav>
       </header>
 
-      <CloudStatusBanner />
+      <>{billingState ? (billingPaused
+        ? <div className="alert-box" role="alert"><strong>{billingState.server} billing {billingState.mode === 'unknown' ? 'status is unconfirmed' : 'is paused'}.</strong> Do not start a bill here. Use the counter the owner has confirmed is active. Only the owner can switch billing in System.</div>
+        : <div role="status">{billingState.server} billing is active on this server.</div>) : <CloudStatusBanner />}</>
       <main className="workspace">
         {allowedTabs.map((tab) => (
           mountedWorkspaces.has(tab.key) ? (
@@ -313,7 +318,13 @@ export default function App() {
               className="workspace-screen"
               hidden={activeWorkspace !== tab.key}
             >
-              {views[tab.key]}
+              {tab.key === 'billing' ? <div className="billing-guard-container">
+                <div inert={billingPaused ? '' : undefined}>{views.billing}</div>
+                {billingPaused && <div className="billing-guard-overlay"><div role="alertdialog" aria-labelledby="billing-guard-title" aria-describedby="billing-guard-message" className="billing-guard-notice">
+                  <h2 id="billing-guard-title">{billingState.server} billing {billingState.mode === 'unknown' ? 'status is unconfirmed' : 'is paused'}</h2>
+                  <p id="billing-guard-message">This counter cannot save a sale here. If the owner has confirmed {billingState.server === 'Local' ? 'cloud' : 'local'} billing is active, use that server. Otherwise wait for the owner to check the switch in System.</p>
+                </div></div>}
+              </div> : views[tab.key]}
             </section>
           ) : null
         ))}

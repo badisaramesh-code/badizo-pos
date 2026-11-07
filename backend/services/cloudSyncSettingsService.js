@@ -16,7 +16,7 @@ function validateConfig(value) {
   return { enabled: value.enabled, frequency: value.frequency, dailyTime: value.dailyTime, timezone: value.timezone };
 }
 
-// Schedule calculation for the future transfer worker. It does not run a job.
+// Pure schedule calculation shared with the durable transfer worker.
 function nextScheduledAt(config, now = new Date()) {
   validateConfig(config);
   if (!config.enabled) return null;
@@ -34,9 +34,10 @@ function nextScheduledAt(config, now = new Date()) {
 function createCloudSyncSettingsService({
   configDirectory = process.env.BADIZO_CLOUD_SYNC_CONFIG_DIR || path.join(os.homedir(), 'BadizoCloudSync'),
   nodeRole = process.env.BADIZO_NODE_ROLE || 'local-server',
-  // No transfer worker is shipped yet. A future worker supplies this adapter
-  // after verifying shop identity, encrypted connectivity and billing authority.
+  // The composition root supplies a worker only after validating enrollment,
+  // supported domains, baseline and billing authority. Default remains off.
   getWorkerState = async () => ({ ready: false, state: 'not-configured', lastSuccessAt: null }),
+  requestTransfer = null,
   clock = () => new Date()
 } = {}) {
   const configFile = path.join(configDirectory, 'schedule.json');
@@ -55,17 +56,24 @@ function createCloudSyncSettingsService({
     const worker = await getWorkerState();
     const editable = nodeRole === 'local-server';
     const ready = editable && worker.ready === true;
-    return { ...saved, nodeRole, editable, service: { ready, state: ready ? (worker.state || 'paused') : 'not-configured' },
+    return { ...saved, nodeRole, editable, service: { ready, state: ready ? (worker.state || 'paused') : 'not-configured', direction:worker.direction==='two-way'?'two-way':'upload' },
       lastSuccessAt: worker.lastSuccessAt || null,
-      nextRunAt: ready ? nextScheduledAt(saved.config, clock()) : null,
+      nextRunAt: ready ? (Object.hasOwn(worker,'nextRunAt') ? worker.nextRunAt : nextScheduledAt(saved.config, clock())) : null,
+      manualPending: worker.manualPending === true,
+      failureCount: Number(worker.failureCount || 0),
       message: !editable ? 'Manage the schedule on the local shop server.' : !ready
-        ? 'Schedule preferences can be saved. Automatic updates and Update Cloud Now are unavailable until the cloud sync connection is configured.'
+        ? worker.reason==='restored-database-requires-enrollment' ? 'Local billing can continue. This restored database needs a newly verified sync baseline before cloud updates can resume.' : 'Schedule preferences can be saved. Automatic updates and Update Cloud Now are unavailable until the cloud sync connection is configured.'
         : saved.config.enabled ? 'Automatic cloud sync is enabled.' : 'Automatic cloud sync is paused.' };
   }
   function save(input, user) {
     const operation = writeQueue.catch(() => {}).then(async () => {
       if (nodeRole !== 'local-server') throw invalid('Cloud sync schedules can only be changed on the local shop server.', 403);
-      const config = validateConfig(input);
+      let proposed = input;
+      if (user?.role === 'ADMIN') {
+        if (!input || Object.keys(input).length !== 1 || !Object.hasOwn(input, 'dailyTime')) throw invalid('Admins can change the daily sync time.', 403);
+        proposed = { ...(await load()).config, dailyTime: input.dailyTime };
+      }
+      const config = validateConfig(proposed);
       const worker = await getWorkerState();
       if (config.enabled && worker.ready !== true) throw invalid('The cloud sync connection is not configured. Save the schedule with automatic sync paused.', 409);
       const payload = { config, updatedAt: clock().toISOString(), updatedBy: String(user?.username || 'server').slice(0, 100) };
@@ -83,6 +91,12 @@ function createCloudSyncSettingsService({
     writeQueue = operation;
     return operation;
   }
-  return { state, save };
+  async function requestNow(user) {
+    if(nodeRole !== 'local-server') throw invalid('Start this update on the local shop server.',403);
+    if(typeof requestTransfer !== 'function' || (await getWorkerState()).ready !== true) throw invalid('Cloud sync is not configured.',409);
+    await requestTransfer(user);
+    return state();
+  }
+  return { state, save, requestNow, loadScheduleRecord: load, loadSchedule: async () => (await load()).config };
 }
 module.exports = { DEFAULT_CONFIG, validateConfig, nextScheduledAt, createCloudSyncSettingsService };

@@ -1,7 +1,8 @@
 const { getFinancialYear } = require('./financialYearService');
+const { isCloudNode } = require('./runtimePolicy');
 
-function formatInwardNo(financialYear, sequenceNo) {
-  return `INW/${financialYear}/${String(sequenceNo).padStart(6, '0')}`;
+function formatInwardNo(financialYear, sequenceNo, env=process.env) {
+  return `${isCloudNode(env)?'CLINW':'INW'}/${financialYear}/${String(sequenceNo).padStart(6, '0')}`;
 }
 
 async function getExistingMaxSequence(connection, financialYear) {
@@ -15,7 +16,7 @@ async function getExistingMaxSequence(connection, financialYear) {
     `SELECT MAX(CAST(SUBSTRING_INDEX(inward_no, '/', -1) AS UNSIGNED)) AS sequence_no
      FROM inward_entries
      WHERE inward_no LIKE ?`,
-    [`INW/${financialYear}/%`]
+    [`${isCloudNode()?'CLINW':'INW'}/${financialYear}/%`]
   );
   const sequenceNext = Number(sequenceRows[0]?.next_number || 1);
   const inwardNext = Number(inwardRows[0]?.sequence_no || 0) + 1;

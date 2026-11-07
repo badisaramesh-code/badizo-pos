@@ -1,4 +1,8 @@
 const express = require('express');
+const { updatePriceListWithCapture } = require('../services/productSyncCapture');
+const { captureStockAdjustment } = require('../services/stockAdjustmentSync');
+const { beginProductCapture, beginProductDeletion, finishProductCapture } = require('../services/productMasterSync');
+const { retainRequestWrite } = require('../services/recoveryRuntimeBinding');
 const router = express.Router();
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
@@ -637,6 +641,7 @@ async function syncProductTaxByName(connection, { productName, aliasNames, hsnCo
     values.push(name, name);
   });
 
+  const capture = await beginProductCapture(connection, conditions.join(' OR '), values);
   const [result] = await connection.query(
     `UPDATE products
      SET hsn_code = ?, gst_percent = ?, updated_at = CURRENT_TIMESTAMP
@@ -644,6 +649,7 @@ async function syncProductTaxByName(connection, { productName, aliasNames, hsnCo
     [String(hsnCode || '').trim(), Number(gstPercent), ...values]
   );
 
+  await finishProductCapture(connection, capture);
   return Number(result?.affectedRows || 0);
 }
 
@@ -913,7 +919,7 @@ async function processPriceListUpdateJob(jobId) {
             await connection.beginTransaction();
             const ids = batchRows.map((row) => row.id);
             const update = priceListUpdateSqlForIds(job.property_name, normalized.value, ids);
-            const [updateResult] = await connection.query(update.sql, update.values);
+            const [updateResult] = await updatePriceListWithCapture(connection, update, ids, job.property_name);
             const [afterRows] = await connection.query(
               `SELECT *
                FROM products
@@ -975,7 +981,7 @@ async function processPriceListUpdateJob(jobId) {
           await connection.beginTransaction();
           const ids = batchRows.map((row) => row.id);
           const update = priceListUpdateSqlForIds(job.property_name, normalized.value, ids);
-          const [updateResult] = await connection.query(update.sql, update.values);
+          const [updateResult] = await updatePriceListWithCapture(connection, update, ids, job.property_name);
           const [afterRows] = await connection.query(
             `SELECT *
              FROM products
@@ -1196,9 +1202,11 @@ router.delete('/dropbox/bulk-delete', authenticate, authorize('SERVER', 'ADMIN')
 
     await connection.beginTransaction();
     const placeholders = deleteBarcodes.map(() => '?').join(',');
+    const capture = await beginProductDeletion(connection, deleteBarcodes);
     await connection.query(`DELETE FROM product_batches WHERE barcode IN (${placeholders})`, deleteBarcodes);
     const [deleteResult] = await connection.query(`DELETE FROM products WHERE barcode IN (${placeholders})`, deleteBarcodes);
 
+    await finishProductCapture(connection, capture);
     await writeAuditLog({
       user: req.user,
       action: 'PRODUCT_DROPBOX_BULK_DELETED',
@@ -1361,10 +1369,12 @@ router.delete('/duplicate-codes/bulk-delete', authenticate, authorize('SERVER', 
     const deletePlaceholders = deleteBarcodes.map(() => '?').join(',');
 
     await connection.beginTransaction();
+    const capture = await beginProductDeletion(connection, deleteBarcodes);
     await connection.query(`DELETE FROM product_batches WHERE barcode IN (${deletePlaceholders})`, deleteBarcodes);
     await connection.query(`DELETE FROM batch_free_offers WHERE trigger_barcode IN (${deletePlaceholders}) OR free_barcode IN (${deletePlaceholders})`, [...deleteBarcodes, ...deleteBarcodes]);
     const [deleteResult] = await connection.query(`DELETE FROM products WHERE barcode IN (${deletePlaceholders})`, deleteBarcodes);
 
+    await finishProductCapture(connection, capture);
     await writeAuditLog({
       user: req.user,
       action: 'PRODUCT_DUPLICATE_CODE_BULK_DELETED',
@@ -1657,6 +1667,7 @@ router.post('/stock-adjustments', authenticate, authorize('SERVER', 'ADMIN'), as
       connection
     });
 
+    await captureStockAdjustment(connection, adjustmentResult.insertId);
     await connection.commit();
     res.json({
       success: true,
@@ -1900,6 +1911,7 @@ function productForImportWrite(product, existingProduct) {
 
 async function bulkUpsertProducts(connection, products = []) {
   if (!products.length) return;
+  const capture = await beginProductCapture(connection, 'barcode IN ('+products.map(()=>'?').join(',')+') OR product_code IN ('+products.map(()=>'?').join(',')+')', [...products.map(row=>row.barcode), ...products.map(row=>row.product_code || null)]);
 
   const placeholders = products
     .map(() => `(${PRODUCT_IMPORT_COLUMNS.map(() => '?').join(',')})`)
@@ -1918,6 +1930,7 @@ async function bulkUpsertProducts(connection, products = []) {
        ${updateSql}`,
     values
   );
+  await finishProductCapture(connection, capture);
 }
 
 function prepareImportBatch(batch, existingProducts) {
@@ -2432,6 +2445,7 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
     });
   }
 
+  const releaseImportWrite = retainRequestWrite(req);
   setImmediate(() => {
     processProductImportJob({ importId, totalInputRows, products, errors }).catch((err) => {
       console.error('Product import background job failed:', err.message);
@@ -2441,7 +2455,7 @@ router.post('/import', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
         totalRows: totalInputRows,
         user: req.user?.username || ''
       });
-    });
+    }).finally(releaseImportWrite);
   });
 
   return res.status(202).json({
@@ -2477,6 +2491,7 @@ function parseJsonValue(value) {
 }
 
 async function restoreProductSnapshot(connection, snapshot) {
+  const capture = await beginProductCapture(connection, 'barcode=?', [snapshot.barcode]);
   await connection.query(
     `INSERT INTO products
      (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, sales_sgst_percent, sales_cgst_percent, sales_igst_percent,
@@ -2549,6 +2564,7 @@ async function restoreProductSnapshot(connection, snapshot) {
       snapshot.default_expiry_date
     ]
   );
+  await finishProductCapture(connection, capture);
 }
 
 router.get('/import-history', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
@@ -2641,11 +2657,29 @@ router.delete('/import-history/:id', authenticate, authorize('SERVER', 'ADMIN'),
 
     let deletedProducts = 0;
     let restoredProducts = 0;
+    if (process.env.BADIZO_SYNC_PRODUCT_CAPTURE === 'true') {
+      // An import snapshot is not permission to erase later sales or edits.
+      // Lock and verify every affected row before rolling back any of them.
+      for (const line of lineRows) {
+        const imported = parseJsonValue(line.imported_product_json);
+        const [currentRows] = await connection.query({sql:'SELECT * FROM products WHERE barcode=? FOR UPDATE',dateStrings:true}, [line.barcode]);
+        if (!imported || currentRows.length !== 1 || JSON.stringify(productSnapshot(currentRows[0])) !== JSON.stringify(productSnapshot(imported))) {
+          throw new Error('Import rollback requires review: a product changed after this import. No products were rolled back.');
+        }
+        if (line.action_status === 'INSERTED') {
+          const [used] = await connection.query('SELECT id FROM invoice_items WHERE barcode=? LIMIT 1', [line.barcode]);
+          const [batches] = await connection.query('SELECT id FROM product_batches WHERE barcode=? LIMIT 1', [line.barcode]);
+          if (used.length || batches.length) throw new Error('An imported product now has sales or purchase batches. Use a correction instead of deleting its history.');
+        }
+      }
+    }
     for (const line of lineRows) {
       if (line.action_status === 'INSERTED') {
+        const capture = await beginProductDeletion(connection, [line.barcode]);
         await connection.query(`DELETE FROM product_batches WHERE barcode = ?`, [line.barcode]);
         await connection.query(`DELETE FROM batch_free_offers WHERE trigger_barcode = ? OR free_barcode = ?`, [line.barcode, line.barcode]);
         const [deleteResult] = await connection.query(`DELETE FROM products WHERE barcode = ?`, [line.barcode]);
+        await finishProductCapture(connection, capture);
         deletedProducts += Number(deleteResult?.affectedRows || 0);
       } else if (line.action_status === 'UPDATED') {
         const previous = parseJsonValue(line.previous_product_json);
@@ -2878,10 +2912,11 @@ router.post('/price-list/jobs', authenticate, authorize('SERVER', 'ADMIN'), asyn
       ]
     );
 
+    const releasePriceWrite = retainRequestWrite(req);
     setImmediate(() => {
       processPriceListUpdateJob(jobId).catch((err) => {
         console.error('Price list background job failed:', err.message);
-      });
+      }).finally(releasePriceWrite);
     });
 
     res.json({
@@ -2981,7 +3016,7 @@ router.post('/price-list/update', authenticate, authorize('SERVER', 'ADMIN'), as
       try {
         await connection.beginTransaction();
         const update = priceListUpdateSqlForIds(property, normalized.value, batchRows.map((row) => row.id));
-        const [batchResult] = await connection.query(update.sql, update.values);
+        const [batchResult] = await updatePriceListWithCapture(connection, update, batchRows.map((row) => row.id), property);
         await connection.commit();
         updatedCount += Number(batchResult?.affectedRows || 0);
       } catch (err) {
@@ -3185,6 +3220,8 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     return res.status(400).json({ error: 'Barcode and product name are required.' });
   }
 
+  let syncConnection = null;
+  let syncCommitted = false;
   try {
     const values = {
       hsnCode: hsn_code || '',
@@ -3320,8 +3357,14 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       values.defaultExpiryDate
     ];
 
+    if (process.env.BADIZO_SYNC_PRODUCT_CAPTURE === 'true') {
+      syncConnection = await db.getConnection();
+      await syncConnection.beginTransaction();
+    }
+    const executor = syncConnection || db;
+    const capture = await beginProductCapture(executor, 'barcode IN (?, ?)', [originalBarcode || finalBarcode, finalBarcode]);
     if (finalProductCode) {
-      const [codeConflicts] = await db.query(
+      const [codeConflicts] = await executor.query(
         'SELECT barcode FROM products WHERE product_code = ? LIMIT 1',
         [finalProductCode]
       );
@@ -3332,7 +3375,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
     }
 
     if (originalBarcode && originalBarcode !== finalBarcode) {
-      const [barcodeConflicts] = await db.query(
+      const [barcodeConflicts] = await executor.query(
         'SELECT barcode FROM products WHERE barcode = ? LIMIT 1',
         [finalBarcode]
       );
@@ -3340,7 +3383,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
         return res.status(409).json({ error: 'Another product already uses this barcode.' });
       }
 
-      const [updateResult] = await db.query(
+      const [updateResult] = await executor.query(
         `UPDATE products
          SET product_code = ?,
              barcode = ?,
@@ -3382,7 +3425,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
         return res.status(404).json({ error: 'Original product was not found. Refresh products and try again.' });
       }
     } else {
-      await db.query(
+      await executor.query(
         `INSERT INTO products
          (product_code, barcode, product_name, alias_names, hsn_code, gst_percent, unit_type, pack_measure, purchase_unit_type, purchase_unit_size, mrp, purchase_price, sale_price, wholesale_price, qty_3_price, qty_6_price, qty_12_price,
           discount_type, discount_value, bulk_discount_value, is_free_item, free_promo_enabled, free_promo_name, free_promo_qty_per_sale,
@@ -3424,7 +3467,8 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       );
     }
 
-    const taxSynced = await syncProductTaxByName(db, {
+    await finishProductCapture(executor, capture);
+    const taxSynced = await syncProductTaxByName(executor, {
       productName: values.productName,
       aliasNames: values.aliasNames,
       hsnCode: values.hsnCode,
@@ -3433,6 +3477,7 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
 
     await writeAuditLog({
       user: req.user,
+      connection: executor,
       action: 'PRODUCT_SAVED',
       entityType: 'PRODUCT',
       entityId: finalBarcode,
@@ -3449,10 +3494,15 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       }
     });
 
+    if (syncConnection) { await syncConnection.commit(); syncCommitted = true; }
     res.json({ success: true, taxSynced });
   } catch (err) {
     console.error('Product save failed:', err.message);
     res.status(500).json({ error: 'Unable to save product to database.' });
+  } finally {
+    if (syncConnection) {
+      try { if (!syncCommitted) await syncConnection.rollback(); } finally { syncConnection.release(); }
+    }
   }
 });
 
@@ -3487,6 +3537,7 @@ router.post('/bulk-update', authenticate, authorize('SERVER', 'ADMIN'), async (r
       const connection = await db.getConnection();
       try {
         await connection.beginTransaction();
+        const capture = await beginProductCapture(connection, 'barcode IN (' + batch.map(() => '?').join(',') + ')', batch.map(row => row.barcode));
         for (const row of batch) {
           const [result] = await connection.query(
             `UPDATE products
@@ -3513,6 +3564,7 @@ router.post('/bulk-update', authenticate, authorize('SERVER', 'ADMIN'), async (r
           );
           updated += Number(result?.affectedRows || 0);
         }
+        await finishProductCapture(connection, capture);
         await connection.commit();
       } catch (err) {
         try {

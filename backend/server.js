@@ -58,6 +58,20 @@ function getCorsOptions() {
 }
 
 app.use(cors(getCorsOptions()));
+const syncRoutes=express.Router();
+const apiRoutes=express.Router();
+let enrolledRuntime=null,configurationPromise=null,syncDatabasePool=null;
+app.use('/api', require('./services/recoveryRuntimeBinding').middleware);
+app.use('/api', cloudWriteGuard);
+// Dedicated peer authentication and 1 MiB parsing happen before the general POS parser.
+app.use('/api/sync', syncRoutes);
+// Recovery transport has an independent operation token and tiny request body.
+// Authenticate it before the much larger general billing/import JSON parser.
+if(process.env.BADIZO_RECOVERY_CONTROL_CONFIG){
+  const control=require('./services/recoveryControl').createRecoveryControl({configPath:process.env.BADIZO_RECOVERY_CONTROL_CONFIG,shopId:process.env.BADIZO_SHOP_ID});
+  app.use('/api/recovery-baseline',require('./routes/recoveryBaseline').createRouter({configPath:process.env.BADIZO_RECOVERY_CONTROL_CONFIG,control,runtimeStatus:()=>enrolledRuntime?.status()}));
+  app.use('/api/recovery-preparation',require('./routes/recoveryPreparation').createRouter({configPath:process.env.BADIZO_RECOVERY_CONTROL_CONFIG,control}));
+}
 app.use(express.json({ limit: process.env.BADIZO_JSON_LIMIT || '250mb' }));
 
 function recordHealthPing(req) {
@@ -81,16 +95,37 @@ function recordHealthPing(req) {
 
 app.get('/api/health', (req, res) => {
   recordHealthPing(req);
-  res.json({ ok: true, service: 'badizo-pos' });
+  res.set('Cache-Control','no-store').json({ ok: true, service: 'badizo-pos', billing:require('./services/recoveryRuntimeBinding').counterBillingState() });
 });
 
 if (isCloudNode()) app.use('/api/cloud-software', require('./routes/cloudSoftware'));
-app.use('/api', cloudWriteGuard);
-mountRoutes(app);
+app.use(apiRoutes);
+if(!process.env.BADIZO_SYNC_ENROLLMENT_CONFIG)mountRoutes(apiRoutes);
+async function configureEnrollment(){
+  if(!process.env.BADIZO_SYNC_ENROLLMENT_CONFIG)return;
+  if(!configurationPromise)configurationPromise=(async()=>{
+    const pool=require('./config/db');await pool.ready;
+    enrolledRuntime=await require('./services/protectedEnrollment').protectedEnrollment({
+      pool,
+      onFailure:error=>logError('Local billing started with cloud sync paused. Rebuild the recovery baseline.',error),
+      create:async()=>{
+        syncDatabasePool=require('./services/syncDatabasePool').createSyncDatabasePool();
+        try {
+          return await require('./services/enrolledSyncRuntime').createEnrolledSyncRuntime({pool:syncDatabasePool,configPath:process.env.BADIZO_SYNC_ENROLLMENT_CONFIG});
+        } catch (error) {
+          await syncDatabasePool.end(); syncDatabasePool=null; throw error;
+        }
+      }
+    });
+    enrolledRuntime.mount(syncRoutes);
+    mountRoutes(apiRoutes,{cloudSyncRuntime:enrolledRuntime});
+  })();
+  return configurationPromise;
+}
 app.get('/api/ready', async (_req, res) => {
   try {
     await require('./config/db').query('SELECT 1');
-    res.json({ ok: true, shopId: process.env.BADIZO_SHOP_ID || null, nodeRole: process.env.BADIZO_NODE_ROLE || 'local-server', releaseCommit: process.env.BADIZO_RELEASE_COMMIT || null });
+    res.json({ ok: true, sync:enrolledRuntime?await enrolledRuntime.status():null, recovery:require('./services/recoveryRuntimeBinding').status(), shopId: process.env.BADIZO_SHOP_ID || null, nodeRole: process.env.BADIZO_NODE_ROLE || 'local-server', releaseCommit: process.env.BADIZO_RELEASE_COMMIT || null });
   } catch (_error) { res.status(503).json({ ok: false }); }
 });
 
@@ -254,17 +289,24 @@ function scheduleDailyBackupCatchUpCheck() {
   return timer;
 }
 
-function startServer(port = PORT) {
+async function startServer(port = PORT) {
+  await configureEnrollment();
   return new Promise((resolve, reject) => {
     const listenPort = normalizePort(port, PORT);
     const server = app.listen(listenPort, HOST, () => {
       console.log(`BADIZO POS API running on http://${HOST}:${listenPort}`);
       logInfo('Backend started', { host: HOST, port: listenPort });
       startLegacyFrontendRedirect(listenPort);
-      if (!isCloudNode()) {
+      if (!isCloudNode() && process.env.BADIZO_DISABLE_SCHEDULED_JOBS !== 'true') {
         scheduleDailySaleAlerts();
         scheduleDailyBackupCatchUpCheck();
       }
+      enrolledRuntime?.start();
+      server.once('close',()=>{
+        enrolledRuntime?.stop();
+        const closingPool=syncDatabasePool; syncDatabasePool=null;
+        closingPool?.end().catch(error=>logError('Sync database pool shutdown failed',error));
+      });
       resolve(server);
     });
 

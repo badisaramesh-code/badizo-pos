@@ -1,0 +1,11 @@
+[
+  {
+    "schemaVersion": 1,
+    "shopId": "HFM001",
+    "displayName": "Hyper Fresh Mart",
+    "mysqlVersion": "8.0.46",
+    "localInstallationId": "hfm001-local",
+    "cloudInstallationId": "hfm001-cloud",
+    "sync": { "enabled": false, "frequency": "daily", "dailyTime": "20:30", "timezone": "Asia/Kolkata" }
+  }
+]
