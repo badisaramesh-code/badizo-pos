@@ -19,18 +19,7 @@ const { logError, logInfo } = require('../services/logger');
 const { normalizePhone, parseMoney } = require('../utils/formatters');
 const { moneyToPaise, paiseToMoney, parseCurrency } = require('../utils/money');
 
-function formatReturnNo() {
-  const now = new Date();
-  const stamp = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0'),
-    String(now.getHours()).padStart(2, '0'),
-    String(now.getMinutes()).padStart(2, '0'),
-    String(now.getSeconds()).padStart(2, '0')
-  ].join('');
-  return `SR-${stamp}`;
-}
+const { financialDocumentNo } = require('../utils/financialDocumentNo');
 
 function nextIsoDate(dateText) {
   const match = String(dateText || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -1077,7 +1066,7 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
       return res.status(400).json({ error: `Invoice is ${invoice.invoice_status.toLowerCase()} and cannot be returned.` });
     }
 
-    const returnNo = formatReturnNo();
+    const returnNo = financialDocumentNo('SR');
     let taxableTotal = 0;
     let gstTotal = 0;
     let refundTotal = 0;
@@ -1105,16 +1094,16 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
       const item = itemRows[0];
 
       if (!item) {
-        throw new Error(`Invoice item ${invoiceItemId} not found.`);
+        throw Object.assign(new Error(`Invoice item ${invoiceItemId} not found.`), { status: 400 });
       }
 
       if (item.is_free_bonus) {
-        throw new Error('Free counter items cannot be returned in POS return billing.');
+        throw Object.assign(new Error('Free counter items cannot be returned in POS return billing.'), { status: 400 });
       }
 
       const availableQty = parseMoney(item.quantity) - parseMoney(item.returned_qty);
       if (returnQty > availableQty) {
-        throw new Error(`Return quantity for ${item.product_name} cannot exceed ${availableQty}.`);
+        throw Object.assign(new Error(`Return quantity for ${item.product_name} cannot exceed ${availableQty}.`), { status: 400 });
       }
 
       const gross = parseMoney(item.sale_price) * returnQty;
@@ -1163,7 +1152,7 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
     }
 
     if (refundTotal <= 0) {
-      throw new Error('No valid return quantity was entered.');
+      throw Object.assign(new Error('No valid return quantity was entered.'), { status: 400 });
     }
 
     await connection.query(
@@ -1209,7 +1198,7 @@ router.post('/return', authenticate, authorize('SERVER', 'ADMIN'), async (req, r
   } catch (err) {
     await connection.rollback();
     console.error('Sales return failed:', err.message);
-    res.status(500).json({ error: err.message || 'Unable to save sales return.' });
+    res.status(err.status === 400 ? 400 : 500).json({ error: err.status === 400 ? err.message : 'Unable to save sales return.' });
   } finally {
     connection.release();
   }

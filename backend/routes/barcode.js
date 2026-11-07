@@ -1,3 +1,4 @@
+const { randomUUID } = require('node:crypto');
 const express = require('express');
 const fs = require('fs/promises');
 const path = require('path');
@@ -284,7 +285,7 @@ router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) =>
     const template = await fs.readFile(templatePath, 'utf8');
     const prn = renderLabels(template, req.body || {});
     const safeBarcode = tsplText(req.body?.barcode || 'barcode', 24).replace(/[^A-Z0-9_-]/gi, '_');
-    const outputName = `${safeBarcode}_${Date.now()}.prn`;
+    const outputName = `${safeBarcode}_${Date.now()}_${randomUUID()}.prn`;
     const outputPath = path.join(OUTPUT_DIR, outputName);
 
     await fs.writeFile(outputPath, prn, 'utf8');

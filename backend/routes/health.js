@@ -2,15 +2,13 @@ const express = require('express');
 const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
-const { promisify } = require('util');
+const { readPrinterHealth } = require('../services/printerHealth');
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { backupDir, listBackups } = require('../services/backupService');
 const { ERROR_LOG, SYSTEM_LOG, logError } = require('../services/logger');
 
 const router = express.Router();
-const execFileAsync = promisify(execFile);
 
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
@@ -41,35 +39,6 @@ async function diskHealth() {
       path: backupDir,
       error: err.message
     };
-  }
-}
-
-async function printerHealth() {
-  if (process.platform !== 'win32') {
-    return { ok: false, note: 'Printer health check is available on Windows only.', printers: [] };
-  }
-
-  try {
-    const command = [
-      'Get-Printer',
-      '|',
-      'Select-Object Name,DriverName,PortName,PrinterStatus,Default,Shared,ShareName',
-      '|',
-      'ConvertTo-Json -Depth 3'
-    ].join(' ');
-    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', command], {
-      windowsHide: true,
-      timeout: 8000
-    });
-    const parsed = JSON.parse(stdout || '[]');
-    const printers = (Array.isArray(parsed) ? parsed : [parsed]).filter(Boolean);
-    return {
-      ok: printers.some((printer) => String(printer.PrinterStatus || '').toLowerCase() === 'normal'),
-      printers
-    };
-  } catch (err) {
-    logError('Printer health check failed', err);
-    return { ok: false, error: err.message, printers: [] };
   }
 }
 
@@ -142,7 +111,7 @@ router.get('/', async (_req, res) => {
   }
 
   health.disk = await diskHealth();
-  health.printers = await printerHealth();
+  health.printers = await readPrinterHealth();
   health.logs = await logFileHealth();
 
   res.json(health);

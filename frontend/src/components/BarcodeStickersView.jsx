@@ -158,6 +158,10 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
   const configuredPrinterName = selectedPrinterConfig.printer || selectedTemplate.printer;
   const selectedPrinterName = printerSelections[templateName]
     || (printerOptions.includes(configuredPrinterName) ? configuredPrinterName : '');
+  const printBusyRef = useRef(false);
+  const [preparedBatch, setPreparedBatch] = useState(null);
+  const batchKey = JSON.stringify([printerStorageKey, templateName, form]);
+  const reusableBatch = preparedBatch?.key === batchKey ? preparedBatch.result : null;
   const searchRef = useRef(null);
   const stickerCountRef = useRef(null);
   const selectedProductRef = useRef(null);
@@ -497,7 +501,9 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
       setErrorMessage('Select the Windows printer used for the working test page, then print.');
       return;
     }
-    setIsPrinting(sendToPrinter);
+    if (printBusyRef.current) return;
+    printBusyRef.current = true;
+    setIsPrinting(true);
     try {
       // Check the local queue before generating a file, which also adds stock.
       if (sendToPrinter && !useServerPrinter && window.badizoDesktop?.getBarcodePrinters) {
@@ -507,17 +513,18 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
           throw new Error('Selected printer is no longer installed. Refresh Printers and select the working Windows printer.');
         }
       }
-      const result = await generateBarcodePrn({
+      const result = reusableBatch || await generateBarcodePrn({
         ...form,
         mrp: moneyTwoDecimals(form.mrp),
         sale_price: moneyTwoDecimals(form.sale_price),
         template_name: templateName,
         printer_name: selectedPrinterName
       });
+      setPreparedBatch({ key: batchKey, result });
       setPrn(result.prn || '');
       setOutputInfo(result);
       if (!sendToPrinter) {
-      setStatusMessage(`Sticker print file ready and report saved: ${result.output_name}. Stock: ${result.old_stock_qty} + ${result.sticker_count} = ${result.new_stock_qty}. Printer: ${result.printer_name || selectedPrinterName}`);
+        setStatusMessage(`Sticker print file ready and report saved: ${result.output_name}. Stock: ${result.old_stock_qty} + ${result.sticker_count} = ${result.new_stock_qty}. Printer: ${result.printer_name || selectedPrinterName}`);
         return;
       }
 
@@ -537,6 +544,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
         const nextSelections = { ...printerSelections, [templateName]: selectedPrinterName };
         setPrinterSelections(nextSelections);
         try { window.localStorage.setItem(printerStorageKey, JSON.stringify(nextSelections)); } catch (_err) { }
+        setPreparedBatch(null);
         setOutputInfo({ ...result, ...printResult });
         setActivePrintJob(printResult.job_token ? { jobToken: printResult.job_token, shareName: localShareName } : null);
         setStatusMessage(`Sticker sent to ${printResult.printer_name || selectedPrinterName}. Stock: ${result.old_stock_qty} + ${result.sticker_count} = ${result.new_stock_qty}. File: ${result.output_name}`);
@@ -547,11 +555,12 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
         }, 30);
       } catch (printErr) {
         setErrorMessage(printErr.response?.data?.error || printErr.message || 'Sticker file was created, but Windows could not send it to the printer.');
-        setStatusMessage(`Sticker file is ready: ${result.output_path}. Check printer sharing, then print this PRN file.`);
+        setStatusMessage(`Stock recorded. Check the Windows queue for this batch before sending the saved labels again. File: ${result.output_name}`);
       }
     } catch (err) {
       setErrorMessage(err.response?.data?.error || err.message || 'Unable to generate PRN.');
     } finally {
+      printBusyRef.current = false;
       setIsPrinting(false);
     }
   }
@@ -669,7 +678,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
               <label><span className="field-label">New GST</span><input className="field" value={form.gst_percent || '0'} readOnly /></label>
               <label className="sticker-count-field"><span className="field-label">Quantity / Stickers</span><input ref={stickerCountRef} className="field" type="number" min="1" step="1" value={form.stickerCount} onChange={(event) => update('stickerCount', event.target.value)} onKeyDown={handleStickerCountKeyDown} /></label>
               <button className="primary-button" type="button" onClick={() => generatePrn({ sendToPrinter: true })} disabled={isPrinting}>
-                {isPrinting ? 'Sending...' : 'Print Barcode Labels'}
+                {isPrinting ? 'Preparing labels…' : reusableBatch ? 'Print Saved Labels' : 'Print Barcode Labels'}
               </button>
               <button className="danger-button" type="button" onClick={cancelActivePrint} disabled={!activePrintJob || isPrinting || isCancellingPrint}>
                 {isCancellingPrint ? 'Cancelling...' : 'Cancel Print'}
