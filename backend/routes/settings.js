@@ -135,7 +135,7 @@ function normalizeBarcodePrinterTemplates(rawValue) {
     acc[templateName] = {
       label: defaults.label,
       printer: String(configured.printer || defaults.printer || '').trim(),
-      shares: [...new Set([...shares, ...defaults.shares])].slice(0, 5)
+      shares: [...new Set(shares.length ? shares : defaults.shares)].slice(0, 5)
     };
     return acc;
   }, {});
