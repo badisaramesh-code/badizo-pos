@@ -581,10 +581,24 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         }))
         .filter((item) => item.barcode && item.quantity > 0)
       : [];
-    const exchangeTotal = normalizedExchangeItems.reduce((total, item) => total + item.line_total, 0) || parseMoney(exchange_total);
+    const exchangeTotal = normalizedExchangeItems.reduce((total, item) => total + item.line_total, 0);
+    if (exchange_total != null && moneyToPaise(exchange_total) !== moneyToPaise(exchangeTotal)) {
+      throw Object.assign(new Error('Exchange total differs from the exchange items. Review the bill.'), {code:'INVALID_BILL_TOTAL'});
+    }
     const loyaltySettings = await getLoyaltySettings(connection);
     checkoutTimer.mark('loyalty-settings');
-    const saleGrandBeforeRedeem = parseCurrency(loyalty_base_total || grand_total);
+    let merchandiseTotal = 0;
+    for (const item of items) {
+      const quantity = Number(item?.quantity), price = Number(item?.sale_price);
+      if (!item?.barcode || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price < 0) {
+        throw Object.assign(new Error('Every bill line needs a valid barcode, positive quantity and non-negative rate.'), {code:'INVALID_BILL_LINE'});
+      }
+      merchandiseTotal += quantity * price;
+    }
+    const saleGrandBeforeRedeem = Math.max(merchandiseTotal - exchangeTotal, 0);
+    if (loyalty_base_total != null && Math.abs(Number(loyalty_base_total)-saleGrandBeforeRedeem)>0.005001) {
+      throw Object.assign(new Error('Cart total has changed. Review the bill before collecting payment.'), {code:'INVALID_BILL_TOTAL'});
+    }
     const loyaltyRedeemResult = await redeemLoyaltyPoints(
       connection,
       invoiceNo,
@@ -595,7 +609,10 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     );
     checkoutTimer.mark('loyalty-redeem');
     const normalizedPaymentMode = normalizePaymentMode(payment_mode);
-    const grandTotal = Math.round(parseCurrency(saleGrandBeforeRedeem - loyaltyRedeemResult.amount));
+    const grandTotal = Math.round(Math.max(saleGrandBeforeRedeem - loyaltyRedeemResult.amount,0));
+    if (!Number.isFinite(Number(grand_total)) || Number(grand_total) !== grandTotal) {
+      throw Object.assign(new Error('Bill total differs from the cart. Review the bill before collecting payment.'), {code:'INVALID_BILL_TOTAL'});
+    }
     const settlement = calculatePaymentSettlement(normalizedPaymentMode, payment_splits, grandTotal, cash_received, payment_reference);
     const paymentSplits = settlement.payments;
     const cashReceivedAmount = settlement.cashReceived;
@@ -663,10 +680,6 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       const quantity = Number(item.quantity);
       const salePrice = parseMoney(item.sale_price);
       const gstPercent = parseMoney(item.gst_percent);
-
-      if (!item.barcode || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(salePrice) || salePrice < 0) {
-        throw Object.assign(new Error('Every bill line needs a valid barcode, positive quantity and non-negative rate.'), { code: 'INVALID_BILL_LINE' });
-      }
 
       const lineGrossTotal = salePrice * quantity;
       const taxFactor = gstPercent / (100 + gstPercent);
@@ -820,7 +833,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     });
     console.error('Checkout rollback:', err.message);
     const retryableDeadlock = err?.code === 'ER_LOCK_DEADLOCK' || Number(err?.errno) === 1213;
-    const validationError = ['PRICE_CHANGED', 'INVALID_PAYMENT', 'INVALID_BILL_LINE'].includes(err.code);
+    const validationError = ['PRICE_CHANGED', 'INVALID_PAYMENT', 'INVALID_BILL_LINE', 'INVALID_BILL_TOTAL'].includes(err.code);
     res.status(err.code === 'PRICE_CHANGED' ? 409 : validationError ? 400 : retryableDeadlock ? 503 : 500).json({
       code: validationError ? err.code : undefined,
       error: retryableDeadlock ? 'Checkout was temporarily busy. Retrying safely.' : err.message,

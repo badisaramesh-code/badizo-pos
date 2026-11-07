@@ -10,6 +10,12 @@ const { ERROR_LOG, SYSTEM_LOG, logError } = require('../services/logger');
 
 const router = express.Router();
 
+router.get('/usage-enabled', authenticate, (_req,res)=>res.json({enabled:require('../services/workspaceUsage').enabled}));
+router.post('/workspace-open', authenticate, (req,res)=>{
+  require('../services/workspaceUsage').record(req.body?.area).catch(()=>{});
+  res.sendStatus(204);
+});
+
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
 function localIpAddresses() {

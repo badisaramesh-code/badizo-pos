@@ -18,7 +18,7 @@ import StaffPayrollView from './components/StaffPayrollView';
 import PosUpdateButton from './components/PosUpdateButton';
 import SystemView from './components/SystemView';
 import CloudStatusBanner from './components/CloudStatusBanner';
-import { clearAuthSession, fetchBackupHealth, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
+import api, { clearAuthSession, fetchBackupHealth, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
 import { APP_TABS, canAccessTab } from './config/navigation';
 import './styles.css';
 import ReportApprovalNotifications from './components/ReportApprovalNotifications';
@@ -41,6 +41,21 @@ export default function App() {
   const [mountedWorkspaces, setMountedWorkspaces] = useState(() => new Set(['billing']));
   const [currentUser, setCurrentUser] = useState(getStoredUser);
   const [backupAlert, setBackupAlert] = useState(null);
+
+  const [usageEnabled,setUsageEnabled] = useState(false);
+  useEffect(() => {
+    let active = true;
+    setUsageEnabled(false);
+    if (currentUser) api.get('/system-health/usage-enabled').then(({data})=>{
+      if (active) setUsageEnabled(data.enabled === true);
+    }).catch(()=>{});
+    return () => { active=false; };
+  }, [currentUser]);
+  useEffect(() => {
+    if (usageEnabled && currentUser && APP_TABS.some(tab => tab.key === activeWorkspace && canAccessTab(tab,currentUser))) {
+      api.post('/system-health/workspace-open',{area:activeWorkspace}).catch(()=>{});
+    }
+  }, [activeWorkspace,currentUser,usageEnabled]);
 
   useEffect(() => {
     setMountedWorkspaces((current) => {
