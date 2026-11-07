@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { approveSensitiveBillingMode, fetchBarcodeTemplate, fetchSettings, generateBarcodePrn, printBarcodePrn, searchProducts } from '../api/client';
+import { approveSensitiveBillingMode, fetchBarcodeTemplate, fetchSettings, generateBarcodePrn, previewBarcodePrn, printBarcodePrn, searchProducts } from '../api/client';
 
 const TEMPLATE_OPTIONS = [
   {
@@ -490,6 +490,18 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
     }
   }
 
+  async function previewLabel() {
+    try {
+      const result = await previewBarcodePrn({ ...form, template_name: templateName });
+      setPrn(result.prn);
+      setOutputInfo(null);
+      setErrorMessage('');
+      setStatusMessage('Test label ready to copy.');
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Unable to preview label.');
+    }
+  }
+
   async function generatePrn({ sendToPrinter = false } = {}) {
     setErrorMessage('');
     setStatusMessage('');
@@ -678,7 +690,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
               <label><span className="field-label">New GST</span><input className="field" value={form.gst_percent || '0'} readOnly /></label>
               <label className="sticker-count-field"><span className="field-label">Quantity / Stickers</span><input ref={stickerCountRef} className="field" type="number" min="1" step="1" value={form.stickerCount} onChange={(event) => update('stickerCount', event.target.value)} onKeyDown={handleStickerCountKeyDown} /></label>
               <button className="primary-button" type="button" onClick={() => generatePrn({ sendToPrinter: true })} disabled={isPrinting}>
-                {isPrinting ? 'Preparing labels…' : reusableBatch ? 'Print Saved Labels' : 'Print Barcode Labels'}
+                {isPrinting ? 'Preparing labelsâ€¦' : reusableBatch ? 'Print Saved Labels' : 'Print Barcode Labels'}
               </button>
               <button className="danger-button" type="button" onClick={cancelActivePrint} disabled={!activePrintJob || isPrinting || isCancellingPrint}>
                 {isCancellingPrint ? 'Cancelling...' : 'Cancel Print'}
@@ -912,7 +924,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
                   </div>
                 )}
                 <button className="secondary-button" type="button" onClick={loadTemplate}>Reload Template</button>
-                <button className="secondary-button" type="button" onClick={() => generatePrn()}>Create Test PRN From Current Product</button>
+                <button className="secondary-button" type="button" onClick={previewLabel}>Create Test PRN From Current Product</button>
                 <button className="secondary-button" type="button" onClick={copyPrn} disabled={!prn}>Copy Test PRN</button>
                 <button className="secondary-button" type="button" onClick={() => {
                   setSetupUnlocked(false);
