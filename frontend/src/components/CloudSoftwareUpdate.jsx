@@ -2,6 +2,8 @@ import React,{useEffect,useState} from 'react';
 import api from '../api/client';
 
 export default function CloudSoftwareUpdate() {
+  const [open,setOpen]=useState(()=>window.location.hash==='#software-versions');
+  const [selected,setSelected]=useState('');
   const [info,setInfo]=useState(null);
   const [notice,setNotice]=useState('');
   const [waiting,setWaiting]=useState(()=>sessionStorage.getItem('cloudUpdateTarget'));
@@ -23,9 +25,8 @@ export default function CloudSoftwareUpdate() {
     refresh();
     return ()=>{active=false;clearTimeout(timer);};
   },[waiting]);
-  async function install(){
-    const commit=info.release.commit;
-    if (!window.confirm('Install this release on the cloud standby and restart its POS service?')) return;
+  async function install(commit){
+    if (!window.confirm('Install '+(info.versions.find(v=>v.commit===commit)?.name || commit.slice(0,12))+' on the cloud standby and restart it?')) return;
     setNotice('');
     try {
       await api.post('/cloud-software',{commit});
@@ -36,7 +37,7 @@ export default function CloudSoftwareUpdate() {
   const available=info?.release && info.release.commit!==info.running;
   return <span role="status">
     {waiting ? 'Updating cloud…' : available && info.standby ?
-      <button className="tab-button" onClick={install} title={info.release.name}>↻ Update cloud software</button> :
+      <button className="tab-button" onClick={()=>install(info.release.commit)} title={info.release.name}>↻ Update cloud software</button> :
       info?.lookupFailed ? 'Cloud update check unavailable' :
       !info ? 'Checking cloud updates…' : !info.standby ? 'Cloud updates paused' :
       info.release ? 'Cloud software up to date' : 'No cloud release available'}
