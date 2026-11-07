@@ -85,7 +85,7 @@ test('API redirects to rediscovered server, retains auth and never retries a sal
   const handlers={};let connectionListener;const retried=[];
   const api=Object.assign(async config=>retried.push(config),{defaults:{},interceptors:{request:{use:fn=>handlers.request=fn},response:{use:(_ok,fn)=>handlers.failure=fn}}});
   const window={location:{protocol:'http:',hostname:'192.168.1.10'},sessionStorage:{getItem:()=> 'existing-token'},badizoDesktop:{getServerConnection:async()=>({apiBaseUrl:'http://192.168.1.10:5000/api'}),onServerConnectionChanged:fn=>connectionListener=fn}};
-  const context={URL,Promise,window,axios:{create:config=>{api.defaults={...config};return api;}},setTimeout:callback=>callback()};
+  const context={URL,Promise,window,process:{env:{}},axios:{create:config=>{api.defaults={...config};return api;}},setTimeout:callback=>callback()};
   let source=fs.readFileSync(path.join(__dirname,'../frontend/src/api/client.js'),'utf8');
   source=source.replace("import axios from 'axios';",'').replace('export default api;','').replace(/export /g,'');
   vm.runInNewContext(source,context);

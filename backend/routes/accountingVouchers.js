@@ -4,18 +4,7 @@ const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { normalizeDate, parseMoney } = require('../utils/formatters');
 
-function voucherNo(prefix) {
-  const now = new Date();
-  const stamp = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0'),
-    String(now.getHours()).padStart(2, '0'),
-    String(now.getMinutes()).padStart(2, '0'),
-    String(now.getSeconds()).padStart(2, '0')
-  ].join('');
-  return `${prefix}-${stamp}`;
-}
+const { financialDocumentNo } = require('../utils/financialDocumentNo');
 
 router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
@@ -47,9 +36,12 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'Amount must be greater than zero.' });
   }
 
+  let connection;
   try {
-    const finalVoucherNo = voucherNo(prefix);
-    await db.query(
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const finalVoucherNo = financialDocumentNo(prefix);
+    await connection.query(
       `INSERT INTO accounting_vouchers
        (voucher_no, voucher_date, voucher_type, account_name, payment_mode, amount,
         account_holder_name, bank_name, bank_account_no, bank_ifsc, upi_id,
@@ -74,33 +66,45 @@ router.post('/', async (req, res) => {
     );
 
     if (voucherType === 'CREDITOR_PAYMENT' && (accountHolderName || bankName || bankAccountNo || bankIfsc || upiId)) {
-      const [updateResult] = await db.query(
-        `UPDATE suppliers
-         SET account_holder_name = COALESCE(NULLIF(?, ''), account_holder_name),
+      const bankDetails = [accountHolderName, bankName, bankAccountNo, bankIfsc, upiId];
+      const updateBankDetails = `account_holder_name = COALESCE(NULLIF(?, ''), account_holder_name),
              bank_name = COALESCE(NULLIF(?, ''), bank_name),
              bank_account_no = COALESCE(NULLIF(?, ''), bank_account_no),
              bank_ifsc = COALESCE(NULLIF(?, ''), bank_ifsc),
              upi_id = COALESCE(NULLIF(?, ''), upi_id),
-             is_active = 1,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE supplier_name = ?`,
-        [accountHolderName, bankName, bankAccountNo, bankIfsc, upiId, accountName]
-      );
-
-      if (updateResult.affectedRows === 0) {
-        await db.query(
+             is_active = 1, updated_at = CURRENT_TIMESTAMP`;
+      const [suppliers] = await connection.query('SELECT id FROM suppliers WHERE supplier_name = ? ORDER BY id', [accountName]);
+      if (suppliers.length) {
+        await connection.query(`UPDATE suppliers SET ${updateBankDetails} WHERE id IN (?)`,
+          [...bankDetails, suppliers.map(supplier => supplier.id)]);
+      } else {
+        // Another counter can create the same supplier after our lookup.
+        await connection.query(
           `INSERT INTO suppliers
            (supplier_name, supplier_gstin, account_holder_name, bank_name, bank_account_no, bank_ifsc, upi_id, created_by)
-           VALUES (?, '', ?, ?, ?, ?, ?, ?)`,
-          [accountName, accountHolderName, bankName, bankAccountNo, bankIfsc, upiId, req.user.username]
+           VALUES (?, '', ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE ${updateBankDetails}`,
+          [accountName, ...bankDetails, req.user.username, ...bankDetails]
         );
       }
     }
 
+    await connection.commit();
     res.json({ success: true, voucher_no: finalVoucherNo, voucher_type: voucherType, account_name: accountName, payment_mode: paymentMode, amount, voucher_date: voucherDate });
   } catch (err) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        connection.destroy();
+        connection = null;
+        console.error('Accounting voucher rollback failed:', rollbackError.message);
+      }
+    }
     console.error('Accounting voucher save failed:', err.message);
     res.status(500).json({ error: 'Unable to save accounting voucher.' });
+  } finally {
+    connection?.release();
   }
 });
 

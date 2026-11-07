@@ -1,3 +1,5 @@
+import ShopMaintenance from './ShopMaintenance';
+import WorkstationPrinters from './WorkstationPrinters';
 import React, { useEffect, useMemo, useState } from 'react';
 import CloudSyncSettings from './CloudSyncSettings';
 import {
@@ -592,6 +594,7 @@ export default function SystemView() {
 
   return (
     <div className="form-stack system-view">
+      <ShopMaintenance />
       <section className="panel">
         <div className="panel-header green"><h2 className="panel-title">Network Architecture - Badizo POS System</h2></div>
         <div className="panel-body system-grid">
@@ -650,13 +653,14 @@ export default function SystemView() {
               <span className="muted">API port {systemHealth?.network?.port || 5000}: {systemHealth?.network?.portReachable ? 'reachable' : 'not reachable'}</span>
             </div>
             <div className="health-card">
-              <span className="field-label">Printers</span>
-              {healthChip(systemHealth?.printers?.ok, 'Detected', 'Permission Note', 'Waiting', 'warning')}
+              <span className="field-label">Server printer queues</span>
+              {healthChip(systemHealth?.printers?.ok, 'Queues available', systemHealth?.printers?.state === 'attention' ? 'Check queue' : 'Unconfirmed', 'Waiting', 'warning')}
               <strong>{systemHealth?.printers?.printers?.length || 0} Windows printers</strong>
               <span className="muted">{systemHealth?.printers?.error || systemHealth?.printers?.note || 'Default/status depends on Windows printer setup.'}</span>
             </div>
           </div>
 
+          <WorkstationPrinters />
           <div className="change-box health-network-box">
             <span>Checked: <strong>{formatHealthDate(systemHealth?.checkedAt)}</strong></span>
             <span>Browser URL from slave machines: <strong className="mono">{systemHealth?.network?.serverIps?.[0] ? `http://${systemHealth.network.serverIps[0]}:3000` : 'http://SERVER-IP:3000'}</strong></span>
@@ -677,7 +681,7 @@ export default function SystemView() {
                 {(systemHealth?.printers?.printers || []).slice(0, 8).map((printer) => (
                   <tr key={`${printer.Name}-${printer.PortName}`}>
                     <td>{printer.Name}</td>
-                    <td>{printer.PrinterStatus || '-'}{printer.Default ? ' | Default' : ''}{printer.Shared ? ' | Shared' : ''}</td>
+                    <td>{printer.PrinterStatus ?? '-'}{printer.Default ? ' | Default' : ''}{printer.Shared ? ' | Shared' : ''}</td>
                     <td className="mono">{printer.ShareName ? `\\\\localhost\\${printer.ShareName}` : (printer.PortName || printer.DriverName || '-')}</td>
                   </tr>
                 ))}
@@ -1046,7 +1050,7 @@ export default function SystemView() {
                           <span className="mono">
                             {visiblePasswords[slot.slot_no] !== undefined
                               ? (visiblePasswords[slot.slot_no] || '(empty)')
-                              : (slot.has_password ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢' : 'Not saved')}
+                              : (slot.has_password ? '••••••••' : 'Not saved')}
                           </span>
                           <button className="secondary-button" type="button" onClick={() => revealVaultPassword(slot.slot_no)} disabled={!slot.has_password}>View</button>
                         </td>

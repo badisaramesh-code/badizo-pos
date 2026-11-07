@@ -460,10 +460,21 @@ async function runBackup(kind) {
   const enabled = String(process.env.GOOGLE_DRIVE_BACKUP_ENABLED || '').toLowerCase() === 'true';
   if (!enabled) throw new Error('GOOGLE_DRIVE_BACKUP_ENABLED is not true in backend\\.env');
 
+  const startedAt = Date.now();
   const backup = await createDatabaseDump(kind);
 
   try {
+    const uploadStarted = Date.now();
     await uploadWithRetry(backup);
+    if (kind === 'daily') {
+      const end = Date.now();
+      const file = path.join(BACKUP_ROOT,'drive-verified-status.json');
+      const tmp = file + '.' + process.pid + '.tmp';
+      try {
+        await fs.promises.writeFile(tmp,JSON.stringify({status:'success',at:new Date(end).toISOString(),durationMs:end-startedAt,uploadMs:end-uploadStarted}));
+        await fs.promises.rename(tmp,file);
+      } catch (error) { console.warn('Backup timing unavailable:',error.code); }
+    }
   } catch (err) {
     // Keep every local backup when upload fails. Never prune after failure.
     fail('Backup remains safely stored locally; Drive upload will be retried on the next run', {

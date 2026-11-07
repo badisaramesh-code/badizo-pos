@@ -419,6 +419,11 @@ export async function fetchBarcodeTemplate(templateName = 'tsc-244-pro-50x50-two
   return data;
 }
 
+export async function previewBarcodePrn(payload) {
+  const { data } = await api.post('/barcode/preview', payload);
+  return data;
+}
+
 export async function generateBarcodePrn(payload) {
   const { data } = await api.post('/barcode/prn', payload);
   return data;

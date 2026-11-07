@@ -49,6 +49,15 @@ test('billing HTTP reliability with an isolated database double', async t => {
   const payload = { checkout_request_id: 'test-checkout-12345', counter_no: 1, items: [{ barcode: 'PRODUCT1', quantity: 1, sale_price: 100, gst_percent: 0 }], grand_total: 100, sub_total: 100, payment_mode: 'Cash', cash_received: 150, change_returned: 999 };
   const post = body => fetch(base + '/billing/checkout', { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(2000) });
   function reset(extra = {}) { state = { queries: [], ...extra }; }
+  await t.test('cash tendered changes the change due, while an inconsistent payable total is rejected',async()=>{
+    reset();
+    const valid=await post({...payload,items:[{...payload.items[0],quantity:0.56}],grand_total:56,sub_total:56,cash_received:100});
+    assert.equal(valid.status,200);assert.equal(state.invoiceParams[9],56);assert.equal(state.invoiceParams[11],44);
+    reset();
+    const invalid=await post({...payload,grand_total:1,cash_received:100});
+    assert.equal(invalid.status,400);assert.equal((await invalid.json()).code,'INVALID_BILL_TOTAL');
+    assert.equal(state.rolledBack,true);assert.equal(state.invoiceParams,undefined);
+  });
   await t.test('cash sale commits the calculated change, not client-supplied change', async () => {
     reset(); const response = await post(payload);
     assert.equal(response.status, 200); assert.equal(state.committed, true); assert.equal(state.released, true);

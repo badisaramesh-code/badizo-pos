@@ -15,11 +15,12 @@ import PriceListView from './components/PriceListView';
 import ProductImportHistoryView from './components/ProductImportHistoryView';
 import ReportsView from './components/ReportsView';
 import StaffPayrollView from './components/StaffPayrollView';
+import PosUpdateButton from './components/PosUpdateButton';
 import SystemView from './components/SystemView';
 import CloudSoftwareUpdate from './components/CloudSoftwareUpdate';
 import CloudPassword from './components/CloudPassword';
 import CloudStatusBanner from './components/CloudStatusBanner';
-import { clearAuthSession, fetchBackupHealth, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
+import api, { clearAuthSession, fetchBackupHealth, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
 import { APP_TABS, canAccessTab } from './config/navigation';
 import './styles.css';
 import ReportApprovalNotifications from './components/ReportApprovalNotifications';
@@ -42,6 +43,21 @@ export default function App() {
   const [mountedWorkspaces, setMountedWorkspaces] = useState(() => new Set(['billing']));
   const [currentUser, setCurrentUser] = useState(getStoredUser);
   const [backupAlert, setBackupAlert] = useState(null);
+
+  const [usageEnabled,setUsageEnabled] = useState(false);
+  useEffect(() => {
+    let active = true;
+    setUsageEnabled(false);
+    if (currentUser) api.get('/system-health/usage-enabled').then(({data})=>{
+      if (active) setUsageEnabled(data.enabled === true);
+    }).catch(()=>{});
+    return () => { active=false; };
+  }, [currentUser]);
+  useEffect(() => {
+    if (usageEnabled && currentUser && APP_TABS.some(tab => tab.key === activeWorkspace && canAccessTab(tab,currentUser))) {
+      api.post('/system-health/workspace-open',{area:activeWorkspace}).catch(()=>{});
+    }
+  }, [activeWorkspace,currentUser,usageEnabled]);
 
   useEffect(() => {
     setMountedWorkspaces((current) => {
@@ -269,6 +285,7 @@ export default function App() {
           ))}
           {process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' && ['ADMIN','SERVER'].includes(currentUser.role) && <CloudSoftwareUpdate />}
           {process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' && <CloudPassword username={currentUser.username} />}
+          {process.env.REACT_APP_BADIZO_CLOUD_BUILD !== 'true' && ['ADMIN','SERVER'].includes(currentUser.role) && <PosUpdateButton />}
           {currentUser.role === 'COUNTER' && (
             <button
               className="tab-button"

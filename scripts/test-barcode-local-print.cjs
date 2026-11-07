@@ -17,7 +17,7 @@ function desktop(printerNames) {
     os: { hostname: () => 'ADMIN1', tmpdir: () => 'C:\\Temp' },
     path: path.win32,
     fs: { writeFileSync: (...args) => writes.push(args), unlinkSync() {} },
-    process: { pid: 4321 }, Buffer, logMessage() {},
+    randomUUID: require('node:crypto').randomUUID, process: { pid: 4321 }, Buffer, logMessage() {},
     startBarcodeQueueSafetyMonitor: () => ({ kill() {} }),
     execFileAsync: async (_file, args) => {
       scripts.push(Buffer.from(args.at(-1), 'base64').toString('utf16le'));
@@ -59,4 +59,12 @@ test('RAW print targets exact installed queue, supports quotes and parentheses, 
     const parse = `$code=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')); $tokens=$null; $errors=$null; [void][System.Management.Automation.Language.Parser]::ParseInput($code,[ref]$tokens,[ref]$errors); if($errors.Count){$errors | ForEach-Object {Write-Error $_.Message}; exit 1}`;
     execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(parse, 'utf16le').toString('base64')], { windowsHide: true });
   }
+});
+test('simultaneous label jobs on one workstation have separate spool identities and PRN files', async () => {
+  const app = desktop(['TSC']);
+  const send = app.handlers.get('badizo:print-barcode-prn');
+  const jobs = await Promise.all(Array.from({ length: 25 }, (_, i) =>
+    send(app.event, { prn: 'LABEL' + i, shareName: 'TSC' })));
+  assert.equal(new Set(jobs.map(job => job.job_token)).size, jobs.length);
+  assert.equal(new Set(app.writes.map(([filename]) => filename)).size, jobs.length);
 });

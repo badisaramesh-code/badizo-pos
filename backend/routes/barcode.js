@@ -1,3 +1,4 @@
+const { randomUUID } = require('node:crypto');
 const express = require('express');
 const fs = require('fs/promises');
 const path = require('path');
@@ -58,7 +59,7 @@ function normalizeTemplateMeta(rawValue) {
     acc[templateName] = {
       size: defaults.size,
       printer: String(configured.printer || defaults.printer || '').trim(),
-      shares: [...new Set([...shares, ...defaults.shares])].slice(0, 5)
+      shares: [...new Set(shares.length ? shares : defaults.shares)].slice(0, 5)
     };
     return acc;
   }, {});
@@ -196,7 +197,12 @@ async function sendPrnToPrinter(outputPath, printerShares) {
 
   for (const printerShare of shares) {
     try {
-      await execFileAsync('cmd.exe', ['/c', 'copy', '/b', outputPath, printerShare], {
+      if (!/^\\\\[^\\/"\x00-\x1f]+\\[^\\/"\x00-\x1f]+$/.test(printerShare)) {
+        throw new Error('Expected a Windows printer share path.');
+      }
+      await execFileAsync('cmd.exe', ['/d', '/v:off', '/c', 'copy /b "%BADIZO_PRN_SOURCE%" "%BADIZO_PRN_SHARE%"'], {
+        windowsVerbatimArguments: true,
+        env: { ...process.env, BADIZO_PRN_SOURCE: outputPath, BADIZO_PRN_SHARE: printerShare },
         windowsHide: true,
         timeout: 15000
       });
@@ -269,6 +275,16 @@ router.get('/print-logs', authorize('SERVER', 'ADMIN'), async (req, res) => {
   }
 });
 
+router.post('/preview', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
+  try {
+    const templateName = cleanTemplateName(req.body?.template_name);
+    const template = await fs.readFile(path.join(TEMPLATE_DIR, templateName), 'utf8');
+    res.json({ prn: renderLabels(template, { ...req.body, stickerCount: 1 }) });
+  } catch (err) {
+    res.status(400).json({ error: 'Unable to preview the selected label template.' });
+  }
+});
+
 router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   let connection;
   try {
@@ -284,7 +300,7 @@ router.post('/prn', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) =>
     const template = await fs.readFile(templatePath, 'utf8');
     const prn = renderLabels(template, req.body || {});
     const safeBarcode = tsplText(req.body?.barcode || 'barcode', 24).replace(/[^A-Z0-9_-]/gi, '_');
-    const outputName = `${safeBarcode}_${Date.now()}.prn`;
+    const outputName = `${safeBarcode}_${Date.now()}_${randomUUID()}.prn`;
     const outputPath = path.join(OUTPUT_DIR, outputName);
 
     await fs.writeFile(outputPath, prn, 'utf8');
@@ -386,7 +402,7 @@ router.post('/print', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) 
     const templateMeta = await getRequestedPrinterMeta(templateName, req.body?.printer_name);
     const outputName = path.basename(String(req.body?.output_name || ''));
 
-    if (!outputName.endsWith('.prn')) {
+    if (!/^[A-Z0-9_-]+\.prn$/i.test(outputName)) {
       return res.status(400).json({ error: 'Valid PRN output file name is required.' });
     }
 

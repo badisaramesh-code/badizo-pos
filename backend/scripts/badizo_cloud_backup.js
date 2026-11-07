@@ -42,11 +42,14 @@ function stamp() {
 
 function ensureDir(dir) { fs.mkdirSync(dir, { recursive: true }); }
 
+const jobStarted = Date.now();
+
 function writeBackupStatus(status, kind, details = {}) {
   ensureDir(LOCAL_ROOT);
   const payload = {
     status,
     kind,
+    durationMs: Date.now()-jobStarted,
     at: new Date().toISOString(),
     ...details
   };
@@ -339,11 +342,15 @@ async function syncDailyBackups(keep = backupKeepCount()) {
   try {
     const remoteNames = await remoteBackupNames(prefix);
     const uploaded = [];
+    let uploadedMs=0, verifiedSizes=true;
     for (const backup of [...local].reverse()) {
       if (remoteNames.has(backup.name)) continue;
       console.log(`Uploading pending backup ${backup.name}...`);
+      const transferStart=Date.now();
       const result = await upload(backup.path, backup.name);
+      uploadedMs+=Date.now()-transferStart;
       const localSize = fs.statSync(backup.path).size;
+      if (Number(result?.size)!==localSize) verifiedSizes=false;
       if (result?.size && Number(result.size) !== localSize) {
         throw new Error(`Google Drive size verification failed for `);
       }
@@ -351,6 +358,13 @@ async function syncDailyBackups(keep = backupKeepCount()) {
       remoteNames.add(backup.name);
     }
 
+    if (!DRIVE_SYNC_FOLDER && uploaded.length && verifiedSizes) {
+      const end=Date.now(), file=path.join(LOCAL_ROOT,'drive-verified-status.json'), tmp=file+'.'+process.pid+'.tmp';
+      try {
+        fs.writeFileSync(tmp,JSON.stringify({status:'success',at:new Date(end).toISOString(),durationMs:end-jobStarted,uploadMs:uploadedMs}));
+        fs.renameSync(tmp,file);
+      } catch (err) { console.warn('Backup timing unavailable:',err.code); }
+    }
     await pruneDrive(prefix, keep);
     pruneLocal(path.join(LOCAL_ROOT, 'daily'), prefix, localBackupKeepCount());
     const latest = local[0];

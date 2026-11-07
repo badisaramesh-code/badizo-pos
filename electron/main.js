@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { randomUUID } = require('node:crypto');
 const path = require('path');
 const os = require('os');
 const { execFile } = require('child_process');
@@ -19,8 +20,10 @@ const SERVER_CACHE_FILE = 'badizo-server-cache.json';
 const servers = [];
 let mainWindow = null;
 let serverConnection = null;
+let posOrigin;
 
 function publishServerConnection(config) {
+  posOrigin = new URL(config.appUrl).origin;
   serverConnection = { apiBaseUrl: `${new URL(config.apiHealthUrl).origin}/api` };
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('badizo:server-connection-changed', serverConnection);
@@ -28,6 +31,13 @@ function publishServerConnection(config) {
 }
 
 ipcMain.handle('badizo:get-server-connection', () => serverConnection);
+ipcMain.handle('badizo:reopen-updated-pos', event => {
+  if (!app.isPackaged || event.sender !== mainWindow?.webContents ||
+      event.senderFrame !== event.sender.mainFrame || new URL(event.senderFrame.url).origin !== posOrigin) return false;
+  app.relaunch();
+  app.quit();
+  return true;
+});
 
 function logMessage(message) {
   try {
@@ -654,7 +664,7 @@ async function printThermalHtml({ html, widthMm, heightMm, printerName, feedMarg
 
     const outputDir = path.join(os.tmpdir(), 'badizo-thermal-print');
     fs.mkdirSync(outputDir, { recursive: true });
-    const pdfPath = path.join(outputDir, `receipt-${Date.now()}.pdf`);
+    const pdfPath = path.join(outputDir, `receipt-${randomUUID()}.pdf`);
     fs.writeFileSync(pdfPath, pdf);
     const debugDir = path.join(app.getPath('userData'), 'thermal-debug');
     fs.mkdirSync(debugDir, { recursive: true });
@@ -791,7 +801,7 @@ exit 3
 
 ipcMain.handle('badizo:get-barcode-printers', async (event) => {
   const printers = await event.sender.getPrintersAsync();
-  return { systemName: os.hostname(), printers: printers.map(({ name, displayName }) => ({ name, displayName })) };
+  return { systemName: os.hostname(), printers: printers.map(({ name, displayName, isDefault }) => ({ name, displayName, isDefault: Boolean(isDefault) })) };
 });
 
 ipcMain.handle('badizo:print-barcode-prn', async (_event, payload) => {
@@ -807,7 +817,7 @@ ipcMain.handle('badizo:print-barcode-prn', async (_event, payload) => {
   const shareName = selectedPrinter.name;
   if (shareName.length > 200 || /[\x00-\x1f]/.test(shareName)) throw new Error('Barcode printer name is invalid.');
 
-  const documentToken = `badizo-barcode-${Date.now()}-${process.pid}`;
+  const documentToken = `badizo-barcode-${randomUUID()}`;
   const tempPath = path.join(os.tmpdir(), `${documentToken}.prn`);
   const printerShare = `\\\\localhost\\${shareName}`;
   const queueMonitor = startBarcodeQueueSafetyMonitor(shareName, documentToken);
@@ -833,7 +843,7 @@ ipcMain.handle('badizo:print-barcode-prn', async (_event, payload) => {
 ipcMain.handle('badizo:cancel-barcode-print', async (_event, payload) => {
   const shareName = String(payload?.shareName || '').trim();
   const documentToken = String(payload?.jobToken || '').trim();
-  if (!shareName || shareName.length > 200 || /[\x00-\x1f]/.test(shareName) || !/^badizo-barcode-\d+-\d+$/.test(documentToken)) throw new Error('Barcode print job details are invalid.');
+  if (!shareName || shareName.length > 200 || /[\x00-\x1f]/.test(shareName) || !/^badizo-barcode-(?:\d+-\d+|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/.test(documentToken)) throw new Error('Barcode print job details are invalid.');
   const escapedShareName = shareName.replace(/'/g, "''");
   const escapedDocumentToken = documentToken.replace(/'/g, "''");
   const script = `

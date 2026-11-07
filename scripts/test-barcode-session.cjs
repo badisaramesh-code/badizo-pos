@@ -22,12 +22,27 @@ test('printer preferences survive a new session and preserve existing selections
 for (const server of [true, false]) test(`${server ? 'Server' : 'Admin1'} printing retains its route and saves the successful printer`, async () => {
   const calls = [];
   const storageKey = `${key}:${server ? 'SERVER:server' : 'ADMIN:admin1'}`;
-  const ctx = { useServerPrinter: server, printerStorageKey: storageKey, printerSelections: {}, form: { barcode: '123', product_name: 'Sample', mrp: 1, sale_price: 1 }, selectedPrinterName: server ? 'Server printer' : 'Admin1 printer', templateName: 'label', moneyTwoDecimals: String,
+  const ctx = { printBusyRef: { current: false }, batchKey: 'batch', reusableBatch: null, setPreparedBatch(value) { ctx.reusableBatch = value?.result; }, useServerPrinter: server, printerStorageKey: storageKey, printerSelections: {}, form: { barcode: '123', product_name: 'Sample', mrp: 1, sale_price: 1 }, selectedPrinterName: server ? 'Server printer' : 'Admin1 printer', templateName: 'label', moneyTwoDecimals: String,
     window: { localStorage: { setItem: (k, v) => saved.set(k, v) }, badizoDesktop: { getBarcodePrinters: async () => { calls.push('inventory'); return { printers: [{ name: 'Admin1 printer' }] }; }, printBarcodePrn: async () => { calls.push('local'); return {}; } }, setTimeout() {} },
     generateBarcodePrn: async () => { calls.push('generate'); return { prn: 'PRINT 1,1', output_name: 'sample.prn' }; }, printBarcodePrn: async () => { calls.push('server'); return {}; },
     setErrorMessage: m => { if (m) throw Error(m); }, setStatusMessage() {}, setIsPrinting() {}, setPrn() {}, setOutputInfo() {}, setActivePrintJob() {}, setSuggestions() {}, setForm() {}, setLocalPrinters() {}, setPrinterSelections() {}, stickerCountRef: {} };
   vm.createContext(ctx);
   await vm.runInContext(source.slice(source.indexOf('  async function generatePrn('), source.indexOf('  async function cancelActivePrint(')) + '\ngeneratePrn({sendToPrinter:true})', ctx);
   assert.deepEqual(calls, server ? ['generate', 'server'] : ['inventory', 'generate', 'local']);
+  calls.length = 0;
+  let attempts = 0;
+  const send = async () => {
+    if (++attempts === 1) throw Error('Printer offline');
+    return {};
+  };
+  ctx.printBarcodePrn = send;
+  ctx.window.badizoDesktop.printBarcodePrn = send;
+  ctx.setErrorMessage = () => {};
+  await Promise.all([ctx.generatePrn({sendToPrinter:true}),ctx.generatePrn({sendToPrinter:true})]);
+  assert.equal(ctx.reusableBatch.output_name, 'sample.prn');
+  await ctx.generatePrn({sendToPrinter:true});
+  assert.equal(calls.filter(call => call === 'generate').length, 1);
+  assert.equal(attempts, 2);
+  assert.equal(ctx.reusableBatch, undefined);
   assert.equal(session(server ? 'SERVER:server' : 'ADMIN:admin1').label, ctx.selectedPrinterName);
 });
