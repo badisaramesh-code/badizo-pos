@@ -17,7 +17,7 @@ router.get('/',async(_req,res)=>{
   catch {res.status(503).json({error:'Unable to reach shop management.'});}
 });
 router.post('/',async(req,res)=>{
-  if(!['update','restart','repair'].includes(req.body?.action))return res.status(400).json({error:'Invalid maintenance action.'});
+  if(!['update','restart','repair','rollback'].includes(req.body?.action))return res.status(400).json({error:'Invalid maintenance action.'});
   try{const result=await remote('request',{action:req.body.action,target:req.body.target});res.status(result.status).json(result.data);}
   catch {res.status(503).json({error:'Unable to reach shop management.'});}
 });

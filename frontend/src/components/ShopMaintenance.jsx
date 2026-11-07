@@ -1,6 +1,6 @@
 import React,{useEffect,useState} from 'react';
 import api from '../api/client';
-const labels={update:'Update software',restart:'Restart POS',repair:'Reinstall desktop app'};
+const labels={update:'Update software',restart:'Restart POS',repair:'Reinstall desktop app',rollback:'Return to previous version'};
 export default function ShopMaintenance() {
   const [info,setInfo]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const pending=['queued','running'].includes(info?.job?.state);
@@ -17,7 +17,7 @@ export default function ShopMaintenance() {
   async function request(action){
     if(!window.confirm(labels[action]+' on this shop server? Finish open bills and close the counters first.')) return;
     setBusy(true);
-    try{const {data}=await api.post('/shop-maintenance',{action});setInfo(v=>({...v,job:data.job}));setError('');}
+    try{const {data}=await api.post('/shop-maintenance',{action,...(action==='rollback'?{target:info.previousCommit}:{})});setInfo(v=>({...v,job:data.job}));if(action==='rollback')window.dispatchEvent(new CustomEvent('badizo-version-switch',{detail:info.previousCommit}));setError('');}
     catch(e){setError(e.response?.data?.error||'Request failed.');}finally{setBusy(false);}
   }
   return <section className="panel"><div className="panel-header"><h2 className="panel-title">Software maintenance</h2></div>

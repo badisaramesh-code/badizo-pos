@@ -23,7 +23,7 @@ export default function PosUpdateButton() {
           setPending(null);
           setMessage('The server has no matching update request. Check Software maintenance in System.');
         }
-        if (pending && data.job?.target === pending && data.job.action === 'update') {
+        if (pending && data.job?.target === pending && ['rollback','update'].includes(data.job.action)) {
           if (data.job.state === 'succeeded' && data.runningCommit === pending) {
             sessionStorage.removeItem(receiptKey);
             setPending(null);
@@ -44,6 +44,16 @@ export default function PosUpdateButton() {
     return () => { active = false; clearTimeout(timer); };
   }, [pending]);
 
+  useEffect(() => {
+    function watch(event) {
+      if (!commitPattern.test(event.detail)) return;
+      sessionStorage.setItem(receiptKey,event.detail);
+      sessionStorage.setItem(receiptKey+'-time',String(Date.now()));
+      setPending(event.detail);
+    }
+    window.addEventListener('badizo-version-switch',watch);
+    return ()=>window.removeEventListener('badizo-version-switch',watch);
+  },[]);
   async function install() {
     if (!window.confirm('Finish open bills at every counter before continuing. Install the shop update and reopen this POS?')) return;
     const target = info.target;
