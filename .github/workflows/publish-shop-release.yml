@@ -1,0 +1,95 @@
+name: Publish approved Windows POS
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+        working-directory: backend
+      - run: npm ci
+        working-directory: frontend
+      - name: Check release
+        shell: pwsh
+        run: |
+          if ((Get-Content package.json -Raw | ConvertFrom-Json).scripts.'test:all') {
+            npm run test:all
+          } else {
+            npm --prefix backend test
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $env:CI = 'true'
+            npm --prefix frontend test -- --watchAll=false --runInBand
+          }
+      - name: Package tested UI and backend
+        shell: pwsh
+        run: |
+          $folder = Join-Path $env:RUNNER_TEMP 'pos-release'
+          if (Test-Path tools/fleet/build-windows-release.cjs) {
+            node tools/fleet/build-windows-release.cjs (git rev-parse HEAD) $folder
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $archive = 'badizo-pos-windows-x64.zip'
+          } else {
+            $archive = 'badizo-pos-standard-windows-x64.zip'
+            $env:BUILD_PATH = Join-Path $folder 'frontend/build'
+            $env:GENERATE_SOURCEMAP = 'false'
+            $env:CI = 'false'
+            Push-Location frontend
+            node node_modules/react-scripts/bin/react-scripts.js build
+            Pop-Location
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            foreach ($file in (git ls-files backend)) {
+              if ($file -match '^backend/(config|middleware|routes|scripts|services|utils)/.+\.(js|cmd)$' -or $file -in @('backend/server.js','backend/package.json','backend/package-lock.json')) {
+                $dest = Join-Path $folder $file
+                New-Item -Force -ItemType Directory (Split-Path $dest) | Out-Null
+                Copy-Item -LiteralPath $file -Destination $dest
+              }
+            }
+            npm ci --omit=dev --prefix (Join-Path $folder 'backend')
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          [IO.Compression.ZipFile]::CreateFromDirectory($folder,(Join-Path $env:RUNNER_TEMP $archive))
+          "POS_ARCHIVE=$archive" >> $env:GITHUB_ENV
+      - name: Build the Windows counter installer
+        shell: pwsh
+        working-directory: electron
+        run: |
+          npm ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Existing enrolled counters keep their own connection settings.
+          $config = Get-Content app-config.json -Raw | ConvertFrom-Json
+          $config.appUrl = 'http://badizo-server:5000'
+          $config.apiHealthUrl = 'http://badizo-server:5000/api/health'
+          $config.serverHosts = @('badizo-server.local', 'badizo-server')
+          $config.forcePackagedConfig = $false
+          $config | ConvertTo-Json | Set-Content app-config.json -Encoding utf8NoBOM
+          # Counters load the UI from the shop server. Ship only counter resources.
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $package.build.extraResources = @($package.build.extraResources | Where-Object { $_.to -in @('assets/badizo.ico','app-config.json') })
+          $package | ConvertTo-Json -Depth 20 | Set-Content package.json -Encoding utf8NoBOM
+          npm run dist
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $installer = @(Get-ChildItem dist -File -Filter '*.exe')
+          if ($installer.Count -ne 1) { throw 'Expected one counter installer.' }
+          $out = Join-Path $env:RUNNER_TEMP 'badizo-counter-setup.exe'
+          Copy-Item -LiteralPath $installer[0].FullName -Destination $out
+          @{ commit=(git rev-parse HEAD); installerSha256=(Get-FileHash $out).Hash.ToLowerInvariant(); desktopExeSha256=(Get-FileHash 'dist/win-unpacked/Badizo.exe').Hash.ToLowerInvariant() } | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP 'counter-checksums.json')
+      - name: Publish immutable commit package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "pos-$env:GITHUB_SHA"
+          $title = "POS update $env:GITHUB_RUN_NUMBER - " + (git log -1 --format=%s)
+          gh release view $tag --json tagName 2>$null
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          gh release create $tag (Join-Path $env:RUNNER_TEMP $env:POS_ARCHIVE) (Join-Path $env:RUNNER_TEMP 'badizo-counter-setup.exe') (Join-Path $env:RUNNER_TEMP 'counter-checksums.json') --target $env:GITHUB_SHA --title $title --generate-notes
