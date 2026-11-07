@@ -84,6 +84,7 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, service: 'badizo-pos' });
 });
 
+if (isCloudNode()) app.use('/api/cloud-software', require('./routes/cloudSoftware'));
 app.use('/api', cloudWriteGuard);
 mountRoutes(app);
 app.get('/api/ready', async (_req, res) => {

@@ -6,7 +6,49 @@ on:
 permissions:
   contents: write
 jobs:
+  cloud:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+        working-directory: frontend
+      - name: Build the cloud UI
+        working-directory: frontend
+        run: node node_modules/react-scripts/bin/react-scripts.js build
+        env:
+          CI: 'false'
+          GENERATE_SOURCEMAP: 'false'
+          REACT_APP_API_BASE_URL: /api
+          REACT_APP_BADIZO_CLOUD_BUILD: 'true'
+      - name: Package Linux server and frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/cloud"
+          mkdir -p "$stage/backend" "$stage/frontend"
+          git ls-files -z backend | while IFS= read -r -d '' item; do
+            case "$item" in
+              backend/config/*.js|backend/middleware/*.js|backend/routes/*.js|backend/services/*.js|backend/utils/*.js|backend/scripts/*.js|backend/server.js|backend/package.json|backend/package-lock.json)
+                install -D -m 644 "$item" "$stage/$item" ;;
+            esac
+          done
+          npm ci --ignore-scripts --omit=dev --prefix "$stage/backend"
+          cp -r frontend/build "$stage/frontend/"
+          echo "$GITHUB_SHA" > "$stage/cloud-release"
+          cd "$stage"
+          zip -qr "$RUNNER_TEMP/badizo-pos-cloud.zip" backend frontend cloud-release -x '*/.bin/*'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-cloud
+          path: ${{ runner.temp }}/badizo-pos-cloud.zip
   release:
+    needs: cloud
     if: github.ref == 'refs/heads/main'
     runs-on: windows-latest
     timeout-minutes: 45
@@ -83,6 +125,10 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP 'badizo-counter-setup.exe'
           Copy-Item -LiteralPath $installer[0].FullName -Destination $out
           @{ commit=(git rev-parse HEAD); installerSha256=(Get-FileHash $out).Hash.ToLowerInvariant(); desktopExeSha256=(Get-FileHash 'dist/win-unpacked/Badizo.exe').Hash.ToLowerInvariant() } | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP 'counter-checksums.json')
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-cloud
+          path: ${{ runner.temp }}
       - name: Publish immutable commit package
         shell: pwsh
         env:
@@ -92,4 +138,4 @@ jobs:
           $title = "POS update $env:GITHUB_RUN_NUMBER - " + (git log -1 --format=%s)
           gh release view $tag --json tagName 2>$null
           if ($LASTEXITCODE -eq 0) { exit 0 }
-          gh release create $tag (Join-Path $env:RUNNER_TEMP $env:POS_ARCHIVE) (Join-Path $env:RUNNER_TEMP 'badizo-counter-setup.exe') (Join-Path $env:RUNNER_TEMP 'counter-checksums.json') --target $env:GITHUB_SHA --title $title --generate-notes
+          gh release create $tag (Join-Path $env:RUNNER_TEMP 'badizo-pos-cloud.zip') (Join-Path $env:RUNNER_TEMP $env:POS_ARCHIVE) (Join-Path $env:RUNNER_TEMP 'badizo-counter-setup.exe') (Join-Path $env:RUNNER_TEMP 'counter-checksums.json') --target $env:GITHUB_SHA --title $title --generate-notes
