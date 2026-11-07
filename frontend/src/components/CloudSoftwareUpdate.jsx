@@ -43,5 +43,16 @@ export default function CloudSoftwareUpdate() {
       info.release ? 'Cloud software up to date' : 'No cloud release available'}
     {['failed','rolled-back','inspect'].includes(info?.state.phase) && ' · '+info.state.message}
     {notice && ' · '+notice}
+    {' '}<button className="tab-button" onClick={()=>setOpen(!open)} aria-expanded={open}>Cloud versions</button>
+    {open && <span className="cloud-version-picker">
+      <label>Switch cloud software to{' '}
+        <select value={selected} onChange={event=>setSelected(event.target.value)}>
+          <option value="">Choose a version</option>
+          {info?.versions?.filter(v=>v.commit!==info.running).map(v=><option key={v.commit} value={v.commit}>{v.name}</option>)}
+        </select>
+      </label>{' '}
+      <button type="button" disabled={!info?.standby || !!waiting || !info.versions?.some(v=>v.commit===selected)} onClick={()=>install(selected)}>Switch version</button>
+      {info?.running && <small> Running {info.running.slice(0,12)}</small>}
+    </span>}
   </span>;
 }
