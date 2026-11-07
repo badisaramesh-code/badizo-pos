@@ -17,6 +17,7 @@ import ReportsView from './components/ReportsView';
 import StaffPayrollView from './components/StaffPayrollView';
 import SystemView from './components/SystemView';
 import CloudSoftwareUpdate from './components/CloudSoftwareUpdate';
+import CloudPassword from './components/CloudPassword';
 import CloudStatusBanner from './components/CloudStatusBanner';
 import { clearAuthSession, fetchBackupHealth, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
 import { APP_TABS, canAccessTab } from './config/navigation';
@@ -267,6 +268,7 @@ export default function App() {
             </button>
           ))}
           {process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' && ['ADMIN','SERVER'].includes(currentUser.role) && <CloudSoftwareUpdate />}
+          {process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' && <CloudPassword username={currentUser.username} />}
           {currentUser.role === 'COUNTER' && (
             <button
               className="tab-button"

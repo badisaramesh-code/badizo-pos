@@ -12,6 +12,7 @@ function bindHost(value, env = process.env) {
 function cloudWriteGuard(req, res, next) {
   if (process.env.BADIZO_NODE_ROLE !== 'cloud-standby' || ['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
   if (['/auth/login', '/auth/logout', '/auth/logout-beacon'].includes(req.path)) return next();
+  if (req.method === 'POST' && req.path === '/auth/change-password') return next();
   return res.status(409).json({ error: 'Cloud billing is in standby. Activate it only after local billing and incoming sync are stopped.' });
 }
 function invoicePrefix(env = process.env) { return isCloudNode(env) ? 'CL' : 'BZ'; }

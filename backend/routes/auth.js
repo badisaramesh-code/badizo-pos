@@ -257,6 +257,31 @@ router.post('/login', async (req, res) => {
   }
 });
 
+router.post('/change-password', authenticate, async (req, res) => {
+  if (!isCloudNode()) return res.sendStatus(404);
+  const { currentPassword, newPassword } = req.body || {};
+  if (typeof currentPassword !== 'string' || currentPassword.length > 256 ||
+      typeof newPassword !== 'string' || newPassword.trim().length < 8 || newPassword.length > 128 ||
+      currentPassword === newPassword) {
+    return res.status(400).json({ error: 'Choose a different password of 8 to 128 characters.' });
+  }
+  try {
+    const id = req.user.id;
+    const [[user]] = await db.query('SELECT password_hash FROM users WHERE id=? AND is_active=1', [id]);
+    if (!user || !verifyPassword(currentPassword, user.password_hash)) {
+      return res.status(403).json({ error: 'Current password is incorrect.' });
+    }
+    const salt = crypto.randomBytes(16).toString('hex');
+    const derived = await require('node:util').promisify(crypto.pbkdf2)(newPassword, salt, 100000, 64, 'sha512');
+    const [result] = await db.query('UPDATE users SET password_hash=? WHERE id=? AND is_active=1 AND BINARY password_hash=?',
+      [salt + ':' + derived.toString('hex'), id, user.password_hash]);
+    if (!result.affectedRows) return res.status(409).json({ error: 'Account changed. Sign in again before retrying.' });
+    return res.sendStatus(204);
+  } catch {
+    return res.status(500).json({ error: 'Unable to change password.' });
+  }
+});
+
 router.post('/logout', authenticate, async (req, res) => {
   try {
     const sessionId = String(req.user?.session_id || crypto.randomUUID()).slice(0, 80);
