@@ -26,7 +26,10 @@ jobs:
           GENERATE_SOURCEMAP: 'false'
           REACT_APP_API_BASE_URL: /api
           REACT_APP_BADIZO_CLOUD_BUILD: 'true'
-      - name: Package Linux server and frontend
+      - name: Verify cloud update and rollback rules
+        working-directory: tools/cloud
+        run: python3 -m unittest -v test_update
+      - name: Assemble Linux release
         shell: bash
         run: |
           set -euo pipefail
