@@ -11,3 +11,4 @@
 !config/private-https.service
 !shop-server.private.gpg
 !Backup-ShopKey.ps1
+!.gitattributes
