@@ -1,0 +1,14 @@
+# Cloud private key must be generated and retained on the cloud host.
+# Cloud firewall rules must restrict this interface to HTTPS and deny forwarding.
+[Interface]
+PrivateKey = REPLACE_WITH_CLOUD_PRIVATE_KEY
+Address = 10.77.41.1/32
+ListenPort = 51820
+PreUp = iptables -I INPUT 1 -i %i -j DROP; iptables -I INPUT 1 -i %i -d 10.77.41.1 -p tcp --dport 443 -j ACCEPT; iptables -I FORWARD 1 -i %i -j DROP; iptables -I FORWARD 1 -o %i -j DROP
+PostDown = iptables -D INPUT -i %i -d 10.77.41.1 -p tcp --dport 443 -j ACCEPT; iptables -D INPUT -i %i -j DROP; iptables -D FORWARD -i %i -j DROP; iptables -D FORWARD -o %i -j DROP
+
+[Peer]
+# Main shop server; do not reuse this identity for another counter.
+PublicKey = REPLACE_WITH_SHOP_SERVER_PUBLIC_KEY
+AllowedIPs = 10.77.41.2/32
+

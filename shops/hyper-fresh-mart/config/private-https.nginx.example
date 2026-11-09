@@ -1,0 +1,38 @@
+# Dedicated nginx configuration. Do not load the vendor's default public site.
+# Run configuration validation before starting. WireGuard must be up first.
+user www-data;
+worker_processes 1;
+pid /run/badizo-private-https.pid;
+error_log /var/log/nginx/badizo-private-error.log warn;
+events { worker_connections 256; }
+http {
+    server_tokens off;
+    access_log off;
+    client_header_timeout 15s;
+    client_body_timeout 60s;
+    send_timeout 60s;
+    keepalive_timeout 30s;
+    server {
+        listen 10.77.41.1:443 ssl;
+        server_name 10.77.41.1;
+        ssl_certificate /etc/badizo-network/tls/cloud-chain.pem;
+        ssl_certificate_key /etc/badizo-network/tls/cloud.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_session_tickets off;
+        # Preserve the existing POS import ceiling; sync has a smaller own limit.
+        client_max_body_size 250m;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy same-origin always;
+        location / {
+            proxy_pass http://127.0.0.1:5000;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header Connection "";
+            proxy_connect_timeout 5s;
+            proxy_read_timeout 300s;
+        }
+    }
+}

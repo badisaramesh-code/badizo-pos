@@ -1,0 +1,58 @@
+HFM001 — WIREGUARD + PRIVATE HTTPS IMPLEMENTED
+Verified: 9 November 2026, approximately 13:48 IST.
+
+Private Cloud POS URL: https://10.77.41.1/
+Use only on enrolled devices. Main shop PC is enrolled; counters and mobile are NOT enrolled.
+Cloud remains HFM001 / cloud-standby, release f90e846dd1a442b3c333e5e3f657d2856d1e1446.
+Database sync/enrollment and emergency billing activation are NOT enabled.
+
+INSTALLED / CONFIGURED
+- Official signed WireGuard Windows 1.1.1 (WireGuard LLC). Installer SHA256: 7BFED60AD61B785C914B38B61555A975488E1D3EC472DBFB2FCDF498FCA75242.
+- Main Windows service: WireGuardTunnel$BadizoCloud, Automatic, Running. Failure recovery restarts after 5/15/60 seconds, reset period 86400 seconds.
+- Runtime configuration: C:\ProgramData\BadizoCloudConnection\HFM001\BadizoCloud.conf; protected for Administrators and SYSTEM. Never copy this configuration to another counter.
+- Main private IP 10.77.41.2/32; route ONLY 10.77.41.1/32 through the VPN. No DNS/default-route changes.
+- Public cloud endpoint: 65.0.24.67:51820 UDP. Lightsail rule added for UDP 51820, IPv4 only. Existing SSH 22 and HTTP 80 rules preserved. No public TCP 443, 5000 or 3306 rule added.
+- Cloud service wg-quick@wg-badizo enabled and active; cloud IP 10.77.41.1/32. Only this PC's public key enrolled. Cloud private keys are root-only mode 600.
+- Cloud INPUT rules allow only HTTPS 443 to 10.77.41.1 over wg-badizo and drop other tunnel input. FORWARD rules drop tunnel forwarding in both directions. No NAT or IP forwarding enabled by this work.
+- Cloud badizo-private-https systemd service enabled and active, bound ONLY to 10.77.41.1:443 and proxied to 127.0.0.1:5000. It follows the WireGuard unit's lifecycle (Requires / PartOf / After).
+- Default vendor nginx.service is masked; its public default website was never started. Actual custom config: /etc/badizo-network/nginx.conf. Unit: /etc/systemd/system/badizo-private-https.service.
+- Existing Node POS and MySQL retain loopback listening on cloud. Neither existing POS service nor MySQL was restarted.
+
+CERTIFICATES
+- Cloud TLS key was generated on cloud and stayed there, /etc/badizo-network/tls/cloud.key.
+- Shop-specific CA signing key stays in this Windows user's CurrentUser\My certificate store. It was not copied to cloud or source control.
+- CA SHA-1 thumbprint: 53A13D5DA51073C33A353DC0466DE9AA30274177.
+- CA SHA256: E1A36462DE0B624E6BEB7480093E2B5E6385F23CA64BD178DADDA716B018B67E.
+- CA trusted in this user's CurrentUser\Root ONLY; system-wide root trust unchanged. Other Windows users/counters need explicit trust onboarding.
+- Public CA file for the future Node sync startup: C:\ProgramData\BadizoCloudConnection\HFM001\hfm001-private-ca.pem. Configure NODE_EXTRA_CA_CERTS during the later planned application activation; live POS environment was not changed.
+- Leaf certificate covers IP 10.77.41.1, server-authentication usage; expires 9 November 2027, 13:31:09 IST. CA expires 9 November 2029.
+- Certificate renewal is NOT automated. Renew before expiry using the protected signing identity, verify the certificate and cloud key match, and reload only the private proxy. Preserve the CA identity during migration; losing the signing key requires a new CA and client trust rollout.
+- Temporary bootstrap was bound only to the authenticated VPN and transferred PUBLIC CSR/certificates/configuration, never private keys or business data. It was explicitly stopped and replaced by HTTPS; it is inactive. Its transient unit also had a 15-minute runtime limit.
+
+VERIFICATION COMPLETED
+- Native wg.exe validated the shop key pair; both peers subsequently completed authenticated handshakes.
+- Certificate/configuration transfer SHA256 hashes verified on cloud; certificate public key matched the retained cloud key; nginx syntax and systemd unit verification passed.
+- TLS 1.3 and cloud /api/ready passed with certificate verification enabled.
+- Wrong hostname rejected (ERR_TLS_CERT_ALTNAME_INVALID); unknown issuer rejected (SELF_SIGNED_CERT_IN_CHAIN).
+- Unauthenticated /api/products returned 401.
+- Cloud frontend served and Chrome showed the Cloud POS login at https://10.77.41.1/ without a certificate interstitial. No credentials were entered; no cloud bill was created.
+- Public TCP 443, 5000 and 3306 were unreachable from this shop in timed checks. This is an observed connectivity check, not a comprehensive external scan.
+- Restarted ONLY the new Windows VPN service once: automatic reconnection and normal Windows HTTPS trust passed; local POS process ID and existing default/LAN routes remained unchanged.
+- Local /api/health stayed healthy; BadizoServer remains Running/Automatic. Existing Drive jobs, printers, databases, live code changes and POS environment were preserved.
+- Boot/reboot acceptance, power-loss recovery, physical counter printing and real application sync/load acceptance remain pending. Neither server was rebooted for this work.
+
+OPERATION / ROLLBACK
+- Main server VPN runs in the background as a Windows service; no daily manual switch-on is needed. Cloud VPN/proxy also start through systemd.
+- A VPN/internet outage delays cloud connectivity; existing local billing does not use the tunnel.
+- To disable only the new connection, an administrator may stop WireGuardTunnel$BadizoCloud. This does not stop the POS service.
+- Cloud rollback: stop/disable badizo-private-https, then wg-quick@wg-badizo. The WireGuard PostDown hook removes only this setup's interface-specific rules. Close only the added UDP 51820 Lightsail rule if retiring it. Do not unmask the vendor default nginx service or change SSH/MySQL/POS.
+- Do not restore a database as part of network rollback.
+
+NEXT APPLICATION STAGE
+1. Prepare/review a clean compatible release while preserving current live local changes.
+2. Test a restored isolated shop database and required migrations/capture, plus actual counter printers.
+3. During a planned sales pause, establish the final matching cloud/local baseline, protected runtime binding and enrollment; then restart the reviewed application and verify sync before reopening local billing.
+4. Enroll each emergency counter with its OWN VPN key/address and the public CA certificate; use an explicit cloud shortcut/configuration, not automatic billing fallback.
+5. Never allow local and cloud billing simultaneously. Fence the previous writer and verify transferred data before switching.
+
+Evidence files beside this report: activation-result.json, trust-result.json, recovery-result.json, verification-result.json. Scripts/templates are operational preparation artifacts, not a new POS release or a fully automatic provisioning system. No private key is stored in this output folder.

@@ -1,0 +1,11 @@
+# Assemble in an ACL-restricted directory outside the repository.
+# This file is a template and must not be imported unchanged.
+[Interface]
+PrivateKey = REPLACE_WITH_THIS_DEVICE_PRIVATE_KEY
+Address = 10.77.41.2/32
+
+[Peer]
+PublicKey = REPLACE_WITH_VERIFIED_CLOUD_PUBLIC_KEY
+Endpoint = 65.0.24.67:51820
+AllowedIPs = 10.77.41.1/32
+PersistentKeepalive = 25

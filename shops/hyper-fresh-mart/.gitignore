@@ -1,0 +1,12 @@
+*
+!.gitignore
+!README.md
+!IMPLEMENTED.txt
+!hfm001-private-ca.pem
+!cloud-chain.pem
+!cloud.public
+!shop-server.public
+!config/
+!config/*.example
+!config/private-https.service
+!shop-server.private.gpg
