@@ -73,7 +73,7 @@ async function main(){
     const wrong=await fetch('http://127.0.0.1:5004/api/sync/status',{headers:{Authorization:'Bearer '+tokens[1],'X-Badizo-Baseline':'0'.repeat(64)}});assert.equal(wrong.status,409);
     const unauthorized=await fetch('http://127.0.0.1:5004/api/sync/events',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});assert.equal(unauthorized.status,401);
     const barcode='ENROLLED'+crypto.randomBytes(8).toString('hex').toUpperCase();
-    const product={barcode,original_barcode:barcode,product_code:barcode,code_mode:'MANUAL',product_name:'ENROLLED TEST '+run,hsn_code:'TEST',gst_percent:0,unit_type:'PCS',purchase_unit_type:'PCS',purchase_unit_size:1,mrp:20,purchase_price:5,sale_price:10,stock_qty:10,min_stock_alert:1};
+    const product={barcode,original_barcode:barcode,product_code:barcode,code_mode:'MANUAL',product_name:'ENROLLED TEST '+run,hsn_code:'TEST',gst_percent:0,unit_type:'PCS',purchase_unit_type:'PCS',purchase_unit_size:1,mrp:20,purchase_price:5,sale_price:10,wholesale_price:10,stock_qty:10,min_stock_alert:1};
     await request(0,'products/save',product);await request(0,'cloud-sync/run',{});
     await until(async()=>{const [[row]]=await pools[1].execute('SELECT sale_price FROM products WHERE barcode=?',[barcode]);return Number(row?.sale_price)===10;},'local product reaches cloud standby');
     assert.equal((await request(0,'cloud-sync/settings')).service.ready,true);
