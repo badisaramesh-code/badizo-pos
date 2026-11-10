@@ -64,6 +64,10 @@ router.post('/', async (req, res) => {
   const role = ['SERVER', 'ADMIN', 'COUNTER', 'SECURITY'].includes(req.body?.role) ? req.body.role : 'COUNTER';
   const counterNo = role === 'COUNTER' ? Number.parseInt(req.body?.counter_no, 10) || 1 : null;
   const isActive = req.body?.is_active === false ? 0 : 1;
+  const canManageServer = req.user.role === 'SERVER';
+  if (role === 'SERVER' && !canManageServer) {
+    return res.status(403).json({ error: 'Only SERVER can manage a SERVER account.' });
+  }
 
   if (!username) {
     return res.status(400).json({ error: 'Username is required.' });
@@ -87,12 +91,15 @@ router.post('/', async (req, res) => {
       }
 
       values.push(id);
-      await db.query(
+      const [result] = await db.query(
         `UPDATE users
          SET username = ?, role = ?, counter_no = ?, is_active = ?${passwordSql}
-         WHERE id = ?`,
+         WHERE id = ?${canManageServer ? '' : " AND role <> 'SERVER'"}`,
         values
       );
+      if (!result.affectedRows) {
+        return res.status(404).json({ error: 'No editable user found.' });
+      }
 
       await writeAuditLog({
         user: req.user,

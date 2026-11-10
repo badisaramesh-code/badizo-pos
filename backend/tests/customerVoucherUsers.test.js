@@ -135,6 +135,21 @@ test('customer, accounting and user management HTTP regression', async t => {
   });
 
   const cashier = { id: 2, username: 'billing2', role: 'COUNTER', counter_no: 2, is_active: 1, password_hash: 'must-remain-private' };
+  await t.test('admin cannot create, promote or overwrite a SERVER account', async () => {
+    reset();
+    for (const id of [undefined, 2]) {
+      const result = await request('/users', 'ADMIN', { id, username: 'owner', role: 'SERVER', password: 'fixture-only' });
+      assert.equal(result.status, 403);
+    }
+    assert.equal(calls.length, 0);
+    reset(sql => {
+      assert.match(sql, /WHERE id = \? AND role <> 'SERVER'/);
+      return { affectedRows: 0 };
+    });
+    const result = await request('/users', 'ADMIN', { id: 1, username: 'owner', role: 'ADMIN', password: 'fixture-only' });
+    assert.equal(result.status, 404);
+    assert.equal(audits.length, 0);
+  });
   await t.test('new cashier password is hashed, identity audited, and hashes omitted from response', async () => {
     reset(sql => sql.includes('INSERT INTO users') ? { insertId: 2 } : [cashier]);
     const result = await request('/users', 'SERVER', { username: cashier.username, password: 'test-only-strong', role: cashier.role, counter_no: 2 });

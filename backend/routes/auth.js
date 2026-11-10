@@ -42,6 +42,7 @@ function passwordMatches(user, password) {
     });
   }
 
+  if (user?.role === 'SERVER' && process.env.BADIZO_RECOVERY_CONTROL_CONFIG) return false;
   return !isCloudNode() && verifyLegacyDefaultPassword(user?.username, password);
 }
 
