@@ -14,8 +14,8 @@ async function main(){
   const ids=['local-'+run,'cloud-'+run],tokens=[crypto.randomBytes(32).toString('hex'),crypto.randomBytes(32).toString('hex')],bindings=[],enrollments=[],children=[];
   let proxy,dropActivationReply=false;const supervisorTimers=[],supervisorWork=[null,null],supervisorErrors=[];
   const ownerHeaders={'Content-Type':'application/json',Authorization:'Bearer '+jwt.sign({role:'SERVER',username:'isolated-enrollment-owner'},process.env.JWT_SECRET)};
-  async function request(index,route,body){
-    const response=await fetch('http://127.0.0.1:'+(5003+index)+'/api/'+route,{method:body===undefined?'GET':'POST',headers:ownerHeaders,...(body===undefined?{}:{body:JSON.stringify(body)})});
+  async function request(index,route,body,headers=ownerHeaders){
+    const response=await fetch('http://127.0.0.1:'+(5003+index)+'/api/'+route,{method:body===undefined?'GET':'POST',headers,...(body===undefined?{}:{body:JSON.stringify(body)})});
     const data=await response.json();if(!response.ok)throw Error('Owner API '+route+' failed with '+response.status);return data;
   }
   async function until(operation,label,timeout=75000){const end=Date.now()+timeout;while(Date.now()<end){try{if(await operation())return;}catch{}await sleep(300);}throw Error('Timed out: '+label);}
@@ -102,11 +102,31 @@ async function main(){
     assert.equal((await request(0,'recovery-control')).billingMode,'standby');assert.equal((await request(1,'recovery-control')).billingMode,'active');
     const denied=await fetch('http://127.0.0.1:5003/api/products/save',{method:'POST',headers:ownerHeaders,body:JSON.stringify({...product,sale_price:99})});assert.equal(denied.status,409);
     await request(1,'products/save',{...product,sale_price:12});
-    const emergencyBill=await request(1,'billing/checkout',{checkout_request_id:crypto.randomUUID(),counter_no:1,customer_name:'ISOLATED HANDOFF CUSTOMER',customer_phone:'',items:[{barcode,product_name:product.product_name,quantity:1,sale_price:12,gst_percent:0}],sub_total:12,gst_total:0,grand_total:12,payment_mode:'Cash',cash_received:12,change_returned:0,billing_tier:'RETAIL',tax_type:'LOCAL'});
+    const cashier = { username: 'qa' + crypto.randomBytes(6).toString('hex'), password: crypto.randomBytes(24).toString('hex') };
+    await request(1, 'users', { ...cashier, role: 'COUNTER', counter_no: 1 });
+    const login = await request(1, 'auth/login', cashier, { 'Content-Type': 'application/json' });
+    assert.equal(login.user.role, 'COUNTER');
+    assert.ok(login.token);
+    const cashierHeaders = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + login.token };
+    const forbidden = await fetch('http://127.0.0.1:5004/api/recovery-control', {
+      method: 'POST', headers: cashierHeaders,
+      body: JSON.stringify({ kind: 'emergency-cloud', expectedGeneration: 0, confirmation: 'LOCAL BILLING IS STOPPED - USE CLOUD' })
+    });
+    assert.equal(forbidden.status, 403);
+    const emergencyBill=await request(1,'billing/checkout',{checkout_request_id:crypto.randomUUID(),counter_no:1,customer_name:'ISOLATED HANDOFF CUSTOMER',customer_phone:'',items:[{barcode,product_name:product.product_name,quantity:1,sale_price:12,gst_percent:0}],sub_total:12,gst_total:0,grand_total:12,payment_mode:'Cash',cash_received:12,change_returned:0,billing_tier:'RETAIL',tax_type:'LOCAL'},cashierHeaders);
     await handoff('use-local');
     assert.equal((await request(0,'recovery-control')).billingMode,'active');assert.equal((await request(1,'recovery-control')).billingMode,'standby');
     const [[returnedProduct]]=await pools[0].execute('SELECT sale_price FROM products WHERE barcode=?',[barcode]);assert.equal(Number(returnedProduct.sale_price),12);assert.deepEqual(supervisorErrors,[]);
     const [[recoveredBill]]=await pools[0].execute('SELECT customer_name,grand_total FROM invoices WHERE invoice_no=?',[emergencyBill.invoice_no]);assert.equal(recoveredBill.customer_name,'ISOLATED HANDOFF CUSTOMER');assert.equal(Number(recoveredBill.grand_total),12);
+    for (const pool of pools) {
+      const [payments] = await pool.execute('SELECT amount, payment_mode FROM invoice_payments WHERE invoice_no=?', [emergencyBill.invoice_no]);
+      assert.equal(payments.length, 1);
+      assert.equal(Number(payments[0].amount), 12);
+      assert.equal(payments[0].payment_mode.toLowerCase(), 'cash');
+      const [[stock]] = await pool.execute('SELECT stock_qty FROM products WHERE barcode=?', [barcode]);
+      assert.equal(Number(stock.stock_qty), 9);
+    }
+    console.log('Cashier password login and cloud checkout passed; cashier activation denied; local and cloud each recorded one cash payment of 12 and stock of 9.');
     const [[returnedLine]]=await pools[0].execute('SELECT id FROM invoice_items WHERE invoice_no=?',[emergencyBill.invoice_no]);
     await request(0,'billing/return',{invoice_no:emergencyBill.invoice_no,reason:'ISOLATED CROSS-SERVER RETURN',refund_mode:'Cash',items:[{invoice_item_id:returnedLine.id,quantity:1}]});
     await handoff('use-cloud');
