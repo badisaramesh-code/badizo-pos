@@ -8,7 +8,7 @@ server {
     ssl_certificate /etc/letsencrypt/live/hfm-public-ip/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/hfm-public-ip/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
-    root /var/www/hfm-public;
+    root /opt/badizo/current/frontend/build;
     client_max_body_size 256k;
     limit_req_status 429;
     add_header X-Content-Type-Options nosniff always;
