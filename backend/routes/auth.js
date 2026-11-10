@@ -184,6 +184,7 @@ function loginOption(row) {
 }
 
 router.get('/login-options', async (req, res) => {
+  if (isCloudNode()) return res.sendStatus(404);
   try {
     const [rows] = await db.query(
       `SELECT username, role, counter_no

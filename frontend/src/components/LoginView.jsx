@@ -64,7 +64,42 @@ function mergeLoginOptions(options) {
   return merged;
 }
 
-export default function LoginView({ onLogin }) {
+function CloudLogin({ onLogin }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(event) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      onLogin(await login(username.trim(), password));
+    } catch (failure) {
+      setError(failure.response?.status === 429 ? 'Too many attempts. Try again later.' : 'Sign-in failed. Check your username and password.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="login-shell">
+      <form className="login-card" onSubmit={submit}>
+        <h1 className="brand-title">Cloud POS</h1>
+        <label>Username<input className="field" autoComplete="username" autoCapitalize="none" spellCheck={false} value={username} onChange={e => setUsername(e.target.value)} required /></label>
+        <label>Password<input className="field" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
+        {error && <div className="alert-box" role="alert">{error}</div>}
+        <button className="primary-button" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+      </form>
+    </div>
+  );
+}
+
+export default function LoginView(props) {
+  return IS_CLOUD_BUILD ? <CloudLogin {...props} /> : <LocalLogin {...props} />;
+}
+
+function LocalLogin({ onLogin }) {
   const loginMode = loginModeFromUrl();
   const fixedLoginUser = IS_CLOUD_BUILD ? '' : fixedLoginUserFromUrl();
   const fixedSystemMatch = fixedLoginUser.match(/^counter([1-6])$/i);
