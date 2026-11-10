@@ -10,12 +10,24 @@ The shop WireGuard private key can be backed up encrypted to a recovery public k
 
 The CA signing key is non-exportable in the SERVER Windows user profile. Its public PEM cannot sign renewals. If the PC is lost, issue a new shop CA, distribute verified trust to the counters and sync service, reissue the server certificate, verify access, then retire the old CA. Cloud WireGuard and TLS private keys remain on Lightsail. If lost, generate new keys there, update the enrolled clients' peer settings through a trusted channel and reissue the leaf certificate. Do not publish cloud host secrets to Git. Rehearse recovery on separate machines.
 
-## Local sales now; cloud sales later
+## Emergency billing at Hyper Fresh Mart
 
-Local billing must continue if internet, VPN, sync, or Lightsail is down. Keep local checkout independent of cloud replies. Ship cloud support disabled by default. Test on a restored copy of the shop database using the actual shop customizations before any live update. Exercise checkout, returns, payments, reports, stock, receipts and printers, counter reconnect, and a simulated cloud outage. Reconcile totals, retry handling and any sync gaps.
+The local server handles normal sales. Lightsail is the emergency standby. As of 10 November 2026 the shop server has private HTTPS access. Sales sync, counter enrollment and a full switch-and-return drill are pending. Cashiers should continue using their usual local POS.
 
-To make cloud the primary billing server: enroll every required counter and test its printer/scanner, restore a backup independently, test peak counter load, verify coverage of every business module and arrange a second internet path if continuous billing during an ISP outage is needed. Schedule a short write pause, resolve pending counter bills, stop local writes, verify a final matching baseline and totals, then enable cloud writes and direct counters to cloud. Never let both servers issue bills independently. To return to local after any cloud sale, first stop cloud writes and reconcile those sales back to local. Merely changing shortcuts is not a rollback.
+### Prepare each designated emergency counter after closing
 
-As of 9 November 2026 only the private connection was verified. Sync and cloud billing are not active. No production cutover is authorized by this record.
+Record the counter label, Windows user, receipt printer and operator. Generate a unique VPN key on that counter and enroll its public key with a unique tunnel address. Route only the private cloud address through the tunnel. Install the verified public shop CA for the cashier account. Give the cloud shortcut a distinct name, “Hyper Fresh Mart – Emergency POS”, alongside the normal local shortcut. On the test system verify cashier identity, counter number, scanner input, receipt printing and an uncertain checkout retry. Record the result for each counter.
+
+### Owner checklist for a local server failure (after commissioning)
+
+1. If local counters still work and only the internet or VPN has failed, continue local sales. Check sync status after connectivity returns.
+2. If the local server has failed, stop billing on every local counter, including the server PC. Prevent it from accepting new sales when it restarts. Record the last known bill on each counter, including any payment taken without a confirmed receipt.
+3. Check the last successful transfer on the standby and compare the latest invoices with counter records. Identify the interval that may be missing. Look up uncertain payments and bills before entering them again. If another counter may still be billing locally, keep the cloud in standby.
+4. Once all local billing has stopped and the owner has reviewed the gap, use the tested emergency activation procedure. Open the emergency shortcut on enrolled counters. Verify the shop and counter shown before taking the first payment.
+5. To return to local, stop new cloud bills, finish pending payments, transfer and reconcile emergency sales, stock and payment totals. Account for any local sales made after the last successful sync. Reopen local billing only after the figures match and the cloud is back in standby.
+
+### Commissioning after closing
+
+Test the merged release on an isolated restored backup, including simultaneous local checkouts with cloud disconnected. Verify sync coverage and counter peripherals. Then schedule the live baseline, enable sync and rehearse the switch and return. Record the last successful transfer time and expected recovery gap. Keep the independent Drive backups running.
 
 Run Backup-ShopKey.ps1 interactively on the original server to make a passphrase-encrypted copy of its WireGuard private key. Choose a long, unique recovery passphrase and keep it in an owner-controlled password manager accessible without this PC. The script checks decryption before producing shop-server.private.gpg. Only that encrypted file should be committed after the check. On a replacement machine decrypt with GnuPG into an administrator-only directory outside Git, then verify the derived WireGuard public key matches shop-server.public before using it. This covers only the shop VPN identity.
