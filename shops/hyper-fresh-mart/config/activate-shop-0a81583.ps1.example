@@ -1,0 +1,52 @@
+$ErrorActionPreference='Stop'
+$commit='0a8158339a3169be489613b89073d9d9f3cd9cf2'
+$shop='D:\badizo-pos-main'
+$dir=Join-Path $env:ProgramFiles "Badizo-HFM001-$commit"
+$reg='HKLM:\SYSTEM\CurrentControlSet\Services\BadizoServer\Parameters'
+$old=Get-ItemProperty -LiteralPath $reg
+if($old.Application -ne 'C:\Program Files\nodejs\node.exe' -or $old.AppDirectory -ne "$shop\backend" -or $old.AppParameters -ne 'server.js' -or $old.AppEnvironmentExtra){throw 'Service settings differ from preflight'}
+if(Test-Path $dir){throw 'Release directory exists'}
+New-Item -ItemType Directory -Path $dir | Out-Null
+$status=Join-Path $dir 'activation-status.txt'
+$switched=$false
+function Ready($path){Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/$path" -TimeoutSec 3 -UseBasicParsing}
+try {
+  'Staging' | Set-Content $status
+  $zip=Join-Path $dir 'release.zip'
+  Copy-Item -LiteralPath "$shop\outputs\hfm-windows-release-0a81583\badizo-pos-windows-x64.zip" -Destination $zip
+  if((Get-FileHash $zip).Hash -ne 'f32b3d64d9bcc381359c3c8f57a233e1cb806fab6b548ba8227b4dc0eac3b8cd'){throw 'Release SHA mismatch'}
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $release=Join-Path $dir 'release'
+  [IO.Compression.ZipFile]::ExtractToDirectory($zip,$release)
+  $manifest=Get-Content -LiteralPath "$release\windows-release.json" -Raw | ConvertFrom-Json
+  if($manifest.commit -ne $commit){throw 'Release manifest mismatch'}
+  foreach($f in $manifest.files){if((Get-FileHash -LiteralPath (Join-Path $release $f.path)).Hash -ne $f.sha256){throw 'File verification failed'}}
+  New-Item -ItemType Junction -Path "$release\barcode" -Target "$shop\barcode" | Out-Null
+  if(@(Get-ChildItem "$release\barcode\templates" -Filter '*.prn').Count -lt 4){throw 'Barcode templates missing'}
+  if(!(Ready 'health').ok){throw 'Previous service unhealthy'}
+  'Switching' | Set-Content $status
+  Stop-Service BadizoServer -ErrorAction Stop
+  $switched=$true
+  Set-ItemProperty -LiteralPath $reg -Name AppParameters -Value ('"'+$release+'\backend\server.js"')
+  New-ItemProperty -LiteralPath $reg -Name AppEnvironmentExtra -PropertyType MultiString -Value @("BADIZO_RELEASE_COMMIT=$commit",'BADIZO_SHOP_ID=HFM001','BADIZO_NODE_ROLE=local-server') -Force | Out-Null
+  Start-Service BadizoServer
+  $end=(Get-Date).AddSeconds(60)
+  do {try {$r=Ready 'ready';if($r.ok -and $r.releaseCommit -eq $commit -and $r.shopId -eq 'HFM001' -and $r.nodeRole -eq 'local-server'){break}} catch {};Start-Sleep -Seconds 1}while((Get-Date) -lt $end)
+  if(!$r.ok -or $r.releaseCommit -ne $commit -or $r.nodeRole -ne 'local-server' -or $r.shopId -ne 'HFM001'){throw 'Release readiness failed'}
+  $index=Invoke-WebRequest -Uri 'http://127.0.0.1:5000/' -UseBasicParsing -TimeoutSec 5
+  $asset=[regex]::Match($index.Content,'/static/js/main\.[a-z0-9]+\.js').Value
+  if(!$asset -or !(Test-Path ($release+'\frontend\build'+$asset))){throw 'Release UI failed'}
+  $opt=Ready 'auth/login-options'
+  if(!$opt){throw 'Local sign-in unavailable'}
+  "Active $commit $asset" | Set-Content $status
+} catch {
+  $why=$_.Exception.Message
+  if($switched){
+    if((Get-Service BadizoServer).Status -ne 'Stopped'){Stop-Service BadizoServer}
+    Set-ItemProperty -LiteralPath $reg -Name AppParameters -Value $old.AppParameters
+    Remove-ItemProperty -LiteralPath $reg -Name AppEnvironmentExtra -ErrorAction SilentlyContinue
+    Start-Service BadizoServer
+    "Rolled back: $why" | Set-Content $status
+  }else{"Stopped before switch: $why" | Set-Content $status}
+  exit 1
+}

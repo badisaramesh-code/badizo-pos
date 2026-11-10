@@ -53,3 +53,11 @@ The SERVER test session switched billing to the cloud copy. A disposable COUNTER
 In a separate drill both copies changed the same retail price while the wholesale price was held fixed. The owner reviewed the conflict, both copies converged and the outstanding event queues emptied. Exchanges, free promotions and loyalty redemption have separate reconciliation requirements. Live shop sync is still disabled.
 
 The final run used validator d95fdd4718e0516049ced6ba037eade7540afe1e with the 038100d backend and exited 0. It also checked duplicate checkout recovery, returns and cancellations, lost activation replies, financial corrections and the restored-local sync block. The temporary databases, MySQL users, fixture directories and test listeners were removed. The original cloud standby passed readiness on f90e846. Lightsail retained the result under ~/hfm-staging/qa-62a19dad4daba086ffb944d72ce4af2494a046c0/evidence/final.log. [GitHub regression results](https://github.com/badisaramesh-code/badizo-pos/actions/runs/42838300644).
+
+### Running release on 10 November 2026 after closing
+
+The Windows shop service and Lightsail standby both reported commit 0a8158339a3169be489613b89073d9d9f3cd9cf2. Windows runs the verified published package from Program Files. Its existing working directory supplies the shop configuration. Barcode templates and output use the shop barcode folder. The previous installation remains at D:\badizo-pos-main. Editing that checkout does not update the running release.
+
+The cloud serves the restored closing snapshot in standby. The local and restored cloud databases each matched all eleven business reconciliation checks. Live synchronization is pending. The shop LAN readiness endpoint, local login options and released frontend passed after restarting BadizoServer.
+
+The shop-specific activation script is archived under config. For rollback of this release during a maintenance window, stop BadizoServer, restore its NSSM AppParameters to server.js and remove the three release identity variables added under AppEnvironmentExtra, then start the service and verify its health. Keep the database and shop configuration in place.
