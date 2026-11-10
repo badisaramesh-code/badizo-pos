@@ -290,6 +290,13 @@ function scheduleDailyBackupCatchUpCheck() {
 }
 
 async function startServer(port = PORT) {
+  if (isCloudNode()) {
+    const db = require('./config/db');
+    await db.ready;
+    // Restored cloud databases skip schema bootstrap. Verify the invoice
+    // column used by every checkout before reporting the standby as ready.
+    await db.query('SELECT customer_remarks FROM invoices LIMIT 0');
+  }
   await configureEnrollment();
   return new Promise((resolve, reject) => {
     const listenPort = normalizePort(port, PORT);
