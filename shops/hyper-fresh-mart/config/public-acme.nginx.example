@@ -1,0 +1,14 @@
+server {
+    listen 172.26.10.99:80 default_server;
+    server_name 65.0.24.67;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/badizo-acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 404;
+    }
+}
