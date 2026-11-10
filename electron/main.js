@@ -6,7 +6,7 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const Module = require('module');
 const express = require('express');
-const { app, BrowserWindow, dialog, ipcMain, screen, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, net, screen, shell } = require('electron');
 const { print: printPdf } = require('pdf-to-printer');
 
 const execFileAsync = promisify(execFile);
@@ -175,7 +175,10 @@ async function isReachable(url, timeoutMs = 2500) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { cache: 'no-store', signal: controller.signal });
+    const options = { cache: 'no-store', signal: controller.signal };
+    const response = new URL(url).protocol === 'https:'
+      ? await net.fetch(url, { ...options, redirect: 'error', credentials: 'omit' })
+      : await fetch(url, options);
     if (!response.ok) return false;
     if (new URL(url).pathname.replace(/\/$/, '') === '/api/health') {
       const health = await response.json();
@@ -289,6 +292,21 @@ async function scanSubnetForHealth(port, timeoutMs) {
 
 async function resolveRemoteServer(config) {
   if (config.startFrontend !== false) return config;
+
+  const page = new URL(config.appUrl);
+  const health = new URL(config.apiHealthUrl);
+  if (page.protocol === 'https:' || health.protocol === 'https:') {
+    if (page.protocol !== 'https:' || page.origin !== health.origin || page.username || page.password || health.username || health.password) {
+      throw new Error('Configure the POS page and health check with the same secure server address.');
+    }
+    if (!config.startBackend && !config.allowLoopbackServer && isLoopbackHost(page.hostname)) {
+      throw new Error('Configure the remote POS server address for this counter.');
+    }
+    if (!await waitForUrl(config.apiHealthUrl, 12000)) {
+      throw new Error('The secure POS server is unreachable. Check the private connection and certificate.');
+    }
+    return config;
+  }
 
   const apiHost = getUrlHost(config.apiHealthUrl);
   const appHost = getUrlHost(config.appUrl);

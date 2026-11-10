@@ -8,6 +8,7 @@ function getDefaultApiBaseUrl() {
   }
 
   const protocol = window.location.protocol || 'http:';
+  if (protocol === 'https:') return window.location.origin + '/api';
   const hostname = window.location.hostname || 'localhost';
   return `${protocol}//${hostname}:5000/api`;
 }

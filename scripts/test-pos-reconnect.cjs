@@ -32,6 +32,27 @@ function clientWindow(recoveredHost) {
   return {eventHandlers,loads,published,heartbeat:()=>heartbeat(),reconnect:()=>timers.filter(timer=>timer.ms===2000).at(-1).callback()};
 }
 
+test('an emergency counter keeps its configured HTTPS origin when the LAN is available', async () => {
+  const origin = 'https://10.77.41.1';
+  const config = { appUrl: origin + '/?loginMode=counter', apiHealthUrl: origin + '/api/health', startFrontend: false, startBackend: false, discoveryEnabled: true };
+  const probes = [];
+  let healthy = true;
+  const context = { URL, isLoopbackHost: () => false, waitForUrl: async url => { probes.push(url); return healthy; } };
+  vm.runInNewContext(main.slice(main.indexOf('async function resolveRemoteServer('), main.indexOf('async function waitForUrl(')), context);
+  assert.equal(await context.resolveRemoteServer(config), config);
+  healthy = false;
+  await assert.rejects(context.resolveRemoteServer(config), /unreachable/);
+  await assert.rejects(context.resolveRemoteServer({ ...config, apiHealthUrl: 'http://shop:5000/api/health' }), /same secure server/);
+  assert.deepEqual(probes, [config.apiHealthUrl, config.apiHealthUrl]);
+});
+
+test('browser served over private HTTPS sends billing requests to the proxy port', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../frontend/src/api/client.js'), 'utf8');
+  const context = { process: { env: {} }, window: { location: new URL('https://shop.test:8443/') } };
+  vm.runInNewContext(source.slice(source.indexOf('function getDefaultApiBaseUrl('), source.indexOf('const api =')), context);
+  assert.equal(context.getDefaultApiBaseUrl(), 'https://shop.test:8443/api');
+});
+
 for(const recoveredHost of ['192.168.1.10','192.168.1.15']) {
   test(`loaded billing page survives reconnect to ${recoveredHost} without navigation or logout`,async()=>{
     const app=clientWindow(recoveredHost);
@@ -72,7 +93,7 @@ test('explicit installation config wins over stale per-user or dedicated counter
 for(const allowLoopbackServer of [true,false]) {
   test(`server desktop loopback connection is ${allowLoopbackServer?'explicitly allowed':'blocked on remote clients'}`,async()=>{
     let probed=[];
-    const context={Date,Set,Number,Promise,DEFAULT_DISCOVERY_TIMEOUT_MS:12000,logMessage(){},saveCachedServerHost(){},
+    const context={URL,Date,Set,Number,Promise,DEFAULT_DISCOVERY_TIMEOUT_MS:12000,logMessage(){},saveCachedServerHost(){},
       getUrlHost:url=>new URL(url).hostname,getUrlPort:url=>Number(new URL(url).port),isLoopbackHost:host=>host==='127.0.0.1',
       buildUrl:(host,port,pathname)=>`http://${host}:${port}${pathname}`,findReachableHealthUrl:async urls=>{probed.push(...urls);return urls[0];}};
     vm.runInNewContext(main.slice(main.indexOf('async function resolveRemoteServer('),main.indexOf('async function waitForUrl(')),context);
