@@ -1,0 +1,56 @@
+limit_req_zone $binary_remote_addr zone=hfm_login:1m rate=5r/m;
+limit_req_zone $server_name zone=hfm_all_logins:1m rate=2r/s;
+limit_req_zone $binary_remote_addr zone=hfm_api:2m rate=15r/s;
+server {
+    listen 172.26.10.99:443 ssl;
+    server_name 65.0.24.67;
+    if ($host != 65.0.24.67) { return 444; }
+    ssl_certificate /etc/letsencrypt/live/hfm-public-ip/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/hfm-public-ip/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    root /var/www/hfm-public;
+    client_max_body_size 256k;
+    limit_req_status 429;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+    add_header Cache-Control no-store always;
+    proxy_pass_request_headers off;
+    proxy_set_header Host localhost;
+    proxy_set_header Content-Type $content_type;
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header X-Real-IP $remote_addr;
+    location = /api/auth/login {
+        limit_except POST { deny all; }
+        client_max_body_size 4k;
+        limit_req zone=hfm_login burst=5 nodelay;
+        limit_req zone=hfm_all_logins burst=10 nodelay;
+        proxy_pass http://127.0.0.1:5081/login;
+    }
+    location = /api/auth/logout {
+        limit_except POST { deny all; }
+        proxy_pass http://127.0.0.1:5081/logout;
+    }
+    location = /_verify {
+        internal;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Authorization $http_authorization;
+        proxy_pass http://127.0.0.1:5081/verify;
+    }
+    location ~ ^/api/(auth/me|health|settings/?|reports/(dashboard|daily-sales)|products/?|products/(search|exact)/[^/]+|customers/(match|lookup/[0-9]+)|billing/invoice/(details|next))$ {
+        limit_except GET { deny all; }
+        limit_req zone=hfm_api burst=40 nodelay;
+        auth_request /_verify;
+        proxy_pass http://127.0.0.1:5000;
+    }
+    location = /api/billing/checkout {
+        limit_except POST { deny all; }
+        limit_req zone=hfm_api burst=8 nodelay;
+        auth_request /_verify;
+        proxy_pass http://127.0.0.1:5000/api/billing/checkout;
+    }
+    location /api/ { return 404; }
+    location = / { try_files /index.html =404; }
+    location / { try_files $uri =404; }
+}

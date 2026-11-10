@@ -1,0 +1,20 @@
+[Unit]
+Description=Hyper Fresh Mart public sign-in session check
+After=badizo-pos.service
+
+[Service]
+User=badizo
+Group=badizo
+EnvironmentFile=/etc/badizo/pos.env
+EnvironmentFile=-/etc/badizo/release.env
+Environment=NODE_PATH=/opt/badizo/current/backend/node_modules
+ExecStart=/opt/badizo/runtime/node24/bin/node /opt/badizo/public/session-gate.cjs
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
