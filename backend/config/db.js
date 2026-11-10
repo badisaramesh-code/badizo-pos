@@ -1349,6 +1349,8 @@ pool.ready = (async () => {
     await ensureColumn(connection, 'invoices', 'billing_tier', "ENUM('RETAIL', 'WHOLESALE') NOT NULL DEFAULT 'RETAIL' AFTER transaction_type");
     await ensureColumn(connection, 'invoices', 'tax_type', "ENUM('LOCAL', 'INTERSTATE') NOT NULL DEFAULT 'LOCAL' AFTER billing_tier");
     await ensureColumn(connection, 'invoices', 'customer_company_name', 'VARCHAR(255) DEFAULT NULL AFTER tax_type');
+    await ensureColumn(connection, 'invoices', 'customer_remarks', "VARCHAR(1000) DEFAULT ''");
+    await ensureColumn(connection, 'customers', 'remarks', "VARCHAR(1000) DEFAULT ''");
     await ensureColumn(connection, 'invoices', 'customer_gstin', 'VARCHAR(15) DEFAULT NULL AFTER customer_company_name');
     await ensureColumn(connection, 'invoices', 'total_cgst', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER customer_gstin');
     await ensureColumn(connection, 'invoices', 'total_sgst', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER total_cgst');

@@ -9536,8 +9536,11 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 
 .local-account-table.history-table .ledger-details-cell,.local-account-table.history-table .ledger-remarks-cell{font-weight:800;color:#172b1d}
 
-/* Keep exactly twelve compact ledger rows in view; older rows scroll below the fixed totals. */
-.local-table-scroll{height:336px;min-height:336px;max-height:336px}
+/* Fill the ledger panel below its toolbar, totals and pagination. */
+.local-book{display:flex;flex-direction:column;height:640px;box-sizing:border-box}
+.local-book>.local-book-toolbar,.local-book>.ledger-profile,.local-book>.local-totals,.local-book>.local-ledger-pagination{flex-shrink:0}
+.local-book>.local-table-with-controls{display:flex;flex:1;min-height:200px}
+.local-book .local-table-scroll{flex:1;min-width:0;height:auto;min-height:200px;max-height:none}
 
 .local-account-table.history-table .ledger-date-cell{font-weight:900;color:#102f1b;white-space:nowrap;font-variant-numeric:tabular-nums}
 
@@ -9566,3 +9569,8 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .billing-guard-container { position: relative; }
 .billing-guard-overlay { position: absolute; inset: 0; z-index: 10; background: rgba(20,34,33,.35); padding: 2rem 1rem; }
 .billing-guard-notice { position: sticky; top: 1rem; max-width: 32rem; margin: 0 auto; padding: 1.25rem; background: white; color: #18302c; border: 2px solid #536d63; border-radius: .5rem; }
+/* Share the totals row with entry count and pagination to leave more room for transactions. */
+.local-book>.local-summary-row{display:flex;align-items:center;gap:10px;flex-shrink:0;margin:7px 0}
+.local-summary-row>.local-totals{flex:1;min-width:0;margin:0}
+.local-summary-row>.local-ledger-pagination{flex-shrink:0;white-space:nowrap;font-size:12px}
+@media(max-width:1000px){.local-book>.local-summary-row{flex-wrap:wrap}.local-summary-row>.local-totals{flex-basis:100%}.local-summary-row>.local-ledger-pagination{margin-left:auto}}

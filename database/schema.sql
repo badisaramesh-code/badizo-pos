@@ -155,6 +155,7 @@ CREATE TABLE quotations (
     customer_name VARCHAR(150) NOT NULL DEFAULT 'Walk-in Customer',
     customer_phone VARCHAR(20) DEFAULT '',
     customer_address VARCHAR(500) DEFAULT '',
+    customer_remarks VARCHAR(1000) DEFAULT '',
     customer_gstin VARCHAR(15) DEFAULT '',
     billing_counter VARCHAR(40) DEFAULT '',
     billing_tier ENUM('RETAIL', 'WHOLESALE') NOT NULL DEFAULT 'RETAIL',

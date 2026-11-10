@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { approveSensitiveBillingMode, fetchBarcodeTemplate, fetchSettings, generateBarcodePrn, previewBarcodePrn, printBarcodePrn, searchProducts } from '../api/client';
+import { approveSensitiveBillingMode, fetchBarcodeTemplate, fetchSettings, generateBarcodePrn, previewBarcodePrn, printBarcodePrn, searchProducts, lookupExactProduct } from '../api/client';
 
 const TEMPLATE_OPTIONS = [
   {
@@ -163,6 +163,9 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
   const batchKey = JSON.stringify([printerStorageKey, templateName, form]);
   const reusableBatch = preparedBatch?.key === batchKey ? preparedBatch.result : null;
   const searchRef = useRef(null);
+  const searchVersionRef = useRef(0);
+  const appliedSearchRef = useRef(null);
+  const keyboardSelectionRef = useRef(false);
   const stickerCountRef = useRef(null);
   const selectedProductRef = useRef(null);
   const systemName = localSystemName || window.location.hostname || '127.0.0.1';
@@ -191,6 +194,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
   useEffect(() => {
     const query = searchQuery.trim();
     if (screenMode !== 'print') return undefined;
+    if (query === appliedSearchRef.current) return undefined;
     if (query.length < 3) {
       setSuggestions([]);
       setSelectedSearchIndex(0);
@@ -353,15 +357,17 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
   }
 
   async function runLiveSearch(query) {
+    const version = searchVersionRef.current;
     setIsSearching(true);
     try {
       const products = await searchProducts(query);
+      if (version !== searchVersionRef.current) return;
       setSuggestions(products.slice(0, 80));
       setSelectedSearchIndex(0);
     } catch (_err) {
-      setSuggestions([]);
+      if (version === searchVersionRef.current) setSuggestions([]);
     } finally {
-      setIsSearching(false);
+      if (version === searchVersionRef.current) setIsSearching(false);
     }
   }
 
@@ -379,6 +385,10 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
   }
 
   function applyProduct(product) {
+    searchVersionRef.current += 1;
+    appliedSearchRef.current = product.barcode || product.product_name || '';
+    keyboardSelectionRef.current = false;
+    setIsSearching(false);
     setForm((current) => ({
       ...current,
       product_name: String(product.product_name || '').toUpperCase(),
@@ -407,6 +417,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
   }
 
   async function searchAndLoadProduct(query = searchQuery) {
+    const version = searchVersionRef.current;
     const cleaned = String(query || '').trim();
     if (!cleaned) {
       setErrorMessage('Scan barcode or type product name first.');
@@ -417,13 +428,17 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
     setStatusMessage('');
 
     try {
-      const products = await searchProducts(cleaned);
-      if (!products.length) {
-        setErrorMessage('Product not found for this barcode/product name.');
+      const exactProduct = await lookupExactProduct(cleaned);
+      if (version !== searchVersionRef.current) return;
+      if (exactProduct) {
+        applyProduct(exactProduct);
         return;
       }
-      if (products.length === 1) {
-        applyProduct(products[0]);
+      const products = await searchProducts(cleaned);
+      if (version !== searchVersionRef.current) return;
+      if (!products.length) {
+        setSuggestions([]);
+        setErrorMessage('Product not found for this barcode/product name.');
         return;
       }
       const exact = products.find((product) => (
@@ -434,7 +449,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
         applyProduct(exact);
         return;
       }
-      setSuggestions(products.slice(0, 8));
+      setSuggestions(products.slice(0, 80));
       setSelectedSearchIndex(0);
       setStatusMessage(`${products.length} products found. Select one product.`);
     } catch (err) {
@@ -444,6 +459,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
 
   function moveSelectedProduct(direction) {
     if (!suggestions.length) return;
+    keyboardSelectionRef.current = true;
     setSelectedSearchIndex((current) => {
       const next = current + direction;
       if (next < 0) return suggestions.length - 1;
@@ -475,7 +491,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
     }
     if (event.key === 'Enter') {
       event.preventDefault();
-      if (suggestions.length) {
+      if (suggestions.length && keyboardSelectionRef.current) {
         loadHighlightedProduct();
       } else {
         searchAndLoadProduct();
@@ -676,7 +692,15 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
               </div>
 
               <div className="barcode-entry-form">
-              <label><span className="field-label">Barcode</span><input className="field" value={form.barcode} onChange={(event) => update('barcode', event.target.value.toUpperCase())} /></label>
+              <label><span className="field-label">Barcode</span><input className="field" value={form.barcode} onChange={(event) => {
+                searchVersionRef.current += 1;
+                update('barcode', event.target.value.toUpperCase());
+              }} onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  searchAndLoadProduct(form.barcode);
+                }
+              }} /></label>
               <label className="wide-field"><span className="field-label">Product</span><input className="field" value={form.product_name} onChange={(event) => update('product_name', event.target.value.toUpperCase())} /></label>
               <label><span className="field-label">Packing Date</span><input className="field" value={form.pkd_date} onChange={(event) => update('pkd_date', event.target.value.toUpperCase())} /></label>
               <label><span className="field-label">Unit</span><input className="field" value={form.unit} onChange={(event) => update('unit', event.target.value)} /></label>
@@ -701,7 +725,13 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
                   autoFocus
                   className="field barcode-live-search"
                   value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onChange={(event) => {
+                    searchVersionRef.current += 1;
+                    appliedSearchRef.current = null;
+                    keyboardSelectionRef.current = false;
+                    setSuggestions([]);
+                    setSearchQuery(event.target.value);
+                  }}
                   onKeyDown={handleSearchKeyDown}
                   placeholder="Type 3+ letters/code or scan barcode"
                 />
@@ -772,7 +802,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
                       key={product.barcode}
                       ref={active ? selectedProductRef : null}
                       className={active ? 'selected-row' : ''}
-                      onClick={() => setSelectedSearchIndex(index)}
+                      onClick={() => applyProduct(product)}
                       onMouseEnter={() => setSelectedSearchIndex(index)}
                       onDoubleClick={() => applyProduct(product)}
                     >

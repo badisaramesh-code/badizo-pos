@@ -524,6 +524,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       counter_no,
       customer_name,
       customer_address,
+      customer_remarks,
       customer_phone,
       items,
       sub_total,
@@ -642,8 +643,8 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
        (invoice_no, financial_year, serial_no, checkout_request_id, customer_name, customer_address, customer_phone, sub_total, gst_total, grand_total,
         cash_received, change_returned, payment_mode, payment_status, payment_reference, billing_counter, transaction_type, billing_tier, tax_type,
         customer_company_name, customer_gstin, total_cgst, total_sgst, total_igst, exchange_total, exchange_items_json,
-        loyalty_redeemed_points, loyalty_redeemed_amount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        loyalty_redeemed_points, loyalty_redeemed_amount, customer_remarks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
        [
          invoiceNo,
          allocatedInvoice.financialYear,
@@ -672,7 +673,8 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         parseCurrency(exchangeTotal),
         normalizedExchangeItems.length ? JSON.stringify(normalizedExchangeItems) : null,
         loyaltyRedeemResult.points,
-        parseCurrency(loyaltyRedeemResult.amount)
+        parseCurrency(loyaltyRedeemResult.amount),
+        String(customer_remarks || '').trim().slice(0, 1000)
       ]
     );
     checkoutTimer.mark('invoice-inserted');
@@ -1267,11 +1269,13 @@ router.get('/hold/list', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       where.push(`(
         invoice_no LIKE ?
         OR customer_name LIKE ?
-        OR customer_phone LIKE ?
-        OR payment_mode LIKE ?
+        OR TRIM(customer_phone) = ?
+        OR grand_total = ?
       )`);
       const searchLike = `%${search}%`;
-      params.push(searchLike, searchLike, searchLike, searchLike);
+      const amountSearch = search.replace(/,/g, '');
+      const searchAmount = /^\d+(?:\.\d{1,2})?$/.test(amountSearch) ? amountSearch : null;
+      params.push(searchLike, searchLike, search, searchAmount);
     }
 
     if (paymentMode === 'Exchange') {

@@ -12,6 +12,7 @@ function toCustomer(row) {
     phone: row.phone,
     gstin: row.resolved_gstin || row.gstin || '',
     address: row.resolved_address || row.address || '',
+    remarks: row.remarks || '',
     loyalty_points: Number(row.loyalty_points || 0),
     total_spent: Number(row.total_spent || 0),
     visit_count: Number(row.visit_count || 0),
@@ -40,7 +41,7 @@ router.get('/match', async (req, res) => {
 
   try {
     const [invoiceRows] = await db.query(
-      `SELECT i.customer_name, i.customer_phone, i.customer_address, i.customer_gstin,
+      `SELECT i.customer_name, i.customer_phone, i.customer_address, i.customer_gstin, i.customer_remarks,
               i.invoice_no AS last_invoice_no, i.created_at AS last_invoice_at
        FROM invoices i
        WHERE i.invoice_status <> 'CANCELLED'
@@ -81,6 +82,7 @@ router.get('/match', async (req, res) => {
       phone: resolvedPhone || customer.phone || '',
       gstin: latest.customer_gstin || customer.gstin || '',
       address: latest.customer_address || customer.address || '',
+      remarks: customer.remarks || latest.customer_remarks || '',
       loyalty_points: Number(customer.loyalty_points || 0),
       total_spent: Number(totals[0]?.total_spent || customer.total_spent || 0),
       visit_count: Number(totals[0]?.billing_count || customer.visit_count || 0),
@@ -171,6 +173,7 @@ router.post('/', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   const customerName = String(req.body?.customer_name || req.body?.name || 'Walk-in Customer').trim() || 'Walk-in Customer';
   const gstin = String(req.body?.gstin || '').trim().toUpperCase();
   const address = String(req.body?.address || '').trim();
+  const remarks = String(req.body?.remarks || '').trim().slice(0, 1000);
 
   if (!phone || phone.length < 10) {
     return res.status(400).json({ error: 'Valid 10 digit phone number is required.' });
@@ -178,13 +181,14 @@ router.post('/', authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
 
   try {
     await db.query(
-      `INSERT INTO customers (customer_name, phone, gstin, address)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO customers (customer_name, phone, gstin, address, remarks)
+       VALUES (?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          customer_name = VALUES(customer_name),
          gstin = VALUES(gstin),
-         address = VALUES(address)`,
-      [customerName, phone, gstin, address]
+         address = VALUES(address),
+         remarks = IF(?, VALUES(remarks), remarks)`,
+      [customerName, phone, gstin, address, remarks, req.body?.remarks !== undefined]
     );
 
     await writeAuditLog({

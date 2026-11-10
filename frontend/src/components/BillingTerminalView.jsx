@@ -512,6 +512,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [isApprovingMode, setIsApprovingMode] = useState(false);
   const [customerName, setCustomerName] = useState(initialDraft?.customerName || '');
   const [customerAddress, setCustomerAddress] = useState(initialDraft?.customerAddress || '');
+  const [customerRemarks, setCustomerRemarks] = useState(initialDraft?.customerRemarks || '');
   const [customerPhone, setCustomerPhone] = useState(initialDraft?.customerPhone || '');
   const [companyName, setCompanyName] = useState(initialDraft?.companyName || '');
   const [customerGstin, setCustomerGstin] = useState(initialDraft?.customerGstin || '');
@@ -785,6 +786,7 @@ export default function BillingTerminalView({ isActive = true }) {
       || billingMode !== RETAIL_MODE
       || customerName
       || customerAddress
+      || customerRemarks
       || customerPhone
       || companyName
       || customerGstin
@@ -815,6 +817,7 @@ export default function BillingTerminalView({ isActive = true }) {
         billingMode,
         customerName,
         customerAddress,
+        customerRemarks,
         customerPhone,
         companyName,
         customerGstin,
@@ -828,7 +831,7 @@ export default function BillingTerminalView({ isActive = true }) {
     } catch (err) {
       // Keep billing usable even if browser storage is unavailable.
     }
-  }, [billingMode, canUseA4Print, cart, cashReceived, companyName, counterNo, currentUser?.username, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, exchangeMode, invoiceNo, mixedPayment, paymentConfirmed, paymentMode, paymentReference, printMode]);
+  }, [billingMode, canUseA4Print, cart, cashReceived, companyName, counterNo, currentUser?.username, customerAddress, customerRemarks, customerGstin, customerName, customerPhone, exchangeItems, exchangeMode, invoiceNo, mixedPayment, paymentConfirmed, paymentMode, paymentReference, printMode]);
 
   useEffect(() => {
     if (!isActive) return undefined;
@@ -1280,18 +1283,15 @@ export default function BillingTerminalView({ isActive = true }) {
     const search = historySearch.trim().toLowerCase();
 
     return invoiceHistory.filter((invoice) => {
-      const createdAt = invoice.created_at ? new Date(invoice.created_at) : null;
-      const hasValidDate = createdAt && !Number.isNaN(createdAt.getTime());
-      const displayDate = hasValidDate ? createdAt.toLocaleString().toLowerCase() : '';
       const searchableText = [
         invoice.invoice_no,
-        invoice.customer_name,
-        invoice.payment_mode,
-        invoice.invoice_status,
-        displayDate
+        invoice.customer_name
       ].filter(Boolean).join(' ').toLowerCase();
-
-      const matchesSearch = !search || searchableText.includes(search);
+      const amountSearch = search.replace(/,/g, '');
+      const matchesAmount = /^\d+(?:\.\d{1,2})?$/.test(amountSearch)
+        && Number(invoice.grand_total) === Number(amountSearch);
+      const matchesPhone = String(invoice.customer_phone || '').trim() === search;
+      const matchesSearch = !search || searchableText.includes(search) || matchesPhone || matchesAmount;
       const matchesPaymentMode = !historyPaymentMode
         || (historyPaymentMode === 'Exchange'
           ? Number(invoice.exchange_total || 0) > 0
@@ -1319,6 +1319,7 @@ export default function BillingTerminalView({ isActive = true }) {
       shop: shopSettings,
       customerName: isBusinessBillingMode(billingMode) ? companyName : customerName,
       customerAddress,
+      customerRemarks,
       customerPhone,
       customerGstin,
       paymentMode,
@@ -1362,7 +1363,7 @@ export default function BillingTerminalView({ isActive = true }) {
         igst: isInterstate ? totals.tax : 0
       }
     };
-  }, [billingMode, cart, cashReceived, changeDue, companyName, counterNo, currentUser?.login_counter_no, currentUser?.role, currentUser?.system_no, currentUser?.username, customerAddress, customerGstin, customerName, customerPhone, exchangeItems, invoiceDate, invoiceNo, mixedPaidTotal, mixedPayment, paymentMode, shopSettings, totals]);
+  }, [billingMode, cart, cashReceived, changeDue, companyName, counterNo, currentUser?.login_counter_no, currentUser?.role, currentUser?.system_no, currentUser?.username, customerAddress, customerRemarks, customerGstin, customerName, customerPhone, exchangeItems, invoiceDate, invoiceNo, mixedPaidTotal, mixedPayment, paymentMode, shopSettings, totals]);
 
   function closeBillingActivityPanels() {
     setShowHistory(false);
@@ -1472,6 +1473,7 @@ export default function BillingTerminalView({ isActive = true }) {
       shop: shopSettings,
       customerName: invoice.customer_name,
       customerAddress: invoice.customer_address || '',
+      customerRemarks: invoice.customer_remarks || '',
       customerPhone: invoice.customer_phone,
       customerGstin: invoice.customer_gstin,
       paymentMode: invoice.payment_mode,
@@ -1551,22 +1553,11 @@ export default function BillingTerminalView({ isActive = true }) {
     const timer = window.setTimeout(async () => {
       setIsCustomerSuggestionLoading(true);
       try {
-        const [rows, exactCustomer] = await Promise.all([
-          fetchCustomers(query),
-          matchCustomerFromPreviousBill({ name: query }).catch(() => null)
-        ]);
+        const rows = await fetchCustomers(query);
         if (!cancelled) {
-          setCustomerSuggestions(rows.slice(0, 3));
+          setCustomerSuggestions(rows);
           setIsCustomerLookupOpen(rows.length > 0);
-          if (exactCustomer) {
-            setCustomerPhone(exactCustomer.phone || '');
-            setCustomerAddress(exactCustomer.address || '');
-            setCustomerGstin(String(exactCustomer.gstin || '').toUpperCase());
-            setLoyaltyCustomer(exactCustomer);
-            setUseLoyaltyPoints(false);
-            setLoyaltyRedeemPoints('');
-            setStatusMessage(`${exactCustomer.customer_name || query} details loaded from previous bill.`);
-          }
+
         }
       } catch (err) {
         if (!cancelled) {
@@ -1584,45 +1575,6 @@ export default function BillingTerminalView({ isActive = true }) {
     };
   }, [billingMode, companyName, customerName]);
 
-  useEffect(() => {
-    const phoneText = String(customerPhone || '').trim();
-    const digits = phoneText.replace(/\D/g, '');
-    if (phoneText.toUpperCase() === 'NO' || digits.length < 10) {
-      setLoyaltyCustomer(null);
-      setUseLoyaltyPoints(false);
-      setLoyaltyRedeemPoints('');
-      return undefined;
-    }
-
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      try {
-        const customer = await matchCustomerFromPreviousBill({ phone: phoneText })
-          .catch(() => lookupCustomer(phoneText));
-        if (cancelled) return;
-        setLoyaltyCustomer(customer);
-        if (isBusinessBillingMode(billingMode)) {
-          setCompanyName(customer.customer_name || companyName);
-        } else {
-          setCustomerName(customer.customer_name || customerName);
-        }
-        setCustomerAddress(customer.address || '');
-        setCustomerGstin(String(customer.gstin || '').toUpperCase());
-        setUseLoyaltyPoints(false);
-        setLoyaltyRedeemPoints('');
-      } catch (err) {
-        if (cancelled) return;
-        setLoyaltyCustomer(null);
-        setUseLoyaltyPoints(false);
-        setLoyaltyRedeemPoints('');
-      }
-    }, 350);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [customerPhone]);
 
   async function loadSettings() {
     try {
@@ -1649,10 +1601,12 @@ export default function BillingTerminalView({ isActive = true }) {
     }
 
     try {
-      const customer = await lookupCustomer(customerPhone);
+      const customer = await lookupCustomer(customerPhone)
+        .catch(() => matchCustomerFromPreviousBill({ phone: customerPhone }));
       setLoyaltyCustomer(customer);
       setCustomerName(customer.customer_name || customerName);
       setCustomerAddress(customer.address || customerAddress);
+      setCustomerRemarks(customer.remarks || '');
       setCustomerGstin(customer.gstin || customerGstin);
       setUseLoyaltyPoints(false);
       setLoyaltyRedeemPoints('');
@@ -1674,6 +1628,7 @@ export default function BillingTerminalView({ isActive = true }) {
     }
     setCustomerPhone(customer.phone || '');
     setCustomerAddress(customer.address || '');
+    setCustomerRemarks(customer.remarks || '');
     setCustomerGstin(String(customer.gstin || '').toUpperCase());
     setLoyaltyCustomer(customer);
     setUseLoyaltyPoints(false);
@@ -1694,7 +1649,8 @@ export default function BillingTerminalView({ isActive = true }) {
         customer_name: isBusinessBillingMode(billingMode) ? companyName : customerName,
         phone: customerPhone,
         gstin: customerGstin,
-        address: customerAddress
+        address: customerAddress,
+        remarks: customerRemarks
       });
       setLoyaltyCustomer(customer);
       setUseLoyaltyPoints(false);
@@ -2669,6 +2625,7 @@ export default function BillingTerminalView({ isActive = true }) {
     setBillingMode(normalizeBillingMode(savedState.billingMode));
     setCustomerName(savedState.customerName || '');
     setCustomerAddress(savedState.customerAddress || '');
+    setCustomerRemarks(savedState.customerRemarks || '');
     setCustomerPhone(savedState.customerPhone || '');
     setCompanyName(savedState.companyName || '');
     setCustomerGstin(savedState.customerGstin || '');
@@ -2697,6 +2654,7 @@ export default function BillingTerminalView({ isActive = true }) {
       billingMode,
       customerName,
       customerAddress,
+      customerRemarks,
       customerPhone,
       companyName,
       customerGstin,
@@ -2749,6 +2707,7 @@ export default function BillingTerminalView({ isActive = true }) {
     setBillingMode(normalizeBillingMode(savedState.billingMode));
     setCustomerName(savedState.customerName || '');
     setCustomerAddress(savedState.customerAddress || '');
+    setCustomerRemarks(savedState.customerRemarks || '');
     setCustomerPhone(savedState.customerPhone || '');
     setCompanyName(savedState.companyName || '');
     setCustomerGstin(savedState.customerGstin || '');
@@ -2865,6 +2824,7 @@ export default function BillingTerminalView({ isActive = true }) {
     setBillingMode(RETAIL_MODE);
     setCustomerName('');
     setCustomerAddress('');
+    setCustomerRemarks('');
     setCustomerPhone('');
     setCompanyName('');
     setCustomerGstin('');
@@ -4410,6 +4370,7 @@ export default function BillingTerminalView({ isActive = true }) {
       customerName: (isBusinessBillingMode(billingMode) ? companyName : customerName) || '',
       customerPhone: customerPhone || '',
       customerAddress: customerAddress || '',
+      customerRemarks: customerRemarks || '',
       validityDays: '7',
       notes: 'Prices and stock are subject to confirmation.',
       username: '',
@@ -4871,6 +4832,7 @@ export default function BillingTerminalView({ isActive = true }) {
         counter_no: counterNo,
         customer_name: customerLabel,
         customer_address: customerAddress,
+      customer_remarks: customerRemarks,
         customer_phone: customerPhone,
         bill_total: totals.grand.toFixed(2),
         item_count: cart.length
@@ -5284,6 +5246,7 @@ export default function BillingTerminalView({ isActive = true }) {
       customer_name: effectiveCustomerName || 'Walk-in Customer',
       customer_phone: effectiveCustomerPhone,
       customer_address: customerAddress,
+      customer_remarks: customerRemarks,
       items: cart.map((item) => ({
         ...item,
         sale_price: getUnitPrice(item, billingMode)
@@ -5900,7 +5863,7 @@ export default function BillingTerminalView({ isActive = true }) {
               {isCustomerLookupOpen && (
                 <div className="supplier-suggestions">
                   {isCustomerSuggestionLoading && <div className="supplier-suggestion-empty">Searching customers...</div>}
-                  {!isCustomerSuggestionLoading && customerSuggestions.slice(0, 3).map((match) => (
+                  {!isCustomerSuggestionLoading && customerSuggestions.map((match) => (
                     <button
                       key={`${match.phone}-${match.customer_name}`}
                       type="button"
@@ -5922,7 +5885,12 @@ export default function BillingTerminalView({ isActive = true }) {
                 ref={customerPhoneRef}
                 className="field"
                 value={customerPhone}
-                onChange={(event) => setCustomerPhone(event.target.value)}
+                onChange={(event) => {
+                  setCustomerPhone(event.target.value);
+                  setLoyaltyCustomer(null);
+                  setUseLoyaltyPoints(false);
+                  setLoyaltyRedeemPoints('');
+                }}
                 onKeyDown={(event) => handleCustomerFieldEnter(event, customerGstinRef)}
                 placeholder="10 digit phone or NO"
               />
@@ -5939,17 +5907,26 @@ export default function BillingTerminalView({ isActive = true }) {
                 placeholder={activeMode.taxType === 'INTERSTATE' ? 'Required for B2B' : 'Optional'}
               />
             </label>
-            <label>
-              <span className="field-label">Address</span>
-              <input
-                ref={customerAddressRef}
-                className="field"
-                value={customerAddress}
-                onChange={(event) => setCustomerAddress(event.target.value)}
-                onKeyDown={(event) => handleCustomerFieldEnter(event, scannerRef)}
-                placeholder="Customer address"
-              />
-            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 6 }}>
+              <label>
+                <span className="field-label">Address</span>
+                <input
+                  ref={customerAddressRef}
+                  className="field"
+                  value={customerAddress}
+                  onChange={(event) => setCustomerAddress(event.target.value)}
+                  onKeyDown={(event) => handleCustomerFieldEnter(event, scannerRef)}
+                  placeholder="Customer address"
+                />
+              </label>
+              <label>
+                <span className="field-label">Remarks</span>
+                <input className="field" value={customerRemarks} maxLength={1000}
+                  onChange={(event) => setCustomerRemarks(event.target.value)}
+                  onKeyDown={(event) => handleCustomerFieldEnter(event, scannerRef)}
+                  placeholder="Optional remarks" />
+              </label>
+              </div>
           </div>
         </section>
 
@@ -6591,12 +6568,12 @@ export default function BillingTerminalView({ isActive = true }) {
                 refreshHistory(false);
               }}>
                 <label>
-                  <span className="field-label">Bill number / customer</span>
+                  <span className="field-label">Bill / name / phone / amount</span>
                   <input
                     className="field"
                     value={historySearch}
                     onChange={(event) => setHistorySearch(event.target.value)}
-                    placeholder="Search invoice no, customer, payment"
+                    placeholder="Search bill no, name, phone, amount"
                     autoFocus
                   />
                 </label>

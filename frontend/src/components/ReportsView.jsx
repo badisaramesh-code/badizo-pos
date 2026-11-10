@@ -26,6 +26,8 @@ import {
 } from '../api/client';
 import { todayIso } from '../utils/date';
 import { formatMoney } from '../utils/money';
+import GstPreparationView from './GstPreparationView';
+import { buildSplitHsn, gstUqc, gstinHasValidFormat } from '../utils/gstPreparation';
 
 function barcodeStickerSize(row) {
   if (row?.template_name === 'tsc-244-1-33x25-single.prn') return '38 x 25 mm Two-Up';
@@ -202,7 +204,7 @@ function ReportHeader({ title, onExcel, onJson, onReviewExcel, excelLabel = 'Exp
       <div className="report-header-actions">
         <button className="header-print-button report-print-trigger" type="button">Print Report</button>
         <button className="header-print-button" type="button" onClick={onExcel}>{excelLabel}</button>
-        {onJson && <button className="header-print-button" type="button" onClick={onJson}>GST Portal JSON</button>}
+        {onJson && <button className="header-print-button" type="button" onClick={onJson}>GSTR-1 JSON (Validate Before Filing)</button>}
         {onReviewExcel && <button className="header-print-button" type="button" onClick={onReviewExcel}>GST Review Excel</button>}
         <button className="header-print-button" type="button" onClick={onPdf}>Export PDF</button>
         {onClose && <button className="close-action-button" type="button" onClick={onClose}>Close</button>}
@@ -1011,12 +1013,21 @@ export default function ReportsView({ isActive = true, onClose }) {
   function validateGstr1PortalExport() {
     const { from, to } = getOrderedRange(fromDate, toDate);
     const gstin = String(shopSettings.gst_number || '').trim().toUpperCase();
-    if (!/^\d{2}[A-Z0-9]{13}$/.test(gstin)) {
+    if (!gstinHasValidFormat(gstin)) {
       setErrorMessage('Enter a valid 15-character shop GSTIN in Settings before creating GSTR-1 upload files.');
       return null;
     }
     if (gstReturnPeriod(from) !== gstReturnPeriod(to)) {
       setErrorMessage('GST portal upload files must contain one return month only. Select dates within the same month.');
+      return null;
+    }
+    const monthEnd = new Date(Number(to.slice(0, 4)), Number(to.slice(5, 7)), 0).getDate();
+    if (!from.endsWith('-01') || Number(to.slice(8, 10)) !== monthEnd) {
+      setErrorMessage('Select the complete calendar month before generating a GST upload candidate.');
+      return null;
+    }
+    if ((gstr1Report.nilExempt || []).some(row => Number(row.nil_rated_value || 0) !== 0)) {
+      setErrorMessage('Zero-rate supplies need nil-rated / exempt / non-GST and place-of-supply classification. Use the review workbook; portal export is blocked until classified.');
       return null;
     }
     const hasUnregisteredInterstate = (gstr1Report.b2cl || []).length > 0
@@ -1025,7 +1036,7 @@ export default function ReportsView({ isActive = true, onClose }) {
       setErrorMessage('Place-of-supply state is required for interstate B2C sales. Correct those bills before creating a portal upload file.');
       return null;
     }
-    const invalidRecipient = (gstr1Report.b2b || []).find((row) => !/^\d{2}[A-Z0-9]{13}$/.test(String(row.customer_gstin || '').trim().toUpperCase()));
+    const invalidRecipient = (gstr1Report.b2b || []).find((row) => !gstinHasValidFormat(row.customer_gstin));
     if (invalidRecipient) {
       setErrorMessage(`B2B invoice ${invalidRecipient.invoice_no || ''} has an invalid customer GSTIN. Correct it before export.`);
       return null;
@@ -1037,6 +1048,14 @@ export default function ReportsView({ isActive = true, onClose }) {
     if (invalidHsn) {
       const shownHsn = String(invalidHsn.hsn_code || '').trim() || 'blank';
       setErrorMessage(`HSN ${shownHsn} is not valid for GST upload. Update products with blank/0000 HSN codes and reload the report.`);
+      return null;
+    }
+    if ((gstr1Report.b2b || []).some(row => !/^[A-Za-z0-9/-]{1,16}$/.test(row.invoice_no || ''))) {
+      setErrorMessage('GST invoice numbers must contain 1–16 letters, digits, / or -. Correct invoice numbering before export.');
+      return null;
+    }
+    if ((gstr1Report.hsn || []).some(row => !gstUqc(row.unit_type))) {
+      setErrorMessage('HSN quantities require verified units (UQC). Reload the report and correct unsupported or missing product units before export.');
       return null;
     }
     setErrorMessage('');
@@ -1086,7 +1105,8 @@ export default function ReportsView({ isActive = true, onClose }) {
       num: index + 1,
       hsn_sc: String(row.hsn_code || ''),
       desc: '',
-      uqc: 'NOS-NUMBERS',
+      uqc: gstUqc(row.unit_type),
+      rt: roundGstValue(row.gst_percent),
       qty: roundGstValue(row.quantity),
       val: roundGstValue(row.total_value),
       txval: roundGstValue(row.taxable_value),
@@ -1106,11 +1126,11 @@ export default function ReportsView({ isActive = true, onClose }) {
     const payload = {
       gstin,
       fp,
-      gt: roundGstValue(gstr1Report.totals?.total),
-      cur_gt: roundGstValue(gstr1Report.totals?.total),
       b2b,
       b2cs,
-      hsn: { data: hsnData },
+      hsn: Number(fp.slice(2) + fp.slice(0, 2)) >= 202505
+        ? { hsn_b2b: buildSplitHsn(gstr1Report.hsnB2b), hsn_b2c: buildSplitHsn(gstr1Report.hsnB2c) }
+        : { data: hsnData },
       nil: { inv: nilInv },
       doc_issue: {
         doc_det: [{
@@ -1375,8 +1395,8 @@ export default function ReportsView({ isActive = true, onClose }) {
           'Output Taxable': Number(gstr3Report.totals?.outwardTaxable || 0),
           'Output Tax': Number(gstr3Report.totals?.outwardTax || 0),
           'Input Taxable': Number(gstr3Report.totals?.inwardTaxable || 0),
-          'Input Tax Credit': Number(gstr3Report.totals?.inputTax || 0),
-          'GST Payable': Number(gstr3Report.totals?.payable || 0),
+          'Purchase GST (unverified)': Number(gstr3Report.totals?.inputTax || 0),
+          'Book tax difference (not payable)': Number(gstr3Report.totals?.payable || 0),
           Status: Number(gstr3Report.totals?.payable || 0) >= 0 ? 'Payable' : 'Input Credit'
         }]
       },
@@ -1828,7 +1848,7 @@ export default function ReportsView({ isActive = true, onClose }) {
             <ReportHeader
               title="GSTR-1, GSTR-2, GSTR-3B Returns"
               onExcel={exportGstr1OfflineExcel}
-              excelLabel="GSTR-1 Excel (Offline Tool)"
+              excelLabel="GSTR-1 Review Excel"
               onJson={exportGstr1PortalJson}
               onReviewExcel={exportGstrReturnsExcel}
               onPdf={exportPdf}
@@ -1836,8 +1856,9 @@ export default function ReportsView({ isActive = true, onClose }) {
             />
             <div className="panel-body form-stack">
               <div className="alert-box">
-                Use “GST Portal JSON” for direct portal upload. Use “GSTR-1 Excel (Offline Tool)” with the GST Returns Offline Tool, then generate its JSON. Verify GSTIN, filing month, place of supply and HSN/UQC before filing.
+                Preparation working only. Validate generated JSON in the current GST Returns Offline Tool / portal before filing. Excel exports are review workbooks, not the official offline-tool template. Review credit/debit notes, amendments, exports, SEZ, reverse charge, exempt/non-GST supplies and ITC separately. The book difference below is not final tax payable.
               </div>
+              <GstPreparationView shop={shopSettings} />
               <section>
                 <h3 className="panel-title">GSTR-1 - Outward Supplies</h3>
               </section>
@@ -1924,7 +1945,7 @@ export default function ReportsView({ isActive = true, onClose }) {
               </section>
 
               <section>
-                <h3 className="panel-title">GSTR-2 - B2B Purchase / Input GST</h3>
+                <h3 className="panel-title">Purchase Register — for GSTR-2B Reconciliation (GSTR-2 is not filed)</h3>
                 <table className="history-table">
                   <thead><tr><th>Supplier GSTIN</th><th>Supplier</th><th>Supplier Invoice</th><th>Date</th><th>Inward No</th><th>Rate</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Invoice Value</th></tr></thead>
                   <tbody>
@@ -1948,11 +1969,11 @@ export default function ReportsView({ isActive = true, onClose }) {
               </section>
 
               <section>
-                <h3 className="panel-title">GSTR-3B Payable Summary - Output vs Input GST</h3>
+                <h3 className="panel-title">Book Tax Summary — Unreconciled Output vs Purchase GST</h3>
                 <table className="history-table">
                   <thead><tr><th>Book</th><th>GST %</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Tax</th><th>Total</th></tr></thead>
                   <tbody>
-                    {[...(gstr3Report.outward || []).map((row) => ({ ...row, book: 'Outward Supplies' })), ...(gstr3Report.inward || []).map((row) => ({ ...row, book: 'Input Tax Credit' }))].length === 0 ? <tr><td colSpan="8">No GSTR-3B summary data found.</td></tr> : [...(gstr3Report.outward || []).map((row) => ({ ...row, book: 'Outward Supplies' })), ...(gstr3Report.inward || []).map((row) => ({ ...row, book: 'Input Tax Credit' }))].map((row, index) => (
+                    {[...(gstr3Report.outward || []).map((row) => ({ ...row, book: 'Outward Supplies' })), ...(gstr3Report.inward || []).map((row) => ({ ...row, book: 'Purchase GST (unverified)' }))].length === 0 ? <tr><td colSpan="8">No GSTR-3B summary data found.</td></tr> : [...(gstr3Report.outward || []).map((row) => ({ ...row, book: 'Outward Supplies' })), ...(gstr3Report.inward || []).map((row) => ({ ...row, book: 'Purchase GST (unverified)' }))].map((row, index) => (
                       <tr key={`${row.book}-${row.gst_percent}-${index}`}><td>{row.book}</td><td>{Number(row.gst_percent || 0)}%</td><td>{formatMoney(row.taxable)}</td><td>{formatMoney(row.cgst)}</td><td>{formatMoney(row.sgst)}</td><td>{formatMoney(row.igst)}</td><td>{formatMoney(row.tax)}</td><td>{formatMoney(row.total)}</td></tr>
                     ))}
                   </tbody>
@@ -1961,8 +1982,8 @@ export default function ReportsView({ isActive = true, onClose }) {
 
               <section className="report-summary-strip">
                 <span>Output Tax: <strong>{formatMoney(gstr3Report.totals?.outwardTax || 0)}</strong></span>
-                <span>Input Tax Credit: <strong>{formatMoney(gstr3Report.totals?.inputTax || 0)}</strong></span>
-                <span>{Number(gstr3Report.totals?.payable || 0) >= 0 ? 'GST Payable' : 'Input Credit'}: <strong>{formatMoney(Math.abs(Number(gstr3Report.totals?.payable || 0)))}</strong></span>
+                <span>Purchase GST (eligibility unverified): <strong>{formatMoney(gstr3Report.totals?.inputTax || 0)}</strong></span>
+                <span>Book tax difference (not payable): <strong>{formatMoney(Number(gstr3Report.totals?.payable || 0))}</strong></span>
               </section>
 
               <section>
@@ -1978,7 +1999,7 @@ export default function ReportsView({ isActive = true, onClose }) {
               </section>
 
               <section>
-                <h3 className="panel-title">GSTR-3B - 4 Eligible ITC</h3>
+                <h3 className="panel-title">Purchase Tax Draft — NOT Verified Eligible ITC</h3>
                 <table className="history-table">
                   <thead><tr><th>Section</th><th>IGST</th><th>CGST</th><th>SGST</th><th>Cess</th></tr></thead>
                   <tbody>

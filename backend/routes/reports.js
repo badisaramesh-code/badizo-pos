@@ -1414,7 +1414,7 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
          AND i.transaction_type <> 'B2B'
          AND COALESCE(i.customer_gstin, '') = ''
          AND i.tax_type = 'INTERSTATE'
-         AND i.grand_total > 250000
+         AND i.grand_total > CASE WHEN DATE(i.created_at) >= '2024-08-01' THEN 100000 ELSE 250000 END
        GROUP BY i.invoice_no, i.created_at, customer_name, ii.gst_percent
        ORDER BY i.created_at ASC, i.invoice_no ASC, ii.gst_percent ASC`,
       [from, to]
@@ -1436,7 +1436,7 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
          AND i.invoice_status <> 'CANCELLED'
          AND i.transaction_type <> 'B2B'
          AND COALESCE(i.customer_gstin, '') = ''
-         AND NOT (i.tax_type = 'INTERSTATE' AND i.grand_total > 250000)
+         AND NOT (i.tax_type = 'INTERSTATE' AND i.grand_total > CASE WHEN DATE(i.created_at) >= '2024-08-01' THEN 100000 ELSE 250000 END)
        GROUP BY supply_type, ii.gst_percent
        ORDER BY supply_type ASC, ii.gst_percent ASC`,
       [from, to]
@@ -1445,6 +1445,7 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
     const [hsn] = await db.query(
       `SELECT
          COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), '') AS hsn_code,
+         COALESCE(p.unit_type, '') AS unit_type,
          ii.gst_percent,
          SUM(ii.quantity) AS quantity,
          SUM((ii.quantity * ii.sale_price) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable_value,
@@ -1456,7 +1457,7 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
        INNER JOIN invoices i ON i.invoice_no = ii.invoice_no
        LEFT JOIN products p ON p.barcode = ii.barcode
        WHERE DATE(i.created_at) BETWEEN ? AND ? AND i.invoice_status <> 'CANCELLED'
-       GROUP BY COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), ''), ii.gst_percent
+       GROUP BY COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), ''), COALESCE(p.unit_type, ''), ii.gst_percent
        ORDER BY hsn_code ASC, ii.gst_percent ASC`,
       [from, to]
     );
@@ -1464,6 +1465,7 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
     const [hsnB2b] = await db.query(
       `SELECT
          COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), '') AS hsn_code,
+         COALESCE(p.unit_type, '') AS unit_type,
          ii.gst_percent,
          SUM(ii.quantity) AS quantity,
          SUM((ii.quantity * ii.sale_price) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable_value,
@@ -1477,7 +1479,7 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
        WHERE DATE(i.created_at) BETWEEN ? AND ?
          AND i.invoice_status <> 'CANCELLED'
          AND (i.transaction_type = 'B2B' OR COALESCE(i.customer_gstin, '') <> '')
-       GROUP BY COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), ''), ii.gst_percent
+       GROUP BY COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), ''), COALESCE(p.unit_type, ''), ii.gst_percent
        ORDER BY hsn_code ASC, ii.gst_percent ASC`,
       [from, to]
     );
@@ -1485,6 +1487,7 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
     const [hsnB2c] = await db.query(
       `SELECT
          COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), '') AS hsn_code,
+         COALESCE(p.unit_type, '') AS unit_type,
          ii.gst_percent,
          SUM(ii.quantity) AS quantity,
          SUM((ii.quantity * ii.sale_price) - ii.cgst_amount - ii.sgst_amount - ii.igst_amount) AS taxable_value,
@@ -1499,7 +1502,7 @@ router.get('/gstr1', authorize('SERVER', 'ADMIN'), async (req, res) => {
          AND i.invoice_status <> 'CANCELLED'
          AND i.transaction_type <> 'B2B'
          AND COALESCE(i.customer_gstin, '') = ''
-       GROUP BY COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), ''), ii.gst_percent
+       GROUP BY COALESCE(NULLIF(ii.hsn_code, ''), NULLIF(p.hsn_code, ''), ''), COALESCE(p.unit_type, ''), ii.gst_percent
        ORDER BY hsn_code ASC, ii.gst_percent ASC`,
       [from, to]
     );
@@ -1567,6 +1570,7 @@ router.get('/gstr2', authorize('SERVER', 'ADMIN'), async (req, res) => {
     const [b2b] = await db.query(
       `SELECT
          ie.supplier_gstin,
+         DATE_FORMAT(MIN(ie.created_at), '%Y-%m-%d') AS booking_date,
          ie.supplier_name,
          ie.supplier_invoice_no,
          DATE_FORMAT(COALESCE(ie.supplier_invoice_date, ie.created_at), '%d-%m-%Y') AS invoice_date,

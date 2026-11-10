@@ -20,6 +20,7 @@ export default function PrintableQuotation({ quotation }) {
     ['UPI ID', quotation.shop?.upi_id]
   ].filter(([, value]) => String(value || '').trim());
   const totalQuantity = items.reduce((sum, item) => sum + toNumber(item.quantity), 0);
+  const totalDiscount = items.reduce((sum, item) => sum + Math.max(toNumber(item.mrp) - toNumber(item.unitPrice), 0) * toNumber(item.quantity, 1), 0);
 
   return (
     <div className="printable-quotation">
@@ -59,13 +60,16 @@ export default function PrintableQuotation({ quotation }) {
         <tbody>
           {items.map((item, index) => {
             const discount = Math.max(toNumber(item.mrp) - toNumber(item.unitPrice), 0) * toNumber(item.quantity, 1);
+            const discountPercent = toNumber(item.mrp) > 0
+              ? Math.max(toNumber(item.mrp) - toNumber(item.unitPrice), 0) / toNumber(item.mrp) * 100
+              : 0;
             return (
               <tr key={`${item.barcode || 'item'}-${index}`}>
                 <td>{item.barcode || '-'}</td>
                 <td><strong>{item.product_name}</strong>{item.pack_measure ? <small>{item.pack_measure}</small> : null}</td>
                 <td>{item.hsn_code || '-'}</td>
                 <td>{money(item.mrp)}</td>
-                <td>{money(discount)}</td>
+                <td>{money(discount)}{discount > 0 ? <small>{money(discountPercent)}%</small> : null}</td>
                 <td>{money(item.gst_percent)}</td>
                 <td>{quantity(item.quantity)} {item.unit_type || ''}</td>
                 <td><strong>{money(item.lineTotal)}</strong></td>
@@ -85,6 +89,7 @@ export default function PrintableQuotation({ quotation }) {
           {quotation.notes && <p><b>Notes:</b> {quotation.notes}</p>}
         </div>
         <div className="quotation-total-box">
+          <div><span>Total Gain</span><strong>Rs. {money(totalDiscount)}</strong></div>
           <div><span>Taxable Amount</span><strong>{money(quotation.totals?.taxable)}</strong></div>
           <div><span>GST Amount</span><strong>{money(quotation.totals?.tax)}</strong></div>
           <div><span>Round Off</span><strong>{money(quotation.totals?.roundOff)}</strong></div>
