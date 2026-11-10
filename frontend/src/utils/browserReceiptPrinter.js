@@ -47,7 +47,7 @@ export async function printOnLocalReceiptPrinter(receipt) {
     device = await response.json();
     if (device.service !== 'badizo-receipt' || !device.printer) return '';
   } catch {
-    if (configured) throw Error('Open Connect receipt printer on this counter and return to billing.');
+    // Only the availability probe ran. The caller can safely open browser print.
     return '';
   }
 

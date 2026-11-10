@@ -64,7 +64,7 @@ test('customer, accounting and user management HTTP regression', async t => {
     reset(sql => sql.startsWith('INSERT') ? { affectedRows: 1 } : [customer]);
     const result = await request('/customers', 'COUNTER', { name: ' Anu ', phone: '+91 90000 00123', address: ' Shop Road ' });
     assert.equal(result.status, 200);
-    assert.deepEqual(calls[0].params, ['Anu', customer.phone, '', 'Shop Road']);
+    assert.deepEqual(calls[0].params, ['Anu', customer.phone, '', 'Shop Road', '', false]);
     assert.doesNotMatch(calls[0].sql, /loyalty_points|total_spent|visit_count/);
     assert.equal(result.data.loyalty_points, 7);
     assert.equal(result.data.total_spent, 350.5);
