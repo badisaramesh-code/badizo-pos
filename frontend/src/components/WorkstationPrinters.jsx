@@ -30,6 +30,10 @@ export default function WorkstationPrinters() {
           <p>No printer queues found. Install the receipt or label printer in Windows, then check again.</p>}
       </div>}
       {error && <p role="alert">{error}</p>}
-    </> : <span>For receipts, check the printer selected in the browser print dialog. Browser barcode labels use the configured server printer share.</span>}
+    </> : <div>
+      <p>For direct receipt printing, install Badizo Receipt Printer on this Windows counter. In Billing, choose Connect receipt printer and approve the local and cloud POS addresses for this shop.</p>
+      {process.env.REACT_APP_RECEIPT_INSTALLER_URL && <a href={process.env.REACT_APP_RECEIPT_INSTALLER_URL}>Download Windows receipt printer setup</a>}
+      <p>Without a connected receipt printer, use the browser print dialog. Browser barcode labels use the configured server printer share.</p>
+    </div>}
   </div>;
 }

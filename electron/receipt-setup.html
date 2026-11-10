@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Badizo receipt printer</title>
+<style>
+body{font:16px system-ui,sans-serif;color:#192a34;margin:2rem auto;padding:0 1.2rem;max-width:35rem}
+label{display:block;font-weight:600;margin:1.4rem 0 .4rem}select,textarea,button{font:inherit;padding:.6rem}
+select,textarea{box-sizing:border-box;width:100%}button{margin-top:1rem}p{line-height:1.45}
+</style></head><body><h1>Counter receipt printer</h1>
+<form><label for="printer">Printer on this PC</label><select id="printer" required></select>
+<label for="origins">Shop POS addresses</label><p>Enter your local billing address and your cloud billing address, one per line. Only these sites can print on this counter.</p>
+<textarea rows="4" id="origins" required></textarea><button id="save" disabled>Save printer settings</button></form>
+<p role="status" id="status">Loading Windows printers…</p><script src="/setup.js"></script></body></html>

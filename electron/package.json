@@ -8,7 +8,8 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win nsis",
-    "pack": "electron-builder --win dir"
+    "pack": "electron-builder --win dir",
+    "build:receipt-printer": "electron-builder --config receipt-helper-build.json --win nsis --publish never"
   },
   "build": {
     "appId": "com.badizo.pos",
@@ -71,6 +72,7 @@
     "express": "^4.22.2",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.22.4",
+    "pdf-lib": "^1.17.1",
     "pdf-to-printer": "^5.8.0"
   },
   "devDependencies": {

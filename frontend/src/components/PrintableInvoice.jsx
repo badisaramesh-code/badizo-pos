@@ -138,16 +138,20 @@ function BillQrCode({ invoice, className = '' }) {
   const size = qr.modules.size;
   const margin = 4;
   const viewSize = size + margin * 2;
+  // A single path keeps large invoice QR codes quick to rasterize for thermal printing.
+  const squares = [];
+  qr.modules.data.forEach((value, index) => {
+    if (value) {
+      const x = (index % size) + margin;
+      const y = Math.floor(index / size) + margin;
+      squares.push(`M${x} ${y}h1v1h-1z`);
+    }
+  });
 
   return (
     <svg className={`bill-qr ${className}`} viewBox={`0 0 ${viewSize} ${viewSize}`} role="img" aria-label="Bill details QR">
       <rect width={viewSize} height={viewSize} fill="#fff" />
-      {Array.from(qr.modules.data).map((value, index) => {
-        if (!value) return null;
-        const x = (index % size) + margin;
-        const y = Math.floor(index / size) + margin;
-        return <rect key={index} x={x} y={y} width="1" height="1" fill="#000" />;
-      })}
+      <path d={squares.join('')} fill="#000" />
     </svg>
   );
 }

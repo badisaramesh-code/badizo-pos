@@ -35,6 +35,7 @@ import { shouldRecoverCheckout } from '../utils/checkoutRecovery';
 import PrintableInvoice from './PrintableInvoice';
 import PrintableQuotation from './PrintableQuotation';
 import { saveSaleReportPdf } from '../utils/saleReportPdf';
+import { connectBrowserPrinter, printOnLocalReceiptPrinter } from '../utils/browserReceiptPrinter';
 
 const BILLING_MODES = {
   RETAIL_LOCAL: {
@@ -4342,6 +4343,34 @@ export default function BillingTerminalView({ isActive = true }) {
         printFrame.style.opacity = '1';
         printFrame.style.pointerEvents = 'none';
         await waitForFrameAssets(doc);
+        // The final receipt template can wrap rows differently from the measurement template.
+        const finalReceipt = doc.querySelector('.thermal-paper');
+        if (finalReceipt) {
+          finalReceipt.style.setProperty('max-height', 'none', 'important');
+          const heightMm = Math.ceil(finalReceipt.getBoundingClientRect().height * 25.4 / 96);
+          if (heightMm > 0) {
+            const pageStyle = doc.createElement('style');
+            pageStyle.textContent = `
+              @page { size: ${thermalWidthMm}mm ${heightMm}mm; margin: 0; }
+              @page thermal-receipt { size: ${thermalWidthMm}mm ${heightMm}mm; margin: 0; }
+              html, body { height: ${heightMm}mm !important; min-height: 0 !important; max-height: none !important; }
+            `;
+            doc.head.appendChild(pageStyle);
+            printFrame.style.height = `${heightMm}mm`;
+            try {
+              const printer = await printOnLocalReceiptPrinter(finalReceipt);
+              if (printer) {
+                setStatusMessage(`Receipt sent to ${printer}.`);
+                cleanup();
+                return;
+              }
+            } catch (err) {
+              setErrorMessage(`${err.message || 'Receipt printing was not confirmed.'} Check the printer before reprinting from Old Bills.`);
+              cleanup();
+              return;
+            }
+          }
+        }
       }
 
       frameWindow.addEventListener('afterprint', cleanup, { once: true });
@@ -6163,6 +6192,12 @@ export default function BillingTerminalView({ isActive = true }) {
                   Quotation A4 PDF
                 </button>
                 <button className="secondary-button" onClick={() => printBill(printableInvoice || printableDraft)}>Print</button>
+                {!window.badizoDesktop && <button type="button" className="secondary-button" onClick={() => {
+                  try {
+                    connectBrowserPrinter(name => setStatusMessage(`Connected to ${name}.`));
+                    setStatusMessage('Choose the printer in the setup tab. If the tab cannot open the page, start Badizo Receipt Printer on this PC.');
+                  } catch (err) { setErrorMessage(err.message); }
+                }}>Connect receipt printer</button>}
                 <button
                   className="secondary-button sale-report-action"
                   type="button"

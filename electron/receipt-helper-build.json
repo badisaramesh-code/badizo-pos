@@ -1,0 +1,12 @@
+{
+  "extends": null,
+  "appId": "com.badizo.receiptprinter",
+  "productName": "Badizo Receipt Printer",
+  "extraMetadata": { "name": "badizo-receipt-printer", "main": "receipt-helper-main.cjs" },
+  "directories": { "output": "../output/browser-receipt-installer" },
+  "files": ["receipt-helper-main.cjs", "browser-receipt-printer.cjs", "receipt-setup.html", "receipt-setup.js"],
+  "asarUnpack": ["**/SumatraPDF*.exe"],
+  "win": { "target": "nsis", "icon": "assets/badizo.ico", "signAndEditExecutable": false },
+  "nsis": { "oneClick": true, "perMachine": false, "include": "receipt-helper-install.nsh", "createDesktopShortcut": false },
+  "artifactName": "Badizo-Receipt-Printer-Setup.exe"
+}
