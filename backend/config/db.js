@@ -1094,6 +1094,7 @@ pool.ready = (async () => {
         UNIQUE KEY uq_local_ledger_scope_name (account_scope, account_name)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+    await require('../services/paymentDiary').ensureSchema(connection);
     await connection.query(`
       CREATE TABLE IF NOT EXISTS staff_workers (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,

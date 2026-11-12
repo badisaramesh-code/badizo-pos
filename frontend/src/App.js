@@ -9,7 +9,8 @@ import GatePassView from './components/GatePassView';
 import InwardEntryView from './components/InwardEntryView';
 import InventoryDashboardView from './components/InventoryDashboardView';
 import LoginView from './components/LoginView';
-import LocalAccountsView from './components/LocalAccountsView';
+import LocalAccountsWorkspace from './components/LocalAccountsWorkspace';
+import { PaymentDiaryReminder } from './components/PaymentDiaryView';
 import OrdersView from './components/OrdersView';
 import PriceListView from './components/PriceListView';
 import ProductImportHistoryView from './components/ProductImportHistoryView';
@@ -45,6 +46,7 @@ export default function App() {
   const billingPaused = billingState && billingState.mode !== 'active';
   const [currentUser, setCurrentUser] = useState(getStoredUser);
   const [backupAlert, setBackupAlert] = useState(null);
+  const [openPaymentDiary,setOpenPaymentDiary]=useState(false);
 
   const [usageEnabled,setUsageEnabled] = useState(false);
   useEffect(() => {
@@ -237,13 +239,14 @@ export default function App() {
     staffPayroll: <StaffPayrollView />,
     reports: <ReportsView isActive={activeWorkspace === 'reports'} onClose={() => setActiveWorkspace('billing')} />,
     books: <BooksView setActiveWorkspace={setActiveWorkspace} />,
-    localAccounts: <LocalAccountsView />,
+    localAccounts: <LocalAccountsWorkspace isActive={activeWorkspace==='localAccounts'} openDiary={openPaymentDiary} onDiaryOpened={()=>setOpenPaymentDiary(false)}/>,
     system: <SystemView />
   };
 
   return (
     <div className="app-shell">
       <ReportApprovalNotifications currentUser={currentUser} />
+      <PaymentDiaryReminder user={currentUser} onOpenDiary={()=>{setOpenPaymentDiary(true);setActiveWorkspace('localAccounts');}}/>
       {backupAlert && (
         <div className="backup-alert-toast-wrap" role="alert" aria-live="assertive">
           <div className={`backup-alert-modal ${backupAlert.status === 'success' ? 'backup-alert-success' : ''}`}>

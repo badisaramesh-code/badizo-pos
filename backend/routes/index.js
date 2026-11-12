@@ -19,6 +19,7 @@ const routes = [
   ['/api/gate-pass', require('./gatePass')],
   ['/api/inward', require('./inward')],
   ['/api/local-accounts', require('./localAccounts')],
+  ['/api/local-payment-diary', require('./paymentDiary')],
   ['/api/settings', require('./settings')],
   ['/api/staff-payroll', require('./staffPayroll')],
   ['/api/system-health', require('./health')],
