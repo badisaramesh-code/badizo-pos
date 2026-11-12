@@ -45,7 +45,7 @@ function createCloudSyncSettingsService({
   async function load() {
     try {
       const saved = JSON.parse(await fs.readFile(configFile, 'utf8'));
-      return { config: validateConfig(saved.config), updatedAt: saved.updatedAt || null, updatedBy: saved.updatedBy || null };
+      return { transfersPaused: saved.transfersPaused === true, config: validateConfig(saved.config), updatedAt: saved.updatedAt || null, updatedBy: saved.updatedBy || null };
     } catch (error) {
       if (error.code === 'ENOENT') return { config: { ...DEFAULT_CONFIG }, updatedAt: null, updatedBy: null };
       throw invalid('Unable to read cloud sync settings. The existing schedule was not replaced.', 500);
@@ -58,25 +58,28 @@ function createCloudSyncSettingsService({
     const ready = editable && worker.ready === true;
     return { ...saved, nodeRole, editable, service: { ready, state: ready ? (worker.state || 'paused') : 'not-configured', direction:worker.direction==='two-way'?'two-way':'upload' },
       lastSuccessAt: worker.lastSuccessAt || null,
-      nextRunAt: ready ? (Object.hasOwn(worker,'nextRunAt') ? worker.nextRunAt : nextScheduledAt(saved.config, clock())) : null,
+      nextRunAt: ready && !saved.transfersPaused ? (Object.hasOwn(worker,'nextRunAt') ? worker.nextRunAt : nextScheduledAt(saved.config, clock())) : null,
       manualPending: worker.manualPending === true,
       failureCount: Number(worker.failureCount || 0),
       message: !editable ? 'Manage the schedule on the local shop server.' : !ready
         ? worker.reason==='restored-database-requires-enrollment' ? 'Local billing can continue. This restored database needs a newly verified sync baseline before cloud updates can resume.' : 'Schedule preferences can be saved. Automatic updates and Update Cloud Now are unavailable until the cloud sync connection is configured.'
-        : saved.config.enabled ? 'Automatic cloud sync is enabled.' : 'Automatic cloud sync is paused.' };
+        : saved.transfersPaused ? 'Cloud transfers are paused. Any batch already in progress can finish.' : saved.config.enabled ? 'Automatic cloud sync is enabled.' : 'Automatic cloud sync is paused.' };
   }
-  function save(input, user) {
+  function save(input, user, pauseOverride) {
     const operation = writeQueue.catch(() => {}).then(async () => {
       if (nodeRole !== 'local-server') throw invalid('Cloud sync schedules can only be changed on the local shop server.', 403);
       let proposed = input;
-      if (user?.role === 'ADMIN') {
+      const previous = await load();
+      if (pauseOverride !== undefined) {
+        if (typeof pauseOverride !== 'boolean') throw invalid('Choose pause or resume.');
+        proposed = previous.config;
+      } else if (user?.role === 'ADMIN') {
         if (!input || Object.keys(input).length !== 1 || !Object.hasOwn(input, 'dailyTime')) throw invalid('Admins can change the daily sync time.', 403);
         proposed = { ...(await load()).config, dailyTime: input.dailyTime };
       }
       const config = validateConfig(proposed);
-      const worker = await getWorkerState();
-      if (config.enabled && worker.ready !== true) throw invalid('The cloud sync connection is not configured. Save the schedule with automatic sync paused.', 409);
-      const payload = { config, updatedAt: clock().toISOString(), updatedBy: String(user?.username || 'server').slice(0, 100) };
+      if (pauseOverride === undefined && config.enabled && (await getWorkerState()).ready !== true) throw invalid('The cloud sync connection is not configured. Save the schedule with automatic sync paused.', 409);
+      const payload = { config, transfersPaused: pauseOverride ?? previous.transfersPaused ?? false, updatedAt: pauseOverride === undefined ? clock().toISOString() : previous.updatedAt, updatedBy: String(user?.username || 'server').slice(0, 100) };
       await fs.mkdir(configDirectory, { recursive: true, mode: 0o700 });
       const temporary = `${configFile}.${crypto.randomUUID()}.tmp`;
       try {
@@ -86,6 +89,10 @@ function createCloudSyncSettingsService({
         await fs.unlink(temporary).catch(() => {});
         throw invalid('Unable to save cloud sync settings. Please retry.', 500);
       }
+      if (pauseOverride !== undefined) {
+        try { await require('./transferAudit').appendSyncEvent(configDirectory, pauseOverride ? 'Paused' : 'Resumed', clock().getTime(), payload.updatedBy); }
+        catch { console.warn('Cloud sync audit write failed.'); }
+      }
       return state();
     });
     writeQueue = operation;
@@ -93,10 +100,11 @@ function createCloudSyncSettingsService({
   }
   async function requestNow(user) {
     if(nodeRole !== 'local-server') throw invalid('Start this update on the local shop server.',403);
+    if ((await load()).transfersPaused) throw invalid('Resume cloud sync before starting a transfer.',409);
     if(typeof requestTransfer !== 'function' || (await getWorkerState()).ready !== true) throw invalid('Cloud sync is not configured.',409);
     await requestTransfer(user);
     return state();
   }
-  return { state, save, requestNow, loadScheduleRecord: load, loadSchedule: async () => (await load()).config };
+  return { audit: () => require('./transferAudit').readReport(configDirectory), state, save, setPaused: (paused, user) => save(null, user, paused), requestNow, loadScheduleRecord: load, loadSchedule: async () => (await load()).config };
 }
 module.exports = { DEFAULT_CONFIG, validateConfig, nextScheduledAt, createCloudSyncSettingsService };

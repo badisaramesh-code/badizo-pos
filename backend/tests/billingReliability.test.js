@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 let state;
 function mock(modulePath, exports) { require.cache[require.resolve(modulePath)] = { exports }; }
 mock('../services/logger', { logError() {}, logInfo() {} });
-mock('../config/db', { getConnection: async () => {
+mock('../config/db', { query:async(sql,params)=>{state.queries.push({sql,params});return sql.includes('FROM parked_checkout_reviews')?[[{checkout_request_id:'test-review-123',review_status:'SAVED',invoice_no:'INV-A'}]]:[{affectedRows:1}];}, getConnection: async () => {
   if (state.connectionError) throw Object.assign(new Error('private database details'), { code: 'ECONNREFUSED' });
   return {
     async beginTransaction() { state.begun = true; },
@@ -18,6 +18,7 @@ mock('../config/db', { getConnection: async () => {
     },
     async query(sql, params) {
       state.queries.push({ sql, params });
+      if(sql.includes('GET_LOCK'))return [[{acquired:1}]];
       if (sql.includes('FROM invoices') && sql.includes('checkout_request_id')) return [state.existing ? [state.existing] : []];
       if (sql.includes('FROM invoice_items')) return [state.savedItems || [{ barcode: 'PRODUCT1', quantity: 1, sale_price: 100, is_free_bonus: 0 }]];
       if (sql.includes('FROM products WHERE barcode IN')) return [[{ barcode: 'PRODUCT1', product_name: 'Test product', sale_price: 100 }]];
@@ -56,11 +57,22 @@ test('billing HTTP reliability with an isolated database double', async t => {
   await t.test('cash tendered changes the change due, while an inconsistent payable total is rejected',async()=>{
     reset();
     const valid=await post({...payload,items:[{...payload.items[0],quantity:0.56}],grand_total:56,sub_total:56,cash_received:100});
-    assert.equal(valid.status,200);assert.equal(state.invoiceParams[9],56);assert.equal(state.invoiceParams[11],44);
+    assert.equal(valid.status,200);assert.equal(state.invoiceParams[9],56);assert.ok(state.queries.some(q=>q.sql.includes('RELEASE_LOCK')));assert.equal(state.invoiceParams[11],44);
     reset();
     const invalid=await post({...payload,grand_total:1,cash_received:100});
     assert.equal(invalid.status,400);assert.equal((await invalid.json()).code,'INVALID_BILL_TOTAL');
     assert.equal(state.rolledBack,true);assert.equal(state.invoiceParams,undefined);
+  });
+  await t.test('weighted exchanges accept exact and older two-decimal counter totals', async () => {
+    for (const exchange_total of [2.675, '2.67']) {
+      reset();
+      const response = await post({ ...payload, exchange_total,
+        exchange_items: [{ barcode: 'RETURN', quantity: 0.25, sale_price: 10.7 }],
+        grand_total: 97, loyalty_base_total: '97.33' });
+      assert.equal(response.status, 200);
+      assert.equal(state.invoiceParams[9], 97);
+      assert.ok(state.queries.some(q => /FROM products WHERE barcode IN.*FOR UPDATE/.test(q.sql)));
+    }
   });
   await t.test('guarded saved checkout verifies full intent while preserving main duplicate checks', async () => {
     const previous = process.env.BADIZO_CHECKOUT_REQUEST_GUARD;
@@ -129,8 +141,9 @@ test('billing HTTP reliability with an isolated database double', async t => {
   });
   await t.test('digital overpayment cannot be committed', async () => {
     reset(); const response = await post({ ...payload, payment_mode: 'Mixed', payment_splits: { cash: 10, upi: 200, card: 200 } });
-    assert.equal(response.status, 400); assert.equal(state.rolledBack, true); assert.equal(state.invoiceParams, undefined);
+    assert.equal(response.status, 400); assert.equal(state.rolledBack, true); assert.equal(state.invoiceParams, undefined);assert.ok(state.queries.some(q=>q.sql.includes('RELEASE_LOCK')));
   });
+  await t.test('pending handover review is admin-only and counters may report their request IDs',async()=>{reset();assert.equal((await fetch(base+'/billing/checkout/reviews',{headers})).status,403);const adminHeaders={...headers,Authorization:'Bearer '+jwt.sign({role:'ADMIN',username:'admin'},JWT_SECRET)};const review=await fetch(base+'/billing/checkout/reviews',{headers:adminHeaders});assert.equal(review.status,200);assert.equal((await review.json())[0].invoice_no,'INV-A');const posted=await fetch(base+'/billing/checkout/reviews',{method:'POST',headers,body:JSON.stringify({rows:[{checkout_request_id:'test-review-123',counter_no:1,grand_total:'100'}]})});assert.equal(posted.status,200);assert.equal((await fetch(base+'/billing/checkout/reviews/test-review-123/check',{method:'POST',headers})).status,403);assert.equal((await fetch(base+'/billing/checkout/reviews/test-review-123/events',{headers})).status,403);assert.equal((await fetch(base+'/billing/checkout/reviews/test-review-123/check',{method:'POST',headers:adminHeaders})).status,200);assert.ok(state.queries.some(q=>q.sql.includes('INSERT INTO checkout_recovery_events')&&q.params?.[1]==='admin'&&q.params?.[2]==='CHECK'));});
   await t.test('malformed requests return JSON instead of a hanging request', async () => {
     const response = await fetch(base + '/billing/checkout', { method: 'POST', headers, body: '{', signal: AbortSignal.timeout(2000) });
     assert.equal(response.status, 400); assert.equal((await response.json()).code, 'INVALID_JSON');

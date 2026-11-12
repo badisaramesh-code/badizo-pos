@@ -6,7 +6,7 @@ import * as api from '../api/client';
 
 jest.mock('../api/client', () => ({
   fetchCounterHandover: jest.fn(), fetchCounterHandoverHistory: jest.fn(),
-  fetchSettings: jest.fn(), getStoredUser: jest.fn(), saveCounterHandover: jest.fn()
+  searchClosingAccounts: jest.fn(), fetchSettings: jest.fn(), getStoredUser: jest.fn(), saveCounterHandover: jest.fn()
 }));
 jest.mock('xlsx', () => ({}));
 
@@ -85,4 +85,44 @@ test('server users return to their last selected handover date and counter', asy
   expect(container.querySelector('select.select').value).toBe('2');
   expect(container.querySelector('input[type="date"]').value).toBe('2026-10-16');
   expect(api.fetchCounterHandover).toHaveBeenCalledWith('2026-10-16', 2);
+});
+
+test.each(['COUNTER', 'ADMIN', 'SERVER'])('%s sees the appropriate screen and print totals', async role => {
+  api.getStoredUser.mockReturnValue({ role, counter_no: 1 });
+  api.fetchCounterHandover.mockResolvedValue({ snapshot: { counter_sales: 87654, all_counter_sales: 98765 } });
+  await act(async () => root.render(<CounterClosingView />));
+  expect(Boolean(container.querySelector('.handover-sales-strip'))).toBe(role !== 'COUNTER');
+  expect(container.querySelector('.handover-print-sheet').textContent.includes('98765')).toBe(role !== 'COUNTER');
+});
+
+test('row three suggests canonical accounts after three letters and saves the chosen customer', async () => {
+  jest.useFakeTimers();
+  try {
+    api.searchClosingAccounts.mockResolvedValue([
+      { kind: 'HISTORY', name: 'Lankapalli' }
+    ]);
+    api.saveCounterHandover.mockResolvedValue({ sheet_no: 'TEST' });
+    await act(async () => root.render(<CounterClosingView />));
+    const input = details()[2];
+    const type = value => act(async () => Simulate.change(input, { target: { value } }));
+    await type('la');
+    await act(async () => jest.advanceTimersByTime(200));
+    expect(api.searchClosingAccounts).not.toHaveBeenCalled();
+    await type('lankapally');
+    await act(async () => jest.advanceTimersByTime(200));
+    expect(api.searchClosingAccounts).toHaveBeenCalledWith('lankapally', false);
+    expect(container.querySelector('[role=listbox]').textContent).toContain('Previous day-sheet name');
+    await act(async () => Simulate.click([...container.querySelectorAll('[role=option]')].find(option => option.textContent.includes('Use as customer'))));
+    expect(input.value).toBe('Lankapalli');
+    const dr = input.closest('tr').querySelector('.handover-dr-input');
+    await act(async () => Simulate.focus(dr));
+    await act(async () => Simulate.change(dr, { target: { value: '125' } }));
+    const save = [...container.querySelectorAll('button')].find(item => /save/i.test(item.textContent));
+    await act(async () => Simulate.click(save));
+    expect(api.saveCounterHandover.mock.calls[0][0].entries).toContainEqual(expect.objectContaining({
+      details: 'Lankapalli', entry_type: 'CLOSING_CUSTOMER', direction: 'DR', amount: '125'
+    }));
+  } finally {
+    jest.useRealTimers();
+  }
 });

@@ -6,6 +6,12 @@ import {
   checkoutRecoveryEnabled,
   pendingCheckout,
   clearConfirmedCheckout,
+  abandonPendingCheckout,
+  parkedCheckouts,
+  parkPendingCheckout,
+  resolveParkedCheckout,
+  syncCheckoutReviews,
+  fetchCheckoutReviews,
   createSalesReturn,
   createQuotation,
   deleteHeldBill,
@@ -32,7 +38,11 @@ import {
 import { amountInWords, formatMoney, toNumber } from '../utils/money';
 import { findExactSaleProduct } from '../utils/productLookup';
 import { shouldRecoverCheckout } from '../utils/checkoutRecovery';
+import { calculateSaleAmounts } from '../utils/saleAmounts';
+import { lineUnits, rupees, roundedPayable } from '../utils/checkoutAmounts';
+import { isConfirmedPriceChange, refreshCheckoutPrices } from '../utils/checkoutPriceRefresh';
 import PrintableInvoice from './PrintableInvoice';
+import CheckoutReviewPanel from './CheckoutReviewPanel';
 import PrintableQuotation from './PrintableQuotation';
 import { saveSaleReportPdf } from '../utils/saleReportPdf';
 import { connectBrowserPrinter, printOnLocalReceiptPrinter } from '../utils/browserReceiptPrinter';
@@ -135,7 +145,7 @@ function getUnitPrice(item, mode) {
   if (quantity >= 6 && qty6Price > 0) return qty6Price;
   if (quantity >= 3 && qty3Price > 0) return qty3Price;
   if (BILLING_MODES[mode]?.tier === 'WHOLESALE') {
-    return toNumber(item.wholesale_price || item.sale_price || item.mrp);
+    return toNumber(item.wholesale_price) || toNumber(item.sale_price || item.mrp);
   }
   return toNumber(item.sale_price || item.mrp);
 }
@@ -525,6 +535,12 @@ export default function BillingTerminalView({ isActive = true }) {
   const [paymentReference, setPaymentReference] = useState(initialDraft?.paymentReference || '');
   const [paymentConfirmed, setPaymentConfirmed] = useState(Boolean(initialDraft?.paymentConfirmed));
   const [isCheckoutSubmitting, setIsCheckoutSubmitting] = useState(false);
+  const [clearCartMessage,setClearCartMessage]=useState('');
+  const readParked=()=>{try{const rows=parkedCheckouts(counterNo);return Array.isArray(rows)?rows:[];}catch{return [];}};
+  const [parkedBills,setParkedBills]=useState(readParked);
+  const [reviewRows,setReviewRows]=useState(null);
+  const [recoveredInvoice,setRecoveredInvoice]=useState('');
+  useEffect(()=>{const refresh=()=>{setParkedBills(readParked());try{Promise.resolve(syncCheckoutReviews(counterNo)).catch(()=>{});}catch{}};refresh();window.addEventListener('badizo-checkout-review-update',refresh);const timer=setInterval(refresh,60000);return()=>{clearInterval(timer);window.removeEventListener('badizo-checkout-review-update',refresh);};},[counterNo]);
   const [holdBillDialogOpen, setHoldBillDialogOpen] = useState(false);
   const [holdCustomerName, setHoldCustomerName] = useState('');
   const [digitalContactModal, setDigitalContactModal] = useState(null);
@@ -535,6 +551,7 @@ export default function BillingTerminalView({ isActive = true }) {
   const [cashReceivedFlashToken, setCashReceivedFlashToken] = useState(0);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [priceRefreshMessage, setPriceRefreshMessage] = useState('');
   const [invoiceHistory, setInvoiceHistory] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
   const [historyPaymentMode, setHistoryPaymentMode] = useState('');
@@ -602,6 +619,9 @@ export default function BillingTerminalView({ isActive = true }) {
   const holdBillShortcutKeysRef = useRef({ ctrl: false, alt: false });
   const holdBillShortcutPressedRef = useRef(false);
   const checkoutInFlightRef = useRef(false);
+  const [checkoutPriceRetry, setCheckoutPriceRetry] = useState(null);
+  const latestCartRef = useRef(cart);
+  latestCartRef.current = cart;
   const checkoutRequestIdRef = useRef(initialDraft?.checkoutRequestId || '');
   const backendPingFailCountRef = useRef(0);
   const previousExchangeModeRef = useRef(exchangeMode);
@@ -1176,29 +1196,15 @@ export default function BillingTerminalView({ isActive = true }) {
   }, [exchangeMode, exchangeQuery]);
 
   const totals = useMemo(() => {
-    let taxable = 0;
-    let tax = 0;
-    let discount = 0;
-
-    cart.forEach((item) => {
+    const { taxable, tax, discount, saleGrand } = calculateSaleAmounts(
+      cart, item => getUnitPrice(item, billingMode)
+    );
+    const exchangeTotal = rupees(exchangeItems.reduce((sum, item) => {
       const quantity = toNumber(item.quantity, 1);
-      const unitPrice = getUnitPrice(item, billingMode);
-      const lineTotal = unitPrice * quantity;
-      const gstPercent = toNumber(item.gst_percent);
-      const rowTax = lineTotal * (gstPercent / (100 + gstPercent));
-
-      taxable += lineTotal - rowTax;
-      tax += rowTax;
-      discount += Math.max(toNumber(item.mrp) - unitPrice, 0) * quantity;
-    });
-
-    const saleGrand = taxable + tax;
-    const exchangeTotal = exchangeItems.reduce((sum, item) => {
-      const quantity = toNumber(item.quantity, 1);
-      return sum + toNumber(item.unitPrice || item.sale_price || item.mrp) * quantity;
-    }, 0);
+      return sum + lineUnits(toNumber(item.unitPrice || item.sale_price || item.mrp), quantity);
+    }, 0));
     const netGrand = Math.max(saleGrand - exchangeTotal, 0);
-    const loyaltyEnabled = shopSettings.loyalty_enabled === true || shopSettings.loyalty_enabled === '1';
+    const loyaltyEnabled = Number(shopSettings.loyalty_enabled) === 1;
     const redeemRulePoints = loyaltyEnabled ? Math.max(toNumber(shopSettings.loyalty_redeem_points || 10), 0) : 0;
     const redeemRuleAmount = Math.max(toNumber(shopSettings.loyalty_redeem_amount || 0.5), 0);
     const availablePoints = Math.floor(toNumber(loyaltyCustomer?.loyalty_points || 0));
@@ -1207,7 +1213,7 @@ export default function BillingTerminalView({ isActive = true }) {
       ? Math.min((requestedRedeemPoints / redeemRulePoints) * redeemRuleAmount, netGrand)
       : 0;
     const unroundedGrand = Math.max(netGrand - loyaltyRedeemAmount, 0);
-    const roundedGrand = Math.round(unroundedGrand);
+    const roundedGrand = roundedPayable(netGrand, loyaltyRedeemAmount);
     const isInterstate = BILLING_MODES[billingMode].taxType === 'INTERSTATE';
     return {
       taxable,
@@ -2803,6 +2809,27 @@ export default function BillingTerminalView({ isActive = true }) {
     }
   }
 
+  async function continueNextCustomer(){
+    if(checkoutInFlightRef.current||isCheckoutSubmitting)return;
+    setErrorMessage('');
+    try{const parked=parkPendingCheckout(counterNo);setParkedBills(readParked());resetBill();setClearCartMessage(parked?'Previous bill safely parked. New cart ready for the NEXT customer. Use Finish / Recover Original for the SAME customer.':'New cart ready.');if(parked)Promise.resolve(syncCheckoutReviews(counterNo)).catch(()=>{});}
+    catch(error){setErrorMessage(error.message||'Cannot safely preserve this bill. Cart retained.');}
+  }
+  async function recoverParkedBill(id,cancelUnsaved=false){
+    if(checkoutInFlightRef.current||isCheckoutSubmitting)return;
+    setIsCheckoutSubmitting(true);setErrorMessage('');
+    try{const result=await resolveParkedCheckout(counterNo,id,{cancelUnsaved});setParkedBills(readParked());setRecoveredInvoice(result.invoice_no||'');setClearCartMessage(result.status==='SAVED'?'Original bill saved as '+result.invoice_no+'. Do not bill this customer again. Reprint the original invoice.':'Original checkout cancelled before saving. It is now safe to enter a replacement bill.');}
+    catch(error){setErrorMessage(error.response?.data?.error||error.message||'Bill is still pending. Use Continue with Next Customer for a different customer.');}
+    finally{setIsCheckoutSubmitting(false);}
+  }
+  async function showHandoverReview(){try{await syncCheckoutReviews(counterNo);setReviewRows(await fetchCheckoutReviews());}catch(error){setErrorMessage(error.response?.data?.error||error.message||'Server review unavailable. Local pending list is retained.');}}
+  async function clearCartSafely(){
+    if(checkoutInFlightRef.current||isCheckoutSubmitting)return;
+    setIsCheckoutSubmitting(true);setErrorMessage('');setClearCartMessage('');
+    try{const result=await abandonPendingCheckout(counterNo);resetBill();setClearCartMessage(result.status==='SAVED'?'Previous bill was already saved as '+result.invoice_no+'. It was not cancelled. Cart cleared; use Bill History to reprint.':'Cart cleared. Ready for a new bill.');}
+    catch(error){setErrorMessage(error.response?.data?.error||error.message||'Unable to clear the pending checkout. Cart retained.');}
+    finally{setIsCheckoutSubmitting(false);}
+  }
   function resetBill(options = {}) {
     if (checkoutRecoveryEnabled) {
       try {
@@ -2810,6 +2837,7 @@ export default function BillingTerminalView({ isActive = true }) {
       } catch (error) { setErrorMessage(error.message); return; }
     }
     const { closeActiveWindow = true } = options;
+    setPriceRefreshMessage('');
     hideHoverBillPreview();
     suppressDraftPersistenceRef.current = true;
     checkoutRequestIdRef.current = '';
@@ -5309,7 +5337,7 @@ export default function BillingTerminalView({ isActive = true }) {
       total_cgst: totals.cgst.toFixed(2),
       total_sgst: totals.sgst.toFixed(2),
       total_igst: totals.igst.toFixed(2),
-      exchange_total: totals.exchangeTotal.toFixed(2),
+      exchange_total: totals.exchangeTotal,
       exchange_items: exchangeItems.map((item) => ({
         barcode: item.barcode,
         product_name: item.product_name,
@@ -5357,6 +5385,38 @@ export default function BillingTerminalView({ isActive = true }) {
 
       completeSuccessfulCheckout(checkoutResult.invoice_no || invoiceNo, checkoutResult.free_items || []);
     } catch (err) {
+      if (isConfirmedPriceChange(err)) {
+        // The server has rolled this attempt back and checkout() has released
+        // its journal. A new ID is required for the newly priced sale intent.
+        checkoutRequestIdRef.current = '';
+        try {
+          const refreshedCart = await refreshCheckoutPrices(cart, lookupExactProduct);
+          if (latestCartRef.current !== cart) {
+            setErrorMessage('The bill changed while rates were checked. Press Complete Sale again to use the current bill.');
+            return;
+          }
+          exactProductShortCacheRef.current.clear();
+          setCart(refreshedCart);
+          setErrorMessage('');
+          const attempts = Number(overrides.priceRefreshAttempts || 0) + 1;
+          if (activePaymentMode === 'Cash' && attempts <= 2) {
+            setPriceRefreshMessage('Rates updated from the server. Completing the bill with the revised total.');
+            setCheckoutPriceRetry({
+              cart: refreshedCart,
+              mode: activePaymentMode,
+              overrides: { ...overrides, priceRefreshAttempts: attempts }
+            });
+          } else {
+            if (activePaymentMode !== 'Cash') setPaymentConfirmed(false);
+            setPriceRefreshMessage(activePaymentMode === 'Cash'
+              ? 'Rates updated again. Review the revised total and press Complete Sale.'
+              : 'Rates updated from the server. Check the revised total and confirm payment before completing the sale.');
+          }
+        } catch (refreshError) {
+          setErrorMessage(refreshError.message || 'Unable to refresh rates. Your bill is retained; try Complete Sale again.');
+        }
+        return;
+      }
       try {
         if (err.checkoutJournalError) throw err;
         // Preview numbers can belong to a different concurrent sale. Recover
@@ -5372,6 +5432,15 @@ export default function BillingTerminalView({ isActive = true }) {
       setIsCheckoutSubmitting(false);
     }
   }
+
+  // Run only after React has rendered the refreshed cart and its new totals;
+  // retrying inside the rejection handler would reuse the old price closure.
+  useEffect(() => {
+    if (!checkoutPriceRetry || isCheckoutSubmitting) return;
+    const retry = checkoutPriceRetry;
+    setCheckoutPriceRetry(null);
+    if (isActive && retry.cart === cart) void submitCheckout(retry.mode, retry.overrides);
+  });
 
   const backendPingLabel = backendPingOk === null ? 'PING ...' : backendPingOk ? 'PING OK' : 'PING FAIL';
   const backendPingTitle = lastBackendPingAt
@@ -5478,6 +5547,9 @@ export default function BillingTerminalView({ isActive = true }) {
             )}
 
             <div className="scanner-row billing-scanner-row">
+              <button type="button" className="secondary-button" onClick={clearCartSafely} disabled={isCheckoutSubmitting}>Clear Cart</button>
+              <button type="button" className="primary-button" onClick={continueNextCustomer} disabled={isCheckoutSubmitting}>Continue with Next Customer</button>
+              {clearCartMessage&&<span role="status">{clearCartMessage}</span>}
               <span className="status-chip">F9 Focus Scanner</span>
               <div className="search-wrap">
                 <input
@@ -5702,6 +5774,12 @@ export default function BillingTerminalView({ isActive = true }) {
               </details>
             </div>
             {(errorMessage || initialPendingError) && <div className="alert-box">{errorMessage || initialPendingError}</div>}
+            {parkedBills.length>0&&<section className="panel" aria-label="Pending bill review"><h3>Pending Bills: {parkedBills.filter(row=>!row.resolution).length}</h3><p>Same customer: finish the original bill here. Do not enter it again in a new cart. These records remain for handover review.</p>{parkedBills.map(row=><div key={row.payload.checkout_request_id}><strong>{row.savedState?.customerName||'Walk-in customer'} · {formatMoney(row.payload.grand_total)} · {row.createdAt}</strong>{row.resolution?<span> · {row.resolution.status} {row.resolution.invoice_no||''}</span>:<><button type="button" disabled={isCheckoutSubmitting} onClick={()=>recoverParkedBill(row.payload.checkout_request_id)}>Finish / Recover Original</button><button type="button" disabled={isCheckoutSubmitting} onClick={()=>recoverParkedBill(row.payload.checkout_request_id,true)}>Cancel Unsaved / Check Saved</button></>}</div>)}</section>}
+            {recoveredInvoice&&<button type="button" onClick={()=>handleReprint(recoveredInvoice)}>Reprint {recoveredInvoice}</button>}
+            {['SERVER','ADMIN'].includes(currentUser?.role)&&<button type="button" onClick={showHandoverReview}>Bill Help / Handover Review</button>}
+            {Array.isArray(reviewRows)&&<CheckoutReviewPanel initialRows={reviewRows} onReprint={handleReprint} onClose={()=>setReviewRows(null)}/>}
+
+            {priceRefreshMessage && <div className="status-box" role="status">{priceRefreshMessage}</div>}
             </div>
           </div>
 

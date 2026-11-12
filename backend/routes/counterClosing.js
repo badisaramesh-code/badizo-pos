@@ -249,12 +249,51 @@ async function getExpectedTotals(date, counterNo) {
 
 router.use(authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'));
 
+const { matchingAccounts } = require('../utils/closingAccountSearch');
+const canViewSales = user => ['SERVER', 'ADMIN'].includes(user.role);
+let directoryCache = { expires: 0, rows: [] };
+
+router.get('/accounts', async (req, res) => {
+  const query = String(req.query.q || '').trim().slice(0, 180);
+  if (query.length < 3) return res.json([]);
+  try {
+    if (Date.now() >= directoryCache.expires) {
+      const [rows] = await db.query(`SELECT DISTINCT TRIM(customer_name) AS name, 'CUSTOMER' AS kind
+        FROM customers WHERE TRIM(customer_name) <> ''
+        UNION SELECT TRIM(customer_name), 'CUSTOMER' FROM invoices
+          WHERE TRIM(customer_name) NOT IN ('', 'Walk-in Customer') AND invoice_status <> 'CANCELLED'
+        UNION SELECT TRIM(account_name), 'CUSTOMER' FROM accounting_vouchers
+          WHERE voucher_type IN ('CUSTOMER_CREDIT', 'DEBTOR_RECEIPT') AND TRIM(account_name) <> ''
+        UNION SELECT TRIM(details), CASE WHEN entry_type = 'CLOSING_CUSTOMER' THEN 'CUSTOMER' ELSE 'HISTORY' END
+          FROM counter_handover_entries
+          WHERE entry_type IN ('GENERAL','CLOSING_CUSTOMER') AND TRIM(details) NOT IN ('','UPI SALE','NUMBER','Today Sale','Counter Closing Cash')
+        UNION SELECT TRIM(account_name), account_scope FROM local_account_ledgers WHERE TRIM(account_name) <> ''
+        UNION SELECT TRIM(account_name), account_scope FROM local_account_entries WHERE TRIM(account_name) <> ''`);
+      directoryCache = { rows, expires: Date.now() + 30000 };
+    }
+    const vendors = req.query.vendors === '1';
+    const rows = directoryCache.rows.filter(row => vendors === ['LOCAL', 'NON_LOCAL'].includes(row.kind));
+    res.json(matchingAccounts(rows, query));
+  } catch (error) {
+    res.status(503).json({ error: 'Account suggestions are unavailable.' });
+  }
+});
+
+function counterSheet(sheet) {
+  if (!sheet) return null;
+  const { id, closing_date, counter_no, sheet_no, opening_cash, denominations, handed_over_by,
+    taken_over_by, notes, created_at, updated_at, entries } = sheet;
+  return { id, closing_date, counter_no, sheet_no, opening_cash, denominations, handed_over_by,
+    taken_over_by, notes, created_at, updated_at,
+    entries: entries.filter(entry => entry.entry_type !== 'SALES' && entry.details !== 'Today Sale') };
+}
+
 router.get('/handover', async (req, res) => {
   try {
     const date = normalizeDate(req.query.date);
     const counterNo = normalizeCounterNo(req.query.counter_no, req.user);
     const [snapshot, sheet] = await Promise.all([
-      getSalesSnapshot(date, counterNo),
+      canViewSales(req.user) ? getSalesSnapshot(date, counterNo) : {},
       loadHandoverSheet(date, counterNo)
     ]);
 
@@ -263,7 +302,7 @@ router.get('/handover', async (req, res) => {
       counter_no: counterNo,
       sheet_no: makeSheetNo(date, counterNo),
       snapshot,
-      sheet,
+      sheet: canViewSales(req.user) ? sheet : counterSheet(sheet),
       denominations: DENOMINATIONS
     });
   } catch (err) {
@@ -422,7 +461,7 @@ router.post('/handover', async (req, res) => {
           date,
           counterNo,
           sheetId,
-          normalizeNamedLedgerAccount(entry.details),
+          entry.entry_type === 'CLOSING_CUSTOMER' ? entry.details.slice(0, 160) : normalizeNamedLedgerAccount(entry.details),
           entry.remarks || `${sheetNo} Counter ${counterNo}`,
           entry.direction,
           entry.amount,
@@ -497,12 +536,9 @@ router.post('/handover', async (req, res) => {
         sheet_no: sheetNo,
         created_at: savedCreatedAt,
         updated_at: savedUpdatedAt,
-        snapshot,
-        dr_total: drTotal,
-        cr_total: crTotal,
+        ...(canViewSales(req.user) ? { snapshot, dr_total: drTotal, cr_total: crTotal, variance_amount: varianceAmount } : {}),
         notes_total: notesTotal,
         cash_balance: cashBalance,
-        variance_amount: varianceAmount,
         ledger_entry_count: ledgerEntryCount
       });
     } catch (err) {
@@ -517,7 +553,7 @@ router.post('/handover', async (req, res) => {
   }
 });
 
-router.get('/expected', async (req, res) => {
+router.get('/expected', authorize('SERVER', 'ADMIN'), async (req, res) => {
   try {
     const date = normalizeDate(req.query.date);
     const counterNo = normalizeCounterNo(req.query.counter_no, req.user);
@@ -646,12 +682,10 @@ router.post('/', async (req, res) => {
       success: true,
       date,
       counter_no: counterNo,
-      expected,
+      ...(canViewSales(req.user) ? { expected, expected_cash_in_hand: expectedCashInHand, difference_amount: differenceAmount } : {}),
       cash_in_total: cashInTotal,
       cash_out_total: cashOutTotal,
-      declared_cash_total: declaredCashTotal,
-      expected_cash_in_hand: expectedCashInHand,
-      difference_amount: differenceAmount
+      declared_cash_total: declaredCashTotal
     });
   } catch (err) {
     console.error('Counter closing save failed:', err.message);

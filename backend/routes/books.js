@@ -1,5 +1,6 @@
 const { lockLedgerSource, syncNamedLedgerDetails } = require('../utils/syncNamedLedgerDetails');
 const express = require('express');
+const { closingParty, partyName, daySheetBalances } = require('../utils/daySheetBalances');
 const { fetchNamedLedgers } = require('../utils/namedLedgers');
 const { writeAuditLog } = require('../services/auditService');
 const router = express.Router();
@@ -469,6 +470,16 @@ router.get('/accounting', async (req, res) => {
       [to]
     );
 
+    const [partyBalances] = await db.query(
+      `SELECT source_type, payment_mode, account_name,
+              SUM(CASE WHEN direction = 'DR' THEN amount ELSE -amount END) AS net_balance,
+              SUM(CASE WHEN entry_date >= ? THEN 0 WHEN direction = 'DR' THEN amount ELSE -amount END) AS opening_balance
+       FROM counter_cash_ledger_entries
+       WHERE source_type = 'COUNTER_HANDOVER' AND entry_date <= ?
+         AND payment_mode IN ('CLOSING_CUSTOMER', 'CLOSING_LOCAL', 'CLOSING_NON_LOCAL')
+       GROUP BY source_type, payment_mode, account_name`,
+      [from, to]
+    );
     const supplierNames = Array.from(new Set(purchases.filter((row) => row.payment_mode !== 'Cash').map((row) => String(row.supplier_name || '').trim()).filter(Boolean)));
     const voucherCustomerNames = vouchers
       .filter((row) => ['CUSTOMER_CREDIT', 'DEBTOR_RECEIPT'].includes(row.voucher_type))
@@ -573,17 +584,20 @@ router.get('/accounting', async (req, res) => {
         'Balance Type': 'Cr'
       })),
       ...cashLedger
-        .filter((row) => supplierNames.includes(String(row.account_name || '').trim()))
-        .map((row) => ({
+        .filter((row) => closingParty(row) ? closingParty(row) !== 'Customer' : supplierNames.includes(String(row.account_name || '').trim()))
+        .map((row) => {
+          const debit = closingParty(row) ? row.direction === 'DR' : row.direction === 'CR';
+          return {
           Date: row.created_at || row.entry_date,
-          Account: row.account_name,
+          Account: partyName(row),
           Voucher: `${row.source_type}-${row.source_id || ''}`,
           Particulars: row.details,
-          Debit: row.direction === 'CR' ? Number(row.amount || 0) : 0,
-          Credit: row.direction === 'DR' ? Number(row.amount || 0) : 0,
+          Debit: debit ? Number(row.amount || 0) : 0,
+          Credit: debit ? 0 : Number(row.amount || 0),
           Balance: Number(row.amount || 0),
-          'Balance Type': row.direction === 'CR' ? 'Dr' : 'Cr'
-        })),
+          'Balance Type': debit ? 'Dr' : 'Cr'
+          };
+        }),
       ...vouchers
         .filter((row) => row.voucher_type === 'CREDITOR_PAYMENT')
         .map((row) => ({
@@ -638,7 +652,10 @@ router.get('/accounting', async (req, res) => {
         ];
       }).flat(),
       ...cashLedger
-        .filter((row) => customerNames.includes(String(row.account_name || '').trim()))
+        .filter((row) => row.payment_mode === 'CLOSING_CUSTOMER' || (
+          !['CLOSING_LOCAL', 'CLOSING_NON_LOCAL'].includes(row.payment_mode)
+          && customerNames.includes(String(row.account_name || '').trim())
+        ))
         .map((row) => ({
           Date: row.created_at || row.entry_date,
           Account: row.account_name,
@@ -694,33 +711,51 @@ router.get('/accounting', async (req, res) => {
         Status: row.payment_status || 'DUE'
       };
     });
-    const payableAgingSummary = emptyAgingSummary();
-    payableAgingSummary.accounts = new Set(payableAgingRows.map((row) => row.Supplier)).size;
-    payableAgingSummary.bills = payableAgingRows.length;
-    payableAgingRows.forEach((row) => addAgingAmount(payableAgingSummary, row.Bucket, Number(row.Due || 0)));
-
     const receivableBalances = sundryDebtorRows.reduce((acc, row) => {
       const account = String(row.Account || '').trim();
       if (!account || account === 'Walk-in Customer') return acc;
       acc[account] = (acc[account] || 0) + Number(row.Debit || 0) - Number(row.Credit || 0);
       return acc;
-    }, {});
-    const receivableAgingRows = Object.entries(receivableBalances)
-      .filter(([, balance]) => balance > 0.01)
-      .map(([account, balance]) => ({
+    }, Object.create(null));
+    const balances = daySheetBalances(partyBalances, receivableBalances);
+    for (const account of balances) {
+      if (!account.daySheet || account.daySheet === 'Customer' || account.cents >= 0) continue;
+      const due = -account.cents / 100;
+      payableAgingRows.push({
+        Supplier: account.name, 'Inward No': '', 'Supplier Invoice': '', 'Bill Date': '',
+        'Due Date': '', 'Bill Total': '', Paid: '', Due: due, 'Overdue Days': 0,
+        Bucket: 'Not Due', Status: 'Day sheet balance'
+      });
+    }
+    const payableAgingSummary = emptyAgingSummary();
+    payableAgingSummary.accounts = new Set(payableAgingRows.map((row) => row.Supplier)).size;
+    payableAgingSummary.bills = payableAgingRows.length;
+    payableAgingRows.forEach((row) => addAgingAmount(payableAgingSummary, row.Bucket, Number(row.Due || 0)));
+
+    const receivableAgingRows = balances
+      .filter(account => account.cents > 0)
+      .map(({ name: account, cents }) => ({
+
         Customer: account,
         'Reference Date': to,
         'Due Date': to,
-        'Bill Total': balance,
+        'Bill Total': cents / 100,
         Received: 0,
-        Due: balance,
+        Due: cents / 100,
         'Overdue Days': 0,
         Bucket: 'Not Due',
         Status: 'OPEN'
       }));
+    for (const account of balances) {
+      if (account.daySheet === 'Customer' && account.cents < 0) {
+        receivableAgingRows.push({ Customer: account.name, 'Reference Date': to, 'Due Date': '',
+          'Bill Total': '', Received: -account.cents / 100, Due: 0, 'Overdue Days': 0,
+          Bucket: 'Not Due', Status: 'Customer advance / credit' });
+      }
+    }
     const receivableAgingSummary = emptyAgingSummary();
-    receivableAgingSummary.accounts = receivableAgingRows.length;
-    receivableAgingSummary.bills = receivableAgingRows.length;
+    receivableAgingSummary.accounts = receivableAgingRows.filter(row => row.Due > 0).length;
+    receivableAgingSummary.bills = receivableAgingSummary.accounts;
     receivableAgingRows.forEach((row) => addAgingAmount(receivableAgingSummary, row.Bucket, Number(row.Due || 0)));
 
     const bankSettlementRows = digitalSettlementRows.map((row) => ({

@@ -1,0 +1,70 @@
+import React, { useEffect, useState } from 'react';
+import { searchClosingAccounts } from '../api/client';
+
+const labels = { LOCAL: 'Local vendor', NON_LOCAL: 'Non-Local vendor', CUSTOMER: 'Customer', HISTORY: 'Previous day-sheet name' };
+
+export default function ClosingAccountInput({ index, inputRef, value, onChange, onFocus, vendors }) {
+  const [open, setOpen] = useState(false);
+  const [response, setResponse] = useState(null);
+  const [active, setActive] = useState(-1);
+  const query = value.trim();
+  const listId = `closing-accounts-${index}`;
+  const visible = open && query.length >= 3 && response?.query === query && response.vendors === vendors;
+  const rows = visible ? response.rows.flatMap(row => row.kind === 'HISTORY'
+    ? [row, { name: row.name, kind: 'CUSTOMER', fromHistory: true }].filter(option =>
+        !option.fromHistory || !response.rows.some(other => other.kind === 'CUSTOMER' && other.name.toUpperCase() === row.name.toUpperCase()))
+    : [row]) : [];
+
+  useEffect(() => {
+    if (!open || query.length < 3) return undefined;
+    let current = true;
+    const timer = setTimeout(async () => {
+      try {
+        const rows = await searchClosingAccounts(query, vendors);
+        if (current) setResponse({ query, vendors, rows });
+      } catch {
+        if (current) setResponse({ query, vendors, rows: [], failed: true });
+      }
+    }, 150);
+    return () => { current = false; clearTimeout(timer); };
+  }, [open, query, vendors]);
+
+  function select(row) {
+    onChange(row.name, row.kind === 'HISTORY' ? undefined : row.kind);
+    setOpen(false);
+    setActive(-1);
+  }
+
+  function keyDown(event) {
+    if (event.key === 'Escape') setOpen(false);
+    if (rows.length && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
+      event.preventDefault();
+      setActive(i => event.key === 'ArrowDown' ? Math.min(i + 1, rows.length - 1) : Math.max(0, i - 1));
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (rows[active]) select(rows[active]);
+      event.currentTarget.closest('tr')?.querySelector('.handover-remarks-input')?.focus();
+    }
+  }
+
+  return <>
+    <input ref={inputRef} className="field handover-details-input" value={value}
+      aria-label={`Row ${index + 1} details`} role="combobox" aria-autocomplete="list"
+      aria-expanded={Boolean(rows.length)} aria-controls={listId}
+      aria-activedescendant={rows[active] ? `${listId}-${active}` : undefined}
+      autoComplete="off" placeholder="Name or details..."
+      onFocus={() => { onFocus(); setOpen(true); }} onBlur={() => setOpen(false)}
+      onChange={event => { setOpen(true); setActive(-1); onChange(event.target.value); }}
+      onKeyDown={keyDown} />
+    {rows.length > 0 && <div role="listbox" id={listId} style={{ maxHeight: 180, overflowY: 'auto' }}>
+      {rows.map((row, i) => <button type="button" role="option" key={row.kind + ':' + row.name}
+        id={`${listId}-${i}`} aria-selected={i === active} tabIndex={-1}
+        style={{ display: 'block', width: '100%', textAlign: 'left', background: i === active ? '#def1df' : 'white' }}
+        onMouseDown={event => event.preventDefault()} onClick={() => select(row)}>
+        {row.name} · {row.fromHistory ? 'Use as customer' : labels[row.kind]}
+      </button>)}
+    </div>}
+    {visible && response.failed && <small>Account suggestions unavailable. Check the spelling before saving.</small>}
+  </>;
+}

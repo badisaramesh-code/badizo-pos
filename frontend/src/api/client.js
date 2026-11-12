@@ -689,6 +689,31 @@ export function pendingCheckout(counterNo) {
 export function clearConfirmedCheckout(counterNo,requestId) {
   if(checkoutRecoveryEnabled)checkoutJournal(counterNo).clear(checkoutServer(),requestId);
 }
+export function parkedCheckouts(counterNo){return checkoutRecoveryEnabled?checkoutJournal(counterNo).parked():[];}
+export function parkPendingCheckout(counterNo){return checkoutRecoveryEnabled?checkoutJournal(counterNo).park():null;}
+export async function syncCheckoutReviews(counterNo){
+ const rows=[];for(let i=0;i<window.localStorage.length;i++){const key=window.localStorage.key(i);if(!key?.startsWith('badizo_checkout_pending_v1:'))continue;try{const list=JSON.parse(window.localStorage.getItem(key)||'null');if(Array.isArray(list))rows.push(...list);else if(list?.schemaVersion===1&&list.payload)rows.push(list);}catch{}}
+ const unique=[...new Map(rows.filter(r=>r.server===checkoutServer()&&r.payload?.checkout_request_id).map(r=>[r.payload.checkout_request_id,r])).values()];
+ for(let i=0;i<unique.length;i+=200)await api.post('/billing/checkout/reviews',{rows:unique.slice(i,i+200).map(r=>({checkout_request_id:r.payload.checkout_request_id,counter_no:r.payload.counter_no,grand_total:r.payload.grand_total}))},{timeout:4000});
+}
+export async function fetchCheckoutReviews(){const {data}=await api.get('/billing/checkout/reviews');return data;}
+export async function checkCheckoutReview(id){const {data}=await api.post('/billing/checkout/reviews/'+encodeURIComponent(id)+'/check');return data;}
+export async function releaseCheckoutReview(id){const {data}=await api.post('/billing/checkout/abandon',{checkout_request_id:id});return data;}
+export async function fetchCheckoutReviewEvents(id){const {data}=await api.get('/billing/checkout/reviews/'+encodeURIComponent(id)+'/events');return data;}
+export async function resolveParkedCheckout(counterNo,id,{cancelUnsaved=false}={}){
+ const row=parkedCheckouts(counterNo).find(r=>r.payload.checkout_request_id===id);if(!row)throw Error('Pending bill was not found.');if(row.resolution)return row.resolution;
+ if(row.server!==checkoutServer())throw Error('Reconnect to the original server to check this bill.');
+ let data;try{({data}=cancelUnsaved?await api.post('/billing/checkout/abandon',{checkout_request_id:id}):await api.post('/billing/checkout',row.payload,{timeout:30000}));}catch(error){if(error?.response?.status===409&&error?.response?.data?.code==='CHECKOUT_ABANDONED'){const result={status:'ABANDONED'};checkoutJournal(counterNo).resolveParked(row.server,id,result);return result;}throw error;}
+ const result=cancelUnsaved?data:{status:'SAVED',invoice_no:data.invoice_no};if(!['SAVED','ABANDONED'].includes(result?.status)||(result.status==='SAVED'&&!result.invoice_no))throw Error('Bill status is uncertain. Keep it pending.');
+ checkoutJournal(counterNo).resolveParked(row.server,id,result);return result;
+}
+export async function abandonPendingCheckout(counterNo) {
+ const row=pendingCheckout(counterNo);if(!row)return {status:'DRAFT'};
+ if(row.server!==checkoutServer())throw Error('The pending checkout belongs to another server. Reconnect to that server before clearing it.');
+ const {data}=await api.post('/billing/checkout/abandon',{checkout_request_id:row.payload.checkout_request_id});
+ if(!['SAVED','ABANDONED'].includes(data?.status))throw Error('Checkout status is uncertain. Cart retained.');
+ clearConfirmedCheckout(counterNo,row.payload.checkout_request_id);return data;
+}
 export async function checkout(payload, savedState) {
   const releaseRejectedBill = error => {
     const status = error?.response?.status;
@@ -696,7 +721,7 @@ export async function checkout(payload, savedState) {
     // These responses are emitted only after validation rolled back. Network
     // errors and already-saved conflicts leave the bill unresolved.
     if (checkoutRecoveryEnabled && [400, 409].includes(status) &&
-        ['PRICE_CHANGED', 'INVALID_PAYMENT', 'INVALID_BILL_LINE'].includes(code)) {
+        ['PRICE_CHANGED', 'INVALID_PAYMENT', 'INVALID_BILL_LINE', 'INVALID_BILL_TOTAL', 'CHECKOUT_ABANDONED'].includes(code)) {
       try { clearConfirmedCheckout(payload.counter_no, payload.checkout_request_id); }
       catch (journalError) { journalError.checkoutJournalError = true; throw journalError; }
     }
@@ -1115,6 +1140,11 @@ export async function fetchStaffMonthlySheet({ month, search = '' } = {}) {
 
 export async function saveStaffSalarySheet(payload) {
   const { data } = await api.post('/staff-payroll/salary-sheet', payload);
+  return data;
+}
+
+export async function searchClosingAccounts(query, vendors = false) {
+  const { data } = await api.get('/counter-closing/accounts', { params: { q: query, vendors: vendors ? '1' : '0' } });
   return data;
 }
 

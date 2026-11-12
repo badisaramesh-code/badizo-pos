@@ -3,6 +3,7 @@ export function cloudSyncProgress(status, requesting, refreshError) {
   if (refreshError) return { label: 'Status unavailable', detail: 'Reconnecting automatically. Sync completion cannot be confirmed yet.', value: 0 };
   if (requesting) return { label: 'Queuing sync…', detail: 'Waiting for the server to accept your request.' };
   if (!status?.service?.ready) return { label: 'Sync unavailable', detail: 'Check the cloud connection setup.', value: 0 };
+  if (status.transfersPaused) return { label: 'Sync paused', detail: 'Pending changes are kept. Any batch already in progress can finish.', value: 0 };
   const phase = status.service.state;
   if (phase === 'retrying') return { label: 'Needs attention — retrying', detail: 'Sync has not completed. Pending changes are retained for retry.', value: 0 };
   if (phase === 'running' || phase === 'pending') return { label: 'Syncing…', detail: 'Exchanging pending changes. You can continue billing.' };

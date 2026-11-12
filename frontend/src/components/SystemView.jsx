@@ -1,6 +1,7 @@
 import ShopMaintenance from './ShopMaintenance';
 import WorkstationPrinters from './WorkstationPrinters';
 import React, { useEffect, useMemo, useState } from 'react';
+import TransferAuditPanel from './TransferAuditPanel';
 import CloudSyncSettings from './CloudSyncSettings';
 import RecoveryReview from './RecoveryReview';
 import StagedRestore from './StagedRestore';
@@ -9,6 +10,7 @@ import FinancialConflictReview from './FinancialConflictReview';
 import {
   approveSensitiveBillingMode,
   downloadBackup,
+  getStoredUser,
   fetchAuditLogs,
   fetchBackups,
   fetchPasswordVault,
@@ -598,6 +600,8 @@ export default function SystemView() {
 
   return (
     <div className="form-stack system-view">
+      {['ADMIN', 'SERVER'].includes(getStoredUser()?.role) && <TransferAuditPanel />}
+      <CloudSyncSettings />
       <ShopMaintenance />
       <section className="panel">
         <div className="panel-header green"><h2 className="panel-title">Network Architecture - Badizo POS System</h2></div>
@@ -1054,7 +1058,7 @@ export default function SystemView() {
                           <span className="mono">
                             {visiblePasswords[slot.slot_no] !== undefined
                               ? (visiblePasswords[slot.slot_no] || '(empty)')
-                              : (slot.has_password ? '••••••••' : 'Not saved')}
+                              : (slot.has_password ? 'ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½' : 'Not saved')}
                           </span>
                           <button className="secondary-button" type="button" onClick={() => revealVaultPassword(slot.slot_no)} disabled={!slot.has_password}>View</button>
                         </td>
@@ -1154,7 +1158,7 @@ export default function SystemView() {
         </div>
         )}
 
-        <CloudSyncSettings />
+
         {process.env.REACT_APP_RECOVERY_REVIEW_ENABLED === 'true' && <RecoveryReview />}
         {process.env.REACT_APP_RECOVERY_REVIEW_ENABLED === 'true' && <FinancialConflictReview />}
         {process.env.REACT_APP_STAGED_RESTORE_ENABLED === 'true' && <StagedRestore />}

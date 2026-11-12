@@ -1,4 +1,4 @@
-// One unresolved checkout per counter. Never infer a failed commit from a
+// One active checkout plus preserved parked checkouts per counter. Never infer a failed commit from a
 // timeout, or silently move an unresolved request to another server.
 const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().filter(key=>value[key]!==undefined).map(key=>[key,ordered(value[key])])):value;
 export function createCheckoutJournal(storage,key){
@@ -25,5 +25,10 @@ export function createCheckoutJournal(storage,key){
     if(row.server!==server||row.payload.checkout_request_id!==id)throw Error('Pending bill identity changed; it has not been cleared.');
     storage.removeItem(key);
   }
-  return {read,prepare,clear};
+  const parkedKey=key+':parked';
+  function parked(){const rows=JSON.parse(storage.getItem(parkedKey)||'[]');if(!Array.isArray(rows)||rows.some(r=>!r.payload?.checkout_request_id||!r.server||!r.savedState))throw Error('Pending bill list needs inspection.');return rows;}
+  function saveParked(rows){const raw=JSON.stringify(rows);storage.setItem(parkedKey,raw);if(storage.getItem(parkedKey)!==raw)throw Error('Cannot safely preserve the pending bill.');}
+  function park(){const row=read();if(!row)return null;const rows=parked();if(!rows.some(r=>r.server===row.server&&r.payload.checkout_request_id===row.payload.checkout_request_id))rows.push({...row,parkedAt:new Date().toISOString()});saveParked(rows);clear(row.server,row.payload.checkout_request_id);return row;}
+  function resolveParked(server,id,resolution){const rows=parked();const row=rows.find(r=>r.server===server&&r.payload.checkout_request_id===id);if(!row)throw Error('Pending bill was not found.');row.resolution={...resolution,checkedAt:new Date().toISOString()};saveParked(rows);}
+  return {read,prepare,clear,parked,park,resolveParked};
 }

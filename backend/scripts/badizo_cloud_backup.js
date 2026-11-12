@@ -56,6 +56,15 @@ function writeBackupStatus(status, kind, details = {}) {
   const temporary = `${STATUS_FILE}.tmp`;
   fs.writeFileSync(temporary, JSON.stringify(payload, null, 2), 'utf8');
   fs.renameSync(temporary, STATUS_FILE);
+  if (kind === 'daily') {
+    const outcome = status === 'success'
+      ? (DRIVE_SYNC_FOLDER ? 'Copied to Drive desktop folder' : 'Google Drive upload/check succeeded')
+      : 'Backup job failed';
+    try {
+      fs.appendFileSync(path.join(LOCAL_ROOT, 'audit-' + payload.at.slice(0, 7) + '.jsonl'),
+        JSON.stringify({ at: payload.at, status: outcome, file: details.file || '' }) + '\n');
+    } catch { console.warn('Daily backup audit write failed.'); }
+  }
 }
 
 function base64Url(input) {
@@ -382,6 +391,7 @@ async function syncDailyBackups(keep = backupKeepCount()) {
       file: local[0].name,
       message: `Google Drive upload pending; automatic retry is enabled. ${String(err.message || '').slice(0, 350)}`
     });
+    err.dailyStatusRecorded = true;
     throw err;
   }
 }
@@ -509,7 +519,7 @@ async function main() {
 const requestedMode = String(process.argv[2] || 'unknown').toLowerCase();
 withOperationLock(main).catch(err => {
   try {
-    if (!['sync-pending', 'upload-existing'].includes(requestedMode)) {
+    if (!err.dailyStatusRecorded && !['sync-pending', 'upload-existing'].includes(requestedMode)) {
       writeBackupStatus('failed', requestedMode, { message: String(err.message || 'Unknown backup error').slice(0, 500) });
     }
   } catch (statusErr) {

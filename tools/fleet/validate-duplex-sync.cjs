@@ -11,7 +11,7 @@ async function main(){
   const [cloudFile,localFile,keyFile,certFile]=process.argv.slice(2);
   const configs=await Promise.all([cloudFile,localFile].map(async file=>JSON.parse(await fs.readFile(file,'utf8'))));
   for(const config of configs)assert.match(config.database,/^badizo_recovery_[a-z0-9]+$/);assert.notEqual(configs[0].database,configs[1].database);
-  const pools=configs.map(c=>mysql.createPool({host:c.host,user:c.user,password:c.password,database:c.database,connectionLimit:5}));const [cloud,local]=pools;
+  const pools=configs.map(c=>mysql.createPool({host:c.host,user:c.user,password:c.password ?? process.env.DB_PASSWORD,database:c.database,connectionLimit:5}));const [cloud,local]=pools;
   const run=crypto.randomUUID(),token=crypto.randomBytes(32).toString('hex');let server;
   const localIdentity={shopId:'HFM001',localInstallationId:'local-'+run,peerInstallationId:'cloud-'+run};
   const cloudIdentity={shopId:'HFM001',localInstallationId:localIdentity.peerInstallationId,peerInstallationId:localIdentity.localInstallationId};
@@ -32,7 +32,7 @@ async function main(){
     await assert.rejects(createSyncPullClient({...pullOptions,token:'0'.repeat(64)})());
     await assert.rejects(createSyncPullClient({...pullOptions,identity:{...localIdentity,shopId:'HFM002'}})());
     await assert.rejects(createSyncPullClient({...pullOptions,mayApply:async()=>false})());
-    const options={pool:local,identity:localIdentity,send:createSyncHttpTransport({url:base+'/receive',token}),pull:createSyncPullClient(pullOptions),canTransfer:async()=>true,clock:()=>now,configDirectory:'/var/lib/badizo/duplex-validation-'+run};
+    const options={pool:local,identity:localIdentity,send:createSyncHttpTransport({url:base+'/receive',token}),pull:createSyncPullClient(pullOptions),canTransfer:async()=>true,clock:()=>now,configDirectory:require('node:path').join(require('node:path').dirname(localFile),'duplex-validation-'+run)};
     let runtime=createCloudSyncRuntime(options);
     assert.equal((await runtime.settings.state()).service.direction,'two-way');
     await runtime.settings.requestNow({username:'validation-owner'});

@@ -113,3 +113,23 @@ test('default installations and cloud nodes cannot request transfers',async t=>{
   const cloud=await isolated(t,{nodeRole:'cloud-standby',getWorkerState:async()=>({ready:true}),requestTransfer:async()=>{throw Error('Unexpected transfer');}});
   await assert.rejects(cloud.service.requestNow({username:'owner'}),error=>error.status===403);
 });
+test('admin pause survives restart, preserves daily time, and holds already queued manual work', async t => {
+  const options = { getWorkerState: async () => ({ready:true, manualPending:true}) };
+  const { directory, service } = await isolated(t, options);
+  const config = {...DEFAULT_CONFIG, enabled:true, dailyTime:'22:15'};
+  await service.save(config,{role:'SERVER'});
+  await service.setPaused(true,{role:'ADMIN',username:'admin'});
+  const restarted = createCloudSyncSettingsService({...options, configDirectory:directory});
+  assert.equal((await restarted.state()).transfersPaused,true);
+  assert.equal((await restarted.state()).nextRunAt,null);
+  await assert.rejects(restarted.requestNow({role:'SERVER'}),/Resume cloud sync/);
+  const worker = require('../services/cloudSyncWorker').createCloudSyncWorker({
+    identity:{shopId:'HFM001',localInstallationId:'test-local'}, getSchedule:restarted.loadScheduleRecord,
+    canTransfer:async()=>true, pool:{getConnection(){assert.fail('paused worker opened a database connection');}},
+    flush(){assert.fail('paused worker started a batch');}
+  });
+  assert.deepEqual(await worker.tick(),{skipped:true});
+  const resumed = await restarted.setPaused(false,{role:'ADMIN',username:'admin'});
+  assert.deepEqual(resumed.config,config);
+  assert.equal(resumed.transfersPaused,false);
+});

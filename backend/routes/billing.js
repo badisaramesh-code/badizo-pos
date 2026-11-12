@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
+const checkoutAbandonment = require('../services/checkoutAbandonment');
 const { captureCheckout, captureInvoiceLifecycle } = require('../services/checkoutSyncCapture');
 const { captureHistoricalBaseline } = require('../services/invoiceOriginIdentity');
 const checkoutIdentity = require('../services/checkoutRequestIdentity');
@@ -151,6 +152,8 @@ async function redeemLoyaltyPoints(connection, invoiceNo, customerPhone, request
   return { phone, points, amount, balance: currentPoints - points };
 }
 
+const { lineUnits, rupees, roundedPayable } = require('../utils/checkoutAmounts');
+
 function currentCheckoutPrice(product, quantity, billingTier) {
   const qty = parseMoney(quantity) || 1;
   const salePrice = parseMoney(product?.sale_price || product?.mrp);
@@ -171,7 +174,7 @@ async function validateCurrentCheckoutPrices(connection, items, billingTier) {
   const placeholders = barcodes.map(() => '?').join(',');
   const [rows] = await connection.query(
     `SELECT barcode, product_name, mrp, sale_price, wholesale_price, qty_3_price, qty_6_price, qty_12_price
-     FROM products WHERE barcode IN (${placeholders})`,
+     FROM products WHERE barcode IN (${placeholders}) ORDER BY barcode FOR UPDATE`,
     barcodes
   );
   const products = new Map(rows.map((row) => [String(row.barcode), row]));
@@ -514,6 +517,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
   const connection = await db.getConnection();
   const checkoutTimer = createCheckoutTimer();
   let invoiceNo = '';
+  let checkoutLock = null;
   let intentHash = null;
 
   try {
@@ -564,6 +568,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
       return res.status(400).json({ error: 'Cart must contain at least one item.' });
     }
 
+    if(checkoutRequestId){checkoutLock=await checkoutAbandonment.acquire(connection,checkoutRequestId);await checkoutAbandonment.assertNotAbandoned(connection,checkoutRequestId);}
     const savedCheckout = await findSavedCheckout(connection, req.body);
     if (savedCheckout) {
       if (savedCheckout.status < 300) {
@@ -595,21 +600,21 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
         }))
         .filter((item) => item.barcode && item.quantity > 0)
       : [];
-    const exchangeTotal = normalizedExchangeItems.reduce((total, item) => total + item.line_total, 0);
-    if (exchange_total != null && moneyToPaise(exchange_total) !== moneyToPaise(exchangeTotal)) {
+    const exchangeTotal = rupees(normalizedExchangeItems.reduce((sum, item) => sum + lineUnits(item.sale_price, item.quantity), 0));
+    if (exchange_total != null && moneyToPaise(exchange_total) !== moneyToPaise(exchangeTotal) && Number(exchange_total) !== Number(exchangeTotal.toFixed(2))) {
       throw Object.assign(new Error('Exchange total differs from the exchange items. Review the bill.'), {code:'INVALID_BILL_TOTAL'});
     }
     const loyaltySettings = await getLoyaltySettings(connection);
     checkoutTimer.mark('loyalty-settings');
-    let merchandiseTotal = 0;
+    let merchandiseUnits = 0;
     for (const item of items) {
       const quantity = Number(item?.quantity), price = Number(item?.sale_price);
       if (!item?.barcode || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price < 0) {
         throw Object.assign(new Error('Every bill line needs a valid barcode, positive quantity and non-negative rate.'), {code:'INVALID_BILL_LINE'});
       }
-      merchandiseTotal += quantity * price;
+      merchandiseUnits += lineUnits(price, quantity);
     }
-    const saleGrandBeforeRedeem = Math.max(merchandiseTotal - exchangeTotal, 0);
+    const saleGrandBeforeRedeem = Math.max(rupees(merchandiseUnits) - exchangeTotal, 0);
     if (loyalty_base_total != null && Math.abs(Number(loyalty_base_total)-saleGrandBeforeRedeem)>0.005001) {
       throw Object.assign(new Error('Cart total has changed. Review the bill before collecting payment.'), {code:'INVALID_BILL_TOTAL'});
     }
@@ -623,7 +628,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     );
     checkoutTimer.mark('loyalty-redeem');
     const normalizedPaymentMode = normalizePaymentMode(payment_mode);
-    const grandTotal = Math.round(Math.max(saleGrandBeforeRedeem - loyaltyRedeemResult.amount,0));
+    const grandTotal = roundedPayable(saleGrandBeforeRedeem, loyaltyRedeemResult.amount);
     if (!Number.isFinite(Number(grand_total)) || Number(grand_total) !== grandTotal) {
       throw Object.assign(new Error('Bill total differs from the cart. Review the bill before collecting payment.'), {code:'INVALID_BILL_TOTAL'});
     }
@@ -839,6 +844,12 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
   } catch (err) {
     await connection.rollback();
     checkoutTimer.mark('rollback');
+    try{const id=String(req.body?.checkout_request_id||'');if(/^[A-Za-z0-9_-]{12,64}$/.test(id)){
+      await connection.query('INSERT INTO checkout_recovery_events(checkout_request_id,actor,action,outcome) VALUES(?,?,?,?)',[id,req.user.username,'CHECKOUT_ERROR',String(err.code||'FAILED').slice(0,20)]);
+      const total=Number(req.body?.grand_total),counter=Number(req.body?.counter_no||req.user.counter_no||1);
+      if(Number.isFinite(total)&&total>=0&&Number.isInteger(counter)&&counter>0)await connection.query('INSERT IGNORE INTO parked_checkout_reviews(checkout_request_id,counter_no,reported_by,grand_total) VALUES(?,?,?,?)',[id,counter,req.user.username,total]);
+    }}catch(auditError){console.error('Checkout error audit unavailable:',auditError.code||'UNKNOWN');}
+
     if (err?.code === 'ER_DUP_ENTRY') {
       const savedCheckout = await findSavedCheckout(connection, req.body);
       if (savedCheckout) {
@@ -859,17 +870,25 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     });
     console.error('Checkout rollback:', err.message);
     const retryableDeadlock = err?.code === 'ER_LOCK_DEADLOCK' || Number(err?.errno) === 1213;
-    const validationError = ['PRICE_CHANGED', 'INVALID_PAYMENT', 'INVALID_BILL_LINE', 'INVALID_BILL_TOTAL'].includes(err.code);
+    const validationError = ['PRICE_CHANGED', 'INVALID_PAYMENT', 'INVALID_BILL_LINE', 'INVALID_BILL_TOTAL', 'CHECKOUT_ABANDONED'].includes(err.code);
     res.status(err.code === 'PRICE_CHANGED' || err.status === 409 ? 409 : validationError ? 400 : retryableDeadlock ? 503 : 500).json({
       code: validationError ? err.code : undefined,
       error: retryableDeadlock ? 'Checkout was temporarily busy. Retrying safely.' : err.message,
       retryable: retryableDeadlock
     });
   } finally {
+    await checkoutAbandonment.release(connection,checkoutLock);
     connection.release();
     req.completeRecoveryWrite?.();
   }
 });
+
+router.post('/checkout/reviews',authenticate,authorize('SERVER','ADMIN','COUNTER'),async(req,res)=>{try{const rows=req.body?.rows;if(!Array.isArray(rows)||rows.length>200)return res.status(400).json({error:'Invalid pending bill list.'});for(const row of rows){if(!/^[A-Za-z0-9_-]{12,64}$/.test(String(row.checkout_request_id||''))||!Number.isInteger(Number(row.counter_no))||Number(row.counter_no)<1||!Number.isFinite(Number(row.grand_total))||Number(row.grand_total)<0)return res.status(400).json({error:'Invalid pending bill identity.'});}for(const row of rows)await db.query('INSERT IGNORE INTO parked_checkout_reviews(checkout_request_id,counter_no,reported_by,grand_total) VALUES(?,?,?,?)',[row.checkout_request_id,row.counter_no,req.user.username,row.grand_total]);res.json({success:true});}catch(error){res.status(503).json({error:'Pending bill review sync is unavailable. Counter copy is retained.'});}});
+router.get('/checkout/reviews',authenticate,authorize('SERVER','ADMIN'),async(req,res)=>{try{const [rows]=await db.query(`SELECT r.*,i.invoice_no,i.invoice_status,e.outcome AS last_outcome,CASE WHEN i.invoice_no IS NOT NULL THEN 'SAVED' WHEN a.checkout_request_id IS NOT NULL THEN 'ABANDONED' WHEN e.action='CHECKOUT_ERROR' AND e.outcome IN ('PRICE_CHANGED','INVALID_PAYMENT','INVALID_BILL_LINE','INVALID_BILL_TOTAL') THEN 'REJECTED' ELSE 'UNRESOLVED' END AS review_status FROM parked_checkout_reviews r LEFT JOIN invoices i ON i.checkout_request_id=r.checkout_request_id LEFT JOIN abandoned_checkouts a ON a.checkout_request_id=r.checkout_request_id LEFT JOIN checkout_recovery_events e ON e.id=(SELECT MAX(h.id) FROM checkout_recovery_events h WHERE h.checkout_request_id=r.checkout_request_id) ORDER BY r.reported_at DESC LIMIT 200`);res.json(rows);}catch(error){res.status(503).json({error:'Unable to load handover review.'});}});
+
+router.post('/checkout/reviews/:id/check',authenticate,authorize('SERVER','ADMIN'),async(req,res)=>{try{res.json(await checkoutAbandonment.inspect(db,req.params.id,req.user.username));}catch(error){res.status(error.statusCode||503).json({error:error.statusCode?error.message:'Unable to check this bill. Nothing was released. Please try again when the server is available.'});}});
+router.get('/checkout/reviews/:id/events',authenticate,authorize('SERVER','ADMIN'),async(req,res)=>{try{if(!/^[A-Za-z0-9_-]{12,64}$/.test(req.params.id))return res.status(400).json({error:'Invalid bill identity.'});const [rows]=await db.query('SELECT actor,action,outcome,invoice_no,created_at FROM checkout_recovery_events WHERE checkout_request_id=? ORDER BY id DESC LIMIT 200',[req.params.id]);res.json(rows);}catch(error){res.status(503).json({error:'Unable to load bill action history.'});}});
+router.post('/checkout/abandon', authenticate, authorize('SERVER','ADMIN','COUNTER'), async(req,res)=>{try{res.json(await checkoutAbandonment.abandon(db,req.body?.checkout_request_id,req.user.username));}catch(error){res.status(error.statusCode||503).json({error:error.statusCode?error.message:'Unable to verify the previous checkout. Cart retained; try again when the server is available.'});}});
 
 router.get('/invoice/details', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
   const invoiceNo = String(req.query.invoice_no || '').trim();

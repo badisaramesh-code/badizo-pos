@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import ClosingAccountInput from './ClosingAccountInput';
 import * as XLSX from 'xlsx';
 import {
   fetchCounterHandover,
@@ -182,6 +183,7 @@ function escapeHtml(value) {
 
 export default function CounterClosingView({ onClose }) {
   const currentUser = getStoredUser();
+  const canViewSales = ['ADMIN', 'SERVER'].includes(currentUser?.role);
   const isCounterUser = currentUser?.role === 'COUNTER';
   const userCounterNo = currentUser?.counter_no || 1;
   const [initialSelection] = useState(() => readLastCounterClosingSelection(userCounterNo));
@@ -200,6 +202,7 @@ export default function CounterClosingView({ onClose }) {
   const [denominations, setDenominations] = useState(emptyDenominations(DEFAULT_DENOMINATIONS));
   const [openingCash, setOpeningCash] = useState('');
   const [entries, setEntries] = useState(makeDefaultEntries);
+  const [searchVendors, setSearchVendors] = useState(false);
   const [activeEntryIndex, setActiveEntryIndex] = useState(0);
   const [isExistingSheet, setIsExistingSheet] = useState(false);
   const [handedOverBy, setHandedOverBy] = useState('');
@@ -390,7 +393,9 @@ export default function CounterClosingView({ onClose }) {
         setTakenOverBy('');
         setNotes('');
         if (manual) {
-          if (nextSnapshot.counter_sales > 0) {
+          if (!canViewSales) {
+            setStatusMessage('Day sheet loaded.');
+          } else if (nextSnapshot.counter_sales > 0) {
             setStatusMessage('Sales details loaded for selected sale date and counter.');
           } else if (nextSnapshot.all_counter_sales > 0) {
             setStatusMessage(`No bills found for ${currentCounterLabel} on ${formatDisplayDate(saleDate)}. All counters have sales for this date.`);
@@ -434,12 +439,12 @@ export default function CounterClosingView({ onClose }) {
     }, 0);
   }
 
-  function updateEntry(index, field, value) {
+  function updateEntry(index, field, value, kind) {
     if (field === 'details' && index < REQUIRED_ENTRY_DETAILS.length) return;
     setActiveEntryIndex(index);
     if (isExistingSheet) setIsExistingSheet(false);
     setEntries((current) => current.map((entry, rowIndex) => (
-      rowIndex === index ? { ...entry, [field]: value } : entry
+      rowIndex === index ? { ...entry, ...(field === 'details' ? { entry_type: kind ? `CLOSING_${kind}` : 'GENERAL' } : {}), [field]: value } : entry
     )));
   }
 
@@ -538,7 +543,7 @@ export default function CounterClosingView({ onClose }) {
       if (!isCounterUser) await loadHistory();
       setSheetNo(result.sheet_no || sheetNo);
       setSheetMeta({ created_at: result.created_at || '', updated_at: result.updated_at || '' });
-      setStatusMessage(`Sheet ${result.sheet_no} saved. Ledger rows posted: ${Number(result.ledger_entry_count || 0)}. Cash notes balance: ${formatMoney(result.cash_balance)}. Difference: ${formatMoney(result.variance_amount)}.`);
+      setStatusMessage(`Sheet ${result.sheet_no} saved. Ledger rows posted: ${Number(result.ledger_entry_count || 0)}. Cash notes balance: ${formatMoney(result.cash_balance)}.${canViewSales ? ` Difference: ${formatMoney(result.variance_amount)}.` : ''}`);
     } catch (err) {
       const message = err.code === 'ECONNABORTED'
         ? 'Save timed out while posting ledger. Please press View to check if the sheet saved, then try again if needed.'
@@ -564,8 +569,8 @@ export default function CounterClosingView({ onClose }) {
         })).concat([
           { Sno: '', Details: 'Cash Notes Denomination Total', Remarks: '', DR: notesTotal, CR: '' },
           { Sno: '', Details: 'Counter Closing Cash', Remarks: 'Auto from opening cash', DR: '', CR: autoClosingCash },
-          { Sno: '', Details: 'Today Sale', Remarks: 'Auto counter sales total', DR: '', CR: autoTodaySale },
-          { Sno: '', Details: 'Counter Closing Total', Remarks: '', DR: drTotal, CR: crTotal }
+          ...(canViewSales ? [{ Sno: '', Details: 'Today Sale', Remarks: 'Auto counter sales total', DR: '', CR: autoTodaySale },
+          { Sno: '', Details: 'Counter Closing Total', Remarks: '', DR: drTotal, CR: crTotal }] : [])
         ])
       },
       {
@@ -732,7 +737,7 @@ export default function CounterClosingView({ onClose }) {
       <strong>Counter Handover Daily Sheet</strong>
       <span>Counter : ${escapeHtml(currentCounterLabel)}</span>
     </div>
-    <div class="sale-row">
+    ${canViewSales ? `<div class="sale-row">
       <strong>${escapeHtml(currentCounterLabel)} sale Rs. ${normalizeAmount(snapshot.counter_sales).toFixed(2)}</strong>
       <strong>All Counters sale Rs : ${normalizeAmount(snapshot.all_counter_sales).toFixed(2)}</strong>
     </div>
@@ -744,6 +749,7 @@ export default function CounterClosingView({ onClose }) {
       <strong>Exchange Sale Rs. ${normalizeAmount(snapshot.exchange_sale_total).toFixed(2)} Net Rs. ${normalizeAmount(snapshot.exchange_net_total).toFixed(2)}</strong>
       <strong>All Ex Sale Rs. ${normalizeAmount(snapshot.all_exchange_sale_total).toFixed(2)} Net Rs. ${normalizeAmount(snapshot.all_exchange_net_total).toFixed(2)}</strong>
     </div>
+    ` : ''}
     <table>
       <thead><tr><th>Sno</th><th>Details</th><th>Remarks</th><th>DR Rs</th><th>CR Rs</th></tr></thead>
       <tbody>
@@ -751,10 +757,11 @@ export default function CounterClosingView({ onClose }) {
         <tr><td>24</td><td colspan="4"><strong>Notes Dinomination</strong></td></tr>
         ${denominationRowsMarkup}
         <tr><td>33</td><td>Counter Closing Cash</td><td></td><td></td><td>${autoClosingCash ? autoClosingCash.toFixed(2) : ''}</td></tr>
-        <tr><td>34</td><td>To Day Sale</td><td></td><td></td><td>${autoTodaySale ? autoTodaySale.toFixed(2) : ''}</td></tr>
+        ${canViewSales ? `<tr><td>34</td><td>To Day Sale</td><td></td><td></td><td>${autoTodaySale ? autoTodaySale.toFixed(2) : ''}</td></tr>
         <tr><td>35</td><td>Difference +/-</td><td></td><td>${handoverPrintDifferenceDr ? handoverPrintDifferenceDr.toFixed(2) : ''}</td><td class="${handoverPrintDifferenceCr ? 'handover-negative-difference' : ''}">${handoverPrintDifferenceCr ? handoverPrintDifferenceCr.toFixed(2) : ''}</td></tr>
+      ` : ''}
       </tbody>
-      <tfoot><tr><th>36</th><th>Counter closing Total</th><th></th><th>${handoverPrintTallyTotal.toFixed(2)}</th><th>${handoverPrintTallyTotal.toFixed(2)}</th></tr></tfoot>
+      ${canViewSales ? `<tfoot><tr><th>36</th><th>Counter closing Total</th><th></th><th>${handoverPrintTallyTotal.toFixed(2)}</th><th>${handoverPrintTallyTotal.toFixed(2)}</th></tr></tfoot>` : ''}
     </table>
     <div class="balance">
       <strong>To Day Cash Notes Count Onwords Balance Rs. ${cashBalance.toFixed(2)}</strong><br />
@@ -1013,7 +1020,7 @@ export default function CounterClosingView({ onClose }) {
             <span className="handover-heading-chip">Edited: {formatDateTime(sheetMeta.updated_at)}</span>
           </div>
 
-          <div className="handover-sales-strip">
+          {canViewSales && <div className="handover-sales-strip">
             <div><span>Total Sale</span><strong>{formatMoney(snapshot.counter_sales)}</strong></div>
             <div><span>Cash Sale</span><strong>{formatMoney(snapshot.cash_sales)}</strong></div>
             <div><span>UPI Sale</span><strong>{formatMoney(snapshot.upi_sales)}</strong></div>
@@ -1028,7 +1035,7 @@ export default function CounterClosingView({ onClose }) {
             <div><span>All Exchange Sale</span><strong>{formatMoney(snapshot.all_exchange_sale_total)}</strong></div>
             <div><span>All Exchange Less</span><strong>{formatMoney(snapshot.all_exchange_less)}</strong></div>
             <div><span>All Exchange Net</span><strong>{formatMoney(snapshot.all_exchange_net_total)}</strong></div>
-          </div>
+          </div>}
 
           <div className="handover-actions-row">
             <label>
@@ -1050,6 +1057,7 @@ export default function CounterClosingView({ onClose }) {
           </div>
 
           <section className="panel">
+            <label><input type="checkbox" checked={searchVendors} onChange={event => setSearchVendors(event.target.checked)} /> Search Local / Non-Local vendors</label>
             <div className="panel-body table-scroll handover-entry-table-scroll">
               <table className="history-table handover-table">
                 <thead><tr><th>Sno</th><th>Details</th><th>Remarks</th><th>DR Rs</th><th>CR Rs</th><th>Clear</th></tr></thead>
@@ -1060,7 +1068,12 @@ export default function CounterClosingView({ onClose }) {
                     <tr key={index}>
                       <td>{index + 1}</td>
                       <td>
-                        <input
+                        {index >= REQUIRED_ENTRY_DETAILS.length ? (
+                          <ClosingAccountInput index={index} value={entry.details} vendors={searchVendors}
+                            inputRef={element => { entryDetailRefs.current[index] = element; }}
+                            onFocus={() => setActiveEntryIndex(index)}
+                            onChange={(value, kind) => updateEntry(index, 'details', value, kind)} />
+                        ) : <input
                           ref={(element) => { entryDetailRefs.current[index] = element; }}
                           className="field handover-details-input"
                           value={entry.details}
@@ -1075,7 +1088,13 @@ export default function CounterClosingView({ onClose }) {
                             }
                           }}
                           placeholder="Type details..."
-                        />
+                        />}
+                        {['CLOSING_CUSTOMER', 'CLOSING_LOCAL', 'CLOSING_NON_LOCAL'].includes(entry.entry_type) && (
+                          <small style={{ display: 'block' }}>
+                            {entry.entry_type === 'CLOSING_CUSTOMER' ? 'Customer' : entry.entry_type === 'CLOSING_LOCAL' ? 'Local vendor' : 'Non-Local vendor'}
+                            {entry.entry_type === 'CLOSING_CUSTOMER' ? ' · DR: Unpaid sale · CR: Payment or advance received' : ' · CR: We owe them · DR: We paid them'}
+                          </small>
+                        )}
                       </td>
                       <td>
                         <input
@@ -1165,7 +1184,7 @@ export default function CounterClosingView({ onClose }) {
                     <td></td>
                     <td><strong>{formatMoney(autoClosingCash)}</strong></td>
                   </tr>
-                  <tr>
+                  {canViewSales && <><tr>
                     <td>Today Sale</td>
                     <td>Automatically taken from counter sales</td>
                     <td></td>
@@ -1176,7 +1195,7 @@ export default function CounterClosingView({ onClose }) {
                     <td></td>
                     <td><strong>{formatMoney(drTotal)}</strong></td>
                     <td><strong>{formatMoney(crTotal)}</strong></td>
-                  </tr>
+                  </tr></>}
                 </tbody>
               </table>
             </div>
@@ -1185,10 +1204,10 @@ export default function CounterClosingView({ onClose }) {
           <div className="handover-total-strip">
             <div><span>Notes Cash Balance</span><strong>{formatMoney(cashBalance)}</strong></div>
             <div><span>Closing Cash</span><strong>{formatMoney(autoClosingCash)}</strong></div>
-            <div><span>Today Sale</span><strong>{formatMoney(autoTodaySale)}</strong></div>
+            {canViewSales && <><div><span>Today Sale</span><strong>{formatMoney(autoTodaySale)}</strong></div>
             <div><span>DR Total</span><strong>{formatMoney(drTotal)}</strong></div>
             <div><span>CR Total</span><strong>{formatMoney(crTotal)}</strong></div>
-            <div className={Math.abs(varianceAmount) > 0.01 ? 'variance-warning' : ''}><span>Difference</span><strong>{formatMoney(varianceAmount)}</strong></div>
+            <div className={Math.abs(varianceAmount) > 0.01 ? 'variance-warning' : ''}><span>Difference</span><strong>{formatMoney(varianceAmount)}</strong></div></>}
           </div>
 
           <label>
@@ -1253,7 +1272,7 @@ export default function CounterClosingView({ onClose }) {
             <strong>Counter Handover Daily Sheet</strong>
             <span>Counter: {currentCounterLabel}</span>
           </div>
-          <div className="handover-print-sale-row">
+          {canViewSales && <><div className="handover-print-sale-row">
             <strong>{currentCounterLabel} sale Rs. {normalizeAmount(snapshot.counter_sales).toFixed(2)}</strong>
             <strong>All Counters sale Rs : {normalizeAmount(snapshot.all_counter_sales).toFixed(2)}</strong>
           </div>
@@ -1265,6 +1284,7 @@ export default function CounterClosingView({ onClose }) {
             <strong>Exchange Sale Rs. {normalizeAmount(snapshot.exchange_sale_total).toFixed(2)} Net Rs. {normalizeAmount(snapshot.exchange_net_total).toFixed(2)}</strong>
             <strong>All Ex Sale Rs. {normalizeAmount(snapshot.all_exchange_sale_total).toFixed(2)} Net Rs. {normalizeAmount(snapshot.all_exchange_net_total).toFixed(2)}</strong>
           </div>
+          </>}
           <table>
             <thead><tr><th>Sno</th><th>Details</th><th>Remarks</th><th>DR Rs</th><th>CR Rs</th></tr></thead>
             <tbody>
@@ -1288,12 +1308,13 @@ export default function CounterClosingView({ onClose }) {
                 </tr>
               ))}
               <tr><td>33</td><td>Counter Closing Cash</td><td></td><td></td><td>{autoClosingCash ? autoClosingCash.toFixed(2) : ''}</td></tr>
-              <tr><td>34</td><td>To Day Sale</td><td></td><td></td><td>{autoTodaySale ? autoTodaySale.toFixed(2) : ''}</td></tr>
+              {canViewSales && <><tr><td>34</td><td>To Day Sale</td><td></td><td></td><td>{autoTodaySale ? autoTodaySale.toFixed(2) : ''}</td></tr>
               <tr><td>35</td><td>Difference +/-</td><td></td><td>{handoverPrintDifferenceDr ? handoverPrintDifferenceDr.toFixed(2) : ''}</td><td className={handoverPrintDifferenceCr ? 'handover-negative-difference' : ''}>{handoverPrintDifferenceCr ? handoverPrintDifferenceCr.toFixed(2) : ''}</td></tr>
+            </>}
             </tbody>
-            <tfoot>
+            {canViewSales && <tfoot>
               <tr><th>36</th><th>Counter closing Total</th><th></th><th>{handoverPrintTallyTotal.toFixed(2)}</th><th>{handoverPrintTallyTotal.toFixed(2)}</th></tr>
-            </tfoot>
+            </tfoot>}
           </table>
           <div className="handover-print-balance">
             <strong>Today Cash Notes Count Onwards Balance Rs. {cashBalance.toFixed(2)}</strong>
