@@ -45,7 +45,7 @@ test('unpaid reminder returns next day even after dismissing it today',async()=>
 });
 test('name suggestions require three letters and search only the chosen Local/Non-Local scope',async()=>{
   api.get.mockImplementation((url)=>Promise.resolve({data:url.endsWith('/accounts')?[{account_name:'SUPPLIER'}]:view()}));
-  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>jest.advanceTimersByTime(250));
+  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>Simulate.click(button('Today\'s dues / overdue')));
   await act(async()=>Simulate.change(input('Account name'),{target:{value:'SU'}}));await act(async()=>jest.advanceTimersByTime(250));
   expect(api.get.mock.calls.filter(([url])=>url.endsWith('/accounts'))).toHaveLength(0);
   await act(async()=>Simulate.change(input('Account name'),{target:{value:'SUP'}}));await act(async()=>jest.advanceTimersByTime(250));
@@ -55,7 +55,7 @@ test('name suggestions require three letters and search only the chosen Local/No
   expect(input('Account name').value).toBe('');
 });
 test('past FY hides new reminder and payment actions while retaining history and closing controls',async()=>{
-  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>jest.advanceTimersByTime(250));
+  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>Simulate.click(button('Today\'s dues / overdue')));
   await act(async()=>Simulate.change(input('Financial year'),{target:{value:'2025'}}));await act(async()=>jest.advanceTimersByTime(250));
   expect(button('Add reminder')).toBeUndefined();expect(button('Record payment')).toBeUndefined();
   expect(button('History')).toBeTruthy();expect(button('Close this completed year')).toBeTruthy();
@@ -63,7 +63,7 @@ test('past FY hides new reminder and payment actions while retaining history and
 
 test('invoice number is optional and an uncertain reminder retry keeps its automatic reference',async()=>{
   api.post.mockRejectedValueOnce(new Error('Network interruption')).mockResolvedValueOnce({data:{id:2}});
-  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>jest.advanceTimersByTime(250));
+  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>Simulate.click(button('Today\'s dues / overdue')));
   expect(input('Bill / invoice number').required).toBe(false);
   await act(async()=>{Simulate.change(input('Account name'),{target:{value:'SUPPLIER'}});Simulate.change(input('Bill amount'),{target:{value:'100'}});});
   await act(async()=>Simulate.submit(container.querySelector('form'),{preventDefault:()=>{}}));
@@ -74,7 +74,7 @@ test('invoice number is optional and an uncertain reminder retry keeps its autom
   expect(second.request_id).toBe(first.request_id);expect(input('Bill / invoice number').value).toBe('');
 });
 test('existing unpaid reminder edits include a reason and version without posting another payment',async()=>{
-  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>jest.advanceTimersByTime(250));
+  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>Simulate.click(button('Today\'s dues / overdue')));
   await act(async()=>Simulate.click(button('Edit')));
   await act(async()=>{Simulate.change(input('Amount'),{target:{value:'150'}});Simulate.change(input('Reason'),{target:{value:'Corrected amount'}});});
   await act(async()=>Simulate.submit(container.querySelector('[aria-label="Edit reminder"] form'),{preventDefault:()=>{}}));
@@ -82,7 +82,7 @@ test('existing unpaid reminder edits include a reason and version without postin
   expect(api.post).not.toHaveBeenCalled();
 });
 test('delete asks for a reason and removes only the selected reminder',async()=>{
-  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>jest.advanceTimersByTime(250));
+  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>Simulate.click(button('Today\'s dues / overdue')));
   await act(async()=>Simulate.click(button('Delete')));
   expect(container.textContent).toContain('You can restore it from Deleted reminders');
   await act(async()=>Simulate.change(input('Reason'),{target:{value:'Duplicate'}}));
@@ -92,7 +92,7 @@ test('delete asks for a reason and removes only the selected reminder',async()=>
 });
 test('paid reminder cannot have its amount edited or be deleted without reversal',async()=>{
   api.get.mockResolvedValue({data:{...view(),rows:[{...due,paid_amount:40,pending_amount:60}]}});
-  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>jest.advanceTimersByTime(250));
+  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>Simulate.click(button('Today\'s dues / overdue')));
   await act(async()=>Simulate.click(button('Edit')));expect(input('Amount').disabled).toBe(true);
   await act(async()=>Simulate.click(button('Cancel')));await act(async()=>Simulate.click(button('Delete')));
   expect(button('Confirm delete')).toBeUndefined();expect(container.textContent).toContain('Reverse it in History');
@@ -104,8 +104,23 @@ test('dealer/day grouping sums remaining balances and keeps scopes and dates sep
 });
 test('diary and reminder show a combined dealer total with separate bill details',async()=>{
  api.get.mockResolvedValue({data:{...view(),rows:[due,{...due,id:2,bill_no:'INV-2',bill_date:'2026-10-16',pending_amount:200,amount:200}]}});
- await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>jest.advanceTimersByTime(250));
+ await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>Simulate.click(button('Today\'s dues / overdue')));
  expect(container.querySelector('.diary-group-heading').textContent).toContain('2 bills');expect(container.querySelector('.diary-group-heading').textContent).toContain('300.00');expect(container.textContent).toContain('INV-1');expect(container.textContent).toContain('INV-2');expect(container.textContent).toContain('2026-10-16');expect([...container.querySelectorAll('button')].filter(b=>b.textContent==='Record payment')).toHaveLength(2);
  await act(async()=>root.render(<PaymentDiaryReminder user={{username:'admin',role:'ADMIN'}}/>));
  expect(container.querySelector('.diary-group-heading').textContent).toContain('300.00');expect(container.textContent).toContain('INV-1');expect(container.textContent).toContain('INV-2');expect(container.textContent).toContain('2026-10-16');
+});
+
+
+test('Show requires criteria; Clear and Reset empty results and Refresh cannot repopulate them',async()=>{
+ await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>jest.advanceTimersByTime(250));
+ expect(api.get).not.toHaveBeenCalled();expect(container.querySelectorAll('.diary-table-panel tbody tr')).toHaveLength(0);
+ await act(async()=>Simulate.click(button('Show')));expect(api.get).not.toHaveBeenCalled();expect(container.textContent).toContain('Select a reminder date/month');
+ await act(async()=>Simulate.change(input('Reminder from'),{target:{value:'2026-11-01'}}));
+ expect(api.get).not.toHaveBeenCalled();await act(async()=>Simulate.click(button('Show')));
+ expect(container.querySelector('.diary-table-panel').textContent).toContain('SUPPLIER');
+ await act(async()=>Simulate.click(button('Refresh')));expect(api.get.mock.calls.at(-1)[1].params.from).toBe('2026-11-01');
+ await act(async()=>Simulate.click(button('Clear')));expect(input('Reminder from').value).toBe('');expect(container.querySelector('.diary-table-panel').textContent).not.toContain('SUPPLIER');
+ const count=api.get.mock.calls.length;await act(async()=>Simulate.click(button('Refresh')));await act(async()=>jest.advanceTimersByTime(250));expect(api.get.mock.calls.length).toBe(count);
+ await act(async()=>Simulate.change(input('Account / bill search'),{target:{value:'SUPPLIER'}}));await act(async()=>Simulate.click(button('Show')));expect(container.querySelector('.diary-table-panel').textContent).not.toContain('SUPPLIER');await act(async()=>Simulate.change(input('Reminder to'),{target:{value:'2026-11-12'}}));await act(async()=>Simulate.click(button('Show')));expect(container.querySelector('.diary-table-panel').textContent).toContain('SUPPLIER');
+ await act(async()=>Simulate.click(button('Reset')));expect(input('Account / bill search').value).toBe('');expect(input('Status').value).toBe('PENDING');expect(container.querySelector('.diary-table-panel').textContent).not.toContain('SUPPLIER');
 });
