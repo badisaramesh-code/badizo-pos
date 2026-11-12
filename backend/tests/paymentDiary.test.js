@@ -49,9 +49,9 @@ test('adding a reminder never duplicates a purchase in the ledger',async()=>{
   const retry=await f.service.add(body,'admin');assert.equal(retry.duplicate,true);assert.equal(f.state.diary.length,2);
   await assert.rejects(f.service.add({...body,amount:'300'},'admin'),e=>e.status===409);
 });
-test('payment and discount atomically post separate DR ledger entries',async()=>{
+test('payment and discount atomically post separate CR ledger entries',async()=>{
   const f=fixture();const result=await f.service.pay(1,payment(),'admin');assert.equal(result.pending_amount,0);
-  assert.deepEqual(f.state.entries.map(r=>[r.scope,r.name,r.dr,r.cr]),[['LOCAL','SUPPLIER',95,0],['LOCAL','SUPPLIER',5,0]]);
+  assert.deepEqual(f.state.entries.map(r=>[r.scope,r.name,r.dr,r.cr]),[['LOCAL','SUPPLIER',0,95],['LOCAL','SUPPLIER',0,5]]);
   assert.match(f.state.entries[0].details,/PAYMENT BANK/);assert.match(f.state.entries[1].details,/DISCOUNT/);
   assert.match(f.state.entries[0].remarks,/HDFC.*UTR-1/);
   const retry=await f.service.pay(1,payment(),'admin');assert.equal(retry.duplicate,true);assert.equal(f.state.entries.length,2);
@@ -135,3 +135,5 @@ test('Bank and UPI payments save without a transaction reference',async()=>{
 });
 
 test('Sunday reminders move to Saturday without changing other weekdays',()=>{const {reminderDate}=require('../services/paymentDiary');assert.equal(reminderDate('2026-11-15'),'2026-11-14');assert.equal(reminderDate('2026-11-14'),'2026-11-14');assert.equal(reminderDate('2026-11-16'),'2026-11-16');assert.equal(reminderDate('2026-11-01'),'2026-10-31');assert.equal(reminderDate('2023-01-01'),'2022-12-31');});
+
+test('all payment modes credit both Local and Non-Local ledgers; reversals debit them',async()=>{for(const scope of ['LOCAL','NON_LOCAL'])for(const payment_mode of ['Cash','Bank','UPI']){const f=fixture();f.state.diary[0].account_scope=scope;await f.service.pay(1,payment({payment_mode}),'admin');assert.deepEqual(f.state.entries.map(r=>[r.dr,r.cr]),[[0,95],[0,5]]);await f.service.reverse(1,{reversal_date:'2026-11-11',reason:'Correction',request_id:'reverse-credit-123'},'admin');assert.deepEqual(f.state.entries.slice(2).map(r=>[r.dr,r.cr]),[[95,0],[5,0]]);}});

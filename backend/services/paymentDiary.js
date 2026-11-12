@@ -90,7 +90,7 @@ function createService(pool, { today = todayIndia } = {}) {
     const [result] = await c.query(`INSERT INTO local_account_entries
       (account_scope,entry_date,account_name,details,remarks,dr_amount,cr_amount,created_by)
       VALUES(?,?,?,?,?,?,?,?)`, [row.account_scope, payment.payment_date, row.account_name, details, remarks,
-      reverse ? 0 : amount / 100, reverse ? amount / 100 : 0, payment.actor]);
+      reverse ? amount / 100 : 0, reverse ? 0 : amount / 100, payment.actor]);
     return result.insertId;
   }
   async function changeState(c,id) {

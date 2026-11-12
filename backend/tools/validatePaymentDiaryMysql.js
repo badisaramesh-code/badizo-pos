@@ -35,7 +35,7 @@ async function main(){
     assert.equal((await service.list({year:2026})).rows[0].pending_amount,50);
     const history=await service.history(record.id);assert.equal(history.length,2);assert.equal(history[1].reversed_date,'2026-11-11');
     const [ledger]=await pool.query('SELECT SUM(dr_amount) AS dr,SUM(cr_amount) AS cr,COUNT(*) AS entries FROM local_account_entries');
-    assert.equal(Number(ledger[0].dr)-Number(ledger[0].cr),50);assert.equal(ledger[0].entries,4);
+    assert.equal(Number(ledger[0].cr)-Number(ledger[0].dr),50);assert.equal(ledger[0].entries,4);
     await service.closeYear({year:2025},'test');
     await assert.rejects(service.add({account_scope:'LOCAL',account_name:'TEST SUPPLIER',bill_no:'TEST-2',bill_date:'2025-10-01',due_date:'2025-11-01',amount:'100',request_id:'closed-reminder-123456'},'test'),/closed financial year/);
     const matches=await service.accounts({scope:'NON_LOCAL',search:'TEST'});assert.deepEqual(matches.map(r=>r.account_name),['TEST OUTSIDE']);

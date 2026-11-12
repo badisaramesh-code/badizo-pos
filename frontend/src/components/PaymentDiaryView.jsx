@@ -86,7 +86,7 @@ export function DiaryPaymentDialog({row,onClose,onSaved}) {
       <label>Transaction ID / UTR (optional)<input value={form.reference_no} maxLength={120} onChange={e=>change('reference_no',e.target.value)}/></label>
       <label className="diary-full">Remarks<input value={form.notes} maxLength={500} onChange={e=>change('notes',e.target.value)}/></label>
     </div><p className={remaining<0?'form-error':''}>Balance after this payment: <strong>{amount(remaining)}</strong></p>
-    <p className="muted">Payment and discount post as separate DR entries in this Local/Non-Local ledger only. No purchase entry is added.</p>
+    <p className="muted">Payment and discount post as separate CR entries in this Local/Non-Local ledger only. No purchase entry is added.</p>
     {error&&<p className="form-error" role="alert">{error}</p>}
     <div className="diary-actions"><button type="button" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-button" disabled={busy||remaining<0||Number(form.paid_amount||0)+Number(form.discount_amount||0)<=0}>{busy?'Saving…':'Confirm payment & post to ledger'}</button></div></form>
   </section></div>;
@@ -102,7 +102,7 @@ function DiaryHistory({row,onClose,onChanged}) {
   }catch(e){setError(errorText(e));}finally{setBusy(false);}}
   return <div className="diary-overlay"><section className="diary-dialog diary-dialog-wide" role="dialog" aria-modal="true" aria-label="Payment history"><h2>{row.account_name} · Bill {row.bill_no}</h2>
     <div className="diary-table-wrap"><table><thead><tr><th>Date</th><th>Through / reference</th><th>Paid</th><th>Less</th><th>Recorded by</th><th>Action</th></tr></thead><tbody>{rows.map(p=><tr key={p.id}><td>{p.payment_date}</td><td>{p.payment_mode}<br/>{p.bank_name} {p.reference_no}<small>{p.notes}</small></td><td>{amount(p.paid_amount)}</td><td>{amount(p.discount_amount)}</td><td>{p.created_by}</td><td>{p.reversed_date?<span>Reversed {p.reversed_date}<small>{p.reversal_reason}</small></span>:<button onClick={()=>setReversal({id:p.id,reason:'',request_id:newId()})}>Reverse</button>}</td></tr>)}</tbody></table>{!rows.length&&<p>No payments recorded.</p>}</div>
-    {reversal&&<form onSubmit={reverse}><label>Reason for reversal<input value={reversal.reason} onChange={e=>setReversal({...reversal,reason:e.target.value})} required maxLength={255}/></label><p>This adds opposite CR entries today and reopens the pending balance. Original entries remain in history.</p><button disabled={busy}>Confirm reversal</button><button type="button" disabled={busy} onClick={()=>setReversal(null)}>Cancel reversal</button></form>}
+    {reversal&&<form onSubmit={reverse}><label>Reason for reversal<input value={reversal.reason} onChange={e=>setReversal({...reversal,reason:e.target.value})} required maxLength={255}/></label><p>This adds opposite DR entries today and reopens the pending balance. Original entries remain in history.</p><button disabled={busy}>Confirm reversal</button><button type="button" disabled={busy} onClick={()=>setReversal(null)}>Cancel reversal</button></form>}
     <h3>Reminder change history</h3>{!changes.length&&<p>No reminder edits or deletions.</p>}{changes.map(change=><div key={change.id}><strong>{change.event_date} · {change.change_type} · {change.created_by}</strong><p>{change.reason}</p></div>)}
     {error&&<p className="form-error" role="alert">{error}</p>}<button onClick={onClose} disabled={busy}>Close history</button>
   </section></div>;
