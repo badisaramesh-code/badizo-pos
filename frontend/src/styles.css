@@ -9648,7 +9648,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .diary-statement header h3 { margin:0 0 8px; }
 .diary-statement header p { margin:6px 0; }
 
-.diary-reminder-unpaid td { background:#fff0f0; color:#a61b1b; border-bottom-color:#ecc8c8; }
-.diary-reminder-unpaid td small { color:#a61b1b; }
-.diary-reminder-paid td { background:#e3f5e8; color:#17632d; border-bottom-color:#badbc4; }
-.diary-reminder-paid td small { color:#17632d; }
+
+.diary-dialog button.diary-payment-pending { background:#b42323; color:#fff; border-color:#b42323; font-weight:600; }
+.diary-dialog button.diary-payment-pending:hover { background:#911b1b; border-color:#911b1b; }
+.diary-dialog button.diary-payment-ok:disabled { background:#237c39; color:#fff; border-color:#237c39; opacity:1; font-weight:600; cursor:default; }

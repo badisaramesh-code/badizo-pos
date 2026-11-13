@@ -143,9 +143,9 @@ test('payment statement Excel contains date range, daily totals and payment rows
  const [book,name]=XLSX.writeFile.mock.calls.at(-1);expect(name).toBe('payment-statement-2026-11-10-2026-11-10.xlsx');expect(book.SheetNames).toEqual(['Statement totals','Payments']);expect(XLSX.utils.sheet_to_json(book.Sheets['Statement totals'])[0]).toMatchObject({'Payment from':'2026-11-10','Total paid':10.25,'Total settled':12});expect(XLSX.utils.sheet_to_json(book.Sheets.Payments)[0]).toMatchObject({'Paid on':'2026-11-10','Account type':'NON_LOCAL','Paid amount':10.25});
 });
 
-test('reminder keeps completed shops green and unsettled shops red',async()=>{
- await act(async()=>root.render(<PaymentDiaryReminder user={{username:'server',role:'SERVER'}}/>));expect(container.querySelector('.diary-reminder-unpaid')).toBeTruthy();
+test('reminder colors only the action buttons and retains completed shops',async()=>{
+ await act(async()=>root.render(<PaymentDiaryReminder user={{username:'server',role:'SERVER'}}/>));expect(button('Record payment').className).toBe('diary-payment-pending');expect(container.querySelector('.diary-reminder-unpaid')).toBeNull();
  api.get.mockResolvedValue({data:{...view(),rows:[{...due,paid_amount:100,pending_amount:0,status:'PAID',payments:[{payment_date:mockDay}]},{...due,id:2,account_name:'PAID OVERDUE',due_date:'2026-11-01',paid_amount:100,pending_amount:0,payments:[{payment_date:mockDay}]},{...due,id:3,account_name:'OLD UNPAID',due_date:'2026-11-01'}]}});
  await act(async()=>window.dispatchEvent(new Event('badizo-local-diary-updated')));
- expect(container.textContent).toContain('SUPPLIER');expect(container.textContent).toContain('PAID OVERDUE');expect(container.textContent).not.toContain('OLD UNPAID');expect(container.querySelectorAll('.diary-reminder-paid')).toHaveLength(2);expect(button('Record payment')).toBeUndefined();expect(container.textContent).toContain('2 paid');
+ expect(container.textContent).toContain('SUPPLIER');expect(container.textContent).toContain('PAID OVERDUE');expect(container.textContent).not.toContain('OLD UNPAID');expect(container.querySelectorAll('button.diary-payment-ok')).toHaveLength(2);expect(container.querySelector('.diary-reminder-paid')).toBeNull();expect(button('✓ Payment OK').disabled).toBe(true);expect(button('Record payment')).toBeUndefined();expect(container.textContent).toContain('2 paid');
 });
