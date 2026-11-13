@@ -37,3 +37,18 @@ test('saved counter handover response omits snapshots, reconciliation totals and
   assert.deepEqual(result.sheet.entries, [entries[1]]);
   assert.equal(result.sheet.opening_cash, 50);
 });
+
+test('closing search uses the same Named Ledgers accounts for GEN and ADV', async () => {
+ const dbPath=require.resolve('../config/db');let queries=0;
+ require.cache[dbPath].exports.query=async sql=>{queries++;
+  if(sql.includes('FROM counter_cash_ledger_entries cle'))return [[{account_name:'GENERAL'},{account_name:'GENERAL'},{account_name:'ADVANCE'}]];
+  if(sql.includes('FROM local_account_ledgers'))return [[{name:'LOCAL STORE',kind:'LOCAL'}]];
+  throw Error('Unexpected account source');
+ };
+ const router=require('../routes/counterClosing');const handler=router.stack.find(layer=>layer.route?.path==='/accounts').route.stack[0].handle;
+ const search=async(q,vendors='0')=>{let result;await handler({query:{q,vendors}}, {json:data=>{result=data;},status:()=>{throw Error('Search failed');}});return result;};
+ assert.deepEqual(await search('GE'),[]);assert.equal(queries,0);
+ assert.deepEqual(await search('GEN'),[{name:'GENERAL',kind:'NAMED_LEDGER'}]);
+ assert.deepEqual(await search('ADV'),[{name:'ADVANCE',kind:'NAMED_LEDGER'}]);
+ assert.deepEqual(await search('LOC','1'),[{name:'LOCAL STORE',kind:'LOCAL'}]);
+});

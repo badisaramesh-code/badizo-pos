@@ -1,4 +1,4 @@
-const { overrideKey } = require('../utils/namedLedgers');
+const { overrideKey, fetchNamedLedgers } = require('../utils/namedLedgers');
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
@@ -258,17 +258,14 @@ router.get('/accounts', async (req, res) => {
   if (query.length < 3) return res.json([]);
   try {
     if (Date.now() >= directoryCache.expires) {
-      const [rows] = await db.query(`SELECT DISTINCT TRIM(customer_name) AS name, 'CUSTOMER' AS kind
-        FROM customers WHERE TRIM(customer_name) <> ''
-        UNION SELECT TRIM(customer_name), 'CUSTOMER' FROM invoices
-          WHERE TRIM(customer_name) NOT IN ('', 'Walk-in Customer') AND invoice_status <> 'CANCELLED'
-        UNION SELECT TRIM(account_name), 'CUSTOMER' FROM accounting_vouchers
-          WHERE voucher_type IN ('CUSTOMER_CREDIT', 'DEBTOR_RECEIPT') AND TRIM(account_name) <> ''
-        UNION SELECT TRIM(details), CASE WHEN entry_type = 'CLOSING_CUSTOMER' THEN 'CUSTOMER' ELSE 'HISTORY' END
-          FROM counter_handover_entries
-          WHERE entry_type IN ('GENERAL','CLOSING_CUSTOMER') AND TRIM(details) NOT IN ('','UPI SALE','NUMBER','Today Sale','Counter Closing Cash')
-        UNION SELECT TRIM(account_name), account_scope FROM local_account_ledgers WHERE TRIM(account_name) <> ''
+      const to = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+      const ledgerRows = await fetchNamedLedgers(db, to);
+      const named = [...new Set(ledgerRows.map(row => row.account_name).filter(Boolean))]
+        .map(name => ({ name, kind: 'NAMED_LEDGER' }));
+      const [vendors] = await db.query(`SELECT DISTINCT TRIM(account_name) AS name, account_scope AS kind
+        FROM local_account_ledgers WHERE TRIM(account_name) <> ''
         UNION SELECT TRIM(account_name), account_scope FROM local_account_entries WHERE TRIM(account_name) <> ''`);
+      const rows = [...named, ...vendors];
       directoryCache = { rows, expires: Date.now() + 30000 };
     }
     const vendors = req.query.vendors === '1';
@@ -466,11 +463,12 @@ router.post('/handover', async (req, res) => {
           entry.direction,
           entry.amount,
           entry.entry_type,
-          req.user.username
+          req.user.username,
+          entry.entry_type === 'CLOSING_NAMED_LEDGER' ? normalizeNamedLedgerAccount(entry.details) : null
         ]);
         await connection.query(
           `INSERT INTO counter_cash_ledger_entries
-           (entry_date, counter_no, source_type, source_id, account_name, details, direction, amount, payment_mode, created_by)
+           (entry_date, counter_no, source_type, source_id, account_name, details, direction, amount, payment_mode, created_by, named_ledger_account)
            VALUES ?`,
           [ledgerRows.map((row) => [row[0], row[1], 'COUNTER_HANDOVER', ...row.slice(2)])]
         );

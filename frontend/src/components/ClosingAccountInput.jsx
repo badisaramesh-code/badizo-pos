@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { searchClosingAccounts } from '../api/client';
 
-const labels = { LOCAL: 'Local vendor', NON_LOCAL: 'Non-Local vendor', CUSTOMER: 'Customer', HISTORY: 'Previous day-sheet name' };
+const labels = { NAMED_LEDGER: 'Named Ledger', LOCAL: 'Local vendor', NON_LOCAL: 'Non-Local vendor', CUSTOMER: 'Customer', HISTORY: 'Previous day-sheet name' };
 
 export default function ClosingAccountInput({ index, inputRef, value, onChange, onFocus, vendors }) {
   const [open, setOpen] = useState(false);
@@ -53,7 +53,7 @@ export default function ClosingAccountInput({ index, inputRef, value, onChange, 
       aria-label={`Row ${index + 1} details`} role="combobox" aria-autocomplete="list"
       aria-expanded={Boolean(rows.length)} aria-controls={listId}
       aria-activedescendant={rows[active] ? `${listId}-${active}` : undefined}
-      autoComplete="off" placeholder="Name or details..."
+      autoComplete="off" placeholder="Type 3 letters · Named Ledger"
       onFocus={() => { onFocus(); setOpen(true); }} onBlur={() => setOpen(false)}
       onChange={event => { setOpen(true); setActive(-1); onChange(event.target.value); }}
       onKeyDown={keyDown} />

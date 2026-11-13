@@ -1057,6 +1057,7 @@ export default function CounterClosingView({ onClose }) {
           </div>
 
           <section className="panel">
+            <p style={{margin:'0 0 8px',fontSize:12}}>Details: type 3 letters to select an existing Named Ledger (GEN → GENERAL, ADV → ADVANCE).</p>
             <label><input type="checkbox" checked={searchVendors} onChange={event => setSearchVendors(event.target.checked)} /> Search Local / Non-Local vendors</label>
             <div className="panel-body table-scroll handover-entry-table-scroll">
               <table className="history-table handover-table">

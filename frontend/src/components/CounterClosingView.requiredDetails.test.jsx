@@ -126,3 +126,16 @@ test('row three suggests canonical accounts after three letters and saves the ch
     jest.useRealTimers();
   }
 });
+
+test.each([['GEN','GENERAL'],['ADV','ADVANCE']])('Details selects %s from Named Ledgers and retains its ledger type',async(query,name)=>{
+ jest.useFakeTimers();try{
+  api.searchClosingAccounts.mockResolvedValue([{kind:'NAMED_LEDGER',name}]);api.saveCounterHandover.mockResolvedValue({sheet_no:'TEST'});
+  await act(async()=>root.render(<CounterClosingView/>));const input=details()[2];
+  await act(async()=>Simulate.change(input,{target:{value:query}}));await act(async()=>jest.advanceTimersByTime(200));
+  const option=container.querySelector('[role=option]');expect(option.textContent).toBe(name+' · Named Ledger');
+  await act(async()=>Simulate.click(option));expect(input.value).toBe(name);
+  const dr=input.closest('tr').querySelector('.handover-dr-input');await act(async()=>Simulate.change(dr,{target:{value:'125'}}));
+  const save=[...container.querySelectorAll('button')].find(item=>/save/i.test(item.textContent));await act(async()=>Simulate.click(save));
+  expect(api.saveCounterHandover.mock.calls[0][0].entries).toContainEqual(expect.objectContaining({details:name,entry_type:'CLOSING_NAMED_LEDGER',amount:'125'}));
+ }finally{jest.useRealTimers();}
+});
