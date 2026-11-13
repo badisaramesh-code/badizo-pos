@@ -3,11 +3,13 @@ import { createRoot } from 'react-dom/client';
 import { Simulate } from 'react-dom/test-utils';
 import PaymentDiaryView, {DiaryPaymentDialog,PaymentDiaryReminder,groupDiaryBills} from './PaymentDiaryView';
 import api from '../api/client';
+import * as XLSX from 'xlsx';
+jest.mock('xlsx',()=>({...jest.requireActual('xlsx'),writeFile:jest.fn()}));
 jest.mock('../api/client',()=>({__esModule:true,default:{get:jest.fn(),post:jest.fn(),put:jest.fn(),delete:jest.fn()}}));
 let mockDay='2026-11-11';
 jest.mock('../utils/date',()=>({todayIso:()=>mockDay}));
 let container,root;
-const due={id:1,account_scope:'LOCAL',account_name:'SUPPLIER',bill_no:'INV-1',bill_date:'2026-10-01',due_date:'2026-11-01',amount:100,paid_amount:0,discount_amount:0,pending_amount:100,status:'PENDING'};
+const due={id:1,account_scope:'LOCAL',account_name:'SUPPLIER',bill_no:'INV-1',bill_date:'2026-10-01',due_date:'2026-11-11',amount:100,paid_amount:0,discount_amount:0,pending_amount:100,status:'PENDING'};
 const view=()=>({rows:[due],summary:{pending:100,due:100},year:2026,active_year:2026,earliest_year:2025,closed_years:[],today:mockDay,as_of:mockDay});
 const button=text=>[...container.querySelectorAll('button')].find(el=>el.textContent===text);
 const input=label=>[...container.querySelectorAll('label')].find(el=>el.textContent.startsWith(label))?.querySelector('input,select');
@@ -35,14 +37,16 @@ test('counter login never requests or shows the financial reminder',async()=>{
   await act(async()=>root.render(<PaymentDiaryReminder user={{username:'counter1',role:'COUNTER'}}/>));
   expect(api.get).not.toHaveBeenCalled();expect(container.querySelector('[role="dialog"]')).toBeNull();
 });
-test('unpaid reminder returns next day even after dismissing it today',async()=>{
-  await act(async()=>root.render(<PaymentDiaryReminder user={{username:'admin',role:'ADMIN'}}/>));
-  expect(container.textContent).toContain("Today's Local / Non-Local payments");
-  await act(async()=>Simulate.click(button('Remind me tomorrow')));
-  expect(container.querySelector('[role="dialog"]')).toBeNull();expect(api.post).not.toHaveBeenCalled();
-  mockDay='2026-11-12';await act(async()=>jest.advanceTimersByTime(60000));
-  expect(container.textContent).toContain('SUPPLIER');expect(container.textContent).toContain('OVERDUE');
+test('today only and minimize restore survive polling',async()=>{
+ api.get.mockResolvedValue({data:{...view(),rows:[due,{...due,id:2,account_name:'OLD',due_date:'2026-11-10'},{...due,id:3,account_name:'FUTURE',due_date:'2026-11-12'}]}});
+ await act(async()=>root.render(<PaymentDiaryReminder user={{username:'admin',role:'ADMIN'}}/>));
+ expect(container.textContent).toContain('SUPPLIER');expect(container.textContent).not.toContain('OLD');expect(container.textContent).not.toContain('FUTURE');
+ await act(async()=>Simulate.click(container.querySelector('[aria-label="Minimize payment reminder"]')));await act(async()=>jest.advanceTimersByTime(60000));expect(container.querySelector('[role="dialog"]')).toBeNull();
+ await act(async()=>Simulate.click(button("Today's payments (1) · Restore")));expect(container.querySelector('[role="dialog"]')).toBeTruthy();
+ await act(async()=>Simulate.click(button('Close for today')));expect(api.post).not.toHaveBeenCalled();
+ mockDay='2026-11-12';api.get.mockResolvedValue({data:{...view(),rows:[{...due,account_name:'FUTURE',due_date:mockDay}]}});await act(async()=>jest.advanceTimersByTime(60000));expect(container.textContent).toContain('FUTURE');expect(container.textContent).not.toContain('SUPPLIER');
 });
+
 test('name suggestions require three letters and search only the chosen Local/Non-Local scope',async()=>{
   api.get.mockImplementation((url)=>Promise.resolve({data:url.endsWith('/accounts')?[{account_name:'SUPPLIER'}]:view()}));
   await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>Simulate.click(button('Today\'s dues / overdue')));
@@ -114,13 +118,34 @@ test('diary and reminder show a combined dealer total with separate bill details
 test('Show requires criteria; Clear and Reset empty results and Refresh cannot repopulate them',async()=>{
  await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>jest.advanceTimersByTime(250));
  expect(api.get).not.toHaveBeenCalled();expect(container.querySelectorAll('.diary-table-panel tbody tr')).toHaveLength(0);
- await act(async()=>Simulate.click(button('Show')));expect(api.get).not.toHaveBeenCalled();expect(container.textContent).toContain('Select a reminder date/month');
+ await act(async()=>Simulate.click(button('Show')));expect(api.get).not.toHaveBeenCalled();expect(container.textContent).toContain('Enter an account / bill');
  await act(async()=>Simulate.change(input('Reminder from'),{target:{value:'2026-11-01'}}));
  expect(api.get).not.toHaveBeenCalled();await act(async()=>Simulate.click(button('Show')));
  expect(container.querySelector('.diary-table-panel').textContent).toContain('SUPPLIER');
  await act(async()=>Simulate.click(button('Refresh')));expect(api.get.mock.calls.at(-1)[1].params.from).toBe('2026-11-01');
  await act(async()=>Simulate.click(button('Clear')));expect(input('Reminder from').value).toBe('');expect(container.querySelector('.diary-table-panel').textContent).not.toContain('SUPPLIER');
  const count=api.get.mock.calls.length;await act(async()=>Simulate.click(button('Refresh')));await act(async()=>jest.advanceTimersByTime(250));expect(api.get.mock.calls.length).toBe(count);
- await act(async()=>Simulate.change(input('Account / bill search'),{target:{value:'SUPPLIER'}}));await act(async()=>Simulate.click(button('Show')));expect(container.querySelector('.diary-table-panel').textContent).not.toContain('SUPPLIER');await act(async()=>Simulate.change(input('Reminder to'),{target:{value:'2026-11-12'}}));await act(async()=>Simulate.click(button('Show')));expect(container.querySelector('.diary-table-panel').textContent).toContain('SUPPLIER');
+ await act(async()=>Simulate.change(input('Account / bill search'),{target:{value:'SUPPLIER'}}));await act(async()=>Simulate.click(button('Show')));expect(container.querySelector('.diary-table-panel').textContent).toContain('SUPPLIER');await act(async()=>Simulate.change(input('Reminder to'),{target:{value:'2026-11-12'}}));await act(async()=>Simulate.click(button('Show')));expect(container.querySelector('.diary-table-panel').textContent).toContain('SUPPLIER');
  await act(async()=>Simulate.click(button('Reset')));expect(input('Account / bill search').value).toBe('');expect(input('Status').value).toBe('PENDING');expect(container.querySelector('.diary-table-panel').textContent).not.toContain('SUPPLIER');
+});
+
+test('previous diary opens yesterday for both scopes and shows actual dated totals',async()=>{
+ const payment={id:9,diary_id:1,account_scope:'NON_LOCAL',account_name:'SUPPLIER',bill_no:'INV-1',due_date:'2026-11-07',payment_date:'2026-11-10',paid_amount:40,discount_amount:2,payment_mode:'Bank',bank_name:'HDFC',reference_no:'UTR123',notes:'Part payment',created_by:'admin'};
+ api.get.mockResolvedValue({data:{...view(),rows:[due],statement:[payment],statement_summary:{from:'2026-11-10',to:'2026-11-10',count:1,paid:40,discount:2,days:[{date:'2026-11-10',count:1,paid:40,discount:2,total:42}]}}});
+ await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>Simulate.click(button('Previous diary')));
+ expect(api.get.mock.calls.at(-1)[1].params).toMatchObject({scope:'ALL',period:'PREVIOUS',from:'2026-11-10',to:'2026-11-10'});expect(container.textContent).toContain('Payment dates: 2026-11-10 to 2026-11-10');expect(container.textContent).toContain('UTR123');expect(container.textContent).toContain('Total paid');expect(input('Payment from').value).toBe('2026-11-10');expect(container.querySelector('.diary-entry')).toBeNull();
+ await act(async()=>Simulate.click(button('Upcoming payments')));expect(api.get.mock.calls.at(-1)[1].params).toMatchObject({scope:'LOCAL',from:'2026-11-12',to:'',status:'PENDING',period:''});
+});
+test('payment statement Excel contains date range, daily totals and payment rows',async()=>{
+ const payment={id:1,diary_id:1,account_scope:'NON_LOCAL',account_name:'SUPPLIER',bill_no:'INV',due_date:'2026-10-01',payment_date:'2026-11-10',paid_amount:10.25,discount_amount:1.75,payment_mode:'Bank',bank_name:'HDFC'};
+ api.get.mockResolvedValue({data:{...view(),rows:[due],statement:[payment],statement_summary:{from:'2026-11-10',to:'2026-11-10',count:1,paid:10.25,discount:1.75,days:[{date:'2026-11-10',count:1,paid:10.25,discount:1.75,total:12}]}}});
+ await act(async()=>root.render(<PaymentDiaryView/>));await act(async()=>Simulate.click(button('Previous diary')));await act(async()=>Simulate.click(button('Export Excel')));
+ const [book,name]=XLSX.writeFile.mock.calls.at(-1);expect(name).toBe('payment-statement-2026-11-10-2026-11-10.xlsx');expect(book.SheetNames).toEqual(['Statement totals','Payments']);expect(XLSX.utils.sheet_to_json(book.Sheets['Statement totals'])[0]).toMatchObject({'Payment from':'2026-11-10','Total paid':10.25,'Total settled':12});expect(XLSX.utils.sheet_to_json(book.Sheets.Payments)[0]).toMatchObject({'Paid on':'2026-11-10','Account type':'NON_LOCAL','Paid amount':10.25});
+});
+
+test('reminder keeps completed shops green and unsettled shops red',async()=>{
+ await act(async()=>root.render(<PaymentDiaryReminder user={{username:'server',role:'SERVER'}}/>));expect(container.querySelector('.diary-reminder-unpaid')).toBeTruthy();
+ api.get.mockResolvedValue({data:{...view(),rows:[{...due,paid_amount:100,pending_amount:0,status:'PAID',payments:[{payment_date:mockDay}]},{...due,id:2,account_name:'PAID OVERDUE',due_date:'2026-11-01',paid_amount:100,pending_amount:0,payments:[{payment_date:mockDay}]},{...due,id:3,account_name:'OLD UNPAID',due_date:'2026-11-01'}]}});
+ await act(async()=>window.dispatchEvent(new Event('badizo-local-diary-updated')));
+ expect(container.textContent).toContain('SUPPLIER');expect(container.textContent).toContain('PAID OVERDUE');expect(container.textContent).not.toContain('OLD UNPAID');expect(container.querySelectorAll('.diary-reminder-paid')).toHaveLength(2);expect(button('Record payment')).toBeUndefined();expect(container.textContent).toContain('2 paid');
 });

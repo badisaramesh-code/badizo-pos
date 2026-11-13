@@ -9637,3 +9637,18 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .payment-diary .diary-group-heading td,.diary-dialog .diary-group-heading td{background:#e5f2e9;border-top:2px solid #278044;padding:10px;text-align:left;color:#16492a}
 
 .local-account-table .local-diary-reminder-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#d21f2b;margin-left:5px;vertical-align:middle;flex-shrink:0}
+
+/* Keep payment reminder fields aligned even when labels wrap. */
+.payment-diary .diary-entry label { display:flex; flex-direction:column; justify-content:space-between; gap:5px; }
+.payment-diary .diary-entry input { width:100%; box-sizing:border-box; height:36px; min-height:36px; margin:0; }
+.payment-diary .diary-entry form>label:nth-of-type(2),.payment-diary .diary-entry form>label:nth-of-type(3) { grid-column:1/-1; }
+.payment-diary .diary-entry input::placeholder { font-size:12px; }
+.payment-diary .diary-layout:has(.diary-statement) { grid-template-columns:minmax(0,1fr); }
+.diary-statement header { padding:12px 14px; margin-bottom:12px; border:1px solid #c8dfcf; border-radius:8px; background:#edf6ef; }
+.diary-statement header h3 { margin:0 0 8px; }
+.diary-statement header p { margin:6px 0; }
+
+.diary-reminder-unpaid td { background:#fff0f0; color:#a61b1b; border-bottom-color:#ecc8c8; }
+.diary-reminder-unpaid td small { color:#a61b1b; }
+.diary-reminder-paid td { background:#e3f5e8; color:#17632d; border-bottom-color:#badbc4; }
+.diary-reminder-paid td small { color:#17632d; }

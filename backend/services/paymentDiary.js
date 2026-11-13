@@ -182,9 +182,9 @@ function createService(pool, { today = todayIndia } = {}) {
     const start=`${year}-04-01`,end=`${year+1}-03-31`,asOf=end<today()?end:today();
     const params=[asOf,asOf,asOf,asOf,start,end,start,end,asOf,end];
     let where='d.bill_date<=?';
-    if(query.scope) {where+=' AND d.account_scope=?';params.push(scope(query.scope));}
-    if(query.from) {where+=` AND (${reminderSql})>=?`;params.push(date(query.from));}
-    if(query.to) {where+=` AND (${reminderSql})<=?`;params.push(date(query.to));}
+    if(query.scope&&!(query.period==='PREVIOUS'&&query.scope==='ALL')) {where+=' AND d.account_scope=?';params.push(scope(query.scope));}
+    if(query.from&&query.period!=='PREVIOUS') {where+=` AND (${reminderSql})>=?`;params.push(date(query.from));}
+    if(query.to&&query.period!=='PREVIOUS') {where+=` AND (${reminderSql})<=?`;params.push(date(query.to));}
     if(query.search) {where+=' AND (d.account_name LIKE ? OR d.bill_no LIKE ?)';const search=`%${text(query.search,180,'Search')}%`;params.push(search,search);}
     const [rows]=await pool.query(`SELECT d.*,DATE_FORMAT(d.bill_date,'%Y-%m-%d') AS bill_date,DATE_FORMAT(d.due_date,'%Y-%m-%d') AS due_date,COALESCE(p.paid,0) AS paid_amount,COALESCE(p.discount,0) AS discount_amount,
       COALESCE(p.activity,0) AS period_activity,COALESCE(h.version,0) AS version,
@@ -202,13 +202,36 @@ function createService(pool, { today = todayIndia } = {}) {
     const all=rows.map(row=>{const pending=Math.max(0,Math.round(Number(row.amount)*100)-Math.round(Number(row.paid_amount)*100)-Math.round(Number(row.discount_amount)*100))/100;
       return {...row,reminder_date:reminderDate(row.due_date),version:Number(row.version||0),is_deleted:Boolean(Number(row.is_deleted)),pending_amount:pending,carried_forward:row.bill_date<start,status:pending===0?'PAID':Number(row.paid_amount)+Number(row.discount_amount)>0?'PART_PAID':'PENDING'};
     }).filter(row=>row.bill_date>=start||row.pending_amount>0||Number(row.period_activity)>0);
+    if((query.period==='PREVIOUS'||String(query.include_payments)==='true')&&all.length){
+      const ids=all.map(row=>row.id);
+      const [payments]=await pool.query("SELECT *,DATE_FORMAT(payment_date,'%Y-%m-%d') AS payment_date,DATE_FORMAT(reversed_date,'%Y-%m-%d') AS reversed_date FROM local_payment_diary_payments WHERE diary_id IN (?) AND payment_date<=? ORDER BY payment_date,id",[ids,asOf]);
+      const byId=new Map();for(const payment of payments){if(!byId.has(Number(payment.diary_id)))byId.set(Number(payment.diary_id),[]);byId.get(Number(payment.diary_id)).push(payment);}
+      for(const row of all)row.payments=byId.get(Number(row.id))||[];
+    }
+    const previous=query.period==='PREVIOUS';
+    const paymentFrom=previous?date(query.from||start):start,paymentTo=previous?date(query.to||asOf):asOf;
+    if(previous&&(paymentFrom>paymentTo||paymentFrom<start||paymentTo>end))fail('Select payment dates within the selected financial year, from earliest to latest.');
+    let displayed=all.filter(row=>query.status==='DELETED'?row.is_deleted:!row.is_deleted&&(query.status==='PAID'?row.status==='PAID':query.status==='ALL'?true:row.pending_amount>0));
+    if(previous){
+      for(const row of all)row.payments=(row.payments||[]).filter(p=>p.payment_date>=paymentFrom&&p.payment_date<=paymentTo);
+      displayed=all.filter(row=>row.payments.length>0);
+    }
+    const statement=previous?displayed.flatMap(row=>row.payments.map(p=>({...p,diary_id:row.id,account_name:row.account_name,account_scope:row.account_scope,bill_no:row.bill_no,due_date:row.due_date,reversed:Boolean(p.reversed_date&&p.reversed_date<=asOf)}))).sort((a,b)=>a.payment_date.localeCompare(b.payment_date)||Number(a.id)-Number(b.id)):[];
+    const daily=new Map();
+    for(const payment of statement){
+      if(payment.reversed)continue;
+      if(!daily.has(payment.payment_date))daily.set(payment.payment_date,{date:payment.payment_date,count:0,paid_cents:0,discount_cents:0});
+      const day=daily.get(payment.payment_date);day.count++;day.paid_cents+=Math.round(Number(payment.paid_amount||0)*100);day.discount_cents+=Math.round(Number(payment.discount_amount||0)*100);
+    }
+    const days=[...daily.values()].map(day=>({date:day.date,count:day.count,paid:day.paid_cents/100,discount:day.discount_cents/100,total:(day.paid_cents+day.discount_cents)/100}));
+    const statementSummary={from:paymentFrom,to:paymentTo,count:days.reduce((sum,d)=>sum+d.count,0),paid:days.reduce((sum,d)=>sum+Math.round(d.paid*100),0)/100,discount:days.reduce((sum,d)=>sum+Math.round(d.discount*100),0)/100,days};
     const summary={pending:0,due:0,upcoming:0,paid:0,discount:0};
-    all.filter(row=>!row.is_deleted).forEach(row=>{summary.pending+=row.pending_amount;summary[row.reminder_date<=today()?'due':'upcoming']+=row.pending_amount;summary.paid+=Number(row.paid_amount);summary.discount+=Number(row.discount_amount);});
+    displayed.filter(row=>!row.is_deleted).forEach(row=>{summary.pending+=row.pending_amount;summary[row.reminder_date<=today()?'due':'upcoming']+=row.pending_amount;summary.paid+=Number(row.paid_amount);summary.discount+=Number(row.discount_amount);});
+    if(previous){summary.paid=statementSummary.paid;summary.discount=statementSummary.discount;}
     const [closed]=await pool.query('SELECT * FROM local_payment_diary_years ORDER BY year_start DESC');
     const [years]=await pool.query("SELECT DATE_FORMAT(MIN(bill_date),'%Y-%m-%d') AS earliest FROM local_payment_diary");
     return {year,active_year:fy(today()),today:today(),start,end,as_of:asOf,closed_years:closed,
-      earliest_year:years[0]?.earliest?fy(years[0].earliest):fy(today()),summary,
-      rows:all.filter(row=>query.status==='DELETED'?row.is_deleted:!row.is_deleted&&(query.status==='PAID'?row.status==='PAID':query.status==='ALL'?true:row.pending_amount>0))};
+      earliest_year:years[0]?.earliest?fy(years[0].earliest):fy(today()),summary,statement,statement_summary:statementSummary,rows:displayed};
   }
   async function accounts(query) {
     const name=text(query.search,180,'Search');if(name.length<3)return [];

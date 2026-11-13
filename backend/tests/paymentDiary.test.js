@@ -137,3 +137,14 @@ test('Bank and UPI payments save without a transaction reference',async()=>{
 test('Sunday reminders move to Saturday without changing other weekdays',()=>{const {reminderDate}=require('../services/paymentDiary');assert.equal(reminderDate('2026-11-15'),'2026-11-14');assert.equal(reminderDate('2026-11-14'),'2026-11-14');assert.equal(reminderDate('2026-11-16'),'2026-11-16');assert.equal(reminderDate('2026-11-01'),'2026-10-31');assert.equal(reminderDate('2023-01-01'),'2022-12-31');});
 
 test('all payment modes credit both Local and Non-Local ledgers; reversals debit them',async()=>{for(const scope of ['LOCAL','NON_LOCAL'])for(const payment_mode of ['Cash','Bank','UPI']){const f=fixture();f.state.diary[0].account_scope=scope;await f.service.pay(1,payment({payment_mode}),'admin');assert.deepEqual(f.state.entries.map(r=>[r.dr,r.cr]),[[0,95],[0,5]]);await f.service.reverse(1,{reversal_date:'2026-11-11',reason:'Correction',request_id:'reverse-credit-123'},'admin');assert.deepEqual(f.state.entries.slice(2).map(r=>[r.dr,r.cr]),[[95,0],[5,0]]);}});
+
+test('previous diary attaches dated payment details and includes partial payments on future bills',async()=>{
+ const service=createService({query:async(sql,args=[])=>{
+  assert.equal((sql.match(/\?/g)||[]).length,args.length);
+  if(sql.includes('LEFT JOIN'))return [[{id:1,bill_date:'2026-10-01',due_date:'2026-11-01',amount:100,paid_amount:0,discount_amount:0},{id:2,bill_date:'2026-10-01',due_date:'2026-11-20',amount:100,paid_amount:40,discount_amount:0},{id:3,bill_date:'2026-10-01',due_date:'2026-11-21',amount:100,paid_amount:0,discount_amount:0}]];
+  if(sql.includes('diary_id IN')){assert.deepEqual(args,[[1,2,3],'2026-11-11']);return [[{id:7,diary_id:2,payment_date:'2026-11-10',paid_amount:40,payment_mode:'Bank',bank_name:'HDFC',reference_no:'UTR123'}]];}
+  if(sql.includes('MIN(bill_date)'))return [[{earliest:'2026-10-01'}]];return [[]];
+ }},{today:()=> '2026-11-11'});
+ const result=await service.list({status:'ALL',include_payments:'true',period:'PREVIOUS'});
+ assert.deepEqual(result.rows.map(r=>r.id),[2]);assert.equal(result.rows[0].payments[0].payment_date,'2026-11-10');assert.equal(result.rows[0].payments[0].reference_no,'UTR123');assert.equal(result.statement_summary.paid,40);assert.equal(result.statement_summary.count,1);
+});
