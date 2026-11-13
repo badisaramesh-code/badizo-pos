@@ -1,9 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { searchClosingAccounts } from '../api/client';
 
 const labels = { NAMED_LEDGER: 'Named Ledger', LOCAL: 'Local vendor', NON_LOCAL: 'Non-Local vendor', CUSTOMER: 'Customer', HISTORY: 'Previous day-sheet name' };
 
 export default function ClosingAccountInput({ index, inputRef, value, onChange, onFocus, vendors }) {
+  const anchor=useRef(null);
+  const [position,setPosition]=useState(null);
   const [open, setOpen] = useState(false);
   const [response, setResponse] = useState(null);
   const [active, setActive] = useState(-1);
@@ -29,6 +32,15 @@ export default function ClosingAccountInput({ index, inputRef, value, onChange, 
     return () => { current = false; clearTimeout(timer); };
   }, [open, query, vendors]);
 
+  useLayoutEffect(()=>{
+    if(!rows.length){setPosition(null);return undefined;}
+    const place=()=>{const rect=anchor.current?.getBoundingClientRect();if(!rect)return;
+      const height=Math.min(180,rows.length*40+8),below=window.innerHeight-rect.bottom;
+      setPosition({position:'fixed',left:Math.max(8,Math.min(rect.left,window.innerWidth-Math.min(rect.width,window.innerWidth-16)-8)),top:below>=height+8?rect.bottom+4:Math.max(8,rect.top-height-4),width:Math.min(rect.width,window.innerWidth-16),maxHeight:height,overflowY:'auto',zIndex:10000,background:'#fff',border:'1px solid #79a687',borderRadius:5,boxShadow:'0 5px 18px #173d3030',padding:3});};
+    place();window.addEventListener('resize',place);window.addEventListener('scroll',place,true);
+    return()=>{window.removeEventListener('resize',place);window.removeEventListener('scroll',place,true);};
+  },[rows.length,query,vendors]);
+
   function select(row) {
     onChange(row.name, row.kind === 'HISTORY' ? undefined : row.kind);
     setOpen(false);
@@ -49,7 +61,7 @@ export default function ClosingAccountInput({ index, inputRef, value, onChange, 
   }
 
   return <>
-    <input ref={inputRef} className="field handover-details-input" value={value}
+    <input ref={element=>{anchor.current=element;if(typeof inputRef==='function')inputRef(element);else if(inputRef)inputRef.current=element;}} className="field handover-details-input" value={value}
       aria-label={`Row ${index + 1} details`} role="combobox" aria-autocomplete="list"
       aria-expanded={Boolean(rows.length)} aria-controls={listId}
       aria-activedescendant={rows[active] ? `${listId}-${active}` : undefined}
@@ -57,14 +69,14 @@ export default function ClosingAccountInput({ index, inputRef, value, onChange, 
       onFocus={() => { onFocus(); setOpen(true); }} onBlur={() => setOpen(false)}
       onChange={event => { setOpen(true); setActive(-1); onChange(event.target.value); }}
       onKeyDown={keyDown} />
-    {rows.length > 0 && <div role="listbox" id={listId} style={{ maxHeight: 180, overflowY: 'auto' }}>
+    {rows.length > 0 && position && createPortal(<div role="listbox" id={listId} style={position}>
       {rows.map((row, i) => <button type="button" role="option" key={row.kind + ':' + row.name}
         id={`${listId}-${i}`} aria-selected={i === active} tabIndex={-1}
         style={{ display: 'block', width: '100%', textAlign: 'left', background: i === active ? '#def1df' : 'white' }}
         onMouseDown={event => event.preventDefault()} onClick={() => select(row)}>
         {row.name} · {row.fromHistory ? 'Use as customer' : labels[row.kind]}
       </button>)}
-    </div>}
+    </div>,document.body)}
     {visible && response.failed && <small>Account suggestions unavailable. Check the spelling before saving.</small>}
   </>;
 }

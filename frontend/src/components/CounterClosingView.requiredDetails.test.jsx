@@ -111,8 +111,8 @@ test('row three suggests canonical accounts after three letters and saves the ch
     await type('lankapally');
     await act(async () => jest.advanceTimersByTime(200));
     expect(api.searchClosingAccounts).toHaveBeenCalledWith('lankapally', false);
-    expect(container.querySelector('[role=listbox]').textContent).toContain('Previous day-sheet name');
-    await act(async () => Simulate.click([...container.querySelectorAll('[role=option]')].find(option => option.textContent.includes('Use as customer'))));
+    expect(document.body.querySelector('[role=listbox]').textContent).toContain('Previous day-sheet name');
+    await act(async () => Simulate.click([...document.body.querySelectorAll('[role=option]')].find(option => option.textContent.includes('Use as customer'))));
     expect(input.value).toBe('Lankapalli');
     const dr = input.closest('tr').querySelector('.handover-dr-input');
     await act(async () => Simulate.focus(dr));
@@ -132,7 +132,7 @@ test.each([['GEN','GENERAL'],['ADV','ADVANCE']])('Details selects %s from Named 
   api.searchClosingAccounts.mockResolvedValue([{kind:'NAMED_LEDGER',name}]);api.saveCounterHandover.mockResolvedValue({sheet_no:'TEST'});
   await act(async()=>root.render(<CounterClosingView/>));const input=details()[2];
   await act(async()=>Simulate.change(input,{target:{value:query}}));await act(async()=>jest.advanceTimersByTime(200));
-  const option=container.querySelector('[role=option]');expect(option.textContent).toBe(name+' · Named Ledger');
+  const option=document.body.querySelector('[role=option]');expect(option.textContent).toBe(name+' · Named Ledger');expect(option.closest('[role=listbox]').parentElement).toBe(document.body);expect(option.closest('[role=listbox]').style.position).toBe('fixed');
   await act(async()=>Simulate.click(option));expect(input.value).toBe(name);
   const dr=input.closest('tr').querySelector('.handover-dr-input');await act(async()=>Simulate.change(dr,{target:{value:'125'}}));
   const save=[...container.querySelectorAll('button')].find(item=>/save/i.test(item.textContent));await act(async()=>Simulate.click(save));
