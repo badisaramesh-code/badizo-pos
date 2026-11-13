@@ -3,6 +3,9 @@ const path = require('node:path');
 let boot = null;
 let activeWrites = 0;
 function validate(value, shopId) {
+  if (value?.database?.port !== undefined && (!Number.isInteger(value.database.port) || value.database.port < 1 || value.database.port > 65535)) throw Error('Invalid recovery database port.');
+  if (value?.nativeReplicationInvalidated !== undefined && typeof value.nativeReplicationInvalidated !== 'boolean') throw Error('Invalid native replication authority marker.');
+  if (value?.invoiceEpoch !== undefined && !require('./recoveryInvoiceNumbers').validInvoiceEpoch(value.invoiceEpoch)) throw Error('Invalid recovery invoice namespace.');
   if (!value || value.schemaVersion !== 1 || value.shopId !== shopId || !/^[a-f0-9-]{36}$/.test(value.activationId || '') || !Number.isSafeInteger(value.generation) || value.generation < 0
     || !['active','validating'].includes(value.phase) || !['active','standby'].includes(value.billingMode)
     || !value.database || !['localhost','127.0.0.1','::1'].includes(value.database.host)
@@ -21,6 +24,9 @@ function load(env = process.env) {
   boot = value;
   env.DB_HOST = value.database.host; env.DB_USER = value.database.user;
   env.DB_PASSWORD = value.database.password; env.DB_NAME = value.database.database;
+  env.DB_PORT = String(value.database.port || 3306);
+  if (value.invoiceEpoch) env.BADIZO_RECOVERY_INVOICE_EPOCH = value.invoiceEpoch;
+  else delete env.BADIZO_RECOVERY_INVOICE_EPOCH;
   // Restore activation never bootstraps or modifies a recovered schema.
   env.BADIZO_DB_BOOTSTRAP = 'false';
   return value;
@@ -28,7 +34,7 @@ function load(env = process.env) {
 function status() {
   const current = read();
   if (!current) return null;
-  return { activationId: boot?.activationId || null, generation:current.generation, phase:current.phase, billingMode:current.billingMode, activeWrites, reconciliationRequired:!!current.reconciliationRequired };
+  return { activationId: boot?.activationId || null, generation:current.generation, phase:current.phase, billingMode:current.billingMode, databaseName:current.database.database, databasePort:current.database.port||3306, nativeReplicationInvalidated:current.nativeReplicationInvalidated===true, activeWrites, reconciliationRequired:!!current.reconciliationRequired };
 }
 function counterBillingState(env = process.env) {
   const cloud = ['cloud-active','cloud-standby'].includes(env.BADIZO_NODE_ROLE);
@@ -46,7 +52,7 @@ function middleware(req,res,next) {
   try {
     const current = read();
     const accountChange = req.method === 'POST' && req.path === '/auth/change-password';
-    const recoveryWork = /^\/(recovery-review|recovery-cases|staged-restore)(?:\/|$)/.test(req.path) || (!!process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/sync\/(events|feed\/ack|handoff(?:\/flush)?)$/.test(req.path));
+    const recoveryWork = /^\/(recovery-review|recovery-cases|staged-restore|backup-recovery)(?:\/|$)/.test(req.path) || (!!process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/sync\/(events|feed\/ack|handoff(?:\/flush)?)$/.test(req.path));
     if(current.handoffId&&/^\/(recovery-review|recovery-cases|staged-restore)(?:\/|$)/.test(req.path))return res.status(409).json({error:'A coordinated billing switch is holding writes. Finish or cancel that operation first.'});
     if (!boot || current.activationId !== boot.activationId || current.phase !== 'active' || (current.billingMode !== 'active' && !recoveryWork && !accountChange)) return res.status(409).json({error:'Billing is paused for recovery. Use the owner recovery controls.'});
   } catch { return res.status(503).json({error:'Recovery state requires inspection. No new writes were accepted.'}); }

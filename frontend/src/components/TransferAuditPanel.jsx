@@ -39,10 +39,10 @@ export default function TransferAuditPanel() {
           audit ? 'No recent backup result available' : 'Status unavailable'} {stale && <strong>· No recent daily backup</strong>}</p>
         <p><strong>Cloud database sync</strong> · {sync ? sync.service.ready ? sync.service.state : 'Not configured' : 'Status unavailable'}
           {sync && <> · Last success: {ist(sync.lastSuccessAt)} · Next run: {ist(sync.nextRunAt)} (IST)</>}</p>
-        <button className="secondary-button" type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-          {expanded ? 'Hide audit history' : 'View 30-day audit history'}</button>
+        {audit?.historyEnabled ? <button className="secondary-button" type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+          {expanded ? 'Hide audit history' : 'View 7-day audit history'}</button> : <p>Optional transfer history is paused. Latest backup and sync status remain available. An administrator can enable seven-day history on the server.</p>}
         {audit?.warnings.map(message => <p role="alert" key={message}>{message}</p>)}
-        {expanded && (audit?.rows.length ? <div className="table-scroll"><table className="history-table">
+        {audit?.historyEnabled && expanded && (audit?.rows.length ? <div className="table-scroll"><table className="history-table">
           <thead><tr><th>Time (IST)</th><th>Job</th><th>Result</th><th>Trigger / file</th></tr></thead>
           <tbody>{audit.rows.map((row, i) => <tr key={row.at + i}><td>{ist(row.at)}</td><td>{row.job}</td>
             <td>{row.status}</td><td>{row.trigger || row.file || '—'}</td></tr>)}</tbody>

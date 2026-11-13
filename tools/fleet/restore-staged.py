@@ -43,6 +43,19 @@ def reviewed_trigger_sql(database):
 
 def configured_trigger_installer(config):
     # Provisioned by the installer, never accepted as an HTTP request field.
+    command_config = config.get('triggerInstallerCommand')
+    if command_config:
+        executable = command_config.get('file')
+        arguments = command_config.get('args')
+        if not isinstance(executable, str) or not pathlib.Path(executable).is_absolute() or not isinstance(arguments, list) or any(not isinstance(arg, str) for arg in arguments):
+            raise ValueError('Invalid fixed trigger installer command.')
+        def install_command(database):
+            if not re.fullmatch(r'badizo_recovery_[a-z0-9]{8,32}', database):
+                raise ValueError('Invalid trigger target.')
+            result = subprocess.run([executable, *arguments, database], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+            if result.returncode:
+                raise RuntimeError('Reviewed trigger installation failed; recovery remains inactive.')
+        return install_command
     configured = config.get('triggerInstallerDefaultsFile')
     if not configured:
         return None
@@ -53,7 +66,10 @@ def configured_trigger_installer(config):
         raise ValueError('Trigger-installer credentials must be owner-only.')
     def install(database):
         sql = reviewed_trigger_sql(database)
-        command = [config.get('mysqlPath', 'mysql'), '--defaults-file=' + str(defaults), '--host=localhost', '--local-infile=0', '--binary-mode']
+        port = config.get('port', 3306)
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise ValueError('Invalid recovery database port.')
+        command = [config.get('mysqlPath', 'mysql'), '--defaults-file=' + str(defaults), '--protocol=TCP', '--host=localhost', '--port=' + str(port), '--local-infile=0', '--binary-mode']
         result = subprocess.run(command, input=sql.encode(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if result.returncode:
             raise RuntimeError('Reviewed trigger installation failed; recovery remains inactive.')
@@ -79,6 +95,9 @@ def restore(config, install_reviewed_trigger=None):
         raise ValueError('Only a distinctly named recovery database is allowed.')
     if config['host'] not in ('127.0.0.1', 'localhost'):
         raise ValueError('Run recovery on the target machine using loopback.')
+    port = config.get('port', 3306)
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise ValueError('Invalid recovery database port.')
     artifact = pathlib.Path(config['artifactDirectory']).resolve(strict=True)
     manifest = json.loads((artifact / 'manifest.json').read_text())
     if manifest['shopId'] != config['shopId'] or manifest['integrityVerified'] is not True:
@@ -119,7 +138,7 @@ def restore(config, install_reviewed_trigger=None):
         with defaults.open('x') as handle:
             handle.write('[client]\n' + '\n'.join(key + '=' + option(config[key]) for key in ('host', 'user', 'password')) + '\n')
         os.chmod(defaults, 0o600)
-        command = [config.get('mysqlPath', 'mysql'), '--defaults-file=' + str(defaults), '--protocol=TCP', '--database=' + database, '--batch', '--raw', '--skip-column-names', '--binary-mode', '--local-infile=0', '--skip-reconnect']
+        command = [config.get('mysqlPath', 'mysql'), '--defaults-file=' + str(defaults), '--protocol=TCP', '--port=' + str(port), '--database=' + database, '--batch', '--raw', '--skip-column-names', '--binary-mode', '--local-infile=0', '--skip-reconnect']
         def query(sql):
             result = subprocess.run(command, input=sql.encode(), capture_output=True)
             if result.returncode:

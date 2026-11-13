@@ -67,6 +67,25 @@ test.each([70, 120])('server rate change to %s automatically retries cash and pr
   expect(invoice.changeReturned).toBe(200 - price);
 });
 
+test('clock ticks and quantity edits skip receipt rendering until native print requests the latest bill', async () => {
+  await mount();
+  await act(async () => jest.advanceTimersByTime(1000));
+  const previousTime = container.querySelector('.live-time-chip').textContent;
+  const initialChecks = api.pendingCheckout.mock.calls.length;
+  await act(async () => jest.advanceTimersByTime(1000));
+  expect(container.querySelector('.live-time-chip').textContent).not.toBe(previousTime);
+  expect(api.pendingCheckout).toHaveBeenCalledTimes(initialChecks);
+  const quantity = container.querySelector('tbody tr td:nth-child(7) input');
+  await act(async () => Simulate.change(quantity, { target: { value: '2' } }));
+  expect(PrintableInvoice).not.toHaveBeenCalled();
+  await act(async () => window.dispatchEvent(new Event('beforeprint')));
+  expect(PrintableInvoice.mock.calls.at(-1)[0].invoice.items[0].quantity).toBe(2);
+  await act(async () => window.dispatchEvent(new Event('afterprint')));
+  PrintableInvoice.mockClear();
+  await act(async () => Simulate.change(quantity, { target: { value: '3' } }));
+  expect(PrintableInvoice).not.toHaveBeenCalled();
+});
+
 test('increased rate with insufficient cash updates the cart and asks for the balance without another POST', async () => {
   api.checkout.mockRejectedValueOnce(conflict);
   api.lookupExactProduct.mockResolvedValue({ barcode: 'COLGATE', sale_price: 120, mrp: 150 });
@@ -141,3 +160,5 @@ test('Clear Cart retains the cart if the server cannot resolve the pending bill'
 test('Continue with Next Customer parks an unresolved bill before opening a fresh cart',async()=>{api.parkPendingCheckout.mockReturnValue({payload:{checkout_request_id:'OLD-123'}});api.parkedCheckouts.mockReturnValue([{server:'S',payload:{checkout_request_id:'OLD-123',grand_total:'100'},savedState:{customerName:'Customer A'}}]);await mount();await act(async()=>Simulate.click([...container.querySelectorAll('button')].find(b=>b.textContent==='Continue with Next Customer')));expect(api.parkPendingCheckout).toHaveBeenCalledWith(1);expect(api.checkout).not.toHaveBeenCalled();expect(container.querySelector('tbody tr td:nth-child(7) input')).toBeNull();expect(container.textContent).toContain('Pending Bills: 1');expect(container.textContent).toContain('Finish / Recover Original');});
 
 test('recovering Customer A preserves the current Customer B cart',async()=>{api.parkedCheckouts.mockReturnValue([{server:'S',payload:{checkout_request_id:'CUSTOMER-A-123',grand_total:'100'},savedState:{customerName:'Customer A'}}]);api.resolveParkedCheckout.mockResolvedValue({status:'SAVED',invoice_no:'INVOICE-A'});await mount();await act(async()=>Simulate.click([...container.querySelectorAll('button')].find(b=>b.textContent==='Finish / Recover Original')));expect(api.resolveParkedCheckout).toHaveBeenCalledWith(1,'CUSTOMER-A-123',{cancelUnsaved:false});expect(container.querySelector('tbody tr td:nth-child(7) input')).not.toBeNull();expect(api.checkout).not.toHaveBeenCalled();expect(container.textContent).toContain('Reprint INVOICE-A');});
+
+test('next-customer action stays in the compact secondary action group beside Clear Cart',async()=>{await mount();const next=[...container.querySelectorAll('button')].find(b=>b.textContent==='Continue with Next Customer');expect(next.classList.contains('primary-button')).toBe(false);expect(next.closest('.payment-panel')).not.toBeNull();expect(next.closest('.billing-cart-actions').nextElementSibling).toBeNull();expect(next.closest('.billing-cart-actions').textContent).toContain('Clear Cart');expect(container.querySelector('.billing-scanner-row').children[0].classList.contains('search-wrap')).toBe(true);});

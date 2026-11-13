@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const checkoutAbandonment = require('../services/checkoutAbandonment');
+const checkoutAudit = require('../services/checkoutAuditPolicy');
+checkoutAudit.startRetention(db);
 const { captureCheckout, captureInvoiceLifecycle } = require('../services/checkoutSyncCapture');
 const { captureHistoricalBaseline } = require('../services/invoiceOriginIdentity');
 const checkoutIdentity = require('../services/checkoutRequestIdentity');
@@ -514,6 +516,8 @@ router.get('/invoice/next', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'
 });
 
 router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {
+  try { require('../services/recoverySessionScope').checkCheckoutScope(req.body); }
+  catch (error) { return res.status(error.status || 503).json({ code: error.code, error: error.message }); }
   const connection = await db.getConnection();
   const checkoutTimer = createCheckoutTimer();
   let invoiceNo = '';
@@ -845,7 +849,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     await connection.rollback();
     checkoutTimer.mark('rollback');
     try{const id=String(req.body?.checkout_request_id||'');if(/^[A-Za-z0-9_-]{12,64}$/.test(id)){
-      await connection.query('INSERT INTO checkout_recovery_events(checkout_request_id,actor,action,outcome) VALUES(?,?,?,?)',[id,req.user.username,'CHECKOUT_ERROR',String(err.code||'FAILED').slice(0,20)]);
+      await checkoutAudit.record(connection,{id,actor:req.user.username,action:'CHECKOUT_ERROR',outcome:String(err.code||'FAILED').slice(0,20)});
       const total=Number(req.body?.grand_total),counter=Number(req.body?.counter_no||req.user.counter_no||1);
       if(Number.isFinite(total)&&total>=0&&Number.isInteger(counter)&&counter>0)await connection.query('INSERT IGNORE INTO parked_checkout_reviews(checkout_request_id,counter_no,reported_by,grand_total) VALUES(?,?,?,?)',[id,counter,req.user.username,total]);
     }}catch(auditError){console.error('Checkout error audit unavailable:',auditError.code||'UNKNOWN');}
@@ -884,10 +888,11 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
 });
 
 router.post('/checkout/reviews',authenticate,authorize('SERVER','ADMIN','COUNTER'),async(req,res)=>{try{const rows=req.body?.rows;if(!Array.isArray(rows)||rows.length>200)return res.status(400).json({error:'Invalid pending bill list.'});for(const row of rows){if(!/^[A-Za-z0-9_-]{12,64}$/.test(String(row.checkout_request_id||''))||!Number.isInteger(Number(row.counter_no))||Number(row.counter_no)<1||!Number.isFinite(Number(row.grand_total))||Number(row.grand_total)<0)return res.status(400).json({error:'Invalid pending bill identity.'});}for(const row of rows)await db.query('INSERT IGNORE INTO parked_checkout_reviews(checkout_request_id,counter_no,reported_by,grand_total) VALUES(?,?,?,?)',[row.checkout_request_id,row.counter_no,req.user.username,row.grand_total]);res.json({success:true});}catch(error){res.status(503).json({error:'Pending bill review sync is unavailable. Counter copy is retained.'});}});
-router.get('/checkout/reviews',authenticate,authorize('SERVER','ADMIN'),async(req,res)=>{try{const [rows]=await db.query(`SELECT r.*,i.invoice_no,i.invoice_status,e.outcome AS last_outcome,CASE WHEN i.invoice_no IS NOT NULL THEN 'SAVED' WHEN a.checkout_request_id IS NOT NULL THEN 'ABANDONED' WHEN e.action='CHECKOUT_ERROR' AND e.outcome IN ('PRICE_CHANGED','INVALID_PAYMENT','INVALID_BILL_LINE','INVALID_BILL_TOTAL') THEN 'REJECTED' ELSE 'UNRESOLVED' END AS review_status FROM parked_checkout_reviews r LEFT JOIN invoices i ON i.checkout_request_id=r.checkout_request_id LEFT JOIN abandoned_checkouts a ON a.checkout_request_id=r.checkout_request_id LEFT JOIN checkout_recovery_events e ON e.id=(SELECT MAX(h.id) FROM checkout_recovery_events h WHERE h.checkout_request_id=r.checkout_request_id) ORDER BY r.reported_at DESC LIMIT 200`);res.json(rows);}catch(error){res.status(503).json({error:'Unable to load handover review.'});}});
+router.get('/checkout/audit-policy',authenticate,authorize('SERVER','ADMIN'),(_req,res)=>res.json(checkoutAudit.state()));
+router.get('/checkout/reviews',authenticate,authorize('SERVER','ADMIN'),async(req,res)=>{try{const [rows]=await db.query(`SELECT r.*,i.invoice_no,i.invoice_status,e.outcome AS last_outcome,CASE WHEN i.invoice_no IS NOT NULL THEN 'SAVED' WHEN a.checkout_request_id IS NOT NULL THEN 'ABANDONED' WHEN e.action='CHECKOUT_ERROR' AND e.outcome IN ('PRICE_CHANGED','INVALID_PAYMENT','INVALID_BILL_LINE','INVALID_BILL_TOTAL') THEN 'REJECTED' ELSE 'UNRESOLVED' END AS review_status FROM parked_checkout_reviews r LEFT JOIN invoices i ON i.checkout_request_id=r.checkout_request_id LEFT JOIN abandoned_checkouts a ON a.checkout_request_id=r.checkout_request_id LEFT JOIN checkout_recovery_events e ON e.id=(SELECT MAX(h.id) FROM checkout_recovery_events h WHERE h.checkout_request_id=r.checkout_request_id AND h.created_at>=CURRENT_TIMESTAMP-INTERVAL 7 DAY) ORDER BY r.reported_at DESC LIMIT 200`);res.json(rows);}catch(error){res.status(503).json({error:'Unable to load handover review.'});}});
 
 router.post('/checkout/reviews/:id/check',authenticate,authorize('SERVER','ADMIN'),async(req,res)=>{try{res.json(await checkoutAbandonment.inspect(db,req.params.id,req.user.username));}catch(error){res.status(error.statusCode||503).json({error:error.statusCode?error.message:'Unable to check this bill. Nothing was released. Please try again when the server is available.'});}});
-router.get('/checkout/reviews/:id/events',authenticate,authorize('SERVER','ADMIN'),async(req,res)=>{try{if(!/^[A-Za-z0-9_-]{12,64}$/.test(req.params.id))return res.status(400).json({error:'Invalid bill identity.'});const [rows]=await db.query('SELECT actor,action,outcome,invoice_no,created_at FROM checkout_recovery_events WHERE checkout_request_id=? ORDER BY id DESC LIMIT 200',[req.params.id]);res.json(rows);}catch(error){res.status(503).json({error:'Unable to load bill action history.'});}});
+router.get('/checkout/reviews/:id/events',authenticate,authorize('SERVER','ADMIN'),async(req,res)=>{try{if(!/^[A-Za-z0-9_-]{12,64}$/.test(req.params.id))return res.status(400).json({error:'Invalid bill identity.'});res.json(await checkoutAudit.history(db,req.params.id));}catch(error){res.status(503).json({error:'Unable to load bill action history.'});}});
 router.post('/checkout/abandon', authenticate, authorize('SERVER','ADMIN','COUNTER'), async(req,res)=>{try{res.json(await checkoutAbandonment.abandon(db,req.body?.checkout_request_id,req.user.username));}catch(error){res.status(error.statusCode||503).json({error:error.statusCode?error.message:'Unable to verify the previous checkout. Cart retained; try again when the server is available.'});}});
 
 router.get('/invoice/details', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), async (req, res) => {

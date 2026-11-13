@@ -33,6 +33,13 @@ function mountRoutes(app, { cloudSyncRuntime, recoveryExecutorFactory } = {}) {
   if (process.env.BADIZO_RECOVERY_CONTROL_CONFIG) {
     const control = require('../services/recoveryControl').createRecoveryControl({configPath:process.env.BADIZO_RECOVERY_CONTROL_CONFIG,shopId:process.env.BADIZO_SHOP_ID});
     app.use('/api/recovery-control',require('./recoveryControl').createRouter(control));
+    if (process.env.BADIZO_BACKUP_UPLOAD_ENABLED === 'true') {
+      const supervisor = require('fs').readFileSync(process.env.BADIZO_RECOVERY_CONTROL_CONFIG, 'utf8');
+      const config = JSON.parse(supervisor);
+      if (config.shopId !== process.env.BADIZO_SHOP_ID || config.nodeRole !== (process.env.BADIZO_NODE_ROLE || 'local-server')) throw Error('Backup recovery shop or node configuration differs.');
+      const uploads = require('../services/backupUploadRecovery').createBackupUploadRecovery(config);
+      app.use('/api/backup-recovery', require('./backupRecovery').createRouter(uploads));
+    }
   }
   if (process.env.BADIZO_STAGED_RESTORE_ENABLED === 'true') {
     const jobs = require('../services/stagedRestoreJobs').createStagedRestoreJobs({directory:process.env.BADIZO_RESTORE_JOB_DIR,shopId:process.env.BADIZO_SHOP_ID,configPath:process.env.BADIZO_RESTORE_CONFIG,python:process.env.BADIZO_PYTHON || 'python'});

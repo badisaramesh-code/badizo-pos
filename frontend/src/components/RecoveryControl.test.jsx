@@ -103,3 +103,8 @@ test('cloud and counter users cannot stop a local switch', async () => {
   await render();
   expect(node.textContent).toBe('');
 });
+
+test('native read-only standby directs owner to managed backup recovery and disables unsafe direct activation', async () => {
+ status={nodeRole:'cloud-standby',supervisorOnline:true,billingMode:'standby',generation:0,emergencyCloudRequiresUpload:true,operation:null};
+ await render();expect(button('Use cloud emergency billing').disabled).toBe(true);expect(node.textContent).toContain('Backup upload recovery in System');expect(node.textContent).toContain('supervised standby export');
+});

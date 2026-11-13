@@ -1,0 +1,18 @@
+# Include inside the public POS server block that defines /_verify and uses hfm_api.
+
+    location = /api/backup-recovery/uploads {
+        limit_except POST { deny all; }
+        client_max_body_size 512m;
+        auth_request /_verify;
+        limit_req zone=hfm_api burst=4 nodelay;
+        proxy_http_version 1.1;
+        proxy_request_buffering off;
+        proxy_read_timeout 900s;
+        proxy_pass http://127.0.0.1:5000;
+    }
+    location ~ ^/api/(backup-recovery(/(recover|discard))?|recovery-control(/recover-switch)?|staged-restore|recovery-review(/[a-zA-Z0-9_-]+(/(decisions|apply))?)?|recovery-cases(/[a-zA-Z0-9_-]+(/[a-z-]+)?)?)$ {
+        limit_except GET POST { deny all; }
+        limit_req zone=hfm_api burst=12 nodelay;
+        auth_request /_verify;
+        proxy_pass http://127.0.0.1:5000;
+    }

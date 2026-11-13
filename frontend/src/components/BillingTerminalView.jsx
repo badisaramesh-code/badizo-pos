@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   approveSensitiveBillingMode,
@@ -469,6 +470,33 @@ function normalizeGatePassDetails(details = {}) {
   };
 }
 
+function LiveBillingClock({ isActive }) {
+  const [liveTime, setLiveTime] = useState(() => new Date());
+  useEffect(() => {
+    if (!isActive) return undefined;
+    setLiveTime(new Date());
+    const timer = window.setInterval(() => setLiveTime(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isActive]);
+  return <span className="live-time-chip">{liveTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>;
+}
+
+function BrowserPrintInvoice({ invoice, mode }) {
+  const [printing, setPrinting] = useState(false);
+  useEffect(() => {
+    // Native print snapshots the page immediately after beforeprint listeners return.
+    const prepare = () => flushSync(() => setPrinting(true));
+    const finish = () => setPrinting(false);
+    window.addEventListener('beforeprint', prepare);
+    window.addEventListener('afterprint', finish);
+    return () => {
+      window.removeEventListener('beforeprint', prepare);
+      window.removeEventListener('afterprint', finish);
+    };
+  }, []);
+  return printing ? <PrintableInvoice invoice={invoice} mode={mode} /> : null;
+}
+
 export default function BillingTerminalView({ isActive = true }) {
   const currentUser = getStoredUser();
   let initialDraft = readActivePosDraft(currentUser);
@@ -478,7 +506,6 @@ export default function BillingTerminalView({ isActive = true }) {
     if (pending) initialDraft = pending.savedState;
   } catch (error) { initialPendingError = error.message; }
   const [invoiceNo, setInvoiceNo] = useState(initialDraft?.invoiceNo || 'Loading...');
-  const [liveTime, setLiveTime] = useState(new Date());
   const [backendPingOk, setBackendPingOk] = useState(null);
   const [lastBackendPingAt, setLastBackendPingAt] = useState(null);
   const [counterNo, setCounterNo] = useState(Number(initialDraft?.counterNo || currentUser?.counter_no || 1));
@@ -853,13 +880,6 @@ export default function BillingTerminalView({ isActive = true }) {
       // Keep billing usable even if browser storage is unavailable.
     }
   }, [billingMode, canUseA4Print, cart, cashReceived, companyName, counterNo, currentUser?.username, customerAddress, customerRemarks, customerGstin, customerName, customerPhone, exchangeItems, exchangeMode, invoiceNo, mixedPayment, paymentConfirmed, paymentMode, paymentReference, printMode]);
-
-  useEffect(() => {
-    if (!isActive) return undefined;
-    setLiveTime(new Date());
-    const timer = window.setInterval(() => setLiveTime(new Date()), 1000);
-    return () => window.clearInterval(timer);
-  }, [isActive]);
 
   useEffect(() => {
     if (!isActive) return undefined;
@@ -5468,7 +5488,7 @@ export default function BillingTerminalView({ isActive = true }) {
                   <span className="ping-status-dot" />
                   {backendPingLabel}
                 </span>
-                <span className="live-time-chip">{liveTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
+                <LiveBillingClock isActive={isActive} />
                 <span className="invoice-chip">Invoice {invoiceNo}</span>
               </div>
             </div>
@@ -5547,10 +5567,6 @@ export default function BillingTerminalView({ isActive = true }) {
             )}
 
             <div className="scanner-row billing-scanner-row">
-              <button type="button" className="secondary-button" onClick={clearCartSafely} disabled={isCheckoutSubmitting}>Clear Cart</button>
-              <button type="button" className="primary-button" onClick={continueNextCustomer} disabled={isCheckoutSubmitting}>Continue with Next Customer</button>
-              {clearCartMessage&&<span role="status">{clearCartMessage}</span>}
-              <span className="status-chip">F9 Focus Scanner</span>
               <div className="search-wrap">
                 <input
                   ref={scannerRef}
@@ -5606,8 +5622,10 @@ export default function BillingTerminalView({ isActive = true }) {
                   </div>
                 )}
               </div>
+              <span className="status-chip">F9 Focus Scanner</span>
               <button className="secondary-button price-check-button" type="button" onClick={openPriceCheck}>Price Check</button>
             </div>
+            {clearCartMessage&&<p className="billing-cart-message" role="status">{clearCartMessage}</p>}
 
           {exchangeMode && (
             <section className="exchange-panel">
@@ -6289,6 +6307,8 @@ export default function BillingTerminalView({ isActive = true }) {
                   Sale Report
                 </button>
               </div>
+              <div className="billing-cart-actions"><button type="button" className="secondary-button" onClick={clearCartSafely} disabled={isCheckoutSubmitting}>Clear Cart</button>
+              <button type="button" className="secondary-button billing-next-customer-button" onClick={continueNextCustomer} disabled={isCheckoutSubmitting}>Continue with Next Customer</button></div>
             </div>
           </div>
         </section>
@@ -7162,7 +7182,7 @@ export default function BillingTerminalView({ isActive = true }) {
       )}
 
       <div className={`print-area ${printMode === 'Thermal' ? 'print-thermal' : 'print-a4'}`} aria-hidden="true">
-        <PrintableInvoice invoice={printableInvoice || printableDraft} mode={printMode} />
+        <BrowserPrintInvoice invoice={printableInvoice || printableDraft} mode={printMode} />
       </div>
     </div>
   );

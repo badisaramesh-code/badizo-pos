@@ -73,3 +73,21 @@ test('parked checkout retries the ORIGINAL ID and does not disturb a different a
 test('handover sync reports parked IDs from a previous cashier without deleting their record',async()=>{const key='badizo_checkout_pending_v1:previous-cashier:1:parked';const raw=JSON.stringify([{server:'http://localhost:5000/api',payload:{checkout_request_id:'previous-cashier-123',counter_no:1,grand_total:'100.00'},savedState:{cart:[]}}]);localStorage.setItem(key,raw);api.post.mockResolvedValueOnce({data:{success:true}});await client.syncCheckoutReviews(1);expect(api.post).toHaveBeenLastCalledWith('/billing/checkout/reviews',{rows:[{checkout_request_id:'previous-cashier-123',counter_no:1,grand_total:'100.00'}]},{timeout:4000});expect(localStorage.getItem(key)).toBe(raw);});
 
 test('counter recognises an admin-released pending bill without getting stuck',async()=>{api.post.mockRejectedValueOnce(new Error('offline'));await expect(client.checkout(payload,state)).rejects.toThrow('offline');client.parkPendingCheckout(1);api.post.mockRejectedValueOnce({response:{status:409,data:{code:'CHECKOUT_ABANDONED'}}});expect((await client.resolveParkedCheckout(1,payload.checkout_request_id)).status).toBe('ABANDONED');expect(client.parkedCheckouts(1)[0].resolution.status).toBe('ABANDONED');});
+
+test('a recovered database holds old pending checkout records instead of replaying them',async()=>{
+ client.setAuthSession('old-token',{username:'server',role:'SERVER'});
+ api.post.mockRejectedValueOnce({code:'ECONNABORTED'}).mockRejectedValueOnce({code:'ECONNABORTED'});
+ await expect(client.checkout(payload,state)).rejects.toBeTruthy();expect(client.pendingCheckout(1)).not.toBeNull();
+ client.setAuthSession('new-token',{username:'server',role:'SERVER',recovery_activation_id:'new-activation'});
+ const count=api.post.mock.calls.length;
+ await expect(client.checkout(payload,state)).rejects.toMatchObject({code:'RECOVERY_CHECKOUT_REVIEW_REQUIRED'});
+ expect(api.post).toHaveBeenCalledTimes(count);expect(client.pendingCheckout(1)).not.toBeNull();
+ await expect(client.abandonPendingCheckout(1)).rejects.toMatchObject({code:'RECOVERY_CHECKOUT_REVIEW_REQUIRED'});
+ await client.syncCheckoutReviews(1);
+ expect(api.post).toHaveBeenCalledTimes(count);expect(client.pendingCheckout(1)).not.toBeNull();
+});
+test('a fresh checkout after recovery carries its activation identity',async()=>{
+ client.setAuthSession('fixture-token',{username:'server',role:'SERVER',recovery_activation_id:'new-activation'});
+ api.post.mockResolvedValueOnce({data:{invoice_no:'fixture'}});await client.checkout(payload,state);
+ expect(api.post.mock.calls[0][1].recovery_activation_id).toBe('new-activation');
+});

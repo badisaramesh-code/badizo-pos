@@ -237,7 +237,7 @@ function hasTodayScheduledBackup() {
   try {
     const prefix = localDatePrefix();
     return fs.existsSync(scheduledDailyBackupDir)
-      && fs.readdirSync(scheduledDailyBackupDir).some((name) => name.startsWith(prefix) && (name.endsWith('.sql.gz') || name.endsWith('.sql')));
+      && fs.readdirSync(scheduledDailyBackupDir).some((name) => name.startsWith(prefix) && (name.endsWith('.sql.gz') || name.endsWith('.sql')) && require('./services/backupCatchUpAuthority').matchesCurrentBackupAuthority(path.join(scheduledDailyBackupDir,name)));
   } catch (err) {
     logError('Daily backup catch-up check failed', err);
     return false;
@@ -248,7 +248,7 @@ function hasTodaySuccessfulCloudBackup() {
   try {
     if (!fs.existsSync(scheduledDailyBackupStatusFile)) return false;
     const status = JSON.parse(fs.readFileSync(scheduledDailyBackupStatusFile, 'utf8'));
-    return status.status === 'success' && String(status.file || '').startsWith(localDatePrefix());
+    return status.status === 'success' && String(status.file || '').startsWith(localDatePrefix()) && path.basename(status.file)===status.file && require('./services/backupCatchUpAuthority').matchesCurrentBackupAuthority(path.join(scheduledDailyBackupDir,status.file));
   } catch (err) {
     logError('Daily cloud backup status check failed', err);
     return false;

@@ -164,11 +164,53 @@ function createRecoverySupervisor(config,{runCommand=command,verify=verifyDataba
     await atomic(config.bindingPath,old);
     await record({...operation,state:'rolled-back',message:'Previous database restored. The recovery database was retained.'});
   }
+  let nextWriterCheck = 0;
   async function tick(){
     await fs.mkdir(config.directory,{recursive:true,mode:0o700});
-    let request;try{request=await json(requestPath);}catch(error){if(error.code==='ENOENT')return;throw error;}
-    if(request.shopId!==config.shopId||!['activate-restore','standby','emergency-local','emergency-cloud','use-cloud','use-local','handoff-standby','handoff-active','reconnect-baseline','copy-lost-local','baseline-stage','baseline-release','prepare-baseline','prepare-lost-local','prepare-export','finish-recovery-cancel'].includes(request.kind)||!/^[a-f0-9-]{36}$/.test(request.id||''))throw Error('Invalid recovery request.');
+    let request;try{request=await json(requestPath);}catch(error){
+      if(error.code!=='ENOENT')throw error;
+      if(config.nodeRole==='cloud-standby' && config.uploadRecoveryConfigPath && Date.now() >= nextWriterCheck){
+        nextWriterCheck=Date.now()+30000;
+        try{await require('./reconcileCloudWriter').reconcileCloudWriter(config, options=>mysql.createConnection({...options,connectTimeout:5000}));}
+        catch{console.warn('Cloud recovery write access could not be verified. The supervisor will retry.');}
+      }
+      return;
+    }
+    if(request.shopId!==config.shopId||!['recover-upload','activate-restore','standby','emergency-local','emergency-cloud','use-cloud','use-local','handoff-standby','handoff-active','reconnect-baseline','copy-lost-local','baseline-stage','baseline-release','prepare-baseline','prepare-lost-local','prepare-export','finish-recovery-cancel'].includes(request.kind)||!/^[a-f0-9-]{36}$/.test(request.id||''))throw Error('Invalid recovery request.');
+    if(request.kind==='emergency-cloud'&&config.emergencyCloudRequiresUpload===true){
+      await record({id:request.id,kind:request.kind,shopId:config.shopId,actor:request.actor,state:'failed',message:'Direct activation is unavailable for this read-only native replica. Keep local counters fenced and use System backup upload recovery, or request a supervised export of the synced standby.'});
+      await fs.unlink(requestPath);return;
+    }
     let operation;try{operation=await json(operationPath);}catch(error){if(error.code!=='ENOENT')throw error;}
+    if(request.kind==='recover-upload'){
+      const upload=require('./backupUploadRecovery');
+      const uploadConfig=await upload.configuration(config);
+      if(!/^[a-f0-9-]{36}$/.test(request.uploadId||''))throw Error('Invalid uploaded backup identity.');
+      const jobPath=path.join(uploadConfig.directory,request.uploadId,'upload.json');
+      const job=await json(jobPath),current=await binding();
+      // An activation may have committed before its final status write. Never import again or revert new sales.
+      if(job.operationId===request.id&&job.targetActivationId===current.activationId&&current.phase==='active'){
+        await upload.markRecoveryActivated(uploadConfig,request,current);
+        await atomic(jobPath,{...job,state:'complete',result:{...job.result,activated:true}});
+        await record({id:request.id,kind:request.kind,shopId:config.shopId,actor:request.actor,state:'complete',message:'Uploaded recovery is active. Previous database retained.'});
+        await fs.unlink(requestPath);return;
+      }
+      if(job.state!=='uploaded'){
+        if(operation?.id===request.id&&operation.state==='inspection-required')return;
+        await record({id:request.id,kind:request.kind,shopId:config.shopId,actor:request.actor,state:'inspection-required',message:'Interrupted upload recovery was not repeated. Preserve both databases and inspect the restore worker before retrying.'});
+        return;
+      }
+      try{
+        const adapters=require('./backupUploadRecoveryAdapters').createBackupRecoveryAdapters(config,{runCommand,waitReady,verify,acquireDatabaseFence});
+        await upload.executeBackupUploadRecovery(config,request,adapters);
+        await fs.unlink(requestPath);
+      }catch{
+        const latest=await json(jobPath);
+        if(latest.state==='failed'){await fs.unlink(requestPath);return;}
+        await record({id:request.id,kind:request.kind,shopId:config.shopId,actor:request.actor,state:'inspection-required',message:'Recovery outcome requires inspection. Uploaded files and databases were retained; do not enable both servers.'});
+      }
+      return;
+    }
     if(['prepare-baseline','prepare-lost-local','prepare-export','finish-recovery-cancel'].includes(request.kind)){
       const op={id:request.id,kind:request.kind,handoffId:request.handoffId||null,mode:request.mode||null,actor:request.actor,shopId:config.shopId,state:'preparing',startedAt:operation?.id===request.id?operation.startedAt:new Date().toISOString()};
       try{

@@ -12,10 +12,15 @@ function authenticate(req, res, next) {
 
   try {
     req.user = jwt.verify(token, JWT_SECRET);
-    next();
   } catch (err) {
-    res.status(401).json({ error: 'Invalid or expired login.' });
+    return res.status(401).json({ error: 'Invalid or expired login.' });
   }
+  try {
+    const activation = require('../services/recoverySessionScope').currentRecoveryActivation();
+    if (activation && req.user.recovery_activation_id !== activation) return res.status(401).json({
+      code: 'RECOVERY_SESSION_CHANGED', error: 'The database was recovered. Sign in again; old pending bills are retained for review.' });
+  } catch { return res.status(503).json({ error: 'Recovery authority cannot be verified. Billing remains unavailable.' }); }
+  next();
 }
 
 function authorize(...roles) {

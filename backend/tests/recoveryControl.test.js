@@ -39,3 +39,15 @@ test('only authenticated server owner can stop the named interrupted switch',asy
   assert.equal((await post('ADMIN',body)).status,403);assert.equal((await post('SERVER',{...body,actor:'forged'})).status,400);assert.equal((await post('SERVER',body)).status,202);
   assert.deepEqual(calls,[{operationId,actor:'actual-owner'}]);
 });
+test('native standby blocks legacy emergency promotion before queuing or changing its binding',async t=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'badizo-native-guard-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const bindingPath=path.join(directory,'binding.json'),configPath=path.join(directory,'config.json');
+ const binding={schemaVersion:1,shopId:'HFM001',activationId:crypto.randomUUID(),generation:0,phase:'active',billingMode:'standby',database:{host:'127.0.0.1',user:'scoped',password:'private',database:'badizo_pos',port:33316}};
+ await atomic(bindingPath,binding);await atomic(configPath,{shopId:'HFM001',nodeRole:'cloud-standby',directory,bindingPath,emergencyCloudRequiresUpload:true});await atomic(path.join(directory,'heartbeat.json'),{shopId:'HFM001',at:new Date().toISOString()});
+ const control=createRecoveryControl({configPath,shopId:'HFM001'});assert.equal((await control.status()).emergencyCloudRequiresUpload,true);
+ await assert.rejects(control.request({kind:'emergency-cloud',expectedGeneration:0,actor:'owner'}),/read-only native replica/);
+ await assert.rejects(fs.stat(path.join(directory,'request.json')),{code:'ENOENT'});assert.deepEqual(JSON.parse(await fs.readFile(bindingPath)),binding);
+ const {createRecoverySupervisor}=require('../services/recoverySupervisor');const request={id:crypto.randomUUID(),kind:'emergency-cloud',shopId:'HFM001',expectedGeneration:0,actor:'owner'};await atomic(path.join(directory,'request.json'),request);
+ let sideEffects=0;const supervisor=createRecoverySupervisor({shopId:'HFM001',nodeRole:'cloud-standby',directory,bindingPath,emergencyCloudRequiresUpload:true,restoreConfigPath:path.join(directory,'restore.json'),restoreJobDirectory:path.join(directory,'jobs'),readyUrl:'http://127.0.0.1:5000/api/ready'},{runCommand:async()=>{sideEffects++},verify:async()=>{sideEffects++}});
+ await supervisor.tick();assert.equal(sideEffects,0);assert.deepEqual(JSON.parse(await fs.readFile(bindingPath)),binding);assert.equal(JSON.parse(await fs.readFile(path.join(directory,'operation.json'))).state,'failed');
+});

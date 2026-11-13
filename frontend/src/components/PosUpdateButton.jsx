@@ -4,10 +4,11 @@ import api from '../api/client';
 const receiptKey = 'badizo-pos-update';
 const commitPattern = /^[a-f0-9]{40}$/;
 
-export default function PosUpdateButton() {
+export default function PosUpdateButton({onOpenMaintenance}) {
   const [info, setInfo] = useState(null);
   const [pending, setPending] = useState(() => sessionStorage.getItem(receiptKey));
   const [message, setMessage] = useState('');
+  const [lookupFailed, setLookupFailed] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -16,7 +17,7 @@ export default function PosUpdateButton() {
       try {
         const {data} = await api.get('/shop-maintenance');
         if (!active) return;
-        setInfo(data);
+        setInfo(data); setLookupFailed(false);
         if (pending && data.job?.target !== pending &&
             Date.now() - Number(sessionStorage.getItem(receiptKey + '-time')) > 180000) {
           sessionStorage.removeItem(receiptKey);
@@ -37,7 +38,7 @@ export default function PosUpdateButton() {
             setMessage('Update ' + data.job.state + '. Check Software maintenance in System.');
           }
         }
-      } catch { /* The service briefly goes offline during installation. */ }
+      } catch { if(active&&!pending)setLookupFailed(true); /* Installation may briefly stop the service. */ }
       if (active) timer = setTimeout(check, pending ? 5000 : 120000);
     }
     check();
@@ -54,6 +55,11 @@ export default function PosUpdateButton() {
     window.addEventListener('badizo-version-switch',watch);
     return ()=>window.removeEventListener('badizo-version-switch',watch);
   },[]);
+  function openMaintenance() {
+    if(onOpenMaintenance)onOpenMaintenance();
+    else window.dispatchEvent(new CustomEvent('badizo-open-software-maintenance'));
+    setMessage(lookupFailed ? 'Unable to check this server version. Open System → Software maintenance.' : info?.configured===false ? 'Software updates need one-time setup on this server. Open System → Software maintenance.' : 'Open System → Software maintenance for the current version and update status.');
+  }
   async function install() {
     if (!window.confirm('Finish open bills at every counter before continuing. Install the shop update and reopen this POS?')) return;
     const target = info.target;
@@ -76,10 +82,10 @@ export default function PosUpdateButton() {
     commitPattern.test(info.target) && info.runningCommit !== info.target;
   const busy = ['queued','running','unknown'].includes(info?.job?.state);
   return <>
-    {(available || pending) && <button type="button" className="tab-button pos-update" onClick={install} disabled={!!pending || busy}>
+    <button type="button" className="tab-button pos-update" onClick={available ? install : openMaintenance} disabled={!!pending || busy} title={available ? 'An approved update is available' : info?.configured===false ? 'Set up software maintenance' : 'View software version and update status'}>
       <span aria-hidden="true" className="pos-update-icon">↻</span>
-      {pending ? 'Updating…' : 'Update available'}
-    </button>}
+      {pending ? 'Updating…' : 'Update Version'}{available&&!pending&&<span className="pos-update-available">Available</span>}
+    </button>
     {message && <span role="status">{message}</span>}
   </>;
 }

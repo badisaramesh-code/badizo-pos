@@ -15,7 +15,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const https = require('https');
-const os = require('os');
+const { createPrivateMysqlDefaults } = require('./privateMysqlDefaults');
 const path = require('path');
 const { spawn } = require('child_process');
 const { URL } = require('url');
@@ -97,45 +97,8 @@ function getMysqlDumpPath() {
   return file;
 }
 
-function escapeOptionValue(value) {
-  return String(value)
-    .replace(/\\/g, '\\\\')
-    .replace(/\r?\n/g, '')
-    .replace(/"/g, '\\"');
-}
-
-async function createTemporaryMysqlDefaults() {
-  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'badizo-mysql-'));
-  const file = path.join(dir, 'client.cnf');
-  const content = [
-    '[client]',
-    `host="${escapeOptionValue(process.env.DB_HOST || 'localhost')}"`,
-    `user="${escapeOptionValue(process.env.DB_USER || 'root')}"`,
-    `password="${escapeOptionValue(requiredEnv('DB_PASSWORD'))}"`,
-    'default-character-set=utf8mb4',
-    ''
-  ].join('\r\n');
-
-  await fs.promises.writeFile(file, content, { encoding: 'utf8', mode: 0o600 });
-
-  // Restrict the temporary credential file to SYSTEM and Administrators on Windows.
-  if (process.platform === 'win32') {
-    await runProcess('icacls.exe', [
-      file,
-      '/inheritance:r',
-      '/grant:r',
-      `${process.env.USERNAME}:R`,
-      'SYSTEM:F',
-      'Administrators:F'
-    ], { allowFailure: true });
-  }
-
-  return {
-    file,
-    async cleanup() {
-      await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
-    }
-  };
+function createTemporaryMysqlDefaults() {
+  return createPrivateMysqlDefaults(process.env);
 }
 
 function runProcess(command, args, options = {}) {
@@ -164,7 +127,8 @@ function runProcess(command, args, options = {}) {
   });
 }
 
-async function createDatabaseDump(kind) {
+async function createDatabaseDump(kind, binding) {
+  binding.assertUnchanged();
   const policy = getPolicy(kind);
   const outputDir = path.join(BACKUP_ROOT, kind);
   ensureDir(outputDir);
@@ -178,6 +142,7 @@ async function createDatabaseDump(kind) {
     info(`Creating ${kind} MySQL backup: ${fileName}`);
     const args = [
       `--defaults-extra-file=${defaults.file}`, // Must be the first option.
+      `--port=${Number(process.env.DB_PORT||3306)}`,
       '--single-transaction',
       '--quick',
       '--routines',
@@ -194,6 +159,7 @@ async function createDatabaseDump(kind) {
 
     await runProcess(getMysqlDumpPath(), args);
 
+    binding.assertUnchanged();
     const stat = await fs.promises.stat(filePath);
     if (stat.size < 1024) {
       throw new Error(`Backup validation failed: file is too small (${stat.size} bytes)`);
@@ -324,11 +290,14 @@ function uploadStream(uploadUrl, filePath, fileSize, token) {
   });
 }
 
-async function uploadWithRetry(backup, attempts = 3) {
+async function uploadWithRetry(backup, binding, attempts = 3) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    binding.assertUnchanged();
     try {
-      return await uploadBackup(backup);
+      const result = await uploadBackup(backup);
+      binding.assertUnchanged();
+      return result;
     } catch (err) {
       lastError = err;
       fail(`Upload attempt ${attempt} failed`, { file: backup.file, error: err.message });
@@ -457,15 +426,18 @@ async function pruneLocal(kind) {
 }
 
 async function runBackup(kind) {
+  const binding=require('./backupRuntimeBinding').loadBackupRuntimeBinding();
   const enabled = String(process.env.GOOGLE_DRIVE_BACKUP_ENABLED || '').toLowerCase() === 'true';
   if (!enabled) throw new Error('GOOGLE_DRIVE_BACKUP_ENABLED is not true in backend\\.env');
 
   const startedAt = Date.now();
-  const backup = await createDatabaseDump(kind);
+  const backup = await createDatabaseDump(kind, binding);
 
   try {
     const uploadStarted = Date.now();
-    await uploadWithRetry(backup);
+    binding.assertUnchanged();
+    await uploadWithRetry(backup, binding);
+    binding.assertUnchanged();
     if (kind === 'daily') {
       const end = Date.now();
       const file = path.join(BACKUP_ROOT,'drive-verified-status.json');
@@ -485,7 +457,9 @@ async function runBackup(kind) {
     throw err;
   }
 
+  binding.assertUnchanged();
   await pruneDrive(kind);
+  binding.assertUnchanged();
   await pruneLocal(kind);
   info(`${kind} backup completed successfully`, {
     file: backup.file,
@@ -495,6 +469,8 @@ async function runBackup(kind) {
 }
 
 async function testConfiguration() {
+  const binding = require('./backupRuntimeBinding').loadBackupRuntimeBinding();
+  binding.assertUnchanged();
   info('Testing MySQL and Google Drive configuration...');
   requiredEnv('DB_PASSWORD');
   requiredEnv('GOOGLE_DRIVE_CLIENT_ID');

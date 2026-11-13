@@ -47,6 +47,11 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(getStoredUser);
   const [backupAlert, setBackupAlert] = useState(null);
   const [openPaymentDiary,setOpenPaymentDiary]=useState(false);
+  useEffect(() => {
+    const changed = () => setCurrentUser(null);
+    window.addEventListener('badizo-recovery-session-changed', changed);
+    return () => window.removeEventListener('badizo-recovery-session-changed', changed);
+  }, []);
 
   const [usageEnabled,setUsageEnabled] = useState(false);
   useEffect(() => {
@@ -291,7 +296,7 @@ export default function App() {
           ))}
           {process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' && ['ADMIN','SERVER'].includes(currentUser.role) && <CloudSoftwareUpdate />}
           {process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' && <CloudPassword username={currentUser.username} />}
-          {process.env.REACT_APP_BADIZO_CLOUD_BUILD !== 'true' && ['ADMIN','SERVER'].includes(currentUser.role) && <PosUpdateButton />}
+          {process.env.REACT_APP_BADIZO_CLOUD_BUILD !== 'true' && ['ADMIN','SERVER'].includes(currentUser.role) && <PosUpdateButton onOpenMaintenance={() => openWorkspaceFromTopNav('system')} />}
           {currentUser.role === 'COUNTER' && (
             <button
               className="tab-button"

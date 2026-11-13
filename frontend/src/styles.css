@@ -9696,3 +9696,12 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .diary-statement .statement-table .statement-day td { padding:6px 8px; }
 .diary-statement .statement-action button { padding:2px 7px; min-height:24px; }
 .diary-statement .statement-table tfoot td { padding:8px; position:sticky; bottom:0; z-index:1; }
+
+/* Recovery actions stay secondary; the product search keeps the flexible column. */
+.billing-scanner-row { grid-template-columns:minmax(0,1fr) max-content max-content; }
+.billing-cart-actions { display:inline-flex; align-items:center; gap:5px; }
+.billing-cart-actions .secondary-button { padding:5px 8px; min-height:30px; width:auto; white-space:nowrap; font-size:11px; line-height:1.15; }
+.billing-cart-message { margin:3px 6px; font-size:12px; }
+@media(max-width:1000px) { .billing-scanner-row { grid-template-columns:max-content 1fr max-content; } .billing-scanner-row>.search-wrap { grid-column:1/-1; grid-row:1; } }
+
+.pos-update-available { padding:2px 5px; border-radius:3px; background:#216a49; color:white; font-size:10px; }

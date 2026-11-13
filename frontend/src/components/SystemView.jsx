@@ -5,6 +5,7 @@ import TransferAuditPanel from './TransferAuditPanel';
 import CloudSyncSettings from './CloudSyncSettings';
 import RecoveryReview from './RecoveryReview';
 import StagedRestore from './StagedRestore';
+import BackupUploadRecovery from './BackupUploadRecovery';
 import RecoveryControl from './RecoveryControl';
 import FinancialConflictReview from './FinancialConflictReview';
 import {
@@ -91,6 +92,7 @@ const DEFAULT_BARCODE_PRINTER_TEMPLATES = {
 };
 
 export default function SystemView() {
+  const [recoveryPage, setRecoveryPage] = useState(null);
   const [gstSlabDraft, setGstSlabDraft] = useState('');
   const [settings, setSettings] = useState({
     shop_name: 'Hyper Fresh Mart LLP',
@@ -600,6 +602,26 @@ export default function SystemView() {
 
   return (
     <div className="form-stack system-view">
+      {process.env.REACT_APP_RECOVERY_CONTROL_ENABLED === 'true' && getStoredUser()?.role === 'SERVER' && (
+        <section className="panel" aria-label="Billing recovery">
+          <div className="panel-header green"><h2 className="panel-title">Billing recovery</h2></div>
+          <div className="panel-body form-stack">
+            <div className="settings-action-row">
+              {['Activate cloud', 'Return to local', 'Review conflicts'].map(label => (
+                <button type="button" key={label} aria-expanded={recoveryPage === label}
+                  className={recoveryPage === label ? 'primary-button compact-primary' : 'secondary-button'}
+                  onClick={() => setRecoveryPage(recoveryPage === label ? null : label)}>{label}</button>
+              ))}
+            </div>
+            {recoveryPage === 'Review conflicts' && <><RecoveryReview /><FinancialConflictReview /></>}
+            {recoveryPage && recoveryPage !== 'Review conflicts' && (
+              (recoveryPage === 'Activate cloud') === (process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true')
+                ? <><BackupUploadRecovery /><RecoveryControl />{process.env.REACT_APP_STAGED_RESTORE_ENABLED === 'true' && <StagedRestore />}</>
+                : <p role="status">Open System → Billing recovery on the {recoveryPage === 'Activate cloud' ? 'cloud' : 'local'} server to start billing there.</p>
+            )}
+          </div>
+        </section>
+      )}
       {['ADMIN', 'SERVER'].includes(getStoredUser()?.role) && <TransferAuditPanel />}
       <CloudSyncSettings />
       <ShopMaintenance />
@@ -1158,11 +1180,6 @@ export default function SystemView() {
         </div>
         )}
 
-
-        {process.env.REACT_APP_RECOVERY_REVIEW_ENABLED === 'true' && <RecoveryReview />}
-        {process.env.REACT_APP_RECOVERY_REVIEW_ENABLED === 'true' && <FinancialConflictReview />}
-        {process.env.REACT_APP_STAGED_RESTORE_ENABLED === 'true' && <StagedRestore />}
-        {process.env.REACT_APP_RECOVERY_CONTROL_ENABLED === 'true' && <RecoveryControl />}
 
         <div className="panel system-folder-panel backup-folder-panel" style={process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' ? { display: 'none' } : undefined}>
           <div className="panel-header green">

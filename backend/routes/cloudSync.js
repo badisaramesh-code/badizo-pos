@@ -1,8 +1,8 @@
 const express = require('express');
 const { authenticate, authorize } = require('../middleware/auth');
-const { createCloudSyncSettingsService } = require('../services/cloudSyncSettingsService');
+const { configuredCloudSyncService } = require('../services/nativeReplicaSettings');
 
-function createRouter(service = createCloudSyncSettingsService()) {
+function createRouter(service = configuredCloudSyncService()) {
   const router = express.Router();
   router.use(authenticate);
   router.get('/audit', authorize('SERVER', 'ADMIN'), async (_req, res) => {

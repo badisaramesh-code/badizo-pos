@@ -32,7 +32,26 @@ function verifyLegacyDefaultPassword(username, password) {
   return false;
 }
 
+function cloudLoginHash(user) {
+  if (!isCloudNode()) return null;
+  const name = String(user?.username || '').toLowerCase();
+  if (!/^(server|admin|counter[1-6])$/.test(name)) return null;
+  const file = process.env.BADIZO_CLOUD_LOGIN_FILE || '/etc/badizo-cloud-login/accounts.json';
+  let contents;
+  try {
+    contents = require('node:fs').readFileSync(file, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT' && !process.env.BADIZO_CLOUD_LOGIN_FILE) return null;
+    throw err;
+  }
+  const accounts = JSON.parse(contents);
+  if (!Object.hasOwn(accounts, name)) throw Error('Cloud account configuration incomplete');
+  return accounts[name];
+}
+
 function passwordMatches(user, password) {
+  const override = cloudLoginHash(user);
+  if (override !== null) return verifyPassword(password, override);
   try {
     if (verifyPassword(password, user?.password_hash)) return true;
   } catch (err) {
@@ -226,6 +245,8 @@ router.post('/login', async (req, res) => {
     }
 
     const safeUser = publicUser(user);
+    const recoveryActivation = require('../services/recoverySessionScope').currentRecoveryActivation();
+    if (recoveryActivation) safeUser.recovery_activation_id = recoveryActivation;
     safeUser.person_name = cleanPersonName.slice(0, 120);
     if (safeUser.role === 'COUNTER') {
       safeUser.system_no = normalizeLoginNumber(system_no, 1, 6);
@@ -261,6 +282,7 @@ router.post('/login', async (req, res) => {
 
 router.post('/change-password', authenticate, async (req, res) => {
   if (!isCloudNode()) return res.sendStatus(404);
+  if (cloudLoginHash(req.user) !== null) return res.status(409).json({ error: 'This password is managed on the cloud server.' });
   const { currentPassword, newPassword } = req.body || {};
   if (typeof currentPassword !== 'string' || currentPassword.length > 256 ||
       typeof newPassword !== 'string' || newPassword.trim().length < 8 || newPassword.length > 128 ||

@@ -22,7 +22,7 @@ function createRecoveryControl({configPath,shopId}){
     if(c.baselinePlanPath){try{baseline=await require('./recoveryBaselineActivation').nodeStatus(c);}catch(error){if(error.code!=='ENOENT')baseline={state:'configuration-needs-inspection'};}}
     let preparation=null;
     if(c.preparationConfigPath){try{preparation=await require('./recoveryPreparation').createRecoveryPreparation(c).status();delete preparation.metadata;}catch{preparation={state:'configuration-needs-inspection'};}}
-    return {configured:true,nodeRole:c.nodeRole,handoffAvailable:!!c.enrollmentConfigPath&&c.nodeRole==='local-server'&&!await require('./captureGap').hasCaptureGap(c.bindingPath,binding),baseline,preparation,handoffId:binding.handoffId||null,supervisorOnline:heartbeat?.shopId===shopId&&Date.now()-Date.parse(heartbeat.at)<15000,generation:binding.generation,phase:binding.phase,billingMode:binding.billingMode,reconciliationRequired:!!binding.reconciliationRequired,operation};
+    return {configured:true,nodeRole:c.nodeRole,emergencyCloudRequiresUpload:c.emergencyCloudRequiresUpload===true,handoffAvailable:!!c.enrollmentConfigPath&&c.nodeRole==='local-server'&&!await require('./captureGap').hasCaptureGap(c.bindingPath,binding),baseline,preparation,handoffId:binding.handoffId||null,supervisorOnline:heartbeat?.shopId===shopId&&Date.now()-Date.parse(heartbeat.at)<15000,generation:binding.generation,phase:binding.phase,billingMode:binding.billingMode,reconciliationRequired:!!binding.reconciliationRequired,operation};
   }
   async function request({kind,jobId,handoffId,mode,expectedGeneration,actor}){
     if(!['activate-restore','standby','emergency-local','emergency-cloud','use-cloud','use-local','handoff-standby','handoff-active','reconnect-baseline','copy-lost-local','baseline-stage','baseline-release','prepare-baseline','prepare-lost-local','prepare-export','finish-recovery-cancel'].includes(kind)||!Number.isSafeInteger(expectedGeneration)||typeof actor!=='string'||!actor.trim())throw Error('Invalid recovery operation.');
@@ -47,6 +47,7 @@ function createRecoveryControl({configPath,shopId}){
       if(kind.startsWith('baseline-')&&(c.nodeRole==='local-server'||handoffId!==plan.operationId))throw Error('Recovery peer identity differs.');
     }
     if(['use-cloud','use-local'].includes(kind)&&(!state.handoffAvailable))throw Error('Coordinated handoff must start on the enrolled local supervisor.');
+    if(kind==='emergency-cloud'&&c.emergencyCloudRequiresUpload===true)throw Error('Direct activation is unavailable for this read-only native replica. Use System backup upload recovery after fencing local counters, or request a supervised export of the synced standby.');
     if(kind==='emergency-cloud'&&!['cloud-active','cloud-standby'].includes(c.nodeRole))throw Error('Cloud emergency billing is cloud only.');
     if(kind==='activate-restore'&&c.nodeRole!=='local-server')throw Error('Restore activation is local only.');
     if(kind==='emergency-local'&&c.nodeRole!=='local-server')throw Error('Emergency local billing is only available locally.');

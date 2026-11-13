@@ -3,12 +3,14 @@ import {jsPDF} from 'jspdf';
 import api,{getStoredUser} from '../api/client';
 export default function FinancialConflictReview(){
   const [cases,setCases]=useState(null),[selected,setSelected]=useState(null),[note,setNote]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+  const [lookupError,setLookupError]=useState('');
   const [targetPayment,setTargetPayment]=useState(''),[confirmed,setConfirmed]=useState(false);
   const allowed=getStoredUser()?.role==='SERVER';
   async function refresh(){const {data}=await api.get('/recovery-cases');setCases(data.cases);}
   async function select(id){try{setSelected((await api.get('/recovery-cases/'+id)).data);setNote('');setError('');setTargetPayment('');setConfirmed(false);}catch{setError('Unable to load current balances.');}}
-  useEffect(()=>{if(allowed)refresh().catch(()=>{});},[allowed]);
-  if(!allowed||!cases)return null;
+  useEffect(()=>{if(allowed)refresh().catch(failure=>setLookupError(failure.response?.status===404 ? 'Conflict review is not configured on this server. Backup recovery replaces the database and does not merge separate sales.' : 'Unable to load financial and stock conflicts. Reopen Review conflicts to retry.'));},[allowed]);
+  if(!allowed)return null;
+  if(!cases)return <p role="status">{lookupError || 'Loading financial and stock conflicts…'}</p>;
   async function retry(){setBusy(true);setError('');try{const {data}=await api.post('/recovery-cases/'+selected.id+'/retry',{expectedRevision:selected.revision,note,confirmation:'RETRY WITHOUT DISCARDING RECORDS'});setSelected(data);setNote('');setSelected((await api.get('/recovery-cases/'+selected.id)).data);await refresh();}catch(failure){setError(failure.response?.data?.error||'Unable to refresh or retry this case. Refresh the case before trying again.');}finally{setBusy(false);}}
   async function correct(action,details){setBusy(true);setError('');try{await api.post('/recovery-cases/'+selected.id+'/'+action,{expectedRevision:selected.revision,note,...details});await select(selected.id);await refresh();}catch(failure){setError(failure.response?.data?.error||'Correction could not be confirmed. Refresh before retrying.');}finally{setBusy(false);}}
   function report(){

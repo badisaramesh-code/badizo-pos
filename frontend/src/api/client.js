@@ -70,6 +70,11 @@ function shouldRetryRequest(error) {
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
+    if (error.response?.status === 401 && error.response?.data?.code === 'RECOVERY_SESSION_CHANGED') {
+      clearAuthSession();
+      window.dispatchEvent(new Event('badizo-recovery-session-changed'));
+      return Promise.reject(error);
+    }
     const config = error.config || {};
     config.__badizoRetryCount = Number(config.__badizoRetryCount || 0);
     if (!shouldRetryRequest(error) || config.__badizoRetryCount >= 2) {
@@ -693,7 +698,8 @@ export function parkedCheckouts(counterNo){return checkoutRecoveryEnabled?checko
 export function parkPendingCheckout(counterNo){return checkoutRecoveryEnabled?checkoutJournal(counterNo).park():null;}
 export async function syncCheckoutReviews(counterNo){
  const rows=[];for(let i=0;i<window.localStorage.length;i++){const key=window.localStorage.key(i);if(!key?.startsWith('badizo_checkout_pending_v1:'))continue;try{const list=JSON.parse(window.localStorage.getItem(key)||'null');if(Array.isArray(list))rows.push(...list);else if(list?.schemaVersion===1&&list.payload)rows.push(list);}catch{}}
- const unique=[...new Map(rows.filter(r=>r.server===checkoutServer()&&r.payload?.checkout_request_id).map(r=>[r.payload.checkout_request_id,r])).values()];
+ const activation=getStoredUser()?.recovery_activation_id;
+ const unique=[...new Map(rows.filter(r=>r.server===checkoutServer()&&r.payload?.checkout_request_id&&(!activation||r.payload.recovery_activation_id===activation)).map(r=>[r.payload.checkout_request_id,r])).values()];
  for(let i=0;i<unique.length;i+=200)await api.post('/billing/checkout/reviews',{rows:unique.slice(i,i+200).map(r=>({checkout_request_id:r.payload.checkout_request_id,counter_no:r.payload.counter_no,grand_total:r.payload.grand_total}))},{timeout:4000});
 }
 export async function fetchCheckoutReviews(){const {data}=await api.get('/billing/checkout/reviews');return data;}
@@ -702,6 +708,7 @@ export async function releaseCheckoutReview(id){const {data}=await api.post('/bi
 export async function fetchCheckoutReviewEvents(id){const {data}=await api.get('/billing/checkout/reviews/'+encodeURIComponent(id)+'/events');return data;}
 export async function resolveParkedCheckout(counterNo,id,{cancelUnsaved=false}={}){
  const row=parkedCheckouts(counterNo).find(r=>r.payload.checkout_request_id===id);if(!row)throw Error('Pending bill was not found.');if(row.resolution)return row.resolution;
+ assertRecoveryPayloadScope(row.payload);
  if(row.server!==checkoutServer())throw Error('Reconnect to the original server to check this bill.');
  let data;try{({data}=cancelUnsaved?await api.post('/billing/checkout/abandon',{checkout_request_id:id}):await api.post('/billing/checkout',row.payload,{timeout:30000}));}catch(error){if(error?.response?.status===409&&error?.response?.data?.code==='CHECKOUT_ABANDONED'){const result={status:'ABANDONED'};checkoutJournal(counterNo).resolveParked(row.server,id,result);return result;}throw error;}
  const result=cancelUnsaved?data:{status:'SAVED',invoice_no:data.invoice_no};if(!['SAVED','ABANDONED'].includes(result?.status)||(result.status==='SAVED'&&!result.invoice_no))throw Error('Bill status is uncertain. Keep it pending.');
@@ -709,12 +716,20 @@ export async function resolveParkedCheckout(counterNo,id,{cancelUnsaved=false}={
 }
 export async function abandonPendingCheckout(counterNo) {
  const row=pendingCheckout(counterNo);if(!row)return {status:'DRAFT'};
+ assertRecoveryPayloadScope(row.payload);
  if(row.server!==checkoutServer())throw Error('The pending checkout belongs to another server. Reconnect to that server before clearing it.');
  const {data}=await api.post('/billing/checkout/abandon',{checkout_request_id:row.payload.checkout_request_id});
  if(!['SAVED','ABANDONED'].includes(data?.status))throw Error('Checkout status is uncertain. Cart retained.');
  clearConfirmedCheckout(counterNo,row.payload.checkout_request_id);return data;
 }
 export async function checkout(payload, savedState) {
+  const activation = getStoredUser()?.recovery_activation_id;
+  const pending = checkoutRecoveryEnabled ? pendingCheckout(payload.counter_no) : null;
+  if (pending) assertRecoveryPayloadScope(pending.payload);
+  if (activation) {
+    if (payload.recovery_activation_id && payload.recovery_activation_id !== activation) assertRecoveryPayloadScope(payload);
+    payload = { ...payload, recovery_activation_id: activation };
+  }
   const releaseRejectedBill = error => {
     const status = error?.response?.status;
     const code = error?.response?.data?.code;
@@ -750,6 +765,14 @@ export async function checkout(payload, savedState) {
       releaseRejectedBill(retryError);
       throw retryError;
     }
+  }
+}
+
+function assertRecoveryPayloadScope(payload) {
+  const activation = getStoredUser()?.recovery_activation_id;
+  if (activation && payload.recovery_activation_id !== activation) {
+    const error = new Error('This pending bill belongs to the database before recovery. Keep it for owner review; do not replay it.');
+    error.checkoutJournalError = true; error.code = 'RECOVERY_CHECKOUT_REVIEW_REQUIRED'; throw error;
   }
 }
 

@@ -1,3 +1,4 @@
+const { matchesBackupAuthority, recordBackupAuthority } = require('./backupArtifactAuthority');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
@@ -295,10 +296,9 @@ async function compressSqlBackup(sqlFile) {
 function mysqldump(outFile) {
   const exe = process.env.MYSQLDUMP_PATH || 'C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysqldump.exe';
   const db = process.env.DB_NAME || 'badizo_pos';
+  const defaults=require('./privateMysqlDefaults').createPrivateMysqlDefaults();
   const args = [
-    `--host=${process.env.DB_HOST || 'localhost'}`,
-    `--user=${process.env.DB_USER || 'root'}`,
-    `--password=${process.env.DB_PASSWORD || '1234'}`,
+    `--defaults-file=${defaults.file}`,
     '--single-transaction',
     '--quick',
     '--routines',
@@ -320,7 +320,7 @@ function mysqldump(outFile) {
   } catch (err) {
     fs.rmSync(outFile, { force: true });
     throw err;
-  }
+  } finally { defaults.cleanup(); }
 }
 
 function localBackupFiles(kind) {
@@ -343,9 +343,10 @@ async function remoteBackupNames(prefix) {
   return new Set((await listDrive(prefix, token)).map(file => String(file.name || '')));
 }
 
-async function syncDailyBackups(keep = backupKeepCount()) {
+async function syncDailyBackups(keep = backupKeepCount(), binding = require('./backupRuntimeBinding').loadBackupRuntimeBinding()) {
+  binding.assertUnchanged();
   const prefix = 'badizo_daily_';
-  const local = localBackupFiles('daily').slice(0, keep);
+  const local = localBackupFiles('daily').filter(item=>matchesBackupAuthority(item.path,binding)).slice(0, keep);
   if (!local.length) throw new Error('No local daily backup is available to synchronize');
 
   try {
@@ -353,10 +354,13 @@ async function syncDailyBackups(keep = backupKeepCount()) {
     const uploaded = [];
     let uploadedMs=0, verifiedSizes=true;
     for (const backup of [...local].reverse()) {
-      if (remoteNames.has(backup.name)) continue;
+      if (!binding.bound && remoteNames.has(backup.name)) continue;
       console.log(`Uploading pending backup ${backup.name}...`);
       const transferStart=Date.now();
+      binding.assertUnchanged();
+      if(!matchesBackupAuthority(backup.path,binding))throw Error('Backup authority changed before upload.');
       const result = await upload(backup.path, backup.name);
+      binding.assertUnchanged();
       uploadedMs+=Date.now()-transferStart;
       const localSize = fs.statSync(backup.path).size;
       if (Number(result?.size)!==localSize) verifiedSizes=false;
@@ -367,6 +371,7 @@ async function syncDailyBackups(keep = backupKeepCount()) {
       remoteNames.add(backup.name);
     }
 
+    binding.assertUnchanged();
     if (!DRIVE_SYNC_FOLDER && uploaded.length && verifiedSizes) {
       const end=Date.now(), file=path.join(LOCAL_ROOT,'drive-verified-status.json'), tmp=file+'.'+process.pid+'.tmp';
       try {
@@ -374,9 +379,11 @@ async function syncDailyBackups(keep = backupKeepCount()) {
         fs.renameSync(tmp,file);
       } catch (err) { console.warn('Backup timing unavailable:',err.code); }
     }
-    await pruneDrive(prefix, keep);
-    pruneLocal(path.join(LOCAL_ROOT, 'daily'), prefix, localBackupKeepCount());
+    if(!binding.bound)await pruneDrive(prefix, keep);
+    binding.assertUnchanged();
+    if(!binding.bound)pruneLocal(path.join(LOCAL_ROOT, 'daily'), prefix, localBackupKeepCount());
     const latest = local[0];
+    binding.assertUnchanged();
     writeBackupStatus('success', 'daily', {
       file: latest.name,
       sizeBytes: fs.statSync(latest.path).size,
@@ -387,6 +394,7 @@ async function syncDailyBackups(keep = backupKeepCount()) {
     });
     return { uploaded, latest: latest.name };
   } catch (err) {
+    binding.assertUnchanged();
     writeBackupStatus('failed', 'daily', {
       file: local[0].name,
       message: `Google Drive upload pending; automatic retry is enabled. ${String(err.message || '').slice(0, 350)}`
@@ -397,6 +405,7 @@ async function syncDailyBackups(keep = backupKeepCount()) {
 }
 
 async function databaseBackup(kind, keep) {
+  const binding = require('./backupRuntimeBinding').loadBackupRuntimeBinding();
   const prefix = `badizo_${kind}_`;
   const dir = path.join(LOCAL_ROOT, kind);
   ensureDir(dir);
@@ -407,13 +416,14 @@ async function databaseBackup(kind, keep) {
     const candidates = localBackupFiles(kind).filter(item => item.name.startsWith(todayPrefix));
     for (const candidate of candidates) {
       try {
+        if(!matchesBackupAuthority(candidate.path,binding))continue;
         if (candidate.path.endsWith('.gz')) validateGzipBackup(candidate.path);
         else validateSqlBackup(candidate.path);
         current = candidate;
         break;
       } catch (err) {
         console.error(`Removing invalid existing backup ${candidate.name}: ${err.message}`);
-        fs.rmSync(candidate.path, { force: true });
+        if(!binding.bound)fs.rmSync(candidate.path, { force: true });
       }
     }
   }
@@ -422,12 +432,18 @@ async function databaseBackup(kind, keep) {
     const name = `${prefix}${stamp()}.sql`;
     const file = path.join(dir, name);
     console.log(`Creating ${kind} database backup...`);
-    mysqldump(file);
-    const compressedFile = await compressSqlBackup(file);
+    let compressedFile;
+    try {
+      binding.assertUnchanged();mysqldump(file);binding.assertUnchanged();compressedFile=await compressSqlBackup(file);binding.assertUnchanged();
+      recordBackupAuthority(compressedFile,binding);
+    } catch(error){fs.rmSync(file,{force:true});if(compressedFile)fs.rmSync(compressedFile,{force:true});throw error;}
     current = { name: path.basename(compressedFile), path: compressedFile, mtime: fs.statSync(compressedFile).mtimeMs };
   } else {
     if (!current.path.endsWith('.gz')) {
+      binding.assertUnchanged();
       const compressedFile = await compressSqlBackup(current.path);
+      binding.assertUnchanged();
+      recordBackupAuthority(compressedFile,binding);
       current = { name: path.basename(compressedFile), path: compressedFile, mtime: fs.statSync(compressedFile).mtimeMs };
       console.log(`Compressed existing backup: ${current.name}`);
     } else {
@@ -435,13 +451,17 @@ async function databaseBackup(kind, keep) {
     }
   }
 
+  binding.assertUnchanged();
   // Retention is enforced locally even when the internet is unavailable.
-  pruneLocal(dir, prefix, localBackupKeepCount());
+  if(!binding.bound)pruneLocal(dir, prefix, localBackupKeepCount());
   if (kind === 'daily') {
-    await syncDailyBackups(keep);
+    await syncDailyBackups(keep,binding);
   } else {
+    binding.assertUnchanged();
     await upload(current.path, current.name);
-    await pruneDrive(prefix, keep);
+    binding.assertUnchanged();
+    binding.assertUnchanged();
+    if(!binding.bound)await pruneDrive(prefix, keep);
   }
   console.log(`${kind} backup completed.`);
 }

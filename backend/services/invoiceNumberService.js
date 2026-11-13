@@ -12,7 +12,9 @@ async function getCounterCount(connection = db) {
 }
 
 function formatInvoiceNo(financialYear, counterNo, sequenceNo) {
-  return `${invoicePrefix()}/${financialYear}/C${String(counterNo).padStart(2, '0')}/${String(sequenceNo).padStart(6, '0')}`;
+  const value = `${invoicePrefix()}/${financialYear}/C${String(counterNo).padStart(2, '0')}/${String(sequenceNo).padStart(6, '0')}`;
+  if (value.length > 50) throw Error('Invoice number exceeds the supported storage length. Billing was not saved; contact support.');
+  return value;
 }
 
 async function getExistingMaxSequence(connection, financialYear) {
@@ -25,8 +27,8 @@ async function getExistingMaxSequence(connection, financialYear) {
   const [invoiceRows] = await connection.query(
     `SELECT MAX(CAST(SUBSTRING_INDEX(invoice_no, '/', -1) AS UNSIGNED)) AS sequence_no
      FROM invoices
-     WHERE invoice_no LIKE ?`,
-    [`${invoicePrefix()}/${financialYear}/C%/%`]
+     WHERE invoice_no LIKE ? ESCAPE '='`,
+    [`${require('./recoveryInvoiceNumbers').escapeLike(invoicePrefix())}/${financialYear}/C%/%`]
   );
   const sequenceNext = Number(sequenceRows[0]?.next_number || 1);
   const invoiceNext = Number(invoiceRows[0]?.sequence_no || 0) + 1;

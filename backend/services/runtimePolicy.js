@@ -14,7 +14,7 @@ function cloudWriteGuard(req, res, next) {
   if (process.env.BADIZO_RUNTIME_BINDING) {
     try { const state=require('./recoveryRuntimeBinding').status(); if(state?.phase==='active'&&state.billingMode==='active') return next(); } catch {}
   }
-  if (process.env.BADIZO_RECOVERY_CONTROL_CONFIG && /^\/(recovery-control|recovery-baseline|recovery-preparation)(?:\/|$)/.test(req.path)) return next();
+  if (process.env.BADIZO_RECOVERY_CONTROL_CONFIG && /^\/(recovery-control|recovery-baseline|recovery-preparation|backup-recovery)(?:\/|$)/.test(req.path)) return next();
   if (process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/sync\/(events|feed\/ack|handoff(?:\/flush)?)$/.test(req.path)) return next();
   if (process.env.BADIZO_SYNC_ENROLLMENT_CONFIG && /^\/recovery-cases(?:\/|$)/.test(req.path)) return next();
   if (['/auth/login', '/auth/logout', '/auth/logout-beacon'].includes(req.path)) return next();
@@ -22,5 +22,8 @@ function cloudWriteGuard(req, res, next) {
   if (req.method === 'POST' && req.path === '/auth/change-password') return next();
   return res.status(409).json({ error: 'Cloud billing is in standby. Activate it only after local billing and incoming sync are stopped.' });
 }
-function invoicePrefix(env = process.env) { return isCloudNode(env) ? 'CL' : 'BZ'; }
+function invoicePrefix(env = process.env) {
+  if (env.BADIZO_RECOVERY_INVOICE_EPOCH) return require('./recoveryInvoiceNumbers').recoveryInvoicePrefix(env.BADIZO_NODE_ROLE || 'local-server', env.BADIZO_RECOVERY_INVOICE_EPOCH);
+  return isCloudNode(env) ? 'CL' : 'BZ';
+}
 module.exports = { isCloudNode, bindHost, cloudWriteGuard, invoicePrefix };

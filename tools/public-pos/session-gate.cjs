@@ -6,6 +6,10 @@ const env = process.env;
 if (env.BADIZO_NODE_ROLE !== 'cloud-standby' || !env.DB_NAME || !env.DB_USER) {
   throw Error('Configure the cloud database before enabling public sign-in.');
 }
+if (env.BADIZO_RUNTIME_BINDING) {
+  const backend = env.BADIZO_BACKEND_ROOT || require('node:path').resolve(__dirname, '../../backend');
+  require(require('node:path').join(backend, 'services/recoveryRuntimeBinding')).load(env);
+}
 const pool = mysql.createPool({
   host: env.DB_HOST || 'localhost', port: Number(env.DB_PORT || 3306),
   database: env.DB_NAME, user: env.DB_USER, password: env.DB_PASSWORD,
