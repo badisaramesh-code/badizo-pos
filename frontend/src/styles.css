@@ -9653,41 +9653,33 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .diary-dialog button.diary-payment-pending:hover { background:#911b1b; border-color:#911b1b; }
 .diary-dialog button.diary-payment-ok:disabled { background:#237c39; color:#fff; border-color:#237c39; opacity:1; font-weight:600; cursor:default; }
 
-/* Payment statement: clear hierarchy, compact rows and aligned currency. */
-.payment-diary .diary-statement { padding:0; overflow:hidden; border-color:#d6e3dc; box-shadow:0 3px 16px #183d2510; }
-.diary-statement .statement-cover { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin:0; padding:24px 26px; border:0; border-radius:0; background:#173d30; color:#fff; }
-.statement-eyebrow { font-size:10px; font-weight:700; letter-spacing:1.5px; color:#b8d7c7; }
-.diary-statement .statement-cover h3 { margin:8px 0 9px; font-size:24px; color:#fff; }
-.diary-statement .statement-cover .statement-period { margin:0 0 6px; font-size:15px; font-weight:600; color:#fff; }
-.statement-cover small { color:#b8d7c7; font-size:12px; }
-.statement-report-label { padding:7px 11px; border:1px solid #6b9380; border-radius:5px; font-size:10px; letter-spacing:1px; color:#d6e8dc; }
-.statement-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:0; padding:20px 12px; background:#f7faf8; border-bottom:1px solid #dce8df; }
-.statement-metrics>div { display:flex; flex-direction:column; gap:8px; padding:0 16px; border-right:1px solid #dce8df; }
+/* Compact payment statement with single-line report rows. */
+.payment-diary .diary-statement { padding:0; overflow:hidden; border-color:#cadbd0; }
+.diary-statement .statement-cover { display:flex; align-items:center; gap:18px; margin:0; padding:7px 16px; min-height:24px; border:0; border-radius:0; background:#173d30; color:#fff; white-space:nowrap; overflow-x:auto; }
+.diary-statement .statement-cover h3 { margin:0; font-size:16px; color:#fff; }
+.statement-eyebrow { font-size:10px; letter-spacing:.8px; color:#c1ddcd; }
+.statement-period { font-size:13px; font-weight:600; }
+.statement-report-label { margin-left:auto; font-size:10px; letter-spacing:.8px; color:#c1ddcd; }
+.statement-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); padding:7px 0; background:#f4f8f5; border-bottom:1px solid #cbded1; }
+.statement-metrics>div { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:0 16px; border-right:1px solid #d4e3d9; white-space:nowrap; }
 .statement-metrics>div:last-child { border-right:0; }
-.statement-metrics span { color:#65776d; font-size:12px; }
-.statement-metrics strong { color:#173d30; font-size:21px; font-variant-numeric:tabular-nums; }
-.diary-statement .diary-table-wrap { padding:0 16px 16px; }
-.diary-statement .statement-table { width:100%; min-width:880px; }
-.diary-statement .statement-table th { padding:14px 12px; font-size:11px; text-transform:uppercase; letter-spacing:.4px; background:#fff; color:#607468; border-bottom:1px solid #d5e2d9; }
-.diary-statement .statement-table td { padding:14px 12px; vertical-align:top; color:#263b30; border-bottom:1px solid #e6ede8; background:#fff; }
-.diary-statement .statement-table .statement-money { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
-.diary-statement .statement-table .statement-date { white-space:nowrap; font-size:12px; color:#637469; }
-.statement-account { font-size:13px; }
-.statement-account-meta { display:flex; gap:9px; align-items:center; margin-top:7px; }
-.statement-account-meta>span { padding:2px 7px; border-radius:4px; background:#edf3ef; color:#53705f; font-size:10px; }
-.diary-statement .statement-account-meta small { display:inline; margin:0; }
-.statement-payment { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
-.statement-mode { padding:3px 8px; border-radius:4px; background:#edf2f8; color:#345574; font-size:11px; font-weight:600; }
-.diary-statement .statement-by { color:#849187; font-size:10px; margin-top:5px; }
-.diary-statement .statement-table .statement-day td { padding:11px 12px; background:#edf5ef; border-bottom:1px solid #dce9df; }
-.statement-day td>div { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.statement-metrics span { color:#596e60; font-size:11px; }
+.statement-metrics strong { color:#173d30; font-size:15px; font-variant-numeric:tabular-nums; }
+.diary-statement .diary-table-wrap { padding:0 12px 10px; }
+.diary-statement .statement-table { width:100%; min-width:1160px; }
+.diary-statement .statement-table th { padding:10px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; background:#dcebdd; color:#204a31; border-bottom:2px solid #5b8e69; }
+.diary-statement .statement-table td { padding:8px 10px; vertical-align:middle; color:#263b30; border-bottom:1px solid #dfe8e2; background:#fff; white-space:nowrap; font-size:12px; }
+.diary-statement .statement-table .statement-money { text-align:right; font-variant-numeric:tabular-nums; }
+.diary-statement .statement-table .statement-date { color:#52675a; }
+.diary-statement .statement-table .statement-day td { padding:7px 10px; background:#f0f6f1; }
+.statement-day td>div { display:flex; align-items:center; justify-content:space-between; gap:20px; }
 .statement-day td>div>span { font-size:11px; color:#557261; }
-.statement-day span[aria-hidden] { padding:0 7px; color:#8ca797; }
-.diary-statement .statement-action { text-align:right; white-space:nowrap; }
-.diary-statement .statement-action button { padding:7px 10px; background:#fff; border:1px solid #d1ddd5; border-radius:5px; font-size:11px; color:#365c46; }
-.diary-statement .statement-table tfoot td { padding:16px 12px; background:#f2f7f3; font-weight:700; border-top:2px solid #bfd4c5; border-bottom:0; }
-.statement-empty { padding:20px 26px; color:#65776d; }
-.diary-statement .statement-reversal { color:#a63b30; white-space:normal; }
-@media(max-width:700px) { .statement-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); row-gap:20px; } .statement-metrics strong { font-size:18px; } .diary-statement .statement-cover { padding:20px; } .statement-report-label { display:none; } }
-
+.statement-day span[aria-hidden] { padding:0 6px; color:#8ca797; }
+.statement-mode { padding:2px 6px; border-radius:3px; background:#edf2f8; color:#345574; font-size:11px; }
+.statement-reversal { color:#a63b30; font-size:10px; margin-left:7px; }
+.diary-statement .statement-action { text-align:right; }
+.diary-statement .statement-action button { padding:4px 8px; margin:0; min-height:26px; background:#fff; border:1px solid #cbdad0; border-radius:4px; font-size:11px; color:#365c46; }
+.diary-statement .statement-table tfoot td { padding:10px; background:#eaf3ec; font-weight:700; border-top:2px solid #93b39e; border-bottom:0; }
+.statement-empty { padding:16px; color:#65776d; }
 .payment-diary .diary-summary[hidden] { display:none; }
+@media(max-width:700px) { .statement-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); row-gap:8px; } .statement-eyebrow,.statement-report-label { display:none; } }
