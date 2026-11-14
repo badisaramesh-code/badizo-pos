@@ -10,9 +10,9 @@ const { spawn, spawnSync } = require('child_process');
 const BACKEND = path.resolve(__dirname, '..');
 require(path.join(BACKEND, 'node_modules', 'dotenv')).config({ path: path.join(BACKEND, '.env'), override: true, quiet: true });
 
-const backupConfig = require('../services/backupConfiguration').backupConfiguration();
-const LOCAL_ROOT = backupConfig.root;
-const STATUS_FILE = path.join(LOCAL_ROOT, 'backup-status.json');
+let backupConfig = require('../services/backupConfiguration').backupConfiguration();
+let LOCAL_ROOT = backupConfig.root;
+let STATUS_FILE = path.join(LOCAL_ROOT, 'backup-status.json');
 const DRIVE_FOLDER_ID = String(process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID || '').trim();
 const DRIVE_SYNC_FOLDER = String(process.env.GOOGLE_DRIVE_SYNC_FOLDER || '').trim();
 const TOKEN_URI = 'https://oauth2.googleapis.com/token';
