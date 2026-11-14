@@ -7,27 +7,21 @@ const zlib = require('zlib');
 const { pipeline } = require('stream/promises');
 const { spawn, spawnSync } = require('child_process');
 
-const ROOT = 'D:\\badizo-pos-main';
-const BACKEND = path.join(ROOT, 'backend');
+const BACKEND = path.resolve(__dirname, '..');
 require(path.join(BACKEND, 'node_modules', 'dotenv')).config({ path: path.join(BACKEND, '.env'), override: true, quiet: true });
 
-const LOCAL_ROOT = 'D:\\BadizoCloudBackups';
+const backupConfig = require('../services/backupConfiguration').backupConfiguration();
+const LOCAL_ROOT = backupConfig.root;
 const STATUS_FILE = path.join(LOCAL_ROOT, 'backup-status.json');
 const DRIVE_FOLDER_ID = String(process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID || '').trim();
 const DRIVE_SYNC_FOLDER = String(process.env.GOOGLE_DRIVE_SYNC_FOLDER || '').trim();
 const TOKEN_URI = 'https://oauth2.googleapis.com/token';
-const OPERATION_LOCK = path.join(LOCAL_ROOT, 'backup-operation.lock');
+let OPERATION_LOCK = path.join(LOCAL_ROOT, 'backup-operation.lock');
 const LOCK_STALE_MS = 2 * 60 * 60 * 1000;
 
-function backupKeepCount() {
-  const configured = Number.parseInt(process.env.GOOGLE_DRIVE_BACKUP_KEEP_COUNT, 10);
-  return Number.isInteger(configured) && configured > 0 ? configured : 730;
-}
+function backupKeepCount() { return backupConfig.driveKeepCount; }
 
-function localBackupKeepCount() {
-  const configured = Number.parseInt(process.env.LOCAL_BACKUP_KEEP_COUNT, 10);
-  return Number.isInteger(configured) && configured >= 0 ? configured : 0;
-}
+function localBackupKeepCount() { return backupConfig.localKeepCount; }
 function fetchWithTimeout(url, options = {}, timeoutMs = 60 * 1000) {
   return fetch(url, {
     ...options,
@@ -60,7 +54,7 @@ function writeBackupStatus(status, kind, details = {}) {
   if (kind === 'daily') {
     const outcome = status === 'success'
       ? (DRIVE_SYNC_FOLDER ? 'Copied to Drive desktop folder' : 'Google Drive upload/check succeeded')
-      : 'Backup job failed';
+      : status === 'local-only' ? 'Local backup completed; Google Drive disabled' : 'Backup job failed';
     try {
       fs.appendFileSync(path.join(LOCAL_ROOT, 'audit-' + payload.at.slice(0, 7) + '.jsonl'),
         JSON.stringify({ at: payload.at, status: outcome, file: details.file || '' }) + '\n');
@@ -150,12 +144,13 @@ function uploadStream(uploadUrl, filePath, token, mimeType) {
 }
 
 async function upload(filePath, driveName) {
+  if (!backupConfig.cloudEnabled) throw new Error('Google Drive backup is disabled.');
   if (DRIVE_SYNC_FOLDER) {
     ensureDir(DRIVE_SYNC_FOLDER);
     const destination = path.join(DRIVE_SYNC_FOLDER, driveName);
     fs.copyFileSync(filePath, destination);
     console.log(`Copied ${driveName} to Google Drive desktop sync folder.`);
-    return { id: 'desktop-sync', name: driveName, path: destination };
+    return { id: 'desktop-sync', name: driveName, path: destination, size: fs.statSync(destination).size };
   }  if (!DRIVE_FOLDER_ID) throw new Error('GOOGLE_DRIVE_BACKUP_FOLDER_ID is missing in backend\\.env');
   const token = await accessToken();
   const stat = fs.statSync(filePath);
@@ -208,6 +203,7 @@ async function listDrive(prefix, token) {
 }
 
 async function pruneDrive(prefix, keep) {
+  if (!backupConfig.cloudEnabled) throw new Error('Google Drive backup is disabled.');
   if (DRIVE_SYNC_FOLDER) {
     ensureDir(DRIVE_SYNC_FOLDER);
     const files = fs.readdirSync(DRIVE_SYNC_FOLDER)
@@ -337,24 +333,36 @@ function localBackupFiles(kind) {
 async function remoteBackupNames(prefix) {
   if (DRIVE_SYNC_FOLDER) {
     ensureDir(DRIVE_SYNC_FOLDER);
-    return new Set(fs.readdirSync(DRIVE_SYNC_FOLDER).filter(name => name.startsWith(prefix)));
+    return new Map(fs.readdirSync(DRIVE_SYNC_FOLDER).filter(name => name.startsWith(prefix)).map(name=>[name,fs.statSync(path.join(DRIVE_SYNC_FOLDER,name)).size]));
   }
   const token = await accessToken();
-  return new Set((await listDrive(prefix, token)).map(file => String(file.name || '')));
+  return new Map((await listDrive(prefix, token)).map(file => [String(file.name || ''),Number(file.size)]));
 }
 
 async function syncDailyBackups(keep = backupKeepCount(), binding = require('./backupRuntimeBinding').loadBackupRuntimeBinding()) {
   binding.assertUnchanged();
   const prefix = 'badizo_daily_';
-  const local = localBackupFiles('daily').filter(item=>matchesBackupAuthority(item.path,binding)).slice(0, keep);
+  const local = localBackupFiles('daily').filter(item=>matchesBackupAuthority(item.path,binding));
   if (!local.length) throw new Error('No local daily backup is available to synchronize');
+
+  if (!backupConfig.cloudEnabled) {
+    binding.assertUnchanged();
+    writeBackupStatus('local-only', 'daily', {
+      localAt:fs.statSync(local[0].path).mtime.toISOString(),localStatus:'success',cloudStatus:'disabled',
+      file: local[0].name,
+      sizeBytes: fs.statSync(local[0].path).size,
+      message: 'Local backup available; Google Drive backup is disabled.'
+    });
+    return { uploaded: [], latest: local[0].name, cloudEnabled: false };
+  }
 
   try {
     const remoteNames = await remoteBackupNames(prefix);
     const uploaded = [];
+    const verifiedUploads = [];
     let uploadedMs=0, verifiedSizes=true;
     for (const backup of [...local].reverse()) {
-      if (!binding.bound && remoteNames.has(backup.name)) continue;
+      if (!DRIVE_SYNC_FOLDER && !binding.bound && remoteNames.get(backup.name)===fs.statSync(backup.path).size){verifiedUploads.push(backup);continue;}
       console.log(`Uploading pending backup ${backup.name}...`);
       const transferStart=Date.now();
       binding.assertUnchanged();
@@ -368,7 +376,8 @@ async function syncDailyBackups(keep = backupKeepCount(), binding = require('./b
         throw new Error(`Google Drive size verification failed for `);
       }
       uploaded.push(backup.name);
-      remoteNames.add(backup.name);
+      if(!DRIVE_SYNC_FOLDER&&Number(result?.size)===localSize)verifiedUploads.push(backup);
+      remoteNames.set(backup.name,Number(result?.size));
     }
 
     binding.assertUnchanged();
@@ -381,21 +390,27 @@ async function syncDailyBackups(keep = backupKeepCount(), binding = require('./b
     }
     if(!binding.bound)await pruneDrive(prefix, keep);
     binding.assertUnchanged();
-    if(!binding.bound)pruneLocal(path.join(LOCAL_ROOT, 'daily'), prefix, localBackupKeepCount());
+    // Unuploaded/size-unverified backlog is never removed by retention.
+    const retained=localBackupFiles('daily');
+    const eligible=backupConfig.keepLocal?(localBackupKeepCount()>0?retained.slice(localBackupKeepCount()):[]):retained;
+    const removable=eligible.filter(item=>verifiedUploads.some(verified=>verified.path===item.path));
     const latest = local[0];
     binding.assertUnchanged();
     writeBackupStatus('success', 'daily', {
+      localAt:fs.statSync(latest.path).mtime.toISOString(), localStatus:'success', cloudStatus:DRIVE_SYNC_FOLDER?'pending':'success', remoteVerified:verifiedUploads.some(item=>item.name===latest.name), localRemoved:!backupConfig.keepLocal&&!binding.bound&&verifiedUploads.some(item=>item.name===latest.name),
       file: latest.name,
       sizeBytes: fs.statSync(latest.path).size,
       uploadedFiles: uploaded,
-      message: uploaded.length
+      message: DRIVE_SYNC_FOLDER ? 'Copied to Drive desktop folder; cloud upload is not verified.' : uploaded.length
         ? 'Google Drive backup uploaded successfully.'
         : 'Google Drive backup is already synchronized.'
     });
+    if(!binding.bound){for(const item of removable){binding.assertUnchanged();fs.rmSync(item.path,{force:true});}}
     return { uploaded, latest: latest.name };
   } catch (err) {
     binding.assertUnchanged();
-    writeBackupStatus('failed', 'daily', {
+    writeBackupStatus('cloud-failed', 'daily', {
+      localAt:fs.statSync(local[0].path).mtime.toISOString(),localStatus:'success',cloudStatus:'failed',
       file: local[0].name,
       message: `Google Drive upload pending; automatic retry is enabled. ${String(err.message || '').slice(0, 350)}`
     });
@@ -453,7 +468,7 @@ async function databaseBackup(kind, keep) {
 
   binding.assertUnchanged();
   // Retention is enforced locally even when the internet is unavailable.
-  if(!binding.bound)pruneLocal(dir, prefix, localBackupKeepCount());
+  if(!backupConfig.cloudEnabled&&!binding.bound)pruneLocal(dir, prefix, localBackupKeepCount());
   if (kind === 'daily') {
     await syncDailyBackups(keep,binding);
   } else {
@@ -524,6 +539,7 @@ async function main() {
     return syncDailyBackups(backupKeepCount());
   }
   if (mode === 'upload-folder') {
+    if (!backupConfig.cloudEnabled) throw new Error('Google Drive backup is disabled.');
     const folder = process.argv.slice(3).join(' ').trim();
     if (!folder) throw new Error('Folder path is required');
     const {zip,name} = zipFolder(folder);
@@ -537,10 +553,19 @@ async function main() {
 }
 
 const requestedMode = String(process.argv[2] || 'unknown').toLowerCase();
-withOperationLock(main).catch(err => {
+async function runConfiguredBackup() {
+  const configurationBinding=require('./backupRuntimeBinding').loadBackupRuntimeBinding();
+  configurationBinding.assertUnchanged();
+  const connection=await require('mysql2/promise').createConnection({host:process.env.DB_HOST||'localhost',port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER||'root',password:process.env.DB_PASSWORD||'1234',database:process.env.DB_NAME||'badizo_pos',connectTimeout:10000});
+  try { backupConfig=await require('../services/backupConfiguration').loadBackupConfiguration(connection); configurationBinding.assertUnchanged(); }
+  finally { await connection.end(); }
+  LOCAL_ROOT=backupConfig.root; STATUS_FILE=backupConfig.statusFile; OPERATION_LOCK=path.join(LOCAL_ROOT,'backup-operation.lock');
+  return withOperationLock(main);
+}
+runConfiguredBackup().catch(err => {
   try {
     if (!err.dailyStatusRecorded && !['sync-pending', 'upload-existing'].includes(requestedMode)) {
-      writeBackupStatus('failed', requestedMode, { message: String(err.message || 'Unknown backup error').slice(0, 500) });
+      writeBackupStatus('failed', requestedMode, { localStatus:'failed', message: String(err.message || 'Unknown backup error').slice(0, 500) });
     }
   } catch (statusErr) {
     console.error(`ERROR writing backup status: ${statusErr.message}`);

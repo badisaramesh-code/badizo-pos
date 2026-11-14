@@ -127,6 +127,8 @@ pool.ready = (async () => {
     connection = await pool.getConnection();
     console.log('Database connected.');
 
+    await connection.query(require('../services/basicSkuSchema').BASIC_SKU_DDL);
+
     await connection.query(`
       CREATE TABLE IF NOT EXISTS users (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,

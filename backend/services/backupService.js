@@ -15,14 +15,16 @@ const {
   uploadBackupToDrive
 } = require('./googleDriveBackupService');
 
-const backupDir = process.env.BACKUP_DIR || path.join(__dirname, '..', 'backups');
-const scheduledBackupDir = process.env.BADIZO_SCHEDULED_BACKUP_DIR || 'D:\\BadizoCloudBackups\\daily';
-const backupSources = [
-  { key: 'manual', dir: backupDir, label: 'Manual / System' },
-  { key: 'scheduled', dir: scheduledBackupDir, label: 'Scheduled / Google Drive' }
-].filter((source, index, sources) => (
-  sources.findIndex((item) => path.resolve(item.dir).toLowerCase() === path.resolve(source.dir).toLowerCase()) === index
-));
+const {backupConfiguration,loadBackupConfiguration}=require('./backupConfiguration');
+async function getBackupSources(config) {
+  config=config||await loadBackupConfiguration(db);
+  const legacy=backupConfiguration();
+  return [{key:'manual',dir:config.manualDir,label:'Manual / System'},
+    {key:'scheduled',dir:config.dailyDir,label:'Scheduled'},
+    {key:'legacy-manual',dir:legacy.manualDir,label:'Previous manual folder'},
+    {key:'legacy-scheduled',dir:process.env.BADIZO_SCHEDULED_BACKUP_DIR||legacy.dailyDir,label:'Previous scheduled folder'}]
+    .filter((source,index,all)=>all.findIndex(item=>path.resolve(item.dir).toLowerCase()===path.resolve(source.dir).toLowerCase())===index);
+}
 
 function timestampForFile(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
@@ -113,8 +115,9 @@ async function createMysqlDefaultsFile() {
   };
 }
 
-async function ensureBackupDir() {
-  await fs.promises.mkdir(backupDir, { recursive: true });
+async function ensureBackupDir(config) {
+  config=config||await loadBackupConfiguration(db);
+  await fs.promises.mkdir(config.manualDir, { recursive: true });
 }
 
 async function listBackupsInDirectory(source) {
@@ -144,17 +147,22 @@ async function listBackupsInDirectory(source) {
 
 async function listBackups() {
   await ensureBackupDir();
-  const backups = (await Promise.all(backupSources.map(listBackupsInDirectory))).flat();
+  const backups = (await Promise.all((await getBackupSources()).map(listBackupsInDirectory))).flat();
   return backups.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
 }
 
-async function pruneLocalBackups(keepCount = driveKeepCount()) {
+async function pruneLocalBackups(keepCount,config) {
+  config=config||await loadBackupConfiguration(db);
+  keepCount=keepCount??config.localKeepCount;
+  if(!keepCount || process.env.BADIZO_RUNTIME_BINDING)return [];
+  const backupSources=await getBackupSources(config);
   const backups = (await listBackupsInDirectory(backupSources.find((source) => source.key === 'manual')))
     .sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
-  const oldBackups = backups.slice(keepCount);
+  let oldBackups = backups.slice(keepCount);
+  if(config.cloudEnabled){const remote=await listDriveBackups(null,config);oldBackups=oldBackups.filter(local=>remote.some(file=>file.name===local.file&&Number(file.size)===local.sizeBytes));}
   const deleted = [];
   for (const backup of oldBackups) {
-    await fs.promises.rm(getBackupPath(backup.file), { force: true });
+    await fs.promises.rm(await getBackupPath(backup.file,config), { force: true });
     deleted.push(backup.file);
   }
   if (deleted.length) {
@@ -176,7 +184,8 @@ async function getDailyBackupTime() {
   }
 }
 
-function getBackupPath(fileNameOrKey) {
+async function getBackupPath(fileNameOrKey,config) {
+  const backupSources=await getBackupSources(config);
   const value = String(fileNameOrKey || '');
   const separatorIndex = value.indexOf('::');
   const sourceKey = separatorIndex > 0 ? value.slice(0, separatorIndex) : 'manual';
@@ -191,7 +200,7 @@ function getBackupPath(fileNameOrKey) {
 
 async function restoreDatabaseBackup(fileName) {
   await ensureBackupDir();
-  const filePath = getBackupPath(fileName);
+  const filePath = await getBackupPath(fileName);
   if (!filePath || !fs.existsSync(filePath)) {
     throw new Error('Backup file not found.');
   }
@@ -248,11 +257,12 @@ async function restoreDatabaseBackup(fileName) {
 }
 
 async function runDatabaseBackup() {
-  await ensureBackupDir();
+  const config=await loadBackupConfiguration(db);
+  await ensureBackupDir(config);
 
   const dbName = process.env.DB_NAME || 'badizo_pos';
   const fileName = `badizo_pos_backup_${timestampForFile()}.sql`;
-  const filePath = path.join(backupDir, fileName);
+  const filePath = path.join(config.manualDir, fileName);
   const dumpCommand = process.env.MYSQLDUMP_PATH || 'mysqldump';
   const defaults = await createMysqlDefaultsFile();
   const args = [
@@ -308,18 +318,19 @@ async function runDatabaseBackup() {
         createdAt: stats.birthtime
       };
 
-      try {
-        if (isDriveBackupEnabled()) {
-          backup.cloudBackup = await uploadBackupToDrive(backup);
-          backup.deletedDriveBackups = (await pruneDriveBackups()).deleted;
-          backup.deletedLocalBackups = await pruneLocalBackups();
-        } else {
-          backup.cloudBackup = { enabled: false };
-        }
-      } catch (err) {
-        backup.cloudBackup = { enabled: true, uploaded: false, error: err.message };
-        logError('Google Drive backup upload failed', err, { file: backup.file, sizeBytes: backup.sizeBytes });
+      backup.cloudBackup={enabled:false};
+      if(config.cloudEnabled){
+        try{
+          backup.cloudBackup=await uploadBackupToDrive(backup,config);
+          backup.deletedDriveBackups=(await pruneDriveBackups(config.driveKeepCount,config)).deleted;
+        }catch(err){backup.cloudBackup={enabled:true,uploaded:false,error:err.message};logError('Google Drive backup upload failed',err,{file:backup.file});}
       }
+      try{
+        if(!config.cloudEnabled||backup.cloudBackup.uploaded){
+          backup.deletedLocalBackups=await pruneLocalBackups(config.localKeepCount,config);
+          if(config.cloudEnabled&&!config.keepLocal&&!process.env.BADIZO_RUNTIME_BINDING&&Number(backup.cloudBackup?.file?.size)===backup.sizeBytes){await fs.promises.rm(filePath,{force:true});backup.localCopyRetained=false;}
+        }
+      }catch(err){backup.localError='Local backup retention failed: '+err.message;logError('Local backup retention failed',err,{file:backup.file});}
 
       resolve(backup);
     });
@@ -361,28 +372,32 @@ function scheduleDailyBackup() {
 let cloudSyncRunning = false;
 
 async function syncPendingBackupsToDrive() {
-  if (!isDriveBackupEnabled() || cloudSyncRunning) return { enabled: isDriveBackupEnabled(), skipped: true };
+  let config;
+  try{config=await loadBackupConfiguration(db);}catch(error){logError('Backup configuration unavailable',error);return {configurationError:error.message,skipped:true};}
+  if (!config.cloudEnabled || cloudSyncRunning) return { enabled: config.cloudEnabled, skipped: true };
 
   cloudSyncRunning = true;
   try {
+    const backupSources=await getBackupSources(config);
     const manualSource = backupSources.find((source) => source.key === 'manual');
-    const [localRows, driveBackups] = await Promise.all([listBackupsInDirectory(manualSource), listDriveBackups()]);
+    const [localRows, driveBackups] = await Promise.all([listBackupsInDirectory(manualSource), listDriveBackups(null,config)]);
     const localBackups = localRows.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
     const uploadedNames = new Set(driveBackups.map((backup) => String(backup.name || '')));
     const pending = localBackups
-      .slice(0, driveKeepCount())
       .filter((backup) => !uploadedNames.has(backup.file))
       .reverse();
     const uploaded = [];
 
     for (const backup of pending) {
-      await uploadBackupToDrive({ ...backup, path: getBackupPath(backup.file) });
+      const filePath=await getBackupPath(backup.file,config);
+      const result=await uploadBackupToDrive({ ...backup, path:filePath },config);
+      if(!config.keepLocal&&!process.env.BADIZO_RUNTIME_BINDING&&Number(result?.file?.size)===backup.sizeBytes)await fs.promises.rm(filePath,{force:true});
       uploaded.push(backup.file);
     }
 
     if (uploaded.length) {
-      await pruneDriveBackups();
-      await pruneLocalBackups();
+      await pruneDriveBackups(config.driveKeepCount,config);
+      await pruneLocalBackups(config.localKeepCount,config);
       logInfo('Pending Google Drive backups synchronized', { uploaded });
     }
     return { enabled: true, uploaded };
@@ -397,7 +412,7 @@ async function syncPendingBackupsToDrive() {
 }
 
 function scheduleCloudBackupSync() {
-  if (!isDriveBackupEnabled()) return null;
+
   const intervalMinutes = Math.max(Number.parseInt(process.env.GOOGLE_DRIVE_RETRY_MINUTES, 10) || 10, 1);
   const intervalMs = intervalMinutes * 60 * 1000;
   const timer = setInterval(() => { syncPendingBackupsToDrive(); }, intervalMs);
@@ -408,8 +423,7 @@ function scheduleCloudBackupSync() {
 }
 
 module.exports = {
-  backupDir,
-  backupSources,
+  getBackupSources,
   getBackupPath,
   listBackups,
   pruneLocalBackups,

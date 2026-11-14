@@ -20,6 +20,7 @@ import SystemView from './components/SystemView';
 import CloudPassword from './components/CloudPassword';
 import CloudStatusBanner from './components/CloudStatusBanner';
 import api, { clearAuthSession, fetchBackupHealth, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
+import { backupAlerts, acknowledgedBackupAlerts, acknowledgeBackupAlert, backupHealthUnavailable } from './utils/backupHealth';
 import { APP_TABS, canAccessTab } from './config/navigation';
 import './styles.css';
 import ReportApprovalNotifications from './components/ReportApprovalNotifications';
@@ -148,45 +149,12 @@ export default function App() {
       try {
         const health = await fetchBackupHealth();
         if (cancelled) return;
-        if (health?.enabled === false) { setBackupAlert(null); return; }
-        const now = new Date();
-        if (now.getHours() < 9) {
-          setBackupAlert(null);
-          return;
-        }
-
-        const isSameDay = (value) => value
-          && value.getFullYear() === now.getFullYear()
-          && value.getMonth() === now.getMonth()
-          && value.getDate() === now.getDate();
-        const latestSuccess = health?.latestSuccessAt ? new Date(health.latestSuccessAt) : null;
-        const statusAt = health?.at ? new Date(health.at) : null;
-        const backedUpToday = isSameDay(latestSuccess) && health?.status === 'success';
-        const failedToday = isSameDay(statusAt) && health?.status === 'failed';
-
-        let alertStatus = '';
-        if (backedUpToday) alertStatus = 'success';
-        else if (failedToday) alertStatus = 'failed';
-        else if (now.getHours() >= 10) alertStatus = 'pending';
-        else {
-          setBackupAlert(null);
-          return;
-        }
-
-        const dayKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
-        const eventKey = alertStatus === 'success'
-          ? (health?.file || dayKey)
-          : (health?.at || health?.latestSuccessAt || dayKey);
-        const alertId = `daily-backup-${alertStatus}-${eventKey}`;
-        const acknowledgedAlert = window.localStorage.getItem('badizo_backup_alert_ack');
-        if (acknowledgedAlert === alertId) return;
-        if (alertStatus === 'success' && acknowledgedAlert?.startsWith('daily-backup-success-')) {
-          const legacyEvent = new Date(acknowledgedAlert.slice('daily-backup-success-'.length));
-          if (!Number.isNaN(legacyEvent.getTime()) && isSameDay(legacyEvent)) return;
-        }
-        setBackupAlert({ ...health, status: alertStatus, alertId });
+        const acknowledged = acknowledgedBackupAlerts(window.localStorage);
+        setBackupAlert(backupAlerts(health).find(alert => !acknowledged.includes(alert.alertId)) || null);
       } catch (_err) {
-        // Backend connectivity is monitored separately; do not show a false backup alarm.
+        if (cancelled) return;
+        const alert = backupHealthUnavailable();
+        setBackupAlert(acknowledgedBackupAlerts(window.localStorage).includes(alert.alertId) ? null : alert);
       }
     };
     const initialTimer = window.setTimeout(checkBackupHealth, 15 * 1000);
@@ -254,20 +222,16 @@ export default function App() {
         <div className="backup-alert-toast-wrap" role="alert" aria-live="assertive">
           <div className={`backup-alert-modal ${backupAlert.status === 'success' ? 'backup-alert-success' : ''}`}>
             <button className="backup-alert-close" type="button" aria-label="Close backup notification" onClick={() => {
-              window.localStorage.setItem('badizo_backup_alert_ack', backupAlert.alertId);
+              acknowledgeBackupAlert(window.localStorage, backupAlert.alertId);
               setBackupAlert(null);
             }}>×</button>
-            <h2>{backupAlert.status === 'success' ? 'Google Drive Backup Successful' : 'Google Drive Backup Pending'}</h2>
-            <p>{backupAlert.status === 'success'
-              ? 'Today database backup was uploaded to Google Drive.'
-              : 'Today Google Drive backup is not complete.'}</p>
-            <p className="backup-alert-detail">{backupAlert.status === 'success'
-              ? (backupAlert.message || 'Backup uploaded successfully.')
-              : (backupAlert.message || 'Backup has not run yet. Check server power, internet and Google authorization.')}</p>
+            <h2>{backupAlert.title}</h2>
+            <p>{backupAlert.description}</p>
+            <p className="backup-alert-detail">{backupAlert.message}</p>
             {backupAlert.file && <p className="backup-alert-time">File: {backupAlert.file}</p>}
             {backupAlert.at && <p className="backup-alert-time">Checked: {new Date(backupAlert.at).toLocaleString()}</p>}
             <button type="button" onClick={() => {
-              window.localStorage.setItem('badizo_backup_alert_ack', backupAlert.alertId);
+              acknowledgeBackupAlert(window.localStorage, backupAlert.alertId);
               setBackupAlert(null);
             }}>{backupAlert.status === 'success' ? 'OK' : 'OK — Inform Admin'}</button>
           </div>
