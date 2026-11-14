@@ -37,12 +37,12 @@ test('counter login never requests or shows the financial reminder',async()=>{
   await act(async()=>root.render(<PaymentDiaryReminder user={{username:'counter1',role:'COUNTER'}}/>));
   expect(api.get).not.toHaveBeenCalled();expect(container.querySelector('[role="dialog"]')).toBeNull();
 });
-test('today only and minimize restore survive polling',async()=>{
+test('today and overdue unpaid reminders preserve minimize restore and daily dismissal',async()=>{
  api.get.mockResolvedValue({data:{...view(),rows:[due,{...due,id:2,account_name:'OLD',due_date:'2026-11-10'},{...due,id:3,account_name:'FUTURE',due_date:'2026-11-12'}]}});
  await act(async()=>root.render(<PaymentDiaryReminder user={{username:'admin',role:'ADMIN'}}/>));
- expect(container.textContent).toContain('SUPPLIER');expect(container.textContent).not.toContain('OLD');expect(container.textContent).not.toContain('FUTURE');
+ expect(container.textContent).toContain('SUPPLIER');expect(container.textContent).toContain('OLD');expect(container.textContent).not.toContain('FUTURE');
  await act(async()=>Simulate.click(container.querySelector('[aria-label="Minimize payment reminder"]')));await act(async()=>jest.advanceTimersByTime(60000));expect(container.querySelector('[role="dialog"]')).toBeNull();
- await act(async()=>Simulate.click(button("Today's payments (1) · Restore")));expect(container.querySelector('[role="dialog"]')).toBeTruthy();
+ await act(async()=>Simulate.click(button("Today's payments (2) · Restore")));expect(container.querySelector('[role="dialog"]')).toBeTruthy();
  await act(async()=>Simulate.click(button('Close for today')));expect(api.post).not.toHaveBeenCalled();
  mockDay='2026-11-12';api.get.mockResolvedValue({data:{...view(),rows:[{...due,account_name:'FUTURE',due_date:mockDay}]}});await act(async()=>jest.advanceTimersByTime(60000));expect(container.textContent).toContain('FUTURE');expect(container.textContent).not.toContain('SUPPLIER');
 });
@@ -147,5 +147,28 @@ test('reminder colors only the action buttons and retains completed shops',async
  await act(async()=>root.render(<PaymentDiaryReminder user={{username:'server',role:'SERVER'}}/>));expect(button('Record payment').className).toBe('diary-payment-pending');expect(container.querySelector('.diary-reminder-unpaid')).toBeNull();
  api.get.mockResolvedValue({data:{...view(),rows:[{...due,paid_amount:100,pending_amount:0,status:'PAID',payments:[{payment_date:mockDay}]},{...due,id:2,account_name:'PAID OVERDUE',due_date:'2026-11-01',paid_amount:100,pending_amount:0,payments:[{payment_date:mockDay}]},{...due,id:3,account_name:'OLD UNPAID',due_date:'2026-11-01'}]}});
  await act(async()=>window.dispatchEvent(new Event('badizo-local-diary-updated')));
- expect(container.textContent).toContain('SUPPLIER');expect(container.textContent).toContain('PAID OVERDUE');expect(container.textContent).not.toContain('OLD UNPAID');expect(container.querySelectorAll('button.diary-payment-ok')).toHaveLength(2);expect(container.querySelector('.diary-reminder-paid')).toBeNull();expect(button('✓ Payment OK').disabled).toBe(true);expect(button('Record payment')).toBeUndefined();expect(container.textContent).toContain('2 paid');
+ expect(container.textContent).toContain('SUPPLIER');expect(container.textContent).toContain('PAID OVERDUE');expect(container.textContent).toContain('OLD UNPAID');expect(container.querySelectorAll('button.diary-payment-ok')).toHaveLength(2);expect(container.querySelector('.diary-reminder-paid')).toBeNull();expect(button('✓ Payment OK').disabled).toBe(true);expect(button('Record payment')).toBeTruthy();expect(container.textContent).toContain('2 paid');
+});
+
+
+test.each(['ADMIN','SERVER'])('overdue popup includes pending and partly paid bills for %s but excludes future and settled old bills',async(role)=>{
+ const rows=[{...due,account_name:'OVERDUE PENDING',due_date:'2026-11-01'},
+ {...due,id:2,account_name:'OVERDUE PARTIAL',due_date:'2026-11-02',paid_amount:60,pending_amount:40,status:'PART_PAID'},
+ {...due,id:3,account_name:'OLD SETTLED',due_date:'2026-11-02',paid_amount:100,pending_amount:0,status:'PAID',payments:[{payment_date:'2026-11-03'}]},
+ {...due,id:4,account_name:'FUTURE ONLY',due_date:'2026-11-12'},
+ {...due,id:5,account_name:'PAID TODAY',due_date:'2026-11-01',paid_amount:100,pending_amount:0,status:'PAID',payments:[{payment_date:mockDay}]},
+ {...due,id:6,account_name:'REVERSED OLD',due_date:'2026-11-01',pending_amount:0,payments:[{payment_date:mockDay,reversed_date:mockDay}]}];
+ api.get.mockResolvedValue({data:{...view(),rows}});
+ await act(async()=>root.render(<PaymentDiaryReminder user={{username:'testuser',role}}/>));
+ expect(container.querySelector('[role="dialog"]')).toBeTruthy();
+ for(const name of ['OVERDUE PENDING','OVERDUE PARTIAL','PAID TODAY'])expect(container.textContent).toContain(name);
+ for(const name of ['OLD SETTLED','FUTURE ONLY','REVERSED OLD'])expect(container.textContent).not.toContain(name);
+ expect(container.textContent).toContain('3 bills');expect(container.textContent).toContain('2 pending');
+ await act(async()=>Simulate.click(button('Close for today')));
+ await act(async()=>jest.advanceTimersByTime(60000));expect(container.querySelector('[role="dialog"]')).toBeNull();
+ await act(async()=>root.render(<PaymentDiaryReminder key="new-login" user={{username:'testuser',role}}/>));
+ expect(container.querySelector('[role="dialog"]')).toBeNull();
+ await act(async()=>root.render(<PaymentDiaryReminder key="other-login" user={{username:'differentuser',role}}/>));
+ expect(container.querySelector('[role="dialog"]')).toBeTruthy();
+ expect(api.post).not.toHaveBeenCalled();
 });
