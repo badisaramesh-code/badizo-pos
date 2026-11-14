@@ -223,9 +223,10 @@ function startLegacyFrontendRedirect(targetPort) {
   return redirectServer;
 }
 
-const scheduledDailyBackupDir = 'D:\\BadizoCloudBackups\\daily';
+const backupConfig = require('./services/backupConfiguration').backupConfiguration();
+const scheduledDailyBackupDir = backupConfig.dailyDir;
 const scheduledDailyBackupScript = path.join(__dirname, 'scripts', 'badizo_cloud_backup.js');
-const scheduledDailyBackupStatusFile = 'D:\\BadizoCloudBackups\\backup-status.json';
+const scheduledDailyBackupStatusFile = backupConfig.statusFile;
 let dailyCatchUpRunning = false;
 
 function localDatePrefix(date = new Date()) {
@@ -261,7 +262,7 @@ function checkDailyBackupCatchUp() {
   if (!afterBackupGraceTime || dailyCatchUpRunning) return;
 
   const hasTodayLocal = hasTodayScheduledBackup();
-  if (hasTodayLocal && hasTodaySuccessfulCloudBackup()) return;
+  if (hasTodayLocal && (!backupConfig.cloudEnabled || hasTodaySuccessfulCloudBackup())) return;
 
   const mode = hasTodayLocal ? 'sync-pending' : 'daily';
   dailyCatchUpRunning = true;

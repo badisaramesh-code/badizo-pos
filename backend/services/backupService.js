@@ -16,7 +16,7 @@ const {
 } = require('./googleDriveBackupService');
 
 const backupDir = process.env.BACKUP_DIR || path.join(__dirname, '..', 'backups');
-const scheduledBackupDir = process.env.BADIZO_SCHEDULED_BACKUP_DIR || 'D:\\BadizoCloudBackups\\daily';
+const scheduledBackupDir = process.env.BADIZO_SCHEDULED_BACKUP_DIR || require('./backupConfiguration').backupConfiguration().dailyDir;
 const backupSources = [
   { key: 'manual', dir: backupDir, label: 'Manual / System' },
   { key: 'scheduled', dir: scheduledBackupDir, label: 'Scheduled / Google Drive' }

@@ -7,11 +7,11 @@ const zlib = require('zlib');
 const { pipeline } = require('stream/promises');
 const { spawn, spawnSync } = require('child_process');
 
-const ROOT = 'D:\\badizo-pos-main';
-const BACKEND = path.join(ROOT, 'backend');
+const BACKEND = path.resolve(__dirname, '..');
 require(path.join(BACKEND, 'node_modules', 'dotenv')).config({ path: path.join(BACKEND, '.env'), override: true, quiet: true });
 
-const LOCAL_ROOT = 'D:\\BadizoCloudBackups';
+const backupConfig = require('../services/backupConfiguration').backupConfiguration();
+const LOCAL_ROOT = backupConfig.root;
 const STATUS_FILE = path.join(LOCAL_ROOT, 'backup-status.json');
 const DRIVE_FOLDER_ID = String(process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID || '').trim();
 const DRIVE_SYNC_FOLDER = String(process.env.GOOGLE_DRIVE_SYNC_FOLDER || '').trim();
@@ -60,7 +60,7 @@ function writeBackupStatus(status, kind, details = {}) {
   if (kind === 'daily') {
     const outcome = status === 'success'
       ? (DRIVE_SYNC_FOLDER ? 'Copied to Drive desktop folder' : 'Google Drive upload/check succeeded')
-      : 'Backup job failed';
+      : status === 'local-only' ? 'Local backup completed; Google Drive disabled' : 'Backup job failed';
     try {
       fs.appendFileSync(path.join(LOCAL_ROOT, 'audit-' + payload.at.slice(0, 7) + '.jsonl'),
         JSON.stringify({ at: payload.at, status: outcome, file: details.file || '' }) + '\n');
@@ -150,6 +150,7 @@ function uploadStream(uploadUrl, filePath, token, mimeType) {
 }
 
 async function upload(filePath, driveName) {
+  if (!backupConfig.cloudEnabled) throw new Error('Google Drive backup is disabled.');
   if (DRIVE_SYNC_FOLDER) {
     ensureDir(DRIVE_SYNC_FOLDER);
     const destination = path.join(DRIVE_SYNC_FOLDER, driveName);
@@ -208,6 +209,7 @@ async function listDrive(prefix, token) {
 }
 
 async function pruneDrive(prefix, keep) {
+  if (!backupConfig.cloudEnabled) throw new Error('Google Drive backup is disabled.');
   if (DRIVE_SYNC_FOLDER) {
     ensureDir(DRIVE_SYNC_FOLDER);
     const files = fs.readdirSync(DRIVE_SYNC_FOLDER)
@@ -348,6 +350,16 @@ async function syncDailyBackups(keep = backupKeepCount(), binding = require('./b
   const prefix = 'badizo_daily_';
   const local = localBackupFiles('daily').filter(item=>matchesBackupAuthority(item.path,binding)).slice(0, keep);
   if (!local.length) throw new Error('No local daily backup is available to synchronize');
+
+  if (!backupConfig.cloudEnabled) {
+    binding.assertUnchanged();
+    writeBackupStatus('local-only', 'daily', {
+      file: local[0].name,
+      sizeBytes: fs.statSync(local[0].path).size,
+      message: 'Local backup available; Google Drive backup is disabled.'
+    });
+    return { uploaded: [], latest: local[0].name, cloudEnabled: false };
+  }
 
   try {
     const remoteNames = await remoteBackupNames(prefix);
@@ -524,6 +536,7 @@ async function main() {
     return syncDailyBackups(backupKeepCount());
   }
   if (mode === 'upload-folder') {
+    if (!backupConfig.cloudEnabled) throw new Error('Google Drive backup is disabled.');
     const folder = process.argv.slice(3).join(' ').trim();
     if (!folder) throw new Error('Folder path is required');
     const {zip,name} = zipFolder(folder);

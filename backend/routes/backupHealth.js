@@ -4,13 +4,14 @@ const path = require('path');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
-const backupRoot = 'D:\\BadizoCloudBackups';
+const backupConfig = require('../services/backupConfiguration').backupConfiguration();
+const backupRoot = backupConfig.root;
 const statusFile = path.join(backupRoot, 'backup-status.json');
 const dailyDir = path.join(backupRoot, 'daily');
-const configuredKeepCount = Number.parseInt(process.env.GOOGLE_DRIVE_BACKUP_KEEP_COUNT, 10);
-const dailyKeepCount = Number.isInteger(configuredKeepCount) && configuredKeepCount > 0
+const configuredKeepCount = Number.parseInt(process.env.LOCAL_BACKUP_KEEP_COUNT, 10);
+const dailyKeepCount = Number.isInteger(configuredKeepCount) && configuredKeepCount >= 0
   ? configuredKeepCount
-  : 3;
+  : 0;
 
 router.use(authenticate);
 
@@ -36,13 +37,15 @@ router.get('/', async (_req, res) => {
 
     res.setHeader('Cache-Control', 'no-store');
     res.json({
-      status: status?.status || (latest ? 'success' : 'unknown'),
+      enabled: backupConfig.cloudEnabled,
+      cloudEnabled: backupConfig.cloudEnabled,
+      status: status?.status === 'failed' ? 'failed' : (!backupConfig.cloudEnabled && latest ? 'local-only' : (status?.status || (latest ? 'success' : 'unknown'))),
       kind: status?.kind || 'daily',
       at: status?.at || null,
       file: status?.file || latest?.name || null,
       latestSuccessAt: status?.status === 'success' ? (status.at || latest?.modifiedAt || null) : null,
       latestLocalBackupAt: latest?.modifiedAt || null,
-      message: status?.status === 'failed' ? String(status.message || 'Backup failed.') : '',
+      message: status?.status === 'failed' ? String(status.message || 'Backup failed.') : (!backupConfig.cloudEnabled ? 'Google Drive backup is disabled; local backups remain enabled.' : ''),
       retainedDailyBackups: dailyFiles.length,
       keepDailyBackups: dailyKeepCount
     });
