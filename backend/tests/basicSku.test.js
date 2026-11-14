@@ -60,5 +60,10 @@ test('missing tax and already published drafts cannot create products',async()=>
 test('schema provision is additive and matches standalone migration',()=>{
   const {BASIC_SKU_DDL}=require('../services/basicSkuSchema');
   assert.match(BASIC_SKU_DDL,/CREATE TABLE IF NOT EXISTS/);assert.match(BASIC_SKU_DDL,/DEFAULT 'DRAFT'/);assert.doesNotMatch(BASIC_SKU_DDL,/DROP |AUTO_INCREMENT=\d/i);
-  assert.equal(fs.readFileSync(path.join(__dirname,'../../database/migrations/basic-sku-drafts.sql'),'utf8').split('\n').slice(1).join('\n').trim(),BASIC_SKU_DDL);
+  const migration=fs.readFileSync(path.join(__dirname,'../../database/migrations/basic-sku-drafts.sql'),'utf8');
+  // Git may check SQL files out with CRLF; JavaScript template literals normalize
+  // their line endings. Compare identical SQL independent of checkout settings.
+  for(const sql of [migration.replace(/\r\n/g,'\n'),migration.replace(/\r?\n/g,'\r\n')]) {
+    assert.equal(sql.replace(/\r\n/g,'\n').split('\n').slice(1).join('\n').trim(),BASIC_SKU_DDL.replace(/\r\n/g,'\n'));
+  }
 });
