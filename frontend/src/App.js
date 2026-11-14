@@ -16,9 +16,7 @@ import PriceListView from './components/PriceListView';
 import ProductImportHistoryView from './components/ProductImportHistoryView';
 import ReportsView from './components/ReportsView';
 import StaffPayrollView from './components/StaffPayrollView';
-import PosUpdateButton from './components/PosUpdateButton';
 import SystemView from './components/SystemView';
-import CloudSoftwareUpdate from './components/CloudSoftwareUpdate';
 import CloudPassword from './components/CloudPassword';
 import CloudStatusBanner from './components/CloudStatusBanner';
 import api, { clearAuthSession, fetchBackupHealth, getStoredUser, logout as recordLogout, pingBackendHealth, recordLogoutOnExit } from './api/client';
@@ -294,9 +292,7 @@ export default function App() {
               {tab.label}
             </button>
           ))}
-          {process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' && ['ADMIN','SERVER'].includes(currentUser.role) && <CloudSoftwareUpdate />}
           {process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' && <CloudPassword username={currentUser.username} />}
-          {process.env.REACT_APP_BADIZO_CLOUD_BUILD !== 'true' && ['ADMIN','SERVER'].includes(currentUser.role) && <PosUpdateButton onOpenMaintenance={() => openWorkspaceFromTopNav('system')} />}
           {currentUser.role === 'COUNTER' && (
             <button
               className="tab-button"

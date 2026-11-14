@@ -1,6 +1,7 @@
 'use strict';
 // A separate opt-in OS agent. Never executed by a web request or POS startup.
 const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
+const { acquireWorkerLock } = require('./native-worker-lock.cjs');
 const mysql=require('../../backend/node_modules/mysql2/promise');
 const {createCloudSyncSettingsService}=require('../../backend/services/cloudSyncSettingsService');
 const {createNativeReplicaControl,validateReplicaConfig,coordinate}=require('../../backend/services/nativeReplicaControl');
@@ -19,10 +20,9 @@ async function main(){
   const cloudOptions=connection(config.cloudMysql),sourceOptions=connection(config.sourceMysql);
   const baselineId=crypto.createHash('sha256').update(JSON.stringify([config.shopId,config.database,config.sourceUuid,config.replicaUuid,config.baselineSha256,config.sourceActivationId,config.sourceGeneration,config.cloudActivationId,config.cloudGeneration,config.sourceDatabasePort,config.cloudDatabasePort])).digest('hex');
   const directory=config.controlDirectory;await fs.mkdir(directory,{recursive:true,mode:0o700});
-  const lock=path.join(directory,'native-agent.lock'),handle=await fs.open(lock,'wx',0o600);
+  const releaseLock = await acquireWorkerLock(directory);
   let cloud,source,timer,wake,stopped=false;
   try{
-    await handle.writeFile(String(process.pid));
     cloud=mysql.createPool({...cloudOptions,connectionLimit:1,queueLimit:1,enableKeepAlive:true});
     source=mysql.createPool({...sourceOptions,connectionLimit:1,queueLimit:1,enableKeepAlive:true});
     const withSession=async operation=>{const c=await cloud.getConnection();let destroyed=false;try{return await operation((sql,args)=>c.query({sql,timeout:5000},args));}catch(error){if(error.fatal||error.code==='PROTOCOL_SEQUENCE_TIMEOUT'){destroyed=true;c.destroy();}throw error;}finally{if(!destroyed)c.release();}};
@@ -48,6 +48,6 @@ async function main(){
     while(!stopped){await agent.tick();if(!stopped)await new Promise(resolve=>{wake=resolve;timer=setTimeout(resolve,5000);});wake=null;}
     // Do not leave an unfinished SQL applier running merely because this controller stopped.
     await control.pause();
-  }finally{if(cloud)await cloud.end();if(source)await source.end();await handle.close();await fs.unlink(lock);}
+  }finally{if(cloud)await cloud.end();if(source)await source.end();await releaseLock();}
 }
 main().catch(error=>{console.error('Native daily sync agent stopped: '+(error.code||error.message));process.exitCode=1;});

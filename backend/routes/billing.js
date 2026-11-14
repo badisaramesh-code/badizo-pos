@@ -875,6 +875,7 @@ router.post('/checkout', authenticate, authorize('SERVER', 'ADMIN', 'COUNTER'), 
     console.error('Checkout rollback:', err.message);
     const retryableDeadlock = err?.code === 'ER_LOCK_DEADLOCK' || Number(err?.errno) === 1213;
     const validationError = ['PRICE_CHANGED', 'INVALID_PAYMENT', 'INVALID_BILL_LINE', 'INVALID_BILL_TOTAL', 'CHECKOUT_ABANDONED'].includes(err.code);
+    if (validationError || retryableDeadlock) res.locals.auditFailureCode = retryableDeadlock ? 'CHECKOUT_BUSY' : err.code;
     res.status(err.code === 'PRICE_CHANGED' || err.status === 409 ? 409 : validationError ? 400 : retryableDeadlock ? 503 : 500).json({
       code: validationError ? err.code : undefined,
       error: retryableDeadlock ? 'Checkout was temporarily busy. Retrying safely.' : err.message,
@@ -964,25 +965,8 @@ router.post('/invoice/reprint', authenticate, authorize('SERVER', 'ADMIN', 'COUN
   }
 
   try {
-    const [result] = await db.query(
-      `UPDATE invoices
-       SET reprint_count = reprint_count + 1
-       WHERE invoice_no = ?`,
-      [invoiceNo]
-    );
-
-    if (result.affectedRows !== 1) {
-      return res.status(404).json({ error: 'Invoice not found.' });
-    }
-
-    await writeAuditLog({
-      user: req.user,
-      action: 'INVOICE_REPRINTED',
-      entityType: 'INVOICE',
-      entityId: invoiceNo,
-      details: { print_mode: printMode }
-    });
-
+    const recorded = await require('../services/invoiceReprints').record(db, invoiceNo, req.user.username, printMode);
+    if (!recorded) return res.status(404).json({ error: 'Invoice not found.' });
     res.json({ success: true });
   } catch (err) {
     console.error('Invoice reprint audit failed:', err.message);

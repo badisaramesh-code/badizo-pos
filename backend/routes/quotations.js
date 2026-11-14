@@ -155,17 +155,6 @@ router.post('/', async (req, res) => {
       );
     }
 
-    await connection.query(
-      `INSERT INTO audit_logs (user_id, username, role, action, entity_type, entity_id, details)
-       VALUES (?, ?, ?, 'QUOTATION_CREATED', 'QUOTATION', ?, ?)`,
-      [
-        req.user?.id || null,
-        cleanText(req.user?.username, 100) || 'system',
-        cleanText(req.user?.role, 30) || 'SYSTEM',
-        quotationNo,
-        JSON.stringify({ approved_by: supervisor.username, grand_total: grandTotal.toFixed(2), item_count: items.length })
-      ]
-    );
     await connection.commit();
     res.status(201).json({ quotation_no: quotationNo, grand_total: grandTotal.toFixed(2) });
   } catch (err) {

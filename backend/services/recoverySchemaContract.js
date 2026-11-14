@@ -456,6 +456,7 @@ module.exports = {
       "created_by",
       "created_at"
     ],
+    "invoice_reprints": ["id", "invoice_no", "username", "print_mode", "created_at"],
     "audit_logs": [
       "id",
       "user_id",

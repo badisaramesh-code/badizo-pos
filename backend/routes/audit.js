@@ -11,7 +11,8 @@ router.get('/', async (req, res) => {
     const [rows] = await db.query(
       `SELECT id, username, role, action, entity_type, entity_id, details, created_at
        FROM audit_logs
-       ORDER BY created_at DESC
+       WHERE action='REQUEST_FAILED' AND created_at >= CURRENT_TIMESTAMP - INTERVAL 7 DAY
+       ORDER BY created_at DESC, id DESC
        LIMIT ?`,
       [limit]
     );

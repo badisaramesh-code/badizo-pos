@@ -724,6 +724,7 @@ pool.ready = (async () => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
+    await require('../services/invoiceReprints').ensureSchema(connection);
     await connection.query(`
       CREATE TABLE IF NOT EXISTS audit_logs (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,

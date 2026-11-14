@@ -1,4 +1,7 @@
 import React,{useEffect,useState} from 'react';
+import PosUpdateButton from './PosUpdateButton';
+import CloudSoftwareUpdate from './CloudSoftwareUpdate';
+import { getStoredUser } from '../api/client';
 import api from '../api/client';
 const labels={update:'Update software',restart:'Restart POS',repair:'Reinstall desktop app',rollback:'Return to previous version'};
 export default function ShopMaintenance() {
@@ -20,11 +23,14 @@ export default function ShopMaintenance() {
     try{const {data}=await api.post('/shop-maintenance',{action,...(action==='rollback'?{target:info.previousCommit}:{})});setInfo(v=>({...v,job:data.job}));if(action==='rollback')window.dispatchEvent(new CustomEvent('badizo-version-switch',{detail:info.previousCommit}));setError('');}
     catch(e){setError(e.response?.data?.error||'Request failed.');}finally{setBusy(false);}
   }
+  const localUpdate = process.env.REACT_APP_BADIZO_CLOUD_BUILD !== 'true' && ['ADMIN', 'SERVER'].includes(getStoredUser()?.role);
   return <section className="panel"><div className="panel-header"><h2 className="panel-title">Software maintenance</h2></div>
-    <div className="panel-body">{error && <p role="alert">{error}</p>}
+    <div className="panel-body">{localUpdate && <PosUpdateButton />}
+    {process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' && ['ADMIN', 'SERVER'].includes(getStoredUser()?.role) && <CloudSoftwareUpdate />}
+    {error && <p role="alert">{error}</p>}
     {info?.configured===false && <p>Enroll this server in shop management to enable software updates.</p>}
     {info?.configured && <><p>Approved release · {info.target?.slice(0,12)||'Not set'}</p>
-    {info.actions?.map(action=><button type="button" className="secondary-button" key={action}
+    {info.actions?.filter(action => !(localUpdate && action === 'update')).map(action=><button type="button" className="secondary-button" key={action}
       disabled={busy||pending||info.job?.state==='unknown'||(action==='update'&&!info.target)} onClick={()=>request(action)}>{labels[action]}</button>)}
     {!info.actions?.length && <p>The Windows maintenance agent has not reported its capabilities.</p>}
     {info.job && <p role="status">{labels[info.job.action]} · {info.job.state}</p>}</>}</div></section>;

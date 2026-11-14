@@ -73,11 +73,13 @@ export default function CloudSyncSettings() {
   }
   return (
     <div className="panel system-folder-panel">
-      <div className="panel-header green"><h2 className="panel-title">Cloud Sync</h2></div>
+      <div className="panel-header green"><h2 className="panel-title">Cloud Sync</h2>
+        <button className="secondary-button" type="button" onClick={updateNow} disabled={!mayEdit || status?.transfersPaused || !status?.service.ready || requesting || saving || status?.manualPending || status?.service.state === 'running'}>{requesting ? 'Queuing…' : ['running', 'pending'].includes(status?.service.state) ? 'Syncing…' : status?.manualPending ? 'Sync queued' : 'Sync Now'}</button>
+      </div>
       <form className="panel-body form-stack" onSubmit={save}>
         <p>{native ? 'Daily background sync sends local database changes through a captured source checkpoint, then stops. Local billing does not wait for cloud confirmation.' : status?.service.direction === 'two-way' ? 'Bring pending cloud changes into this local server and send local changes to the cloud.' : 'Update this shop’s cloud billing database with pending changes.'} Daily full backups to Google Drive continue separately.</p>
         {loading && <p className="muted" role="status">Loading cloud sync settings…</p>}
-        {status && <div className="change-box" role="status"><strong>{status.service.ready ? 'Cloud connection configured' : 'Cloud sync not configured'}</strong><span>{status.message}</span></div>}
+        {status && <div className="change-box" role="status"><strong>{status.service.ready ? 'Cloud connection configured' : status.service.state === 'offline' ? 'Sync worker offline' : 'Cloud sync unavailable'}</strong><span>{status.message}</span></div>}
         {status?.editable && (native || status.service.ready || status.transfersPaused) &&
           <button className="secondary-button" type="button" onClick={togglePause} disabled={saving || requesting}>
             {status.transfersPaused ? 'Resume Cloud Sync' : 'Pause Cloud Sync'}
@@ -92,12 +94,11 @@ export default function CloudSyncSettings() {
         </label> : <p className="muted">Hourly sync runs at the start of each hour in IST once connected and enabled.</p>}
         {native && <p className="muted">Pause stops new replication work after the current transaction finishes. Local sales continue. Resume continues an unfinished daily target from retained database logs.</p>}
         <label><input type="checkbox" checked={configuration.enabled} disabled={!mayEdit || saving || (!status?.service.ready && (!native || !configuration.enabled))} onChange={event => change('enabled', event.target.checked)} /> Enable automatic cloud sync</label>
-        {!status?.service.ready && <p className="muted">Automatic sync can be enabled after the cloud sync connection is configured.</p>}
+        {status && !status.service.ready && status.service.state === 'not-configured' && <p className="muted">Automatic sync can be enabled after the cloud sync connection is configured.</p>}
         {status && <p className="muted">{native ? 'Last completed daily sync' : 'Last successful sync'}: {status.lastSuccessAt ? new Date(status.lastSuccessAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Not reported'}. Next run: {status.nextRunAt ? new Date(status.nextRunAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Not scheduled'}.</p>}
         {getStoredUser()?.role !== 'SERVER' && <p className="muted">{native ? 'Admins can pause or resume daily sync and change its daily time on the local server.' : 'Admins can pause or resume transfers and change the daily sync time on the local server.'}</p>}
         <div className="settings-action-row">
           <button className="secondary-button" type="submit" disabled={!(mayEdit || adminTime) || saving || requesting || loading}>{saving ? 'Saving…' : 'Save Cloud Sync Schedule'}</button>
-          <button className="secondary-button" type="button" onClick={updateNow} disabled={!mayEdit || status?.transfersPaused || !status?.service.ready || requesting || saving || status?.manualPending || status?.service.state === 'running'}>{requesting ? 'Queuing…' : ['running', 'pending'].includes(status?.service.state) ? 'Syncing…' : status?.manualPending ? 'Sync queued' : status?.service.direction === 'two-way' ? 'Sync Local and Cloud' : 'Update Cloud Now'}</button>
         </div>
         {!loading && native && <p role="status">Replication status: {status.service.state}. Received and applied checkpoints are checked separately; a connection alone does not confirm that cloud is up to date.</p>}
         {!loading && <div aria-live="polite" aria-atomic="true">

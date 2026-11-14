@@ -2,7 +2,7 @@
 const { ensureSchema: ensureCheckoutSchema } = require('./checkoutAbandonment');
 const { ensureSchema: ensureDiarySchema } = require('./paymentDiary');
 const { tables: required } = require('./recoverySchemaContract');
-const additive = new Set(['abandoned_checkouts','parked_checkout_reviews','checkout_recovery_events',
+const additive = new Set(['invoice_reprints','abandoned_checkouts','parked_checkout_reviews','checkout_recovery_events',
   'local_payment_diary','local_payment_diary_payments','local_payment_diary_years','local_payment_diary_changes']);
 
 function verifyScopedGrants(rows, database) {
@@ -50,6 +50,7 @@ async function prepareCandidateSchema(connection, { shopId, database }) {
   const [[before]] = await connection.query(snapshotSql);
   // Explicitly reviewed additive changes only; never invoke the application initializer,
   // seed users, modify passwords/settings or run arbitrary migrations from the upload.
+  await require('./invoiceReprints').ensureSchema(connection);
   await ensureCheckoutSchema(connection);
   await ensureDiarySchema(connection);
   const [[invalid]] = await connection.query(`SELECT
@@ -62,6 +63,6 @@ async function prepareCandidateSchema(connection, { shopId, database }) {
   const [[after]] = await connection.query(snapshotSql);
   if (JSON.stringify(before) !== JSON.stringify(after)) throw Error('Candidate business data changed during schema preparation.');
   return { candidateSchemaVerified: true, candidateDataIntegrityVerified: true, businessReconciliationVerified: false, shopId, database, summary: after,
-    migrations: ['checkout-recovery-additive', 'payment-diary-additive'], activeDatabaseChanged: false };
+    migrations: ['checkout-recovery-additive', 'payment-diary-additive','invoice-reprints-additive'], activeDatabaseChanged: false };
 }
 module.exports = { verifyScopedGrants, prepareCandidateSchema };

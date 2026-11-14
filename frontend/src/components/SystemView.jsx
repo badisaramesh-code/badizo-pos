@@ -607,14 +607,15 @@ export default function SystemView() {
           <div className="panel-header green"><h2 className="panel-title">Billing recovery</h2></div>
           <div className="panel-body form-stack">
             <div className="settings-action-row">
-              {['Activate cloud', 'Return to local', 'Review conflicts'].map(label => (
+              {['Upload backup', 'Activate cloud', 'Return to local', 'Review conflicts'].map(label => (
                 <button type="button" key={label} aria-expanded={recoveryPage === label}
                   className={recoveryPage === label ? 'primary-button compact-primary' : 'secondary-button'}
                   onClick={() => setRecoveryPage(recoveryPage === label ? null : label)}>{label}</button>
               ))}
             </div>
             {recoveryPage === 'Review conflicts' && <><RecoveryReview /><FinancialConflictReview /></>}
-            {recoveryPage && recoveryPage !== 'Review conflicts' && (
+            {recoveryPage === 'Upload backup' && <BackupUploadRecovery />}
+            {['Activate cloud', 'Return to local'].includes(recoveryPage) && (
               (recoveryPage === 'Activate cloud') === (process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true')
                 ? <><BackupUploadRecovery /><RecoveryControl />{process.env.REACT_APP_STAGED_RESTORE_ENABLED === 'true' && <StagedRestore />}</>
                 : <p role="status">Open System → Billing recovery on the {recoveryPage === 'Activate cloud' ? 'cloud' : 'local'} server to start billing there.</p>
@@ -1350,11 +1351,12 @@ export default function SystemView() {
           <button className="secondary-button" onClick={loadAuditLogs}>Refresh</button>
         </div>
         <div className="panel-body">
+          <p>Errors and failed requests from the last 7 days.</p>
           <table className="history-table">
             <thead><tr><th>Time</th><th>User</th><th>Role</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead>
             <tbody>
               {auditLogs.length === 0 ? (
-                <tr><td colSpan="6">No audit activity yet.</td></tr>
+                <tr><td colSpan="6">No failures recorded in the last 7 days.</td></tr>
               ) : (
                 auditLogs.map((log) => (
                   <tr key={log.id}>

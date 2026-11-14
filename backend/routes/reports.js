@@ -462,7 +462,7 @@ router.get('/reprints', authorize('SERVER', 'ADMIN'), async (req, res) => {
         al.entity_id LIKE ?
         OR i.customer_name LIKE ?
         OR al.username LIKE ?
-        OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(al.details, '$.print_mode')), 'Thermal') LIKE ?
+        OR al.print_mode LIKE ?
       )`);
       const like = `%${search}%`;
       values.push(like, like, like, like);
@@ -476,18 +476,21 @@ router.get('/reprints', authorize('SERVER', 'ADMIN'), async (req, res) => {
          TIME_FORMAT(al.created_at, '%H:%i:%s') AS reprint_time,
          al.created_at,
          al.username AS reprinted_by,
-         COALESCE(JSON_UNQUOTE(JSON_EXTRACT(al.details, '$.print_mode')), 'Thermal') AS print_mode,
+         al.print_mode AS print_mode,
          i.customer_name,
          i.grand_total,
          i.payment_mode,
          i.billing_counter,
          i.created_at AS invoice_created_at,
          i.reprint_count
-       FROM audit_logs al
+       FROM (
+         SELECT -id AS id, invoice_no AS entity_id, username, print_mode, created_at FROM invoice_reprints
+         UNION ALL
+         SELECT id, entity_id, username, COALESCE(JSON_UNQUOTE(JSON_EXTRACT(details, '$.print_mode')), 'Thermal'), created_at
+         FROM audit_logs WHERE action='INVOICE_REPRINTED' AND entity_type='INVOICE'
+       ) al
        LEFT JOIN invoices i ON i.invoice_no = al.entity_id
-       WHERE al.action = 'INVOICE_REPRINTED'
-         AND al.entity_type = 'INVOICE'
-         AND ${filters.join(' AND ')}
+       WHERE ${filters.join(' AND ')}
        ORDER BY al.created_at DESC, al.id DESC`,
       values
     );

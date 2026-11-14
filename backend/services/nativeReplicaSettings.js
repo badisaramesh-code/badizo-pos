@@ -16,7 +16,8 @@ function createNativeReplicaSettings({directory,nodeRole='local-server',clock=()
     try{
       if(await invalidated(directory))return {ready:false,state:'blocked',reason:'Backup recovery changed this sync baseline. A newly verified baseline is required.',nextRunAt:null};
       const raw=await optionalJson(path.join(directory,'native-status.json')),age=clock().getTime()-Date.parse(raw?.heartbeatAt);
-      if(raw?.engine!=='mysql-replication'||!Number.isFinite(age)||age < -5000||age>20000)throw Error('Stale status');
+      if(raw?.engine!=='mysql-replication'||!Number.isFinite(age)||age < -5000)throw Error('Invalid status');
+      if(age>20000)return {ready:false,state:'offline',reason:'The local sync worker stopped reporting. Check the worker on the shop server.',lastSuccessAt:raw.lastSuccessAt||null,nextRunAt:null};
       const manual=await optionalJson(path.join(directory,'native-manual.json'));
       const cleanPoint=point=>point&&/^[A-Za-z0-9_-]+\.\d{6}$/.test(point.file)&&Number.isSafeInteger(point.position)&&point.position>=4?{file:point.file,position:point.position}:null;
       return {ready:raw.ready===true,state:raw.state,lastSuccessAt:raw.lastSuccessAt||null,nextRunAt:raw.nextRunAt||null,
