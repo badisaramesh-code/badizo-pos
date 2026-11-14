@@ -5,7 +5,7 @@ const path = require('path');
 const { readPrinterHealth } = require('../services/printerHealth');
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { backupDir, listBackups } = require('../services/backupService');
+const { getBackupSources, listBackups } = require('../services/backupService');
 const { ERROR_LOG, SYSTEM_LOG, logError } = require('../services/logger');
 
 const router = express.Router();
@@ -26,7 +26,9 @@ function localIpAddresses() {
 }
 
 async function diskHealth() {
+  let backupDir;
   try {
+    backupDir=(await getBackupSources()).find(source=>source.key==='manual').dir;
     const targetPath = path.parse(backupDir).root || backupDir;
     const stats = await fs.statfs(targetPath);
     const freeBytes = Number(stats.bavail || 0) * Number(stats.bsize || 0);
@@ -102,7 +104,9 @@ router.get('/', async (_req, res) => {
     health.mysql = { ok: false, error: err.message };
   }
 
+  let backupDir;
   try {
+    backupDir=(await getBackupSources()).find(source=>source.key==='manual').dir;
     const backups = await listBackups();
     const lastBackup = backups[0] || null;
     health.backup = {

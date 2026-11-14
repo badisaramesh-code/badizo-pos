@@ -21,7 +21,7 @@ test('disabled cloud preserves a local backup and never starts a remote request'
     backupConfig: { cloudEnabled: false },
     localBackupFiles: () => [{ name: 'today.sql.gz', path: 'fixture' }],
     matchesBackupAuthority: () => true,
-    fs: { statSync: () => ({ size: 123 }) },
+    fs: { statSync: () => ({ size: 123, mtime:new Date(0) }) },
     writeBackupStatus: (...args) => statuses.push(args),
     remoteBackupNames: () => { throw Error('Remote request forbidden'); }
   };
@@ -33,17 +33,18 @@ test('disabled cloud preserves a local backup and never starts a remote request'
   assert.equal(statuses[0][2].sizeBytes, 123);
   context.backupConfig.cloudEnabled = true;
   await assert.rejects(context.sync(3, { assertUnchanged() {} }), /Remote request forbidden/);
-  assert.equal(statuses[1][0], 'failed');
+  assert.equal(statuses[1][0], 'cloud-failed');
 });
-test('catch-up still starts local backup when cloud is disabled, but skips repeated upload attempts', () => {
+test('catch-up still starts local backup when cloud is disabled, but skips repeated upload attempts', async () => {
   const source = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
-  const fn = source.slice(source.indexOf('function checkDailyBackupCatchUp('), source.indexOf('\nfunction scheduleDailyBackupCatchUpCheck('));
+  const fn = source.slice(source.indexOf('async function checkDailyBackupCatchUp('), source.indexOf('\nfunction scheduleDailyBackupCatchUpCheck('));
   let local = false;
   const started = [];
   const context = {
     Date: class extends Date { getHours() { return 12; } },
     dailyCatchUpRunning: false,
     backupConfig: { cloudEnabled: false },
+    require:()=>({loadBackupConfiguration:async()=>({cloudEnabled:false,enabled:true,dailyTime:'09:00',dailyDir:'fixture',statusFile:'fixture'})}),
     hasTodayScheduledBackup: () => local,
     hasTodaySuccessfulCloudBackup: () => { throw Error('Cloud status must not be needed'); },
     logInfo() {}, logError() {},
@@ -52,11 +53,11 @@ test('catch-up still starts local backup when cloud is disabled, but skips repea
     spawn: (_exe, args) => { started.push(args[1]); return { on() {} }; }
   };
   vm.createContext(context);
-  vm.runInContext(fn + '\ncheckDailyBackupCatchUp();', context);
+  await vm.runInContext(fn + '\ncheckDailyBackupCatchUp();', context);
   assert.deepEqual(started, ['daily']);
   local = true;
   context.dailyCatchUpRunning = false;
-  vm.runInContext('checkDailyBackupCatchUp();', context);
+  await vm.runInContext('checkDailyBackupCatchUp();', context);
   assert.deepEqual(started, ['daily']);
 });
 test('local-only health retains failures and reports local retention', async () => {
@@ -70,7 +71,8 @@ test('local-only health retains failures and reports local retention', async () 
       stat: async () => ({mtime: new Date('2026-01-01T00:00:00Z')})
     } },
     '../middleware/auth': {authenticate(){}},
-    '../services/backupConfiguration': {backupConfiguration: () => ({root:'fixture',cloudEnabled:false})}
+    '../config/db':{},
+    '../services/backupConfiguration': {loadBackupConfiguration: async () => ({root:'fixture',dailyDir:'fixture',statusFile:'status',cloudEnabled:false,enabled:true,localKeepCount:14})}
   };
   const context = {module:{exports:{}},process:{env:{LOCAL_BACKUP_KEEP_COUNT:'14'}},require(name){if(!(name in dependencies))throw Error(name);return dependencies[name];}};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../routes/backupHealth.js'),'utf8'),context);

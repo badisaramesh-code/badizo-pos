@@ -169,8 +169,8 @@ function putFileStream(uploadUrl, filePath, fileSize, mimeType, token) {
   });
 }
 
-async function uploadBackupToDrive(backup) {
-  if (!isDriveBackupEnabled()) {
+async function uploadBackupToDrive(backup,config) {
+  if (!(config ? config.cloudEnabled : isDriveBackupEnabled())) {
     return { enabled: false };
   }
 
@@ -217,8 +217,8 @@ async function uploadBackupToDrive(backup) {
   return { enabled: true, uploaded: true, file: uploaded };
 }
 
-async function listDriveBackups(token = null) {
-  if (!isDriveBackupEnabled()) return [];
+async function listDriveBackups(token = null,config) {
+  if (!(config ? config.cloudEnabled : isDriveBackupEnabled())) return [];
   const folderId = String(process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID || '').trim();
   if (!folderId) return [];
   const accessToken = token || await getAccessToken();
@@ -236,10 +236,10 @@ async function listDriveBackups(token = null) {
   return data.files || [];
 }
 
-async function pruneDriveBackups(keepCount = driveKeepCount()) {
-  if (!isDriveBackupEnabled()) return { enabled: false, deleted: [] };
+async function pruneDriveBackups(keepCount = driveKeepCount(),config) {
+  if (!(config ? config.cloudEnabled : isDriveBackupEnabled())) return { enabled: false, deleted: [] };
   const token = await getAccessToken();
-  const files = await listDriveBackups(token);
+  const files = await listDriveBackups(token,config);
   const oldFiles = files.slice(keepCount);
   const deleted = [];
   for (const file of oldFiles) {

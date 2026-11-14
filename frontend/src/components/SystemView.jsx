@@ -8,12 +8,14 @@ import StagedRestore from './StagedRestore';
 import BackupUploadRecovery from './BackupUploadRecovery';
 import RecoveryControl from './RecoveryControl';
 import FinancialConflictReview from './FinancialConflictReview';
+import { backupSettingsPayload, generalSettingsPayload } from '../utils/backupHealth';
 import {
   approveSensitiveBillingMode,
   downloadBackup,
   getStoredUser,
   fetchAuditLogs,
   fetchBackups,
+  fetchBackupHealth,
   fetchPasswordVault,
   fetchSessionEvents,
   fetchSettings,
@@ -139,6 +141,7 @@ export default function SystemView() {
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [backupInfo, setBackupInfo] = useState({ backupDir: '', backups: [] });
+  const [backupHealth, setBackupHealth] = useState(null);
   const [systemHealth, setSystemHealth] = useState(null);
   const [healthLoadError, setHealthLoadError] = useState('');
   const [isHealthLoading, setIsHealthLoading] = useState(false);
@@ -148,6 +151,7 @@ export default function SystemView() {
   const [users, setUsers] = useState([]);
   const [userForm, setUserForm] = useState(emptyUserForm);
   const [isBackingUp, setIsBackingUp] = useState(false);
+  const [isSavingBackup, setIsSavingBackup] = useState(false);
   const [setupUnlocked, setSetupUnlocked] = useState(false);
   const [setupPassword, setSetupPassword] = useState({ username: '', password: '' });
   const [passwordVaultFolder, setPasswordVaultFolder] = useState('BADIZO_PRODUCT');
@@ -194,6 +198,7 @@ export default function SystemView() {
     } catch (err) {
       setBackupInfo({ backupDir: '', backups: [] });
     }
+    try { setBackupHealth(await fetchBackupHealth()); } catch { setBackupHealth(null); }
   }
 
   async function loadAuditLogs() {
@@ -362,7 +367,7 @@ export default function SystemView() {
     setErrorMessage('');
 
     try {
-      const savedSettings = await saveSettings(settings);
+      const savedSettings = await saveSettings(generalSettingsPayload(settings));
       setSettings((current) => ({ ...current, ...savedSettings }));
       setSetupUnlocked(false);
       setSetupPassword({ username: '', password: '' });
@@ -468,6 +473,9 @@ export default function SystemView() {
       } else {
         setStatusMessage(`Backup created: ${result.backup.file}`);
       }
+      if (result.backup?.localError) {
+        setErrorMessage(`The backup was created, but local backup cleanup needs attention: ${result.backup.localError}`);
+      }
       await loadBackups();
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to create backup.');
@@ -528,12 +536,18 @@ export default function SystemView() {
   async function handleSaveBackupTime() {
     setStatusMessage('');
     setErrorMessage('');
+    setIsSavingBackup(true);
     try {
-      const savedSettings = await saveSettings({ backup_daily_time: settings.backup_daily_time || '09:00' });
+      const supportsBackupSettings = typeof settings.backup_drive_enabled === 'boolean';
+      const payload = supportsBackupSettings ? backupSettingsPayload(settings) : { backup_daily_time: settings.backup_daily_time || '09:00' };
+      const savedSettings = await saveSettings(payload);
       setSettings((current) => ({ ...current, ...savedSettings }));
-      setStatusMessage('Backup time saved. Restart backend once for the daily scheduler to use the new time.');
+      setStatusMessage(supportsBackupSettings ? 'Backup settings saved for the next job; no restart is needed. A backup already running may finish using its previous settings.' : 'Backup time saved. This older server may require a restart to use the new time.');
+      await loadBackups();
     } catch (err) {
-      setErrorMessage(err.response?.data?.error || 'Unable to save backup time.');
+      setErrorMessage(err.response?.data?.error || err.message || 'Unable to save backup settings.');
+    } finally {
+      setIsSavingBackup(false);
     }
   }
 
@@ -1202,6 +1216,15 @@ export default function SystemView() {
                 <span>Daily backup runs at <strong>{settings.backup_daily_time || '09:00'}</strong>.</span>
                 <span>Backup folders: <strong>{(backupInfo.backupDirs || []).map((item) => item.directory).join(' | ') || backupInfo.backupDir || 'backend/backups'}</strong></span>
               </div>
+              <div className="change-box backup-folder-box" aria-live="polite">
+                <span>Local backup: <strong>{backupHealth?.localStatus || (backupHealth?.latestLocalBackupAt ? 'Available' : 'Status unavailable')}</strong>
+                  {backupHealth?.localMessage && <> — {backupHealth.localMessage}</>}
+                  {backupHealth?.latestLocalBackupAt && <> · Last created: {formatHealthDate(backupHealth.latestLocalBackupAt)}</>}
+                </span>
+                <span>Google Drive: <strong>{backupHealth?.cloudEnabled === false ? 'Disabled' : (backupHealth?.cloudStatus || 'Status unavailable')}</strong>
+                  {backupHealth?.cloudEnabled !== false && backupHealth?.cloudMessage && <> — {backupHealth.cloudMessage}</>}
+                </span>
+              </div>
               <div className="settings-section settings-inline-section system-file-card setup-file-backup">
                 <label>
                   <span className="field-label">Daily Backup Time</span>
@@ -1212,8 +1235,28 @@ export default function SystemView() {
                     onChange={(event) => updateSetting('backup_daily_time', event.target.value)}
                   />
                 </label>
-                <button className="secondary-button" type="button" onClick={handleSaveBackupTime}>Save Backup Time</button>
               </div>
+              {typeof settings.backup_drive_enabled === 'boolean' ? (
+                <fieldset disabled={isSavingBackup} className="settings-section form-stack">
+                  <legend>Backup storage</legend>
+                  <small>Saved settings apply to the next backup job. A job already running may finish using its previous settings.</small>
+                  <label><span className="field-label">Local backup folder on the server</span>
+                    <input className="field" value={settings.backup_local_folder || ''} onChange={event => updateSetting('backup_local_folder', event.target.value)} />
+                  </label>
+                  <small>Scheduled backups are stored in the daily subfolder. This is a server path, not a folder on this counter.</small>
+                  <label><span className="field-label">Local daily backups to keep (0 keeps all)</span>
+                    <input className="field" type="number" min="0" step="1" value={settings.backup_local_keep_count ?? 0} onChange={event => updateSetting('backup_local_keep_count', event.target.value)} />
+                  </label>
+                  <label><input type="checkbox" checked={settings.backup_drive_enabled} onChange={event => setSettings(current => ({...current, backup_drive_enabled: event.target.checked, backup_keep_local: true}))} /> Upload backups to Google Drive</label>
+                  <small>Enable after the server’s Google Drive connection is configured. Local backups continue when Drive is disabled.</small>
+                  <label><input type="checkbox" checked={!settings.backup_drive_enabled || settings.backup_keep_local !== false} disabled={!settings.backup_drive_enabled} onChange={event => updateSetting('backup_keep_local', event.target.checked)} /> Keep local copies after a successful Drive upload</label>
+                  <small>{settings.backup_drive_enabled ? 'Recommended: keep local copies too. If unchecked, local copies are removed only after a verified upload; failed uploads retain them.' : 'Local copies are required while Google Drive is disabled.'}</small>
+                  {settings.backup_drive_enabled && <label><span className="field-label">Google Drive backups to keep</span>
+                    <input className="field" type="number" min="1" step="1" value={settings.backup_drive_keep_count ?? 3} onChange={event => updateSetting('backup_drive_keep_count', event.target.value)} />
+                  </label>}
+                </fieldset>
+              ) : <p className="muted">Storage controls require the updated server. Current server backup settings are preserved.</p>}
+              <button className="secondary-button" type="button" disabled={isSavingBackup} onClick={handleSaveBackupTime}>{isSavingBackup ? 'Saving...' : 'Save Backup Settings'}</button>
               <button className="primary-button" onClick={handleBackupNow} disabled={isBackingUp}>
                 {isBackingUp ? 'Creating Backup...' : 'Backup Now'}
               </button>

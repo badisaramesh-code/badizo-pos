@@ -5,7 +5,9 @@ const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { JWT_SECRET } = require('../middleware/auth');
 
+const {BACKUP_SETTING_KEYS,publicBackupSettings,validateBackupSettings}=require('../services/backupConfiguration');
 const ALLOWED_SETTINGS = new Set([
+  ...BACKUP_SETTING_KEYS,
   'shop_name',
   'gst_number',
   'phone',
@@ -156,6 +158,7 @@ function publicSettings(settings) {
     .filter((value, index, list) => list.indexOf(value) === index)
     .sort((a, b) => a - b);
   return {
+    ...publicBackupSettings(settings),
     shop_name: settings.shop_name || 'Hyper Fresh Mart LLP',
     gst_number: settings.gst_number || '36AAJFH7790R1ZB',
     phone: settings.phone || '08761 295000',
@@ -258,7 +261,13 @@ router.get('/', async (_req, res) => {
 
 router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) => {
   try {
-    const entries = Object.entries(req.body || {}).filter(([key]) => ALLOWED_SETTINGS.has(key));
+    const incoming=Object.fromEntries(Object.entries(req.body || {}).filter(([key])=>BACKUP_SETTING_KEYS.includes(key)));
+    let backupEntries=null;
+    if(Object.keys(incoming).length){
+      try{const validated=validateBackupSettings(incoming,await readSettings());backupEntries=Object.keys(incoming).length===1&&incoming.backup_daily_time!==undefined?[['backup_daily_time',validated.backup_daily_time]]:Object.entries(validated);}
+      catch(error){return res.status(400).json({error:error.message});}
+    }
+    const entries = Object.entries(req.body || {}).filter(([key]) => ALLOWED_SETTINGS.has(key) && !BACKUP_SETTING_KEYS.includes(key));
 
     for (const [key, rawValue] of entries) {
       let value = key === 'barcode_printer_templates'
@@ -369,6 +378,7 @@ router.post('/', authenticate, authorize('SERVER', 'ADMIN'), async (req, res) =>
       );
     }
 
+    if(backupEntries)await db.query('INSERT INTO app_settings (setting_key,setting_value) VALUES ? ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value)',[backupEntries]);
     res.json(publicSettings(await readSettings()));
   } catch (err) {
     console.error('Settings save failed:', err.message);

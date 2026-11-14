@@ -67,3 +67,13 @@ Keep shop identity, bank details and printer configuration as deployment setting
 Test on a separate database and port with scheduled jobs and printing disabled.
 Obtain the maintenance-window approval before replacing live files, applying
 migrations, altering production settings or restarting the backend.
+
+## Persistent backup controls
+
+Server / Admin users can configure the backup root, local retention count, Drive enablement, whether to keep local copies, Drive retention and daily time in System Settings. Settings are stored atomically in app_settings and apply to the next job without a restart. Drive credentials remain in the server environment; the enable switch does not create a Google connection.
+
+Local generation is always required. Keep local copies defaults to true, including when Drive is enabled; turning Drive off forces it on. Optional removal after upload requires verified matching remote bytes and is never performed for desktop-sync copies or recovery-bound artifacts. Pending/unverified files are preserved even when this exceeds configured retention. A zero local retention count keeps all local copies.
+
+Until settings are saved, environment paths/counts remain effective. An explicit Drive=false overrides credentials; existing credible Drive configuration is recognized when the old enable variable is absent. Changing the root sends future jobs to its daily/manual subfolders; it does not move or delete old files. Legacy environment folders remain available in the backup list. Files from other previous user-selected folders remain on disk and can be accessed by selecting that folder again.
+
+Health reports local and cloud outcomes separately. Disabled Drive cannot produce Google failure alerts, but local write/read/retention failures remain visible. Catch-up follows the configured daily time and reads fresh settings each pass. The standalone script reads settings via a short direct DB connection after validating active recovery binding, without loading schema-bootstrap code; it fails visibly if settings cannot be read.

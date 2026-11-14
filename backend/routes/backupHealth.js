@@ -4,22 +4,14 @@ const path = require('path');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
-const backupConfig = require('../services/backupConfiguration').backupConfiguration();
-const backupRoot = backupConfig.root;
-const statusFile = path.join(backupRoot, 'backup-status.json');
-const dailyDir = path.join(backupRoot, 'daily');
-const configuredKeepCount = Number.parseInt(process.env.LOCAL_BACKUP_KEEP_COUNT, 10);
-const dailyKeepCount = Number.isInteger(configuredKeepCount) && configuredKeepCount >= 0
-  ? configuredKeepCount
-  : 0;
-
+const {loadBackupConfiguration}=require('../services/backupConfiguration');
 router.use(authenticate);
 
 router.get('/', async (_req, res) => {
+  let backupConfig;
   try {
-    if (process.env.BADIZO_DISABLE_SCHEDULED_CLOUD_BACKUP === 'true') {
-      return res.json({ enabled: false, status: 'disabled', message: 'Scheduled cloud backup is not configured for this store.' });
-    }
+    backupConfig=await loadBackupConfiguration(require('../config/db'));
+    const statusFile=backupConfig.statusFile,dailyDir=backupConfig.dailyDir;
     let status = null;
     if (fs.existsSync(statusFile)) {
       status = JSON.parse(await fs.promises.readFile(statusFile, 'utf8'));
@@ -35,22 +27,28 @@ router.get('/', async (_req, res) => {
     dailyEntries.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
     const latest = dailyEntries[0] || null;
 
+    const oldCloudFailure=status?.status==='failed' && /^Google Drive upload pending/.test(status?.message||'');
+    const localStatus=status?.localStatus || (oldCloudFailure?'success':status?.status==='failed'?'failed':latest||['success','local-only','cloud-failed'].includes(status?.status)?'success':'unknown');
+    const cloudStatus=!backupConfig.cloudEnabled?'disabled':status?.cloudStatus||(oldCloudFailure?'failed':status?.status==='success'?'success':status?.status==='cloud-failed'?'failed':'unknown');
+    const localAt=localStatus==='success'?(status?.localAt||latest?.modifiedAt||null):latest?.modifiedAt||null;
     res.setHeader('Cache-Control', 'no-store');
     res.json({
-      enabled: backupConfig.cloudEnabled,
-      cloudEnabled: backupConfig.cloudEnabled,
-      status: status?.status === 'failed' ? 'failed' : (!backupConfig.cloudEnabled && latest ? 'local-only' : (status?.status || (latest ? 'success' : 'unknown'))),
-      kind: status?.kind || 'daily',
-      at: status?.at || null,
-      file: status?.file || latest?.name || null,
-      latestSuccessAt: status?.status === 'success' ? (status.at || latest?.modifiedAt || null) : null,
-      latestLocalBackupAt: latest?.modifiedAt || null,
-      message: status?.status === 'failed' ? String(status.message || 'Backup failed.') : (!backupConfig.cloudEnabled ? 'Google Drive backup is disabled; local backups remain enabled.' : ''),
-      retainedDailyBackups: dailyFiles.length,
-      keepDailyBackups: dailyKeepCount
+      enabled:backupConfig.enabled, localEnabled:true, cloudEnabled:backupConfig.cloudEnabled,
+      keepLocalCopies:backupConfig.keepLocal, dailyTime:backupConfig.dailyTime,
+      status:localStatus==='failed'?'failed':cloudStatus==='failed'?'cloud-failed':!backupConfig.cloudEnabled&&localStatus==='success'?'local-only':localStatus,
+      localStatus, cloudStatus,
+      localMessage:localStatus==='failed'?String(status?.message||'Local backup failed.'):'',
+      cloudMessage:cloudStatus==='failed'?String(status?.message||'Google Drive upload failed.'):'',
+      kind:status?.kind||'daily',at:status?.at||null,file:status?.file||latest?.name||null,
+      latestSuccessAt:cloudStatus==='success'?(status?.at||null):null,
+      latestLocalBackupAt:localAt,localAt,
+      message:localStatus==='failed'?String(status?.message||'Local backup failed.'):cloudStatus==='failed'?String(status?.message||'Google Drive upload failed.'):'',
+      retainedDailyBackups:dailyFiles.length,keepDailyBackups:backupConfig.localKeepCount
+
     });
-  } catch (_err) {
-    res.status(500).json({ error: 'Unable to read backup health.' });
+  } catch (err) {
+    if(backupConfig)return res.json({enabled:backupConfig.enabled,cloudEnabled:backupConfig.cloudEnabled,localEnabled:true,localStatus:'failed',status:'failed',localMessage:'Unable to read local backup status: '+err.message,message:'Unable to read local backup status: '+err.message,at:new Date().toISOString(),dailyTime:backupConfig.dailyTime});
+    res.status(500).json({ error: 'Backup settings are unavailable; backup status cannot be verified.' });
   }
 });
 
