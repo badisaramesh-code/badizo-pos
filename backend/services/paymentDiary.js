@@ -243,10 +243,10 @@ function createService(pool, { today = todayIndia } = {}) {
   }
   async function history(id) {const [rows]=await pool.query("SELECT *,DATE_FORMAT(payment_date,'%Y-%m-%d') AS payment_date,DATE_FORMAT(reversed_date,'%Y-%m-%d') AS reversed_date FROM local_payment_diary_payments WHERE diary_id=? ORDER BY payment_date,id",[id]);return rows;}
   async function changes(id) {const [rows]=await pool.query("SELECT *,DATE_FORMAT(event_date,'%Y-%m-%d') AS event_date FROM local_payment_diary_changes WHERE diary_id=? ORDER BY id",[id]);return rows;}
-  async function modify(id,body,actor,type='EDIT') {
+  async function modify(id,body,actor,type='EDIT',connection=null) {
     const key=requestId(body.request_id),reason=text(body.reason,255,'Reason',true);
     const intent={id,type,body},hash=fingerprint(intent);
-    return transaction(async c=>{
+    const work=async c=>{
       const [rows]=await c.query("SELECT *,DATE_FORMAT(bill_date,'%Y-%m-%d') AS bill_date,DATE_FORMAT(due_date,'%Y-%m-%d') AS due_date FROM local_payment_diary WHERE id=? FOR UPDATE",[id]);
       if(!rows.length)fail('Reminder not found.',404);const old=rows[0];
       const [prior]=await c.query('SELECT id,request_hash FROM local_payment_diary_changes WHERE request_id=?',[key]);
@@ -278,7 +278,8 @@ function createService(pool, { today = todayIndia } = {}) {
         (diary_id,change_type,event_date,reason,changes_json,request_id,request_hash,created_by) VALUES(?,?,?,?,?,?,?,?)`,
         [id,type,today(),reason,JSON.stringify({before:old,after:type==='EDIT'?next:{is_deleted:type==='DELETE'}}),key,hash,actor]);
       return {id};
-    });
+    };
+    return connection?work(connection):transaction(work);
   }
   async function closeYear(body,actor) {
     const year=Number(body.year);if(!Number.isInteger(year)||year<2000||year>=fy(today()))fail('Only a completed financial year can be closed after 31 March.');

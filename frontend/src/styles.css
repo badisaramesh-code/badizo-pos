@@ -9637,6 +9637,7 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 .payment-diary .diary-group-heading td,.diary-dialog .diary-group-heading td{background:#e5f2e9;border-top:2px solid #278044;padding:10px;text-align:left;color:#16492a}
 
 .local-account-table .local-diary-reminder-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#d21f2b;margin-left:5px;vertical-align:middle;flex-shrink:0}
+.local-account-table .local-diary-paid-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#238636;margin-left:3px;vertical-align:middle;flex-shrink:0}
 
 /* Keep payment reminder fields aligned even when labels wrap. */
 .payment-diary .diary-entry label { display:flex; flex-direction:column; justify-content:space-between; gap:5px; }

@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { normalizeDate, parseMoney } = require('../utils/formatters');
@@ -27,7 +28,13 @@ router.get('/', async(req,res)=>{ const scope=scopeOf(req.query.scope),from=norm
  EXISTS(SELECT 1 FROM local_payment_diary d
  WHERE d.create_request_id=CONCAT('ledger-entry-',local_account_entries.id)
  AND d.account_scope=local_account_entries.account_scope AND d.account_name=local_account_entries.account_name
- AND COALESCE((SELECT h.change_type FROM local_payment_diary_changes h WHERE h.diary_id=d.id AND h.change_type IN ('DELETE','RESTORE') ORDER BY h.id DESC LIMIT 1),'RESTORE')<>'DELETE') AS has_diary_reminder
+ AND COALESCE((SELECT h.change_type FROM local_payment_diary_changes h WHERE h.diary_id=d.id AND h.change_type IN ('DELETE','RESTORE') ORDER BY h.id DESC LIMIT 1),'RESTORE')<>'DELETE') AS has_diary_reminder,
+ EXISTS(SELECT 1 FROM local_payment_diary d
+ WHERE d.create_request_id=CONCAT('ledger-entry-',local_account_entries.id)
+ AND d.account_scope=local_account_entries.account_scope AND d.account_name=local_account_entries.account_name
+ AND COALESCE((SELECT h.change_type FROM local_payment_diary_changes h WHERE h.diary_id=d.id AND h.change_type IN ('DELETE','RESTORE') ORDER BY h.id DESC LIMIT 1),'RESTORE')<>'DELETE'
+ AND d.amount<=COALESCE((SELECT SUM(p.paid_amount+p.discount_amount) FROM local_payment_diary_payments p WHERE p.diary_id=d.id AND p.reversed_date IS NULL),0)) AS has_diary_payment,
+ (SELECT DATEDIFF(d.due_date,d.bill_date) FROM local_payment_diary d WHERE d.create_request_id=CONCAT('ledger-entry-',local_account_entries.id) LIMIT 1) AS diary_credit_days
  FROM local_account_entries WHERE account_scope=? AND entry_date<=? ORDER BY account_name, entry_date, id`,[scope,to]); const [profiles]=await db.query(`SELECT account_name, address_details, phone_number, gst_number FROM local_account_ledgers WHERE account_scope=?`,[scope]); const profileMap=new Map(profiles.map(p=>[String(p.account_name).toLocaleLowerCase(),p])); const running=new Map(),ledgerMap=new Map(),rows=[]; all.forEach(row=>{const key=String(row.account_name).toLocaleLowerCase(),balance=(running.get(key)||0)+Number(row.dr_amount||0)-Number(row.cr_amount||0);running.set(key,balance);if(!ledgerMap.has(key))ledgerMap.set(key,{name:row.account_name,entries:0,dr:0,cr:0,...(profileMap.get(key)||{})});const l=ledgerMap.get(key);l.entries++;l.dr+=Number(row.dr_amount||0);l.cr+=Number(row.cr_amount||0);l.balance=l.dr-l.cr;if(String(row.entry_date).slice(0,10)>=from)rows.push({...row,details:String(row.details||'').toUpperCase(),balance,balance_type:balance>=0?'DR':'CR'});}); profiles.forEach(p=>{const key=String(p.account_name).toLocaleLowerCase();if(!ledgerMap.has(key))ledgerMap.set(key,{name:p.account_name,entries:0,dr:0,cr:0,balance:0,...p});}); rows.sort((a,b)=>String(a.entry_date).localeCompare(String(b.entry_date))||Number(a.id)-Number(b.id)); const dr=rows.reduce((s,r)=>s+Number(r.dr_amount||0),0),cr=rows.reduce((s,r)=>s+Number(r.cr_amount||0),0);res.json({scope,from,to,rows,ledgers:[...ledgerMap.values()].sort((a,b)=>a.name.localeCompare(b.name)),totals:{dr,cr,balance:dr-cr}}); } catch(err){console.error('Local accounts load failed:',err.message);res.status(500).json({error:'Unable to load Local / Non-Local accounts.'});} });
 async function saveEntry(req,res,editing=false) {
  let c;
@@ -39,8 +46,16 @@ async function saveEntry(req,res,editing=false) {
   if(editing){
    const [rows]=await c.query('SELECT id FROM local_account_entries WHERE id=? FOR UPDATE',[id]);
    if(!rows.length)throw Object.assign(new Error('Entry not found.'),{statusCode:404});
-   const [linked]=await c.query('SELECT id FROM local_payment_diary WHERE create_request_id=?',['ledger-entry-'+id]);
-   if(linked.length)throw Object.assign(new Error('This bill is linked to Payment Diary. Manage its reminder and payments in Payment Diary.'),{statusCode:409});
+   const [linked]=await c.query(`SELECT d.*,DATEDIFF(d.due_date,d.bill_date) AS credit_days,
+     COALESCE((SELECT MAX(id) FROM local_payment_diary_changes h WHERE h.diary_id=d.id),0) AS version
+     FROM local_payment_diary d WHERE d.create_request_id=? FOR UPDATE`,['ledger-entry-'+id]);
+   if(linked.length){
+    const diary=linked[0],change={reason:'Updated from Local / Non-Local ledger',version:Number(diary.version),request_id:'ledger-edit-'+crypto.randomUUID()};
+    if(rawDays==='')await diaryService.modify(Number(diary.id),change,req.user.username,'DELETE',c);
+    else {const due=new Date(r.date+'T00:00:00Z');due.setUTCDate(due.getUTCDate()+Number(rawDays));
+     await diaryService.modify(Number(diary.id),{...change,account_scope:r.scope,account_name:r.name,bill_no:diary.bill_no,bill_date:r.date,due_date:due.toISOString().slice(0,10),amount:(r.cr||r.dr).toFixed(2),notes:[r.details,r.remarks].filter(Boolean).join(' | ').slice(0,500)},req.user.username,'EDIT',c);
+    }
+   }
    await c.query('UPDATE local_account_entries SET account_scope=?,entry_date=?,account_name=?,details=?,remarks=?,dr_amount=?,cr_amount=? WHERE id=?',[r.scope,r.date,r.name,r.details,r.remarks,r.dr,r.cr,id]);
   }else{
    const [saved]=await c.query('INSERT INTO local_account_entries (account_scope,entry_date,account_name,details,remarks,dr_amount,cr_amount,created_by) VALUES(?,?,?,?,?,?,?,?)',[r.scope,r.date,r.name,r.details,r.remarks,r.dr,r.cr,req.user.username]);id=saved.insertId;
