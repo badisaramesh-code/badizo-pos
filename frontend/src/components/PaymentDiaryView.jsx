@@ -10,6 +10,7 @@ const newId=()=>globalThis.crypto?.randomUUID?.()||`diary-${Date.now()}-${Math.r
 const errorText=error=>error.response?.data?.error||error.message||'Unable to complete the operation.';
 const readDraft=key=>{try{return JSON.parse(sessionStorage.getItem(key)||'null');}catch{return null;}};
 const afterDays=(day,days)=>{const d=new Date(`${day}T12:00:00Z`);d.setUTCDate(d.getUTCDate()+Number(days||0));return Number.isFinite(d.getTime())?d.toISOString().slice(0,10):day;};
+const daysBetween=(from,to)=>Math.round((Date.parse(`${to}T12:00:00Z`)-Date.parse(`${from}T12:00:00Z`))/86400000);
 export function groupDiaryBills(rows) {
   const groups=new Map();
   for(const row of rows){
@@ -26,13 +27,18 @@ function DiaryGroupHeading({group,columns}) {
 function notify(){window.dispatchEvent(new Event('badizo-local-diary-updated'));}
 
 function DiaryEditDialog({row,mode,onClose,onSaved}) {
-  const [form,setForm]=useState({account_scope:row.account_scope,account_name:row.account_name,bill_no:row.bill_no.startsWith('REM-')?'':row.bill_no,bill_date:row.bill_date,due_date:row.due_date,amount:String(row.amount),notes:row.notes||'',reason:''});
+  const [form,setForm]=useState({account_scope:row.account_scope,account_name:row.account_name,bill_no:row.bill_no.startsWith('REM-')?'':row.bill_no,bill_date:row.bill_date,due_date:row.due_date,credit_days:String(daysBetween(row.bill_date,row.due_date)),amount:String(row.amount),notes:row.notes||'',reason:''});
   const [error,setError]=useState(''),[busy,setBusy]=useState(false),[names,setNames]=useState([]);
   const request=useRef(newId()),saving=useRef(false);
   const settled=Number(row.paid_amount||0)+Number(row.discount_amount||0)>0;
   const locked=settled||row.carried_forward;
   const title=mode==='EDIT'?'Edit reminder':mode==='DELETE'?'Delete reminder':'Restore reminder';
-  const change=(key,value)=>setForm(current=>({...current,[key]:value}));
+  const change=(key,value)=>setForm(current=>{
+    if(key==='bill_date')return {...current,bill_date:value,due_date:afterDays(value,current.credit_days)};
+    if(key==='credit_days')return {...current,credit_days:value,due_date:afterDays(current.bill_date,value)};
+    if(key==='due_date')return {...current,due_date:value,credit_days:String(Math.max(0,daysBetween(current.bill_date,value)))};
+    return {...current,[key]:value};
+  });
   useEffect(()=>{let cancelled=false;setNames([]);if(mode!=='EDIT'||locked||form.account_name.length<3)return;const timer=setTimeout(()=>api.get(`${base}/accounts`,{params:{scope:form.account_scope,search:form.account_name}}).then(({data})=>{if(!cancelled)setNames(data);}).catch(()=>{}),250);return()=>{cancelled=true;clearTimeout(timer);};},[mode,locked,form.account_scope,form.account_name]);
   async function save(event){event.preventDefault();if(saving.current)return;saving.current=true;setBusy(true);setError('');try{
     const payload={...form,bill_no:form.bill_no.trim()||(row.bill_no.startsWith('REM-')?row.bill_no:`REM-${request.current}`),version:row.version||0,request_id:request.current};
@@ -50,6 +56,7 @@ function DiaryEditDialog({row,mode,onClose,onSaved}) {
         <label>Invoice number (optional)<input disabled={locked} value={form.bill_no} onChange={e=>change('bill_no',e.target.value)} maxLength={100}/></label>
         <label>Amount<input disabled={locked} type="number" min="0.01" step="0.01" value={form.amount} onChange={e=>change('amount',e.target.value)} required/></label>
         <label>Bill date<input disabled={locked} type="date" max={todayIso()} value={form.bill_date} onChange={e=>change('bill_date',e.target.value)} required/></label>
+        <label>Credit days<input type="number" min="0" max="3660" step="1" value={form.credit_days} onChange={e=>change('credit_days',e.target.value)} required/></label>
         <label>Due date<input type="date" value={form.due_date} onChange={e=>change('due_date',e.target.value)} required/></label>
         <label className="diary-full">Remarks<input value={form.notes} onChange={e=>change('notes',e.target.value)} maxLength={500}/></label>
       </div></>}
