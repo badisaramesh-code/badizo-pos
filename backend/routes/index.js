@@ -1,6 +1,7 @@
 const { protectAsyncRoutes, apiErrorHandler } = require('../middleware/asyncRoutes');
 
 const routes = [
+  ['/api/basic-skus', require('./basicSku')],
   ['/api/shop-maintenance', require('./shopMaintenance')],
   ['/api/auth', require('./auth')],
   ['/api/audit', require('./audit')],

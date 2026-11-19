@@ -223,9 +223,10 @@ function startLegacyFrontendRedirect(targetPort) {
   return redirectServer;
 }
 
-const scheduledDailyBackupDir = 'D:\\BadizoCloudBackups\\daily';
+let backupConfig = require('./services/backupConfiguration').backupConfiguration();
+let scheduledDailyBackupDir = backupConfig.dailyDir;
 const scheduledDailyBackupScript = path.join(__dirname, 'scripts', 'badizo_cloud_backup.js');
-const scheduledDailyBackupStatusFile = 'D:\\BadizoCloudBackups\\backup-status.json';
+let scheduledDailyBackupStatusFile = backupConfig.statusFile;
 let dailyCatchUpRunning = false;
 
 function localDatePrefix(date = new Date()) {
@@ -248,6 +249,7 @@ function hasTodaySuccessfulCloudBackup() {
   try {
     if (!fs.existsSync(scheduledDailyBackupStatusFile)) return false;
     const status = JSON.parse(fs.readFileSync(scheduledDailyBackupStatusFile, 'utf8'));
+    if(!backupConfig.keepLocal && !process.env.BADIZO_RUNTIME_BINDING && status.status==='success' && status.remoteVerified && status.localRemoved && String(status.file||'').startsWith(localDatePrefix()))return true;
     return status.status === 'success' && String(status.file || '').startsWith(localDatePrefix()) && path.basename(status.file)===status.file && require('./services/backupCatchUpAuthority').matchesCurrentBackupAuthority(path.join(scheduledDailyBackupDir,status.file));
   } catch (err) {
     logError('Daily cloud backup status check failed', err);
@@ -255,13 +257,20 @@ function hasTodaySuccessfulCloudBackup() {
   }
 }
 
-function checkDailyBackupCatchUp() {
+async function checkDailyBackupCatchUp() {
+  if(dailyCatchUpRunning)return;
+  try{backupConfig=await require('./services/backupConfiguration').loadBackupConfiguration(require('./config/db'));}
+  catch(error){logError('Backup configuration read failed',error);return;}
+  if(!backupConfig.enabled)return;
+  scheduledDailyBackupDir=backupConfig.dailyDir; scheduledDailyBackupStatusFile=backupConfig.statusFile;
   const now = new Date();
-  const afterBackupGraceTime = now.getHours() > 9 || (now.getHours() === 9 && now.getMinutes() >= 5);
+  const [hour,minute]=backupConfig.dailyTime.split(':').map(Number);
+  const afterBackupGraceTime = now.getHours()*60+now.getMinutes() >= hour*60+minute;
   if (!afterBackupGraceTime || dailyCatchUpRunning) return;
 
+  if(backupConfig.cloudEnabled&&!backupConfig.keepLocal&&hasTodaySuccessfulCloudBackup())return;
   const hasTodayLocal = hasTodayScheduledBackup();
-  if (hasTodayLocal && hasTodaySuccessfulCloudBackup()) return;
+  if (hasTodayLocal && (!backupConfig.cloudEnabled || hasTodaySuccessfulCloudBackup())) return;
 
   const mode = hasTodayLocal ? 'sync-pending' : 'daily';
   dailyCatchUpRunning = true;

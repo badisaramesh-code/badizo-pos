@@ -2,6 +2,7 @@ const db = require('../config/db');
 const { normalizeCounterNo } = require('../utils/formatters');
 const { getFinancialYear } = require('./financialYearService');
 const { invoicePrefix } = require('./runtimePolicy');
+const { legacyInvoicePolicy } = require('./legacyInvoicePolicy');
 
 async function getCounterCount(connection = db) {
   const [rows] = await connection.query(
@@ -12,7 +13,10 @@ async function getCounterCount(connection = db) {
 }
 
 function formatInvoiceNo(financialYear, counterNo, sequenceNo) {
-  const value = `${invoicePrefix()}/${financialYear}/C${String(counterNo).padStart(2, '0')}/${String(sequenceNo).padStart(6, '0')}`;
+  const legacy = legacyInvoicePolicy();
+  const value = legacy
+    ? `${legacy.prefix}/${financialYear}/${String(sequenceNo).padStart(3, '0')}`
+    : `${invoicePrefix()}/${financialYear}/C${String(counterNo).padStart(2, '0')}/${String(sequenceNo).padStart(6, '0')}`;
   if (value.length > 50) throw Error('Invoice number exceeds the supported storage length. Billing was not saved; contact support.');
   return value;
 }
@@ -24,15 +28,19 @@ async function getExistingMaxSequence(connection, financialYear) {
      WHERE financial_year = ?`,
     [financialYear]
   );
+  const legacy = legacyInvoicePolicy();
+  const patterns = [`${require('./recoveryInvoiceNumbers').escapeLike(invoicePrefix())}/${financialYear}/C%/%`];
+  if (legacy) patterns.push(`${require('./recoveryInvoiceNumbers').escapeLike(legacy.prefix)}/${financialYear}/%`);
   const [invoiceRows] = await connection.query(
     `SELECT MAX(CAST(SUBSTRING_INDEX(invoice_no, '/', -1) AS UNSIGNED)) AS sequence_no
      FROM invoices
-     WHERE invoice_no LIKE ? ESCAPE '='`,
-    [`${require('./recoveryInvoiceNumbers').escapeLike(invoicePrefix())}/${financialYear}/C%/%`]
+     WHERE ${patterns.map(() => "invoice_no LIKE ? ESCAPE '='").join(' OR ')}`,
+    patterns
   );
   const sequenceNext = Number(sequenceRows[0]?.next_number || 1);
   const invoiceNext = Number(invoiceRows[0]?.sequence_no || 0) + 1;
-  return Math.max(sequenceNext, invoiceNext, 1);
+  const launchStart = legacy?.startYear === financialYear ? legacy.startNumber : 1;
+  return Math.max(sequenceNext, invoiceNext, launchStart);
 }
 
 async function ensureSequenceRow(connection, financialYear, counterNo = 0) {

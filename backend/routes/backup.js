@@ -4,8 +4,7 @@ const path = require('path');
 const router = express.Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const {
-  backupDir,
-  backupSources,
+  getBackupSources,
   getBackupPath,
   listBackups,
   restoreDatabaseBackup,
@@ -18,8 +17,9 @@ router.use(authenticate, authorize('SERVER', 'ADMIN'));
 
 router.get('/', async (_req, res) => {
   try {
+    const backupSources=await getBackupSources();
     res.json({
-      backupDir,
+      backupDir:backupSources.find(source=>source.key==='manual').dir,
       backupDirs: backupSources.map((source) => ({ key: source.key, label: source.label, directory: source.dir })),
       backups: await listBackups()
     });
@@ -54,7 +54,7 @@ router.post('/run', async (req, res) => {
 
 router.get('/download/:file', async (req, res) => {
   try {
-    const filePath = getBackupPath(req.params.file);
+    const filePath = await getBackupPath(req.params.file);
     if (!filePath || !fs.existsSync(filePath)) {
       return res.status(404).json({ error: 'Backup file not found.' });
     }

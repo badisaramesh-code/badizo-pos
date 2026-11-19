@@ -1,0 +1,4 @@
+'use strict';
+// Keep in sync with database/migrations/basic-sku-drafts.sql.
+const BASIC_SKU_DDL = "CREATE TABLE IF NOT EXISTS `basic_sku_drafts` (\n  `id` bigint unsigned NOT NULL AUTO_INCREMENT,\n  `product_code` varchar(60) COLLATE utf8mb4_unicode_ci NOT NULL,\n  `product_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,\n  `details` json NOT NULL,\n  `status` enum('DRAFT','PUBLISHED') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'DRAFT',\n  `created_by` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,\n  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  UNIQUE KEY `product_code` (`product_code`),\n  KEY `idx_basic_sku_status_id` (`status`,`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+module.exports = { BASIC_SKU_DDL };
