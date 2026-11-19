@@ -34,6 +34,7 @@ router.get('/', async(req,res)=>{ const scope=scopeOf(req.query.scope),from=norm
  FROM local_account_entries WHERE account_scope=? AND entry_date<=? ORDER BY account_name, entry_date, id`,[scope,to]); const [profiles]=await db.query(`SELECT account_name, address_details, phone_number, gst_number FROM local_account_ledgers WHERE account_scope=?`,[scope]); const profileMap=new Map(profiles.map(p=>[String(p.account_name).toLocaleLowerCase(),p])); const running=new Map(),ledgerMap=new Map(),rows=[]; all.forEach(row=>{const key=String(row.account_name).toLocaleLowerCase(),balance=(running.get(key)||0)+Number(row.dr_amount||0)-Number(row.cr_amount||0);running.set(key,balance);if(!ledgerMap.has(key))ledgerMap.set(key,{name:row.account_name,entries:0,dr:0,cr:0,...(profileMap.get(key)||{})});const l=ledgerMap.get(key);l.entries++;l.dr+=Number(row.dr_amount||0);l.cr+=Number(row.cr_amount||0);l.balance=l.dr-l.cr;if(String(row.entry_date).slice(0,10)>=from)rows.push({...row,details:String(row.details||'').toUpperCase(),balance,balance_type:balance>=0?'DR':'CR'});}); profiles.forEach(p=>{const key=String(p.account_name).toLocaleLowerCase();if(!ledgerMap.has(key))ledgerMap.set(key,{name:p.account_name,entries:0,dr:0,cr:0,balance:0,...p});}); rows.sort((a,b)=>String(a.entry_date).localeCompare(String(b.entry_date))||Number(a.id)-Number(b.id)); const dr=rows.reduce((s,r)=>s+Number(r.dr_amount||0),0),cr=rows.reduce((s,r)=>s+Number(r.cr_amount||0),0);res.json({scope,from,to,rows,ledgers:[...ledgerMap.values()].sort((a,b)=>a.name.localeCompare(b.name)),totals:{dr,cr,balance:dr-cr}}); } catch(err){console.error('Local accounts load failed:',err.message);res.status(500).json({error:'Unable to load Local / Non-Local accounts.'});} });
 async function saveEntry(req,res,editing=false) {
  let c;
+ let reminderLinked=false;
  try {
   const r=clean(req.body), rawDays=String(req.body.credit_days??'').trim();
   if(rawDays && (!/^\d+$/.test(rawDays)||Number(rawDays)>3650)) throw Object.assign(new Error('Days must be a whole number between 0 and 3650.'),{statusCode:400});
@@ -46,6 +47,7 @@ async function saveEntry(req,res,editing=false) {
      COALESCE((SELECT MAX(id) FROM local_payment_diary_changes h WHERE h.diary_id=d.id),0) AS version
      FROM local_payment_diary d WHERE d.create_request_id=? FOR UPDATE`,['ledger-entry-'+id]);
    if(linked.length){
+    reminderLinked=true;
     const diary=linked[0],change={reason:'Updated from Local / Non-Local ledger',version:Number(diary.version),request_id:'ledger-edit-'+crypto.randomUUID()};
     if(rawDays==='')await diaryService.modify(Number(diary.id),change,req.user.username,'DELETE',c);
     else {const due=new Date(r.date+'T00:00:00Z');due.setUTCDate(due.getUTCDate()+Number(rawDays));
@@ -56,12 +58,12 @@ async function saveEntry(req,res,editing=false) {
   }else{
    const [saved]=await c.query('INSERT INTO local_account_entries (account_scope,entry_date,account_name,details,remarks,dr_amount,cr_amount,created_by) VALUES(?,?,?,?,?,?,?,?)',[r.scope,r.date,r.name,r.details,r.remarks,r.dr,r.cr,req.user.username]);id=saved.insertId;
   }
-  if(rawDays){
+  if(rawDays&&!reminderLinked){
    const due=new Date(r.date+'T00:00:00Z');due.setUTCDate(due.getUTCDate()+Number(rawDays));
    await diaryService.add({account_scope:r.scope,account_name:r.name,bill_no:'LEDGER-'+id,bill_date:r.date,due_date:due.toISOString().slice(0,10),amount:(r.cr||r.dr).toFixed(2),notes:[r.details,r.remarks].filter(Boolean).join(' | ').slice(0,500),request_id:'ledger-entry-'+id},req.user.username,c);
   }
   await c.commit();res.json({success:true,id,diary_posted:Boolean(rawDays)});
- }catch(err){if(c)await c.rollback().catch(()=>{});const status=err.statusCode||err.status||500;res.status(status).json({error:status<500?err.message:'Unable to save account entry.'});}
+ }catch(err){if(c)await c.rollback().catch(()=>{});console.error('Local account entry save failed:',err.message);const status=err.statusCode||err.status||500;res.status(status).json({error:status<500?err.message:'Unable to save account entry.'});}
  finally{if(c)c.release();}
 }
 router.post('/',(req,res)=>saveEntry(req,res));
