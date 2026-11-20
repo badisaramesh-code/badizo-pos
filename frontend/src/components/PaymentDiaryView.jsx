@@ -116,17 +116,18 @@ function DiaryHistory({row,onClose,onChanged}) {
   </section></div>;
 }
 
-export function PaymentDiaryReminder({user,onOpenDiary}) {
+export function PaymentDiaryReminder({user,onOpenDiary,loginSession=''}) {
   const allowed=['SERVER','ADMIN'].includes(user?.role);
   const [rows,setRows]=useState([]),[visible,setVisible]=useState(false),[payment,setPayment]=useState(null);
   const minimized=useRef(false);
-  const dayKey=()=>`badizo_diary_reminder_${user?.username}_${todayIso()}`;
+  const dayKey=()=>`badizo_diary_reminder_${user?.username}_${todayIso()}_${loginSession}`;
   const load=useCallback(async(force=false)=>{if(!allowed)return;try{const {data}=await api.get(base,{params:{status:'ALL',include_payments:true}});
     const due=data.rows.filter(row=>{
       const reminderDate=row.reminder_date||row.due_date;
-      const hasPendingBalance=Number(row.pending_amount)>0;
-      const paidToday=(row.payments||[]).some(p=>p.payment_date===data.today&&!p.reversed_date);
-      return hasPendingBalance||paidToday;
+      if(reminderDate>data.today)return false;
+      const pending=Number(row.pending_amount)>0;
+      const paidToday=(row.payments||[]).some(payment=>payment.payment_date===data.today&&!payment.reversed_date);
+      return pending||paidToday;
     });setRows(due);
     if(due.length&&!minimized.current&&(force||!sessionStorage.getItem(dayKey())))setVisible(true);
     if(!due.length)setVisible(false);
@@ -134,9 +135,9 @@ export function PaymentDiaryReminder({user,onOpenDiary}) {
   useEffect(()=>{if(!allowed)return;load();const timer=setInterval(()=>load(),60000);const update=()=>load();window.addEventListener('badizo-local-diary-updated',update);return()=>{clearInterval(timer);window.removeEventListener('badizo-local-diary-updated',update);};},[allowed,load]);
   if(!allowed)return null;
   const close=()=>{sessionStorage.setItem(dayKey(),'dismissed');setVisible(false);};
-  return <>{!visible&&!payment&&rows.length>0&&minimized.current&&<button style={{position:'fixed',bottom:18,right:18,zIndex:1200}} onClick={()=>{minimized.current=false;setVisible(true);}}>Today's payments ({rows.length}) · Restore</button>}{visible&&!payment&&<div className="diary-overlay"><section className="diary-dialog diary-dialog-wide" style={{borderTop:'6px solid #2e7d32'}} role="dialog" aria-modal="true" aria-labelledby="diary-reminder-title"><button style={{float:'right'}} aria-label="Minimize payment reminder" onClick={()=>{minimized.current=true;setVisible(false);}}>− Minimize</button><p style={{margin:'0 0 8px',fontWeight:700,color:'#216331'}}><time dateTime={todayIso()}>{reportDate(todayIso())}</time></p><h2 id="diary-reminder-title">Today's Local / Non-Local payments</h2><p>{rows.length} bills · {rows.filter(row=>Number(row.pending_amount)<=0).length} paid · {rows.filter(row=>Number(row.pending_amount)>0).length} pending · Balance <strong>{amount(rows.reduce((sum,row)=>sum+Number(row.pending_amount||0),0))}</strong></p>
+  return <>{!visible&&!payment&&rows.length>0&&minimized.current&&<button style={{position:'fixed',bottom:18,right:18,zIndex:1200}} onClick={()=>{minimized.current=false;setVisible(true);}}>Today's payments ({rows.length}) · Restore</button>}{visible&&!payment&&<div className="diary-overlay"><section className="diary-dialog diary-dialog-wide" style={{borderTop:'6px solid #2e7d32'}} role="dialog" aria-modal="true" aria-labelledby="diary-reminder-title"><div style={{float:'right',display:'flex',gap:8}}><button type="button" onClick={()=>load(true)}>Refresh</button><button aria-label="Minimize payment reminder" onClick={()=>{minimized.current=true;setVisible(false);}}>− Minimize</button></div><p style={{margin:'0 0 8px',fontWeight:700,color:'#216331'}}><time dateTime={todayIso()}>{reportDate(todayIso())}</time></p><h2 id="diary-reminder-title">Today's Local / Non-Local payments</h2><p>{rows.length} bills · {rows.filter(row=>Number(row.pending_amount)<=0).length} paid · {rows.filter(row=>Number(row.pending_amount)>0).length} pending · Balance <strong>{amount(rows.reduce((sum,row)=>sum+Number(row.pending_amount||0),0))}</strong></p>
     <div className="diary-table-wrap"><table><thead><tr><th>Account / bill</th><th>Due date</th><th>Pending / status</th><th>Action</th></tr></thead><tbody>{groupDiaryBills(rows).map(group=><React.Fragment key={group.key}><DiaryGroupHeading group={group} columns={4}/>{group.rows.map(row=><tr key={row.id}><td><strong>{row.account_name}</strong><small>{row.account_scope==='LOCAL'?'Local':'Non-Local'} · {row.bill_no}</small><small>Bill {row.bill_date} · Amount {amount(row.amount)}</small></td><td>{row.reminder_date||row.due_date}{row.reminder_date&&row.reminder_date!==row.due_date&&<small>Sunday due {row.due_date} · reminding Saturday</small>}{Number(row.pending_amount)>0?((row.reminder_date||row.due_date)<todayIso()?' · OVERDUE':(row.reminder_date||row.due_date)===todayIso()?' · DUE TODAY':' · UPCOMING'):' · PAID'}</td><td><strong>{amount(row.pending_amount)}</strong><small>{Number(row.pending_amount)<=0?'PAID':Number(row.paid_amount)>0?'PART PAID · Balance pending':'UNPAID'}</small>{Number(row.paid_amount)>0&&<small>Paid {amount(row.paid_amount)} · Less {amount(row.discount_amount)}</small>}</td><td>{Number(row.pending_amount)>0?<button className="diary-payment-pending" onClick={()=>setPayment(row)}>Record payment</button>:<button className="diary-payment-ok" disabled>✓ Payment OK</button>}</td></tr>)}</React.Fragment>)}</tbody></table></div>
-    <div className="diary-actions"><button onClick={close}>Close for today</button><button className="primary-button" onClick={()=>{close();onOpenDiary();}}>Open Payment Diary</button></div><small>Includes all unpaid bills, including upcoming bills. Closing does not mark bills paid.</small>
+    <div className="diary-actions"><button onClick={close}>Close for today</button><button className="primary-button" onClick={()=>{close();onOpenDiary();}}>Open Payment Diary</button></div><small>Shows bills due today or earlier with a pending balance. Overdue balances continue to appear each day until paid. Closing does not mark bills paid.</small>
   </section></div>}{payment&&<DiaryPaymentDialog row={payment} onClose={()=>setPayment(null)} onSaved={()=>{setPayment(null);load(true);}}/>}</>;
 }
 

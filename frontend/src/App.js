@@ -44,8 +44,13 @@ export default function App() {
   const [billingState, setBillingState] = useState(process.env.REACT_APP_BADIZO_CLOUD_BUILD === 'true' ? {server:'Cloud',mode:'unknown'} : null);
   const billingPaused = billingState && billingState.mode !== 'active';
   const [currentUser, setCurrentUser] = useState(getStoredUser);
+  const [loginSession, setLoginSession] = useState(() => Date.now());
   const [backupAlert, setBackupAlert] = useState(null);
   const [openPaymentDiary,setOpenPaymentDiary]=useState(false);
+  const handleLogin = (user) => {
+    setLoginSession(Date.now());
+    setCurrentUser(user);
+  };
   useEffect(() => {
     const changed = () => setCurrentUser(null);
     window.addEventListener('badizo-recovery-session-changed', changed);
@@ -166,7 +171,7 @@ export default function App() {
     };
   }, [currentUser]);
   if (!currentUser) {
-    return <LoginView onLogin={setCurrentUser} />;
+    return <LoginView onLogin={handleLogin} />;
   }
 
   const allowedTabs = APP_TABS.filter((tab) => canAccessTab(tab, currentUser));
@@ -217,7 +222,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <ReportApprovalNotifications currentUser={currentUser} />
-      <PaymentDiaryReminder user={currentUser} onOpenDiary={()=>{setOpenPaymentDiary(true);setActiveWorkspace('localAccounts');}}/>
+      <PaymentDiaryReminder user={currentUser} loginSession={loginSession} onOpenDiary={()=>{setOpenPaymentDiary(true);setActiveWorkspace('localAccounts');}}/>
       {backupAlert && (
         <div className="backup-alert-toast-wrap" role="alert" aria-live="assertive">
           <div className={`backup-alert-modal ${backupAlert.status === 'success' ? 'backup-alert-success' : ''}`}>
