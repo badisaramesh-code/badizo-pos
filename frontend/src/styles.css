@@ -9706,3 +9706,4 @@ body.badizo-ping-fail .brand-pulse-dots span:nth-child(3) {
 @media(max-width:1000px) { .billing-scanner-row { grid-template-columns:max-content 1fr max-content; } .billing-scanner-row>.search-wrap { grid-column:1/-1; grid-row:1; } }
 
 .pos-update-available { padding:2px 5px; border-radius:3px; background:#216a49; color:white; font-size:10px; }
+.ledger-balance-cr { color:#b42318; font-weight:700; }
