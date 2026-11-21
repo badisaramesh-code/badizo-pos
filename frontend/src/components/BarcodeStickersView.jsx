@@ -30,6 +30,7 @@ const TEMPLATE_OPTIONS = [
 
 const BARCODE_STORE_SETTINGS_KEY = 'badizo_barcode_store_settings';
 const BARCODE_LABEL_FORMAT_KEY = 'badizo_barcode_label_format_v2';
+const SERVER_BARCODE_LABEL_FORMAT_KEY = 'badizo_server_barcode_label_format_v1';
 const BARCODE_PRINTER_SELECTIONS_KEY = 'badizo_barcode_printer_selections';
 const DEFAULT_STORE_SETTINGS = {
   company: 'hyper fresh mart llp',
@@ -75,9 +76,9 @@ function downloadTextFile(text, filename) {
   window.URL.revokeObjectURL(url);
 }
 
-function loadBarcodeLabelFormat() {
+function loadBarcodeLabelFormat(useServerPrinter = false) {
   try {
-    const saved = window.localStorage.getItem(BARCODE_LABEL_FORMAT_KEY);
+    const saved = window.localStorage.getItem(useServerPrinter ? SERVER_BARCODE_LABEL_FORMAT_KEY : BARCODE_LABEL_FORMAT_KEY);
     return TEMPLATE_OPTIONS.some((option) => option.name === saved)
       ? saved
       : 'tsc-244-1-33x25-single.prn';
@@ -114,7 +115,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
   }, [isActive, onBackToProductForm]);
   const savedStoreSettings = loadBarcodeStoreSettings();
   const [screenMode, setScreenMode] = useState('print');
-  const [templateName, setTemplateName] = useState(loadBarcodeLabelFormat);
+  const [templateName, setTemplateName] = useState(() => loadBarcodeLabelFormat(useServerPrinter));
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
@@ -350,7 +351,7 @@ export default function BarcodeStickersView({ isActive = false, onBackToProductF
   function changeTemplateName(nextTemplateName) {
     setTemplateName(nextTemplateName);
     try {
-      window.localStorage.setItem(BARCODE_LABEL_FORMAT_KEY, nextTemplateName);
+      window.localStorage.setItem(useServerPrinter ? SERVER_BARCODE_LABEL_FORMAT_KEY : BARCODE_LABEL_FORMAT_KEY, nextTemplateName);
     } catch (_err) {
       // Ignore storage failures; selection still works for the current screen.
     }
