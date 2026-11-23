@@ -782,9 +782,7 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       default_batch_no: String(source.default_batch_no ?? '').trim().toUpperCase(),
       default_mfd_date: dateInputValue(source.default_mfd_date),
       default_expiry_date: dateInputValue(source.default_expiry_date),
-      wholesale_price: source.wholesale_price_overridden === false
-        ? String(source.sale_price ?? '').trim()
-        : String(source.wholesale_price ?? '').trim() || String(source.sale_price ?? '').trim(),
+      wholesale_price: String(source.wholesale_price ?? '').trim() || String(source.sale_price ?? '').trim(),
       discount_value: String(source.discount_value ?? '').trim() === '' ? '0' : source.discount_value,
       bulk_discount_value: String(source.bulk_discount_value ?? '').trim() === '' ? '0' : source.bulk_discount_value,
       free_promo_qty_per_sale: String(source.free_promo_qty_per_sale ?? '').trim() === '' ? '1' : source.free_promo_qty_per_sale,
