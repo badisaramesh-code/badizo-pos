@@ -841,6 +841,10 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
   }
 
   function editProduct(product) {
+    const salePrice = Number(product.sale_price) || 0;
+    const wholesalePrice = String(product.wholesale_price ?? '').trim() === ''
+      ? salePrice
+      : Number(product.wholesale_price) || 0;
     setForm({
       original_barcode: product.barcode || '',
       product_code: product.product_code || '',
@@ -858,14 +862,14 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
       mrp: String(product.mrp ?? ''),
       purchase_price: String(product.purchase_price ?? ''),
       sale_price: String(product.sale_price ?? ''),
-      wholesale_price: String(product.sale_price ?? ''),
-      wholesale_price_overridden: false,
+      wholesale_price: String(wholesalePrice),
+      wholesale_price_overridden: wholesalePrice !== salePrice,
       qty_3_price: Number(product.qty_3_price) > 0 ? String(product.qty_3_price) : '',
       qty_6_price: Number(product.qty_6_price) > 0 ? String(product.qty_6_price) : '',
       qty_12_price: Number(product.qty_12_price) > 0 ? String(product.qty_12_price) : '',
       discount_type: product.discount_type || 'PERCENT',
       discount_value: String(product.discount_value ?? ''),
-      bulk_discount_value: calculateDiscountFromPrice(product.mrp, product.sale_price, product.discount_type || 'PERCENT'),
+      bulk_discount_value: calculateDiscountFromPrice(product.mrp, wholesalePrice, product.discount_type || 'PERCENT'),
       is_free_item: Boolean(product.is_free_item),
       free_promo_enabled: Boolean(product.free_promo_enabled),
       free_promo_name: product.free_promo_name || '',
