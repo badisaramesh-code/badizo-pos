@@ -21,6 +21,11 @@ export function groupDiaryBills(rows) {
   }
   return [...groups.values()].sort((a,b)=>a.date.localeCompare(b.date)||a.account_name.localeCompare(b.account_name));
 }
+function hideDuplicateLedgerReminders(rows) {
+  const billKey=row=>JSON.stringify([row.account_scope,String(row.account_name).trim().toUpperCase(),row.bill_date,Math.round(Number(row.amount||0)*100)]);
+  const namedBills=new Set(rows.filter(row=>!/^LEDGER-\d+$/i.test(String(row.bill_no||''))).map(billKey));
+  return rows.filter(row=>!/^LEDGER-\d+$/i.test(String(row.bill_no||''))||!namedBills.has(billKey(row)));
+}
 function DiaryGroupHeading({group,columns}) {
   return group.rows.length>1?<tr className="diary-group-heading"><td colSpan={columns}><strong>{group.account_name} · {group.account_scope==='LOCAL'?'Local':'Non-Local'} · Reminder {group.date} · {group.rows.length} bills · Total pending {amount(group.pendingCents/100)}</strong></td></tr>:null;
 }
@@ -128,9 +133,9 @@ export function PaymentDiaryReminder({user,onOpenDiary,loginSession=''}) {
       const pending=Number(row.pending_amount)>0;
       const paidToday=(row.payments||[]).some(payment=>payment.payment_date===data.today&&!payment.reversed_date);
       return pending||paidToday;
-    });setRows(due);
-    if(due.length&&!minimized.current&&(force||!sessionStorage.getItem(dayKey())))setVisible(true);
-    if(!due.length)setVisible(false);
+    });const reminders=hideDuplicateLedgerReminders(due);setRows(reminders);
+    if(reminders.length&&!minimized.current&&(force||!sessionStorage.getItem(dayKey())))setVisible(true);
+    if(!reminders.length)setVisible(false);
   }catch{/* Leave billing and ledgers available if the reminder cannot load. */}},[allowed,user?.username]);
   useEffect(()=>{if(!allowed)return;load();const timer=setInterval(()=>load(),60000);const update=()=>load();window.addEventListener('badizo-local-diary-updated',update);return()=>{clearInterval(timer);window.removeEventListener('badizo-local-diary-updated',update);};},[allowed,load]);
   if(!allowed)return null;

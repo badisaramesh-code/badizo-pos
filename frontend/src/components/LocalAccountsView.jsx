@@ -90,8 +90,8 @@ export default function LocalAccountsView(){
    const nextFrom=savedDate&&savedDate<from?savedDate:from,nextTo=savedDate&&savedDate>to?savedDate:to;
    if(nextFrom!==from)setFrom(nextFrom);if(nextTo!==to)setTo(nextTo);
    setMessage(form.credit_days!==''&&form.credit_days!=null?'Bill saved with Payment Diary reminder.':editId?'Entry updated.':'Entry added to ledger.');
-   setForm({...blank(),entry_date:savedDate||todayIso(),account_name:selected||''});setEditId(null);
-   window.setTimeout(()=>document.getElementById(selected?'local-entry-details':'local-account-name-input')?.focus(),0);
+   setForm(blank());setEditId(null);setSuggestionsOpen(false);setSuggestionIndex(0);
+   window.setTimeout(()=>document.getElementById('local-account-name-input')?.focus(),0);
    void load({from:nextFrom,to:nextTo});
   }catch(x){if(scopeRef.current===scope)setError(x.response?.data?.error||'Unable to save entry.');}
   finally{savingEntryRef.current=false;setIsSavingEntry(false);}
