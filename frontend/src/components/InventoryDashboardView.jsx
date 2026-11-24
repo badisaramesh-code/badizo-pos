@@ -723,7 +723,11 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
 
       if (field === 'wholesale_price') {
         next.wholesale_price_overridden = String(value ?? '').trim() !== '';
-        next.bulk_discount_value = calculateDiscountFromPrice(next.mrp, value, discountType);
+        next.bulk_discount_value = calculateDiscountFromPrice(
+          next.mrp,
+          next.wholesale_price_overridden ? value : next.sale_price,
+          discountType
+        );
       }
 
       if (field === 'bulk_discount_value') {
@@ -736,7 +740,9 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
         if (next.wholesale_price !== '') next.bulk_discount_value = calculateDiscountFromPrice(next.mrp, next.wholesale_price, value);
       }
 
-      if (!next.wholesale_price_overridden) {
+      // Keep the wholesale input empty while the user is replacing its value.
+      // A blank value still falls back to retail when the product is saved.
+      if (!next.wholesale_price_overridden && field !== 'wholesale_price') {
         next.wholesale_price = next.sale_price;
         next.bulk_discount_value = calculateDiscountFromPrice(next.mrp, next.sale_price, discountType);
       }
@@ -909,8 +915,13 @@ export default function InventoryDashboardView({ isActive = false, navigationKey
         free_promo_name: uppercaseProductName(productForm.free_promo_name)
       });
       const syncedText = result.taxSynced > 1 ? ` HSN/GST synced for ${result.taxSynced} matching products.` : '';
-      setStatusMessage(`${form.product_name} saved.${syncedText}`);
-      resetProductForm();
+      const savedWholesalePrice = Number(result.wholesalePrice ?? productForm.wholesale_price);
+      setStatusMessage(`${form.product_name} saved. Wholesale price: ${savedWholesalePrice.toFixed(2)}.${syncedText}`);
+      if (productForm.original_barcode) {
+        setForm((current) => ({ ...current, updated_at: todayIso() }));
+      } else {
+        resetProductForm();
+      }
       await loadProducts();
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Unable to save product.');

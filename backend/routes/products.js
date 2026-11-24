@@ -3467,6 +3467,21 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
       );
     }
 
+    // Verify this field independently so a product save cannot report success
+    // while the wholesale price remains unchanged in the products table.
+    await executor.query(
+      'UPDATE products SET wholesale_price = ? WHERE barcode = ?',
+      [values.wholesalePrice, finalBarcode]
+    );
+    const [savedPriceRows] = await executor.query(
+      'SELECT wholesale_price FROM products WHERE barcode = ? LIMIT 1',
+      [finalBarcode]
+    );
+    const savedWholesalePrice = Number(savedPriceRows[0]?.wholesale_price);
+    if (!Number.isFinite(savedWholesalePrice) || Math.abs(savedWholesalePrice - values.wholesalePrice) >= 0.005) {
+      throw new Error('Wholesale price could not be verified after save.');
+    }
+
     await finishProductCapture(executor, capture);
     const taxSynced = await syncProductTaxByName(executor, {
       productName: values.productName,
@@ -3490,12 +3505,13 @@ router.post('/save', authenticate, authorize('SERVER', 'ADMIN'), async (req, res
         tax_synced_products: taxSynced,
         purchase_price: values.purchasePrice,
         sale_price: values.salePrice,
+        wholesale_price: savedWholesalePrice,
         stock_qty: values.stockQty
       }
     });
 
     if (syncConnection) { await syncConnection.commit(); syncCommitted = true; }
-    res.json({ success: true, taxSynced });
+    res.json({ success: true, taxSynced, wholesalePrice: savedWholesalePrice });
   } catch (err) {
     console.error('Product save failed:', err.message);
     res.status(500).json({ error: 'Unable to save product to database.' });
