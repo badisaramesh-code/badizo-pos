@@ -23,6 +23,12 @@ export default function LocalAccountsView(){
  const [ledgerPage,setLedgerPage]=useState(null);
  const [isSavingEntry,setIsSavingEntry]=useState(false);
  const savingEntryRef=useRef(false);
+ const deleteDialogRef = useRef(null);
+ const deletingLedgerRef = useRef(false);
+ const [deleteTarget, setDeleteTarget] = useState(null);
+ const [deleteName, setDeleteName] = useState('');
+ const [deleteError, setDeleteError] = useState('');
+ const [isDeletingLedger, setIsDeletingLedger] = useState(false);
  const loadRequestRef=useRef(0);
  const scopeRef=useRef(scope);scopeRef.current=scope;
  async function load(range={}){const request=++loadRequestRef.current;setError('');try{const result=await fetchLocalAccounts({scope,from:range.from||from,to:range.to||to,_:Date.now()});if(request===loadRequestRef.current&&scopeRef.current===scope){setLedgerPage(null);setData(result);}}catch(e){if(request===loadRequestRef.current&&scopeRef.current===scope)setError(e.response?.data?.error||'Unable to load accounts.');}}
@@ -90,8 +96,11 @@ export default function LocalAccountsView(){
    const nextFrom=savedDate&&savedDate<from?savedDate:from,nextTo=savedDate&&savedDate>to?savedDate:to;
    if(nextFrom!==from)setFrom(nextFrom);if(nextTo!==to)setTo(nextTo);
    setMessage(form.credit_days!==''&&form.credit_days!=null?'Bill saved with Payment Diary reminder.':editId?'Entry updated.':'Entry added to ledger.');
-   setForm(blank());setEditId(null);setSuggestionsOpen(false);setSuggestionIndex(0);
-   window.setTimeout(()=>document.getElementById('local-account-name-input')?.focus(),0);
+   const nextAccountName = editId ? '' : form.account_name.trim();
+   setForm({ ...blank(), account_name: nextAccountName });
+   setEditId(null);setSuggestionsOpen(false);setSuggestionIndex(0);
+   const nextFieldId = nextAccountName ? 'local-entry-details' : 'local-account-name-input';
+   window.setTimeout(()=>document.getElementById(nextFieldId)?.focus(),0);
    void load({from:nextFrom,to:nextTo});
   }catch(x){if(scopeRef.current===scope)setError(x.response?.data?.error||'Unable to save entry.');}
   finally{savingEntryRef.current=false;setIsSavingEntry(false);}
@@ -100,7 +109,43 @@ export default function LocalAccountsView(){
  const edit=useCallback(function edit(r){setEditId(r.id);setForm({entry_date:normalizeDateInput(r.entry_date,''),account_name:r.account_name,details:uppercaseDetails(r.details),remarks:r.remarks||'',dr_amount:Number(r.dr_amount)||'',cr_amount:Number(r.cr_amount)||'',credit_days:r.diary_credit_days==null?'':String(r.diary_credit_days)});document.querySelector('.local-entry-grid')?.scrollIntoView({behavior:'smooth',block:'center'});},[]);
  async function saveProfile(){setError('');try{await saveLocalLedgerProfile({...profile,account_scope:scope,account_name:selected});setMessage('Ledger heading details saved.');setProfileEdit(false);await load();}catch(x){setError(x.response?.data?.error||'Unable to save ledger details.');}}
  async function saveLedgerName(){const nextName=ledgerName.trim().toUpperCase();setError('');setMessage('');if(!nextName){setError('Ledger name is required.');return;}try{const result=await renameLocalLedger({account_scope:scope,old_name:selected,new_name:nextName});setSelected(result.name);setForm(f=>({...f,account_name:f.account_name===selected?result.name:f.account_name}));setNameEdit(false);setMessage('Ledger name updated.');await load();}catch(x){setError(x.response?.data?.error||'Unable to rename ledger.');}}
- async function removeLedger(){const ledgerToDelete=selected;if(!ledgerToDelete)return;const typed=window.prompt(`Delete the complete ledger "${ledgerToDelete}", all ${currentLedger?.entries||0} entries, and its linked Payment Diary records?\n\nType the ledger name exactly to confirm:`,'');if(typed===null)return;if(typed.trim().toUpperCase()!==ledgerToDelete.trim().toUpperCase()){setMessage('');setError('Ledger name did not match. Nothing was deleted.');return;}setError('');setMessage('');try{const result=await deleteLocalLedger({account_scope:scope,account_name:ledgerToDelete});setSelected('');setEditId(null);setNameEdit(false);setForm(blank());setMessage(`${ledgerToDelete} ledger deleted (${result.deleted_entries||0} entries, ${result.deleted_diary_records||0} Payment Diary records).`);await load();}catch(x){setError(x.response?.data?.error||'Unable to delete ledger.');}}
+ function removeLedger() {
+  if (!selected || deletingLedgerRef.current) return;
+  setDeleteTarget({ name: selected, scope });
+  setDeleteName('');
+  setDeleteError('');
+  deleteDialogRef.current.showModal();
+ }
+
+ async function confirmLedgerDelete(event) {
+  event.preventDefault();
+  if (!deleteTarget || deletingLedgerRef.current) return;
+  const { name, scope: targetScope } = deleteTarget;
+  if (deleteName.trim().toUpperCase() !== name.trim().toUpperCase()) {
+   setDeleteError('Ledger name did not match.');
+   return;
+  }
+  deletingLedgerRef.current = true;
+  setIsDeletingLedger(true);
+  setDeleteError('');
+  setError('');
+  setMessage('');
+  try {
+   const result = await deleteLocalLedger({ account_scope: targetScope, account_name: name });
+   deleteDialogRef.current?.close();
+   setSelected('');
+   setEditId(null);
+   setNameEdit(false);
+   setForm(blank());
+   setMessage(`${name} ledger deleted (${result.deleted_entries || 0} entries, ${result.deleted_diary_records || 0} Payment Diary records).`);
+   await load();
+  } catch (error) {
+   setDeleteError(error.response?.data?.error || 'Unable to delete ledger.');
+  } finally {
+   deletingLedgerRef.current = false;
+   setIsDeletingLedger(false);
+  }
+ }
  const toggleCleared=useCallback(async function toggleCleared(row){if(row.is_opening)return;const id=Number(row.id),next=!Boolean(Number(row.is_cleared));setError('');skipNextLedgerAutoScrollRef.current=true;setData(current=>({...current,rows:current.rows.map(item=>Number(item.id)===id?{...item,is_cleared:next?1:0}:item)}));try{await setLocalAccountEntryCleared(id,next);}catch(x){skipNextLedgerAutoScrollRef.current=true;setData(current=>({...current,rows:current.rows.map(item=>Number(item.id)===id?{...item,is_cleared:next?0:1}:item)}));setError(x.response?.data?.error||'Unable to update cleared status.');}},[]); function excel(){const heading=[['Ledger Name',selected||`${scope==='LOCAL'?'Local':'Non-Local'} Day Book`],['Address / Details',profile.address_details],['Phone',profile.phone_number],['GST Number',profile.gst_number],[],['Date','Name','Details','Remarks','DR','CR','Balance','DR/CR']];const body=rows.map(r=>[formatLedgerDate(r.entry_date),r.account_name,uppercaseDetails(r.details),capitalizeFirstLetter(r.remarks),Number(r.dr_amount),Number(r.cr_amount),Math.abs(Number(r.balance)),ledgerEntryType(r)]);const ws=XLSX.utils.aoa_to_sheet([...heading,...body,[],['TOTAL','','','',totals.dr,totals.cr,Math.abs(balance),balance>=0?'DR':'CR']]),wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,(selected||'Day Book').slice(0,31));XLSX.writeFile(wb,`${scope.toLowerCase()}_${selected||'day_book'}_${from}_${to}.xlsx`);}
  async function downloadLedgerPdf(){
   let shop;setError('');
@@ -173,7 +218,26 @@ export default function LocalAccountsView(){
   });  window.setTimeout(cleanup,600000);
  }
  const ledgerTableBody=useMemo(()=>(<tbody>{visibleRows.length?visibleRows.map(r=><tr key={r.id}><td className="ledger-date-cell">{formatLedgerDate(r.entry_date)}{!r.is_opening&&Number(r.has_diary_reminder)===1&&<><span className="local-diary-reminder-dot" role="img" aria-label="Added to Payment Diary" title="Added to Payment Diary"/>{Number(r.has_diary_payment)===1&&<span className="local-diary-paid-dot" role="img" aria-label="Payment Diary bill fully paid" title="Payment Diary bill fully paid"/>}</>}</td>{!selected&&<td className="ledger-name-column">{r.account_name}</td>}<td className="ledger-details-cell">{uppercaseDetails(r.details)||'-'}</td><td className="ledger-remarks-cell">{capitalizeFirstLetter(r.remarks)||'-'}</td><td className="ledger-clear-column">{r.is_opening?'-':<button type="button" className={`local-clear-check ${Number(r.is_cleared) ? 'checked' : ''}`.trim()} aria-label={Number(r.is_cleared)?'Mark entry not cleared':'Mark entry cleared'} aria-pressed={Boolean(Number(r.is_cleared))} onClick={()=>toggleCleared(r)}>{Number(r.is_cleared) ? '✓' : ''}</button>}</td><td>{Number(r.dr_amount)?formatLedgerAmount(r.dr_amount):'-'}</td><td>{Number(r.cr_amount)?formatLedgerAmount(r.cr_amount):'-'}</td><td><span className={Number(r.balance)<0?'ledger-balance-cr':''}>{formatLedgerAmount(Math.abs(Number(r.balance)))}</span></td><td><strong className={`ledger-entry-type ${ledgerEntryType(r).toLowerCase()}`}>{ledgerEntryType(r)}</strong></td><td>{r.is_opening?'-':<button onClick={()=>edit(r)}>Edit</button>}</td></tr>):<tr><td colSpan="10">No entries for selected dates.</td></tr>}</tbody>),[visibleRows,selected,toggleCleared,edit]);
- return <div className={`local-accounts-view ${scope==='LOCAL'?'local-scope-local':'local-scope-non-local'}`}><section className="panel local-entry-panel"><div className="local-entry-heading-row"><div className="panel-header"><div><h2>{scope==='LOCAL'?'Local Account Book':'Non-Local Account Book'}</h2><p>Independent manual DR / CR accounts</p></div></div><strong className="local-current-scope" aria-live="polite">Current View: {scope==='LOCAL'?'LOCAL':'NON-LOCAL'}</strong><div className="local-scope-tabs"><button className={scope==='LOCAL'?'active':''} onClick={()=>changeScope('LOCAL')}>Local</button><button className={scope==='NON_LOCAL'?'active':''} onClick={()=>changeScope('NON_LOCAL')}>Non-Local</button></div></div>
+ return <div className={`local-accounts-view ${scope==='LOCAL'?'local-scope-local':'local-scope-non-local'}`}>
+ <dialog ref={deleteDialogRef} aria-labelledby="local-ledger-delete-title"
+  onCancel={event => { if (deletingLedgerRef.current) event.preventDefault(); }}>
+  <h2 id="local-ledger-delete-title">Delete {deleteTarget?.scope === 'LOCAL' ? 'Local' : 'Non-Local'} Ledger</h2>
+  <p>This permanently deletes <strong>{deleteTarget?.name}</strong>, all its entries, and linked Payment Diary records.</p>
+  <form className="form-stack" onSubmit={confirmLedgerDelete}>
+   <label>Type the ledger name to confirm
+    <input value={deleteName} onChange={event => { setDeleteName(event.target.value); setDeleteError(''); }}
+     autoFocus autoComplete="off" required disabled={isDeletingLedger} />
+   </label>
+   {deleteError && <p className="form-error" role="alert">{deleteError}</p>}
+   <div className="actions-row">
+    <button type="button" disabled={isDeletingLedger} onClick={() => deleteDialogRef.current.close()}>Cancel</button>
+    <button type="submit" className="local-ledger-delete-button" disabled={isDeletingLedger}>
+     {isDeletingLedger ? 'Deleting…' : 'Delete Ledger'}
+    </button>
+   </div>
+  </form>
+ </dialog>
+ <section className="panel local-entry-panel"><div className="local-entry-heading-row"><div className="panel-header"><div><h2>{scope==='LOCAL'?'Local Account Book':'Non-Local Account Book'}</h2><p>Independent manual DR / CR accounts</p></div></div><strong className="local-current-scope" aria-live="polite">Current View: {scope==='LOCAL'?'LOCAL':'NON-LOCAL'}</strong><div className="local-scope-tabs"><button className={scope==='LOCAL'?'active':''} onClick={()=>changeScope('LOCAL')}>Local</button><button className={scope==='NON_LOCAL'?'active':''} onClick={()=>changeScope('NON_LOCAL')}>Non-Local</button></div></div>
  <form className="local-entry-grid" onSubmit={submit}><label>Date<input type="date" min="2000-01-01" max="2099-12-31" value={form.entry_date} onChange={e=>handleEntryDate(e.target.value)} required/></label><label className="local-account-name-field">Name<div className="local-account-name-wrap"><input id="local-account-name-input" value={form.account_name} onChange={e=>handleNameChange(e.target.value)} onFocus={()=>form.account_name.trim().length>=1&&setSuggestionsOpen(true)} onBlur={()=>window.setTimeout(()=>setSuggestionsOpen(false),150)} onKeyDown={handleNameKeyDown} autoComplete="off" required/>{suggestionsOpen&&accountSuggestions.length>0&&<div className="local-account-suggestions" role="listbox">{accountSuggestions.map((ledger,index)=><button type="button" key={ledger.name} className={index===suggestionIndex?'active':''} onMouseDown={e=>e.preventDefault()} onClick={()=>chooseAccount(ledger)}><strong>{ledger.name}</strong><small>{[ledger.phone_number,ledger.gst_number,ledger.address_details].filter(Boolean).join(' | ')||`${ledger.entries} entries`}</small></button>)}</div>}</div></label><label>Details<input id="local-entry-details" value={form.details} onChange={e=>update('details',uppercaseDetails(e.target.value))}/></label><label>Remarks<input value={form.remarks} onChange={e=>update('remarks',capitalizeFirstLetter(e.target.value))}/></label><label>Days (optional)<input aria-label="Days (optional)" type="number" min="0" max="3650" step="1" placeholder="Bill reminder" value={form.credit_days??''} onChange={e=>update('credit_days',e.target.value)}/></label><label>DR<input data-submit-on-enter="true" type="number" min="0" step="0.01" value={form.dr_amount} onChange={e=>update('dr_amount',e.target.value)}/></label><label>CR<input data-submit-on-enter="true" type="number" min="0" step="0.01" value={form.cr_amount} onChange={e=>update('cr_amount',e.target.value)}/></label><button className="primary-button" disabled={isSavingEntry}>{isSavingEntry?'Saving...':editId?'Update Entry':selected?`Post to ${selected}`:'Add Entry'}</button>{editId&&<button type="button" onClick={()=>{setEditId(null);setForm({...blank(),account_name:selected});}}>Cancel</button>}</form>{error&&<p className="form-error">{error}</p>}{message&&<p className="form-success">{message}</p>}</section>
  <section className="local-book-layout"><aside className="panel local-ledger-list"><h3>{scope==='LOCAL'?'Local':'Non-Local'} Ledgers</h3><div id="local-ledger-name-scroll" className="local-ledger-name-scroll"><button className={!selected?'active':''} onClick={()=>setSelected('')}>Day Book (All)</button>{data.ledgers.map(l=><button key={l.name} className={selected===l.name?'active':''} onClick={()=>chooseAccount(l)}><span>{l.name}</span><small>{l.entries}</small></button>)}</div></aside><div className="panel local-book"><div className={`local-book-toolbar${nameEdit?' name-editing':''}`}> <div className="local-ledger-title"><div className="local-ledger-title-row"><h2>{selected||`${scope==='LOCAL'?'Local':'Non-Local'} Day Book`}</h2></div><span>{selected?'Ledger Book':'Day Book'} · Financial Year {new Date(from).getFullYear()}-{String(new Date(from).getFullYear()+1).slice(-2)}</span></div><div className="local-date-filter">{selected&&(nameEdit?<div className="local-ledger-name-edit"><input autoFocus maxLength="180" value={ledgerName} onChange={e=>setLedgerName(e.target.value.toUpperCase())} onKeyDown={e=>{if(e.key==='Enter')saveLedgerName();if(e.key==='Escape'){setNameEdit(false);setLedgerName(selected);}}}/><button onClick={saveLedgerName}>Save</button><button onClick={()=>{setNameEdit(false);setLedgerName(selected);}}>Cancel</button></div>:<button className="local-ledger-name-button" onClick={()=>{setLedgerName(selected);setNameEdit(true);}}>Edit Name</button>)}{selected&&<button className="local-ledger-delete-button" onClick={removeLedger}>Delete Ledger</button>}<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/><input type="date" value={to} onChange={e=>setTo(e.target.value)}/><button onClick={load}>View</button>{selected&&<button onClick={startAdd}>+ Add</button>}<button onClick={excel}>Excel</button><button onClick={downloadLedgerPdf}>A4 PDF</button><button onClick={printLedger}>Print</button></div></div>
  {selected&&<div className="ledger-profile">{profileEdit?<><textarea placeholder="Address / other details" value={profile.address_details} onChange={e=>setProfile(p=>({...p,address_details:e.target.value}))}/><input placeholder="Phone number" value={profile.phone_number} onChange={e=>setProfile(p=>({...p,phone_number:e.target.value}))}/><input placeholder="GST number" value={profile.gst_number} onChange={e=>setProfile(p=>({...p,gst_number:e.target.value}))}/><button onClick={saveProfile}>Save Heading</button><button onClick={()=>setProfileEdit(false)}>Cancel</button></>:<><div><strong>Address / Details:</strong> {profile.address_details||'-'}</div><div><strong>Phone:</strong> {profile.phone_number||'-'} &nbsp; <strong>GST:</strong> {profile.gst_number||'-'}</div><button onClick={()=>setProfileEdit(true)}>Edit Heading</button></>}</div>}

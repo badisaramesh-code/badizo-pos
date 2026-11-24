@@ -64,11 +64,20 @@ test('large books render only one page, preserve full totals and search from the
     fetchLocalAccounts.mockImplementationOnce(() => new Promise(resolve => { finishReload = resolve; }));
     saveLocalAccountEntry.mockClear();
     saveLocalAccountEntry.mockResolvedValue({ success: true, id: 2369 });
+    const entryForm = container.querySelector('.local-entry-grid');
     await act(async () => {
-      Simulate.submit(container.querySelector('.local-entry-grid'));
-      Simulate.submit(container.querySelector('.local-entry-grid'));
+      Simulate.change(entryForm.querySelector('#local-account-name-input'), { target: { value: 'TEST LEDGER' } });
+      Simulate.change(entryForm.querySelector('#local-entry-details'), { target: { value: 'FIRST ENTRY' } });
+      Simulate.change(entryForm.querySelector('input[data-submit-on-enter]'), { target: { value: '100' } });
+    });
+    await act(async () => {
+      Simulate.submit(entryForm);
+      Simulate.submit(entryForm);
     });
     expect(saveLocalAccountEntry).toHaveBeenCalledTimes(1);
+    expect(entryForm.querySelector('#local-account-name-input').value).toBe('TEST LEDGER');
+    expect(entryForm.querySelector('#local-entry-details').value).toBe('');
+    expect(entryForm.querySelector('input[data-submit-on-enter]').value).toBe('');
     await act(async () => finishReload({ rows, ledgers: [{ name: 'TEST LEDGER', balance: 2368, entries: 2368 }] }));
   } finally {
     await act(async () => root.unmount()); container.remove();
